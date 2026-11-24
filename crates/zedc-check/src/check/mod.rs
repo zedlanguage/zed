@@ -517,29 +517,6 @@ pub enum Witness {
     },
 }
 
-/// A power `a ^ e` at `span` whose base builds a part past 64 bits (DESIGN.md
-/// sec:checking_in_zed): whether the base is a `rat`, the least bit lengths of its built parts
-/// (exactly [`Rat::built_widths`] for a base the text fixes, else what `Ck::least_built`
-/// proves), whether they are exact, `F`, the sum of their lengths less one, and their count,
-/// the least magnitude `k` of the exponent where the walk met it and whether every exponent
-/// is below 0, and `k * F + built`, the least bit length of the result. Found by
-/// `Ck::too_large_power`.
-struct WidePower<'a> {
-    a: &'a Expr,
-    e: &'a Expr,
-    span: Span,
-    rat: bool,
-    widths: [Option<u128>; 2],
-    exact: bool,
-    floor_log: u128,
-    built: u64,
-    k: Num,
-    negative: bool,
-    bits: Num,
-    /// What the base's bounds rest on, left to the end of the walk ([`Built::proof`]).
-    proof: Option<coprime::ProofId>,
-}
-
 /// An operation at `span` on operands the text fixes that builds a number in full, `p`, whose
 /// build the kernel sizes ([`kernel_build`]): the bits it builds, within the address space.
 /// Found by `Ck::too_large_build`, judged against the memory limit of `main` once it is read.
@@ -549,16 +526,6 @@ struct WideBuild {
     /// The operands' spans, whose derivation the rejection prints.
     args: Vec<Span>,
     bits: Num,
-}
-
-/// An operation `p` at `span` on the operands `args` that builds from their values, kept by
-/// the span of each operand (`Ck::note_build_parent`), so that a repair that shrinks a power
-/// is checked with the builds around it (`Ck::shrunk_power_fits`, row CONST-repair-build-trial).
-#[derive(Clone)]
-struct BuildParent<'a> {
-    p: Prim,
-    args: Vec<&'a Expr>,
-    span: Span,
 }
 
 /// A product or quotient `a * b` or `a / b` at `span` whose least size the text proves
@@ -2733,34 +2700,16 @@ struct Ck<'t, 'a> {
     port_writers: HashSet<usize>,
     /// The memory limit written before `main`, in bytes, the span of its `@limits` and that of
     /// the argument of `memory:` ([`Self::main_limits`]): a number proved larger is rejected
-    /// ([`Self::too_large_power`]).
+    /// ([`Self::powers_over_main_limit`]).
     main_memory: Option<(u128, Span, Span)>,
-    /// The powers of a wide base found within the address space, by span, with what the walk
-    /// found of each at its site, for [`Self::powers_over_main_limit`] to judge against the
-    /// memory limit of `main` once it is read.
-    wide_powers: BTreeMap<Span, WidePower<'a>>,
     /// The products and quotients whose least size the text proves within the address space,
-    /// by span, with what the walk found of each at its site, judged as [`Self::wide_powers`]
-    /// are.
+    /// by span, with what the walk found of each at its site, for
+    /// [`Self::powers_over_main_limit`] to judge against the memory limit of `main` once it is
+    /// read.
     wide_products: BTreeMap<Span, WideProduct<'a>>,
-    /// The products and quotients proved past the address space, rejected once the walk is
-    /// over (`Ck::judge_proved`), when the operations around each are known, so that the
-    /// repair of a smaller power operand is checked with them (row
-    /// CONST-too-large-products-fix), each with the derivation of its type as the walk wrote
-    /// it where the product was met, which the message keeps.
-    space_products: Vec<(WideProduct<'a>, Vec<Note>)>,
     /// The other operations that build a number in full within the address space, by span
-    /// (`Ck::too_large_build`), judged as [`Self::wide_powers`] are.
+    /// (`Ck::too_large_build`), judged as [`Self::wide_products`] are.
     wide_builds: BTreeMap<Span, WideBuild>,
-    /// The operation that builds from each operand's value, by the operand's span
-    /// (`Ck::note_build_parent`), read by the repair of a power past the memory limit of
-    /// `main`.
-    build_parents: HashMap<Span, BuildParent<'a>>,
-    /// The powers a repair of a power past the memory limit of `main` folds, by base value and
-    /// exponent (`Ck::shrunk_power_fits`): each repair tries the exponents `2^j` from the top
-    /// down, and lines with one base try the same ones, so each is folded once per check
-    /// (FAIL-powers-bench-43s).
-    shrunk_powers: HashMap<(Value, i64), Option<Value>>,
     /// The classes; class `k` is the type variable `$k`. Those an admitted forward reserves
     /// are made only when it is forced (`M62`, [`probe::Classes`]).
     classes: probe::Classes<Class>,
@@ -3572,12 +3521,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             port_params: HashSet::new(),
             port_writers: HashSet::new(),
             main_memory: None,
-            wide_powers: BTreeMap::new(),
             wide_products: BTreeMap::new(),
-            space_products: Vec::new(),
             wide_builds: BTreeMap::new(),
-            build_parents: HashMap::new(),
-            shrunk_powers: HashMap::new(),
             classes: Default::default(),
             data_checked: HashSet::new(),
             merge_checked: HashMap::new(),
@@ -14164,8 +14109,10 @@ fn binary_prim(op: BinaryOp) -> Option<Prim> {
 }
 
 /// The most memory, in bits, one step of a constant fold may ask for ([`kernel_folded`]):
-/// 2^27 bits, 16 MiB. A power asks for eight times its result, so `b ^ k` is folded up to a
-/// result of 2 MiB, about five million decimal digits; past that its value is not known, and
+/// 2^27 bits, 16 MiB. A step that builds a power in full asks for eight times its result, so
+/// `b ^ k + 1` is folded up to a result of 2 MiB, about five million decimal digits (the power
+/// `b ^ k` of a base wider than a word alone is kept as an atom and builds nothing, DESIGN.md
+/// step L1.17b); past that its value is not known, and
 /// the checker reads the expression by its type and range alone, as it reads one whose
 /// operands are not literals.
 //
@@ -14175,7 +14122,8 @@ fn binary_prim(op: BinaryOp) -> Option<Prim> {
 // It stands for the per-call partial-evaluation budget of A54 until MIX-budget sets that
 // budget, and is set as A99 set its 250 ms work bound: by the time one step takes at the
 // bound, measured with `zedc run` on the build machine (2026-11-13, 32 cores at load 50):
-// `(2^64 + 13) ^ 258111`, the largest power of that base the bound allows, takes about 0.3 s
+// `(2^64 + 13) ^ 258111`, then the largest power of that base the bound allowed (since
+// KEPT-power-form the bound falls on `(2^64 + 13) ^ 258110 + 1`, which builds it), took about 0.3 s
 // of processor time beyond the rest of the check, and `(2^64 + 13) ^ (2^22)`, at eight times
 // the bound, several seconds. It also lies far below the address space of every target (2^64
 // bytes on Linux x86_64, `limits::ADDRESS_BYTES_LOG2`), so a fold the bound lets through is one
@@ -16589,10 +16537,6 @@ struct Built {
     /// product's coefficients are the factors' products only where no factor shares a prime
     /// with them.
     kept: Option<coprime::SetId>,
-    /// Whether the bit lengths and the numbers of `parts` are the coefficients themselves, as
-    /// for a value the text fixes, so a part within 64 bits is known to be one, which a power
-    /// factors into kept primes (`Rat::pow`).
-    exact: bool,
     /// What the bounds rest on that the walk could not decide, the coprimality of roots made
     /// by products ([`coprime::Roots::settle`]); `None` where nothing is left to prove.
     proof: Option<coprime::ProofId>,

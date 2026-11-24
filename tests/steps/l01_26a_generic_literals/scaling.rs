@@ -433,6 +433,28 @@ pub(super) fn if_of_a_power(n: usize) -> String {
     format!("f(b: bool) = if b {{ 3^{} }} else {{ 2 }};\n", 200 * n)
 }
 
+/// `f(b: bool) = if b { (2^64 + 13)^(200 n) } else { 2 };`, a base wider than 64 bits.
+pub(super) fn if_of_a_wide_power(n: usize) -> String {
+    format!(
+        "f(b: bool) = if b {{ (2^64 + 13)^{} }} else {{ 2 }};\n",
+        200 * n
+    )
+}
+
+/// A power of a base wider than 64 bits is kept as the base, unfactored, with its exponent
+/// (plan row LIT-power-wide-base; DESIGN.md sec:domains "Kept powers"), so the type of an `if`
+/// holding one prints the power, as for a base of a word; before, `Rat::pow` built its digits,
+/// 13 million bits at the exponent 200,000. `2^64 + 13` holds no prime below 2^8 and is no
+/// perfect power, so it is one atom (`l01_17_value_representation::powers::
+/// a_power_of_a_wide_base_is_kept`). The cost: `bench::scaling::
+/// the_type_of_an_if_holding_a_power_of_a_wide_base_prints_the_power_when_checked`.
+#[test]
+fn the_type_of_an_if_holding_a_power_of_a_wide_base_prints_the_power() {
+    let src = if_of_a_wide_power(1);
+    assert_eq!(type_errors(&src), Vec::<String>::new());
+    assert_eq!(sig(&src, "f"), "(b: bool) -> 2 | 18446744073709551629^200");
+}
+
 /// [`if_of_a_power`] and `main() = f(b: true) > 1;`, rejected.
 pub(super) fn main_of_an_if_of_a_power(n: usize) -> String {
     format!("{}main() = f(b: true) > 1;\n", if_of_a_power(n))

@@ -263,6 +263,22 @@ pub(crate) trait ByteOut {
             self.magnitude(e.magnitude());
         }
     }
+
+    /// The wide atoms `(q, f)` of a number ([`Rat::wide`], plan row KEPT-power-form), after its
+    /// kept form under tags 14 and 15: their count, then each base's magnitude and each
+    /// exponent's sign and magnitude. O(w) words for the w words of the atoms, as [`W::kept`].
+    /// A number with no wide atom keeps its tags 2, 3, 12 and 13 and its bytes, so only the
+    /// addresses of values holding a wide atom changed (each such value was built in full
+    /// before, under tag 2 or 3).
+    fn wide(&mut self, r: &Rat) {
+        let wide = r.wide();
+        self.word(wide.len() as u64);
+        for (q, f) in wide {
+            self.magnitude(q);
+            self.tag(u8::from(f.sign() == Sign::Minus));
+            self.magnitude(f.magnitude());
+        }
+    }
 }
 
 impl ByteOut for W {
@@ -422,6 +438,16 @@ impl W {
             Value::Int(i) => {
                 self.tag(1);
                 self.word(*i as u64);
+            }
+            Value::Big(b) if !b.wide().is_empty() => {
+                self.tag(14);
+                self.kept(b, false);
+                self.wide(b);
+            }
+            Value::Rat(r) if !r.wide().is_empty() => {
+                self.tag(15);
+                self.kept(r, true);
+                self.wide(r);
             }
             Value::Big(b) if b.kept().2.is_empty() => {
                 self.tag(2);
@@ -939,8 +965,8 @@ impl<'a> R<'a> {
                     None => return self.err(at, "a rational with denominator 0"),
                 }
             }
-            12 | 13 => {
-                let rational = t == 13;
+            12..=15 => {
+                let rational = t == 13 || t == 15;
                 let num = self.big()?;
                 let den = match rational {
                     true => BigInt::from(self.magnitude()?),
@@ -951,7 +977,18 @@ impl<'a> R<'a> {
                 for _ in 0..count {
                     pows.push((self.n()?, self.big()?));
                 }
-                let r = match Rat::from_kept(num, den, pows) {
+                let mut wide = Vec::new();
+                if t >= 14 {
+                    let count = self.len()?;
+                    for _ in 0..count {
+                        wide.push((self.magnitude()?, self.big()?));
+                    }
+                    // The writer gives tags 14 and 15 only to a number with a wide atom.
+                    if wide.is_empty() {
+                        return self.err(at, "a number with no wide atom under a wide tag");
+                    }
+                }
+                let r = match Rat::from_kept_wide(num, den, pows, wide) {
                     Some(r) if rational || r.is_integer() => r,
                     _ => return self.err(at, "a number not in the form it is kept in"),
                 };

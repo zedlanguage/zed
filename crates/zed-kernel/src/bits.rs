@@ -462,7 +462,7 @@ fn extract_big(xs: &[u32], mask: &BigUint) -> BigUint {
 // pdep_and_pext_agree_on_wide_and_kept_operands` (COMPLEXITY.md, the `zed_kernel::bits` row).
 fn low_words(x: &Rat, k: u64) -> Result<Vec<u32>, TooLarge> {
     match x.integer_factors() {
-        (built, []) => Ok(built
+        (built, []) if x.wide().is_empty() => Ok(built
             .magnitude()
             .iter_u32_digits()
             .take(k.div_ceil(32) as usize)
@@ -474,11 +474,11 @@ fn low_words(x: &Rat, k: u64) -> Result<Vec<u32>, TooLarge> {
     }
 }
 
-/// The integer `r` as built digits, `None` when it keeps any prime power. Every operand of a
-/// word is an integer (`word` checks), so its denominator is 1.
+/// The integer `r` as built digits, `None` when it keeps any prime power or wide atom. Every
+/// operand of a word is an integer (`word` checks), so its denominator is 1.
 fn as_built(r: &Rat) -> Option<&BigInt> {
     match r.integer_factors() {
-        (built, []) => Some(built),
+        (built, []) if r.wide().is_empty() => Some(built),
         _ => None,
     }
 }

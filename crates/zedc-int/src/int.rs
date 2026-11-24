@@ -2088,12 +2088,16 @@ impl From<&Int> for Num {
 }
 
 /// An integer of the kernel, kept as a power of each of its primes, which may be far past
-/// what can be written out. It must be an integer.
+/// what can be written out, and as a power of each of its wide atoms (`Rat::wide`). It must
+/// be an integer, so every exponent is positive.
 impl From<&zed_kernel::num::Rat> for Num {
     fn from(v: &zed_kernel::num::Rat) -> Num {
         let (coeff, pows) = v.integer_factors();
-        pows.iter().fold(Num::from(coeff), |n, (p, e)| {
+        let n = pows.iter().fold(Num::from(coeff), |n, (p, e)| {
             &n * &Num::power(false, BigUint::from(*p), e.magnitude().clone())
+        });
+        v.wide().iter().fold(n, |n, (q, f)| {
+            &n * &Num::power(false, q.clone(), f.magnitude().clone())
         })
     }
 }

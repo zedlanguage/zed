@@ -261,6 +261,19 @@ impl Out<'_> {
                 a.fields.iter().for_each(|f| self.str(f));
                 self.seq(a.args(), Job::Value, todo);
             }
+            // A number with a wide atom (plan row KEPT-power-form): its kept form and its atoms
+            // (`ByteOut::wide`), never built; tags 15 and 16 are new, so no other value's
+            // bytes changed.
+            Value::Big(n) if !n.wide().is_empty() => {
+                self.tag(15);
+                self.kept(n, false);
+                self.wide(n);
+            }
+            Value::Rat(r) if !r.wide().is_empty() => {
+                self.tag(16);
+                self.kept(r, true);
+                self.wide(r);
+            }
             Value::Big(n) if n.kept().2.is_empty() => {
                 self.tag(8);
                 self.number(n, false);
@@ -583,5 +596,83 @@ mod tests {
         // The empty string is its tag and a zero length.
         let e = def(&holding(&[Text::from("")]), &none).unwrap();
         assert!(e.windows(9).any(|w| w == &as_bytes(b"")[..]));
+    }
+
+    /// The bytes of a definition whose body is the number `v`, in hexadecimal.
+    fn number_hex(v: Value) -> String {
+        let d = Def {
+            name: "n".into(),
+            domain: None,
+            facets: Vec::new(),
+            body: lit(v),
+        };
+        let bytes = def(&d, &|_: &str| None).unwrap();
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Plan row KEPT-power-form: wide atoms (step L1.17b) change the content address of a
+    /// number that holds one and of no other. Each number below without a wide atom has the
+    /// bytes origin/main 39bdc7f17 wrote for it, printed by this test there; each with one,
+    /// `(2^64 + 13)^3` as an `int` and its reciprocal as a `rat`, was built in full there and
+    /// is now written with tag 15 or 16, its kept form and its atoms.
+    #[test]
+    fn only_a_number_with_a_wide_atom_changed_its_bytes() {
+        use num_bigint::{BigInt, BigUint};
+        use zed_kernel::Rat;
+        let int = |n: BigInt| Value::int(n);
+        let recip = |r: &Rat| Rat::int(BigInt::from(1)).div(r).unwrap().unwrap();
+        let two: BigInt = BigInt::from(2);
+        let b: BigInt = (BigInt::from(1) << 64u32) + 13;
+        let kept = Rat::int(two.clone()).pow(&BigUint::from(100u32)).unwrap();
+        let third = Rat::new(BigInt::from(1), BigInt::from(3)).unwrap();
+        // The bytes origin/main 80c93acf5 wrote, printed by this test there (2026-11-23).
+        let unchanged = [
+            (
+                "small int",
+                int(BigInt::from(-5)),
+                "01000000000000006e0000000000000000000101fbffffffffffffff",
+            ),
+            (
+                "plain wide int",
+                int(b.clone()),
+                "01000000000000006e00000000000000000001080002000000000000000d00000000000000010000\
+                 0000000000",
+            ),
+            (
+                "kept prime power",
+                Value::integer(kept.clone()),
+                "01000000000000006e000000000000000000010d000100000000000000010000000000000001000000\
+                 00000000020000000000000000010000000000000064000000000000\
+                 00",
+            ),
+            (
+                "plain rat",
+                Value::rat(third.clone()),
+                "01000000000000006e00000000000000000001090001000000000000000100000000000000010000\
+                 00000000000300000000000000",
+            ),
+            (
+                "rat with a kept power",
+                Value::rat(recip(&kept).mul(&third).unwrap()),
+                "01000000000000006e000000000000000000010e000100000000000000010000000000000001000000\
+                 0000000003000000000000000100000000000000020000000000000001010000000000000064000000\
+                 00000000",
+            ),
+        ];
+        for (what, v, before) in unchanged {
+            assert_eq!(number_hex(v), before, "{what}");
+        }
+        // The bytes before the body's value: those of `0`, less its tag 1 and its word.
+        let zero = number_hex(Value::Int(0));
+        let head = &zero[..zero.len() - 18];
+        let cube = Rat::int(b.clone()).pow(&BigUint::from(3u32)).unwrap();
+        for (what, v, tag) in [
+            ("wide int", Value::integer(cube.clone()), "0f"),
+            ("wide rat", Value::rat(recip(&cube)), "10"),
+        ] {
+            let hex = number_hex(v);
+            println!("{what}: {hex}");
+            assert!(hex.starts_with(&format!("{head}{tag}")), "{what}: {hex}");
+        }
     }
 }

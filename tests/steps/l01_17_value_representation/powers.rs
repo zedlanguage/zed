@@ -4,7 +4,7 @@
 
 use num_bigint::{BigInt, BigUint};
 use zed_kernel::Rat;
-use zed_kernel::num::{LiteralRounding, TooLarge};
+use zed_kernel::num::LiteralRounding;
 use zed_tests::instances::Rng;
 
 /// `zed_kernel::num::literal_f64` of a decimal; every text of these tests is one.
@@ -377,52 +377,62 @@ fn an_exact_division_by_a_huge_power_builds_nothing() {
     assert!(ten.is_even() && !five.is_even() && !int(-3).is_even() && int(0).is_even());
 }
 
-/// A base wider than 64 bits is not factored; its power is built.
+/// A base wider than 64 bits is not factored and its power is not built: it is kept as a wide
+/// atom with its exponent (DESIGN.md "Kept powers", step L1.17b), equal to the power built.
 #[test]
-fn a_power_of_a_wide_base_is_built() {
+fn a_power_of_a_wide_base_is_kept() {
     let wide: BigInt = (BigInt::from(1) << 64) + 13;
     let r = Rat::int(wide.clone()).pow(&7u32.into()).unwrap();
+    assert_eq!(r.wide(), &[(wide.magnitude().clone(), BigInt::from(7))]);
     assert_eq!(r, Rat::int(wide.pow(7u32)));
     let mixed = Rat::int(wide.clone())
         .mul(&two_to(100))
         .unwrap()
         .pow(&3u32.into())
         .unwrap();
+    assert_eq!(mixed.wide().len(), 1);
     assert_eq!(built(&mixed), Rat::int(wide.pow(3u32) << 300));
 }
 
-/// A base wider than 64 bits raised to an exponent of `2^64` or more is refused for the memory
-/// its power asks, a byte for each bit of the wide parts times the exponent, and is never built:
-/// a numerator, a denominator or both wide, of either sign, with or without kept powers. The
-/// size named is the least the power has, `e * (L - 1) + 1` bits for each wide part of `L` bits
-/// (plan row MSG-too-large-figure): 65 and 71 bits here.
+/// A base wider than 64 bits raised to an exponent of `2^64` or more is kept in a few words,
+/// never built: a numerator, a denominator or both wide, of either sign, with or without kept
+/// powers. Each wide part is one atom with the exponent, negated for a denominator, and the
+/// sign is that of the base to an odd exponent.
 #[test]
-fn a_power_of_a_wide_base_to_an_exponent_beyond_64_bits_is_refused() {
+fn a_power_of_a_wide_base_to_an_exponent_beyond_64_bits_is_kept() {
     let wide: BigInt = (BigInt::from(1) << 64) + 13;
+    // The Mersenne prime `2^127 - 1`, so the denominator stays one wide atom (`2^70 + 1`, the
+    // value first tried, is `5^2` times primes that fit a word, and became kept primes).
+    let wider: BigInt = (BigInt::from(1) << 127) - 1;
     let narrow = BigInt::from(3);
+    let up = |q: &BigInt| (q.magnitude().clone(), 1);
+    let down = |q: &BigInt| (q.magnitude().clone(), -1);
     let bases = [
-        (Rat::int(wide.clone()), vec![65u32]),
-        (Rat::int(-wide.clone()), vec![65]),
-        (Rat::new(narrow.clone(), wide.clone()).unwrap(), vec![65]),
+        (Rat::int(wide.clone()), vec![up(&wide)]),
+        (Rat::int(-wide.clone()), vec![up(&wide)]),
         (
-            Rat::new(-wide.clone(), (BigInt::from(1) << 70) + 1).unwrap(),
-            vec![65, 71],
+            Rat::new(narrow.clone(), wide.clone()).unwrap(),
+            vec![down(&wide)],
         ),
-        (Rat::int(wide).mul(&two_to(-100)).unwrap(), vec![65]),
+        (
+            Rat::new(-wide.clone(), wider.clone()).unwrap(),
+            vec![up(&wide), down(&wider)],
+        ),
+        (
+            Rat::int(wide.clone()).mul(&two_to(-100)).unwrap(),
+            vec![up(&wide)],
+        ),
     ];
     let one = BigUint::from(1u32);
     for e in [&one << 64u32, (&one << 64u32) + 1u32, &one << 200u32] {
-        for (base, parts) in &bases {
-            let bits: u32 = parts.iter().sum();
-            let least: BigUint = parts.iter().map(|l| BigUint::from(l - 1) * &e + 1u32).sum();
-            assert_eq!(
-                base.pow(&e),
-                Err(TooLarge {
-                    size: least,
-                    ask: (BigUint::from(bits) * &e) << 3u32
-                }),
-                "{base:?} ^ {e}"
-            );
+        for (base, atoms) in &bases {
+            let p = base.pow(&e).unwrap();
+            let want: Vec<(BigUint, BigInt)> = (atoms.iter())
+                .map(|(q, s)| (q.clone(), BigInt::from(e.clone()) * s))
+                .collect();
+            assert_eq!(p.wide(), &want[..], "{base:?} ^ {e}");
+            let odd = e.bit(0);
+            assert_eq!(p.is_negative(), base.is_negative() && odd, "{base:?} ^ {e}");
         }
     }
 }

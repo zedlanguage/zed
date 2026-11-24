@@ -4,8 +4,8 @@
 use zed_tests::scaling;
 
 use crate::too_large::{
-    chain, coprime_fourth_powers, even_chain, kept_sums, powers, product_chain, rat_product_chain,
-    rejected_times,
+    built, chain, coprime_fourth_powers, even_chain, exponent, kept_sums, powers, product_chain,
+    rat_product_chain, rejected_times,
 };
 
 /// Checks that rejecting `make(n)`, with `per * n` rejections, scales as a pass of order n.
@@ -16,9 +16,9 @@ fn rejecting(what: &str, n: usize, per: usize, make: fn(usize) -> String) {
 
 #[test]
 fn rejecting_many_powers_scales() {
-    // The bound is O(1) words per power: one division and one comparison.
+    // Each power is kept, O(1) words, and its sum with 1 refused before it allocates.
     rejecting(
-        "n powers past the address space, each rejected",
+        "n sums of a power past the address space, each rejected",
         200,
         1,
         powers,
@@ -28,9 +28,9 @@ fn rejecting_many_powers_scales() {
 #[test]
 fn reading_a_chain_of_names_and_divisions_scales() {
     // Each name is read once, however many powers read it: the chain of `n` names costs `n`
-    // divisions of 103-bit numbers and `n` rejections.
+    // divisions of 103-bit numbers and `n` rejections, each of a sum with a power.
     rejecting(
-        "a chain of n names and divisions, a power of each rejected",
+        "a chain of n names and divisions, a sum with a power of each rejected",
         200,
         1,
         chain,
@@ -40,9 +40,10 @@ fn reading_a_chain_of_names_and_divisions_scales() {
 #[test]
 fn bounding_a_chain_of_products_scales() {
     // Each name is read once, however many products read through it: the chain of `n` names
-    // costs O(n) reads of bit lengths and `n` rejections, each at the third `*` of its line.
+    // costs O(n) kernel products of kept powers, each O(1) words, and `n` rejections, each at
+    // the sum with 1 of its line.
     rejecting(
-        "a chain of n names and products, a product of each rejected",
+        "a chain of n names and products, a sum with a product of each rejected",
         200,
         1,
         product_chain,
@@ -51,12 +52,11 @@ fn bounding_a_chain_of_products_scales() {
 
 #[test]
 fn bounding_a_chain_of_rat_products_scales() {
-    // Plan row CONST-too-large-products-unproved, cases (a) and (c): each name keeps `b` as
-    // the root of its numerator and `c` as that of its denominator, so each `*` costs at most
-    // six gcds of 65-bit numbers, not a gcd of the whole chain's product: O(n) in all, and
-    // `2n` rejections.
+    // Plan row CONST-too-large-products-unproved, cases (a) and (c): each name keeps `b` and
+    // `c` as atoms, so each `*` adds exponents of O(1) words, not a product of the whole
+    // chain's: O(n) in all, and `2n` rejections, each of a sum with 1.
     rejecting(
-        "a chain of n rat names, a product and a power of each rejected",
+        "a chain of n rat names, a sum with a product and with a power of each rejected",
         200,
         2,
         rat_product_chain,
@@ -103,10 +103,10 @@ fn folding_a_power_of_a_huge_exponent_scales() {
 /// zedc-check); at `2^24` that fold is unknown and a later stage refuses the program instead.
 const N_EXPONENT_BITS: usize = 1 << 20;
 
-/// Plan row CONST-too-large-coprime-base: `n` names from `y0 = rat(r0) ^ (2^60)`, each the one
-/// before times or divided by `rat(r_i)`, for `r_i` of [`coprime_fourth_powers`], and `y * y`
-/// for the last name `y`, past the address space.
-fn coprime_chain(n: usize) -> String {
+/// Plan row CONST-too-large-coprime-base: `n` names from `y0 = rat(r0) ^ e` ([`exponent`]),
+/// each the one before times or divided by `rat(r_i)`, for `r_i` of [`coprime_fourth_powers`],
+/// and `y * y + 1` for the last name `y`, past the address space.
+fn coprime_chain(n: usize, fixed: bool) -> String {
     let r = coprime_fourth_powers(n);
     let body: String = (1..n)
         .map(|i| {
@@ -115,24 +115,44 @@ fn coprime_chain(n: usize) -> String {
         })
         .collect();
     format!(
-        "main(m: MainArgs) {{\n    y0 = rat({}) ^ (2^60);\n{body}    \
-         m.stdout <- String(y{} * y{});\n}}\n",
+        "main(m: MainArgs) {{\n{}    y0 = rat({}) ^ e;\n{body}    \
+         m.stdout <- String(y{} * y{} + 1 > 0);\n}}\n",
+        exponent(fixed),
         r[0],
         n - 1,
         n - 1
     )
 }
 
+/// The chains of roots of the two benches below with the exponent fixed: since KEPT-power-form
+/// `rat(r0) ^ (2^60)` is kept, so every name is a fixed value and the sum of the last square is
+/// rejected, once. With the exponent the input picks, the program compiles: the sum is left to
+/// the run, as `2^(2^70) + n` is.
+#[test]
+fn a_fixed_chain_of_roots_is_rejected_at_its_last_sum() {
+    // `reused_chain` needs two links for its last `y`.
+    for n in [2, 5] {
+        rejected_times(&coprime_chain(n, true), 1);
+        rejected_times(&reused_chain(n, true), 1);
+        for src in [coprime_chain(n, false), reused_chain(n, false)] {
+            assert_eq!(built(&src), None, "{src}");
+        }
+    }
+}
+
 #[test]
 fn bounding_a_chain_of_products_with_several_roots_scales() {
-    // Each `*` and `/` joins the roots in O(1) and leaves its check between a set and a root
-    // to the end of the walk; the coprime base of the `n` roots costs O(M(N) log n) for `N`
-    // bits in all, and the checks a lookup per root of the smaller side: one rejection.
-    let srcs = scaling::inputs(N_ROOTS, coprime_chain);
+    // The roots path (`Ck::least_built`): no name is fixed, as the exponent is the input's, so
+    // each `*` and `/` by a coprime `r_i` unions the roots of the two operands, O(1) a link. With
+    // the exponent fixed every name is a fixed kernel value, and folding the chain exactly
+    // holds `i` words at link `i`, O(n^2) in the memo (`Ck::fixed_value`, "as the run's would";
+    // plan row FOLD-growing-chains); that program is tested at small sizes above.
+    let srcs = scaling::inputs(N_ROOTS, |n| coprime_chain(n, false));
     scaling::check(
-        "a chain of n products and quotients by coprime numbers, the square of the last rejected",
+        "a chain of n products and quotients by coprime numbers, the square of the last left to \
+         the run",
         N_ROOTS,
-        |k| rejected_times(&srcs[&k], 1),
+        |k| assert_eq!(built(&srcs[&k]), None),
     );
 }
 
@@ -142,12 +162,13 @@ fn bounding_a_chain_of_products_whose_roots_all_share_a_prime_scales() {
     // so the batch gcd leaves them all to the coprime base by halves (zed-kernel's
     // `num::coprime::coprime_base`, since DRY-coprime-bases-one), a polylogarithmic factor over
     // M(N), where factor refinement split each against every element before it, O(n^2) gcds.
+    // Timed with the exponent the input picks, as the two benches above.
     let srcs = scaling::inputs(N_ROOTS, |n| even_chain(n, false));
     scaling::check(
         "a chain of n products by even numbers and quotients by odd ones, the square of the \
-         last rejected",
+         last left to the run",
         N_ROOTS,
-        |k| rejected_times(&srcs[&k], 1),
+        |k| assert_eq!(built(&srcs[&k]), None),
     );
 }
 
@@ -193,13 +214,15 @@ const N_SETTLE: usize = 20_000;
 const N_ROOTS: usize = 2000;
 
 /// Plan row CONST-too-large-coprime-base: `x` of `n` roots, a chain `z_i = z_{i-1} / rat(r_i)`
-/// of fixed values, `y_i = x * z_i` at each link, and the last `y * y`, past the address
-/// space. Each `y_i` checks the `n` roots of `x` against the `i` of `z_i`'s denominator.
-fn reused_chain(n: usize) -> String {
+/// of fixed values, `y_i = x * z_i` at each link, and the last `y * y + 1`, past the address
+/// space.
+fn reused_chain(n: usize, fixed: bool) -> String {
     let r = coprime_fourth_powers(2 * n);
     let mut s = format!(
-        "main(m: MainArgs) {{\n    x0 = rat({}) ^ (2^60);\n    z0 = rat(1) / rat({});\n",
-        r[0], r[n]
+        "main(m: MainArgs) {{\n{}    x0 = rat({}) ^ e;\n    z0 = rat(1) / rat({});\n",
+        exponent(fixed),
+        r[0],
+        r[n]
     );
     for (i, ri) in r.iter().enumerate().take(n).skip(1) {
         s += &format!("    x{i} = x{} * rat({ri});\n", i - 1);
@@ -212,21 +235,24 @@ fn reused_chain(n: usize) -> String {
             n - 1
         );
     }
-    s + &format!("    m.stdout <- String(y{} * y{});\n}}\n", n - 1, n - 1)
+    s + &format!(
+        "    m.stdout <- String(y{} * y{} + 1 > 0);\n}}\n",
+        n - 1,
+        n - 1
+    )
 }
 
 #[test]
 fn bounding_products_of_one_value_and_each_link_of_a_chain_scales() {
-    // Each `z_i` is fixed, and its roots are the literals it is made of, not its own
-    // denominator of `i` words (`Ck::fixed_roots`), so the base holds `2n` roots of O(1) words;
-    // the check of `x` against `z_i` reuses that against `z_{i-1}` and looks up one root
-    // (`coprime::Roots::settle`): O(log n) a link, where the lookups alone cost `i`. Before
-    // both, 941 times the work at 8n for n = 25.
-    let srcs = scaling::inputs(N_ROOTS / 2, reused_chain);
+    // The roots path, as above: `x` is not fixed, so each `y_i = x * z_i` unions the roots of
+    // `x` with those of the fixed `z_i`. With the exponent fixed each `y_i` is one exact kernel
+    // product, a gcd of the `n` words of `x` against the `i` of `z_i`, superquadratic in all
+    // (plan row FOLD-growing-chains); that program is tested at small sizes above.
+    let srcs = scaling::inputs(N_ROOTS / 2, |n| reused_chain(n, false));
     scaling::check(
         "products of one value of n roots and each link of a chain of n fixed quotients, the \
-         square of the last rejected",
+         square of the last left to the run",
         N_ROOTS / 2,
-        |k| rejected_times(&srcs[&k], 1),
+        |k| assert_eq!(built(&srcs[&k]), None),
     );
 }

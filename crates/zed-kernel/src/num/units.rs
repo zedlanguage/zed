@@ -373,13 +373,25 @@ mod rat {
                 false => d *= pk,
             }
         }
+        for (q, f) in r.wide() {
+            let k = f
+                .magnitude()
+                .to_usize()
+                .expect("a test's exponents are small");
+            let qk = num_traits::pow(BigInt::from(q.clone()), k);
+            match f.is_positive() {
+                true => n *= qk,
+                false => d *= qk,
+            }
+        }
         lowest(n, d)
     }
 
-    /// Whether `r` is held in the normal form `Rat` promises, as [`Rat::from_kept`] checks it.
+    /// Whether `r` is held in the normal form `Rat` promises, as [`Rat::from_kept_wide`]
+    /// checks it.
     fn normal(r: &Rat) -> bool {
         let (n, d, pows) = r.kept();
-        Rat::from_kept(n.clone(), d.clone(), pows.to_vec()).is_some()
+        Rat::from_kept_wide(n.clone(), d.clone(), pows.to_vec(), r.wide().to_vec()).is_some()
     }
 
     /// `r` is `n / d`, held in normal form.

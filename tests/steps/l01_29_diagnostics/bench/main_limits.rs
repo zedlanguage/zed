@@ -1,32 +1,8 @@
-//! `n` powers, and `n` products of powers, past the memory limit of `main`, at `n` and `8n`
-//! (`main_limits.rs`).
+//! `n` powers past the memory limit of `main`, at `n` and `8n` (`main_limits.rs`).
 
 use zed_tests::scaling;
 
-use crate::main_limits::{
-    powers, powers_past_the_memory_limit_rejected, products,
-    products_past_the_memory_limit_rejected,
-};
-
-#[test]
-fn rejecting_many_products_past_the_memory_limit_scales() {
-    // Operands of 4.2 Mbit again (`2^16`; PERF-product-limit-built-to-measure): the repair
-    // sizes each shrunk product from its operands' bit lengths and folds each trial power once
-    // a check, so what is left per line is the walk's own fold of its two operands. At n = 40
-    // the run at 8n took 39.3 s, about 123 ms a line in the dev profile, with the instruction
-    // ratio 8.590 (v5e3, b22-checkrest13, 2026-11-24); n = 12 keeps the run at 8n under the
-    // 20 s a piece may take. Before, at 2^12 operands, n = 40 took 6.75 s at 8n (ratio 8.456,
-    // b22-checkrest12), and at 2^16 a line cost about 130 ms more for building each product.
-    let n = 12;
-    let srcs = scaling::inputs(n, products);
-    scaling::check(
-        "n products past the memory limit of main, each offering a smaller power operand",
-        n,
-        |k| {
-            products_past_the_memory_limit_rejected(&srcs[&k], k);
-        },
-    );
-}
+use crate::main_limits::{powers, powers_past_the_memory_limit_rejected};
 
 #[test]
 fn rejecting_many_powers_past_the_memory_limit_scales() {
