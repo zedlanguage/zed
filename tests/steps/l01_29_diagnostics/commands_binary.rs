@@ -711,16 +711,89 @@ fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() 
     );
 }
 
-/// DIAG-too-large-with-type-error, point (1): a power past the address space inside a
-/// division by the literal 0 is reported with the other errors of the unit, not hidden by
-/// them: `zedc run` prints the `Lines` rejection of `#divByZero`, the "Number too large for any
-/// memory of the target" rejection of `rat(b) ^ (2^64)` with its checked fix, and the division
-/// that always fails, in the order of their places.
+/// DIAG-too-large-with-type-error, point (2): the note on the exponent `2^64` gives its value
+/// beside an `f32` base as beside an `f64` base ([`WIDE`]); it gave the class's carriers,
+/// `int | f32`. Negative control: the rest of the notes are those of `f64` with `f32` written
+/// for it, so the note is the one difference.
+#[test]
+fn zedc_run_prints_the_value_of_an_exponent_beside_an_f32_base_as_beside_an_f64_one() {
+    let f64_out = rejection("run", &file("wide64.zed", WIDE));
+    let f32_out = rejection("run", &file("wide32.zed", &WIDE.replace("f64", "f32")));
+    let strip = |out: &str| -> String {
+        (out.lines())
+            .map(|l| l.split_once(".zed:").map_or(l, |(_, rest)| rest))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(
+        f32_out.contains("[12] 3:35: this `^` gives 2^64\n"),
+        "{f32_out}"
+    );
+    assert_eq!(strip(&f32_out), strip(&f64_out).replace("f64", "f32"));
+}
+
+/// DIAG-too-large-with-type-error, point (2), the other mixes of carriers: the test above holds
+/// one exponent, `2^64`, beside an `f32` base. Here each class of exponent (a power, a sum, a
+/// difference below 0 and a negation of integer literals alone, a plain literal, a literal in
+/// parentheses, an `int` name) beside a float base, and the same terms as the base of a float
+/// exponent, are rejected by `zedc run` with the same notes beside `f32` as beside `f64`, `f64`
+/// written as `f32`: no step shows a class's carriers (`int | f32`) where the `f64` program
+/// shows the value. Each pair is listed when they differ. The notes that list the arrows of `^`
+/// list all of them, the same in both programs, so they are left out of the comparison.
+/// `f64(b) ^ b` with `b` an `int` checks as `f32(b) ^ b` does, by the arrow `f64 ^ int` of
+/// 0501dc977 (POW-domains), as DESIGN.md L1.17 says ("at every base carrier").
+#[test]
+fn zedc_run_prints_each_exponent_beside_an_f32_as_beside_an_f64() {
+    let terms = [
+        "(2^64)", "(2^6 + 1)", "(1 - 3)", "(-(2^3))", "64", "(64)", "b",
+    ];
+    let strip = |out: &str| -> String {
+        (out.lines())
+            .filter(|l| !l.contains("`^` takes ("))
+            .map(|l| l.split_once(".zed:").map_or(l, |(_, rest)| rest))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut differ = Vec::new();
+    for (i, t) in terms.iter().enumerate() {
+        for (j, power) in [format!("f64(b) ^ {t}"), format!("{t} ^ f64(b)")]
+            .iter()
+            .enumerate()
+        {
+            let text = format!(
+                "main(m: MainArgs) {{\n  b = 2^64 + 13;\n  m.stdout <- String(rat({power}));\n}}\n"
+            );
+            let run = |name: String, text: &str| {
+                let f = file(&name, text);
+                let (status, out, err) = zedc("run", &f, &[]);
+                format!("status {status:?}\n{}\n{}", strip(&out), strip(&err))
+            };
+            let f64_out = run(format!("mix{i}_{j}_64.zed"), &text);
+            let f32_out = run(
+                format!("mix{i}_{j}_32.zed"),
+                &text.replace("f64", "f32"),
+            );
+            if f32_out != f64_out.replace("f64", "f32") {
+                differ.push(format!(
+                    "`{power}`:\n--- f64:\n{f64_out}\n--- f32:\n{f32_out}"
+                ));
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n\n"));
+}
+
+/// DIAG-too-large-with-type-error, point (1): a sum past the address space inside a division
+/// by the literal 0 is reported with the other errors of the unit, not hidden by them: `zedc
+/// run` prints the `Lines` rejection of `#divByZero`, the "Number too large for any memory of
+/// the target" rejection of `rat(b) ^ (2^64) + 1`, and the division that always fails, in the
+/// order of their places. Since KEPT-power-form the power alone is kept and builds nothing
+/// (DESIGN.md step L1.17c), so the sum writes it out.
 #[test]
 fn zedc_run_reports_a_power_too_large_beside_the_type_errors_around_it() {
     let f = file(
         "wide_div.zed",
-        "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String(rat(b) ^ (2^64) / 0);\n}\n",
+        "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String((rat(b) ^ (2^64) + 1) / 0);\n}\n",
     );
     let out = rejection("run", &f);
     let path = format!("{}:", f.display());
@@ -735,7 +808,7 @@ fn zedc_run_reports_a_power_too_large_beside_the_type_errors_around_it() {
     );
     assert!(
         heads[1].starts_with(
-            "3:22: Number too large for any memory of the target: `rat(b) ^ (2^64)` needs at least 128 EiB"
+            "3:22: Number too large for any memory of the target: `(rat(b) ^ (2^64) + 1)` needs at least 128 EiB"
         ),
         "{out}"
     );
@@ -746,12 +819,12 @@ fn zedc_run_reports_a_power_too_large_beside_the_type_errors_around_it() {
 }
 
 /// QUESTIONS A100 (answered B, 2026-11-13), DESIGN sec:checking_in_zed and the sec:diagnostics
-/// row "Number too large for any memory of the target": `rat(b) ^ (2^64)` with
-/// `b = 2^64 + 13` builds a numerator of at least `2^64 * 64 + 1` bits, 128 EiB, past the
-/// 16 EiB that Linux x86_64 addresses, so it is a compile error. The message gives the least
-/// size of the base and of the exponent, the bound that follows from them, the menu (a smaller
-/// exponent, an exponent read from the input, the operation deleted) and the smaller exponent
-/// checked: `2^60` needs at least 8 EiB, which fits.
+/// row "Number too large for any memory of the target": printing `rat(b) ^ (2^64)` with
+/// `b = 2^64 + 13` writes at least 355,393,490,465,494,856,472 digits, 308 EiB, past the
+/// 16 EiB that Linux x86_64 addresses, so it is a compile error (DESIGN.md step L1.17c; the
+/// power alone is kept and builds nothing). The message gives where the operand's value comes
+/// from, what printing asks for and why, and the menu (an operand read from the input, the
+/// operation deleted).
 const TOO_LARGE: &str =
     "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String(rat(b) ^ (2^64));\n}\n";
 
@@ -763,21 +836,33 @@ fn zedc_run_rejects_a_power_of_wide_literals_too_large_for_any_memory_of_the_tar
         format!(
             "{}:{}",
             f.display(),
-            r#"3:22: Number too large for any memory of the target: `rat(b) ^ (2^64)` needs at least 128 EiB; Linux x86_64 addresses 16 EiB. Try `m.stdout <- String(rat(b) ^ (2^60))` instead.
-  [1] 3:22: the numerator p of the base `rat(b)` is at least 2^64 in magnitude, so ⌊log₂ |p|⌋ is 64
-      3 |   m.stdout <- String(rat(b) ^ (2^64));
-        |                      ^^^^^^ [1]
-        |                      ^^^^^^^^^^^^^^^ [4, 5, 6]
-        |                               ^^^^^^ [3]
-  [2] 2:3: `b` is bound here to `2^64 + 13`
-      2 |   b = 2^64 + 13;
-        |   ^^^^^^^^^^^^^^
-  [3] 3:31: the exponent k, `(2^64)`, is at least 2^64
-  [4] 3:22: so `rat(b) ^ (2^64)` has at least 2^64 * 64 + 1 bits from the base's numerator: |k| * ⌊log₂ |p|⌋ + 1 at the least |p| and |k|
-  [5] 3:22: or read the exponent from the input: the run then stops if no memory holds the result
-  [6] 3:22: or delete `rat(b) ^ (2^64)` if its result is not used
-  fixes, each checked here:
-    m.stdout <- String(rat(b) ^ (2^60));    needs at least 8 EiB
+            r#"3:15: Number too large for any memory of the target: `String(rat(b) ^ (2^64))` needs at least 308 EiB; Linux x86_64 addresses 16 EiB.
+  [1]  3:22: this `^` gives rat
+       3 |   m.stdout <- String(rat(b) ^ (2^64));
+         |               ^^^^^^^^^^^^^^^^^^^^^^^ [13, 14, 15]
+         |                      ^^^^^^ [2]  ^^ [12]
+         |                      ^^^^^^^^^^^^^^^ [1]
+         |                          ^ [3] ^ [11]
+         |                               ^^^^^^ [10]
+  [2]  3:22: this call of `rat` gives rat \ 0r
+  [3]  3:26: `b` is int here
+  [4]  2:7: `b` is defined as this expression, int
+       2 |   b = 2^64 + 13;
+         |       ^ [7]  ^^ [9]
+         |       ^^^^ [6]
+         |       ^^^^^^^^^ [4, 5]
+         |         ^^ [8]
+  [5]  2:7: this `+` adds integer literals alone, so it is a literal too; nothing here gives it a carrier, so it is an `int`
+  [6]  2:7: this `^` takes a power of integer literals alone, so it is a literal too; nothing here gives it a carrier, so it is an `int`
+  [7]  2:7: this literal, 2, is 2
+  [8]  2:9: this literal, 64, is 64
+  [9]  2:14: this literal, 13, is 13
+  [10] 3:31: this `^` gives 2^64
+  [11] 3:32: this literal, 2, is 2
+  [12] 3:34: this literal, 64, is 64
+  [13] 3:15: `String(rat(b) ^ (2^64))` asks for at least 2^71 bits: printing a number writes all of its digits, a byte each
+  [14] 3:15: or read an operand from the input: the run then stops if no memory holds what it writes out
+  [15] 3:15: or delete `String(rat(b) ^ (2^64))` if its result is not used
 "#
         )
     );

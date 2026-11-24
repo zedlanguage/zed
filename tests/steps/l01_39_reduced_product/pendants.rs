@@ -1736,15 +1736,80 @@ fn whole(s: &Scope, f: &Formula) -> Option<BTreeMap<String, String>> {
 /// the route is taken by parts of each of the three kinds ST-eqs-rest-exact admits
 /// ([`RouteKinds`]): two disjunctions or more (design D), a pendant whose name has a hole
 /// (design C) and a pendant whose coefficient is not one or minus one (design B). Before
-/// ST-eqs-rest-exact each of the three counts was 0 (R1_CLAUDE T1).
+/// ST-eqs-rest-exact each of the three counts was 0 (R1_CLAUDE T1). A kind no drawn part
+/// took the route with is covered by a reviewed part built for it ([`KIND_PARTS`]), so the
+/// count is never left to the draw (FAIL-pendants-holed-seed).
 #[test]
 fn the_projections_by_pendants_and_of_the_whole_part_are_sound() {
     let (r, seed) = Rng::fresh("the projection by pendants");
-    let kinds = pendants_against_whole_drawn(r, seed, true);
+    assert_each_kind_taken(seed, pendants_against_whole_drawn(r, seed, true));
+}
+
+/// Fails unless the route by pendants was taken by a part of each of the three kinds.
+fn assert_each_kind_taken(seed: u64, kinds: RouteKinds) {
     assert!(
         kinds.disjunctions > 0 && kinds.holed > 0 && kinds.coefficient > 0,
         "seed {seed}: the route was not taken by a part of each kind: {kinds:?}"
     );
+}
+
+/// FAIL-pendants-holed-seed (b22-checkrest13's merge check, 2026-11-24): at seed
+/// 9929385727579474391 none of the 130 parts drawn `wide` that took the route had a pendant
+/// whose name's box has a hole (`RouteKinds { disjunctions: 22, holed: 0, coefficient: 51 }`),
+/// so [`the_projections_by_pendants_and_of_the_whole_part_are_sound`] failed on a sound run.
+/// With [`KIND_PARTS`] the reviewed part `C-1` is compared in place of one, and this passes.
+#[test]
+fn a_run_that_draws_no_holed_pendant_still_takes_the_route_with_one() {
+    let seed = 9_929_385_727_579_474_391;
+    assert_each_kind_taken(
+        seed,
+        pendants_against_whole_drawn(Rng::new(seed), seed, true),
+    );
+}
+
+/// The count of one kind in a [`RouteKinds`].
+type KindCount = fn(&RouteKinds) -> usize;
+
+/// For each kind of [`RouteKinds`], the row of [`REVIEWED_PARTS`] compared in place of a drawn
+/// part when no drawn part of that kind took the route: `D-1` has two disjunctions, `C-1` the
+/// pendant `a + b == z0` with `z0` in `[-5, 0]` and `[2, 5]`, `B-1` the pendant
+/// `3 * z0 - a - b + 1 == 0`. Coverage of each kind comes from a part built to reach it, not
+/// from drawing until it appears (PROOF-test-coverage-constructive): in a draw of 130 parts the
+/// holed kind needs a `z` box with a hole (one in 6 of the boxes with both bounds 4 or more
+/// apart, [`random_boxes`]) on a pendant that took the route, and seed 9929385727579474391 has
+/// none.
+const KIND_PARTS: [(&str, KindCount); 3] = [
+    ("D-1", |k| k.disjunctions),
+    ("C-1", |k| k.holed),
+    ("B-1", |k| k.coefficient),
+];
+
+/// Each part of [`KIND_PARTS`] is counted in its own kind by [`RouteKinds::count`], and only
+/// in it, and takes the route; so a run that draws no part of a kind still counts one.
+#[test]
+fn each_part_built_for_a_kind_is_counted_in_that_kind() {
+    for (row, of_kind) in KIND_PARTS {
+        let (items, bs) = reviewed_part(row);
+        let mut kinds = RouteKinds::default();
+        kinds.count(&items, &bs);
+        for (other, other_kind) in KIND_PARTS {
+            assert_eq!(
+                other_kind(&kinds),
+                usize::from(other == row),
+                "{row} counted as {kinds:?}"
+            );
+        }
+        assert_eq!(of_kind(&kinds), 1);
+        assert!(kept(&scope(&bs), &formula(&items)).is_some(), "{row}");
+    }
+}
+
+/// The items and boxes of the row `row` of [`REVIEWED_PARTS`].
+fn reviewed_part(row: &str) -> (Vec<Item>, BTreeMap<String, Vec<Piece>>) {
+    let (_, bx, part, _) = (REVIEWED_PARTS.iter())
+        .find(|p| p.0 == row)
+        .expect("a row of the review");
+    (parse(part), boxes(bx))
 }
 
 /// The run of [`the_projections_by_pendants_and_of_the_whole_part_are_sound`] at seed
@@ -1809,6 +1874,35 @@ fn parts_answered_before_the_classed_charges_are_answered() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// The negative control of fix B of the test above: with `SPARE_OFF` (each piece of a class
+/// asked with its class, b7ab00a78) the whole part of seed 30 is refused again; with it on,
+/// answered.
+#[test]
+fn the_classed_charge_seeds_are_refused_with_each_fix_undone() {
+    use zedc::store::presburger::exact::SPARE_OFF;
+    let whole = |seed: u64, at: usize| {
+        let mut r = Rng::new(seed);
+        let mut drawn = None;
+        for _ in 1..=at {
+            drawn = Some(drawn_case(&mut r, false, true));
+        }
+        let (items, bs) = drawn.expect("a part");
+        let s = scope(&bs);
+        let f = formula(&items);
+        let syms: Vec<Atom> = (f.atoms().into_iter())
+            .filter(|a| matches!(a, Atom::Sym(_)))
+            .collect();
+        each_answer(&s, &f, &syms)
+    };
+    SPARE_OFF.set(true);
+    let off = whole(30, 109);
+    SPARE_OFF.set(false);
+    let on = whole(30, 109);
+    println!("seed 30 spare off: {off}\nseed 30 spare on: {on}");
+    assert!(off.contains("refused"), "{off}");
+    assert!(!on.contains("refused"), "{on}");
 }
 
 /// The parts that took the route by pendants, counted by kind: with two disjunctions or
@@ -2035,6 +2129,23 @@ fn pendants_against_whole_drawn(mut r: Rng, seed: u64, wide: bool) -> RouteKinds
             other => panic!("the built part is not compared: {other:?}"),
         }
         eprintln!("no part compared; the built part compared in their place");
+    }
+    // Drawn `wide`, the run must take the route with each kind (the callers that assert it,
+    // `assert_each_kind_taken`); a kind no drawn part took it with is covered by its part of
+    // `KIND_PARTS`, compared and counted as a drawn part is.
+    if wide {
+        for (row, of_kind) in KIND_PARTS {
+            if of_kind(&route) > 0 {
+                continue;
+            }
+            let (items, bs) = reviewed_part(row);
+            match compare_part(&items, &bs, &mut kinds) {
+                Some(Some(fault)) if fault.is_empty() => route.count(&items, &bs),
+                Some(Some(fault)) => wrong.push(format!("the reviewed part {row}: {fault}")),
+                other => panic!("the reviewed part {row} is not compared: {other:?}"),
+            }
+            eprintln!("no drawn part of the kind of {row} took the route; {row} compared");
+        }
     }
     assert!(
         wrong.is_empty(),

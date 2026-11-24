@@ -5107,15 +5107,75 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The remap `e` taken as a need by class `r`, of a source of type `src`, which holds the
     /// class's root variable `$r` in the place of the class.
+    ///
+    /// The need also records the type each name bound outside the remap that its levels read
+    /// has here ([`Self::remap_free_names`]), as `f` of `m as (k -> v) into (k -> f(v))`; the
+    /// check of the need reads each at that type, bound as the call binds it (the proof is at
+    /// the `NeedKind::Remap` arm of `meet`). A name with no type here is left out and read in
+    /// the scope where the need is checked, as every name was before the fix.
+    // Complexity tradeoff: the names are found once per remap (cached by span) and their
+    // types copied once per need made, O(names + their types' size), the cost of writing the
+    // types into the need that the check of the need then reads.
     fn remap_need(&mut self, e: &'a Expr, r: usize, src: Ty) -> Ty {
         self.remap_exprs.insert(e.span, e);
         let rank = self.remap_rank(e, &src);
+        let names = self.remap_free_names(e);
+        let free = (names.iter())
+            .filter_map(|&id| self.env.get(&id).map(|t| (id, t.clone())))
+            .collect();
         let kind = NeedKind::Remap {
             at: e.span,
             src,
             rank,
+            free,
         };
         self.need(r, kind, true, e.span)
+    }
+
+    /// The names the levels of the remap `e` (its key and leaf expressions and their folds)
+    /// read, at any depth, that are bound outside `e` and are not declared functions, as
+    /// binder ids, sorted, each once. A binder of `e`'s own `as` pattern, or of a lambda or
+    /// block inside it, has its span inside `e`, and its type is set by the walk of the
+    /// remap from its source; a declared function's type is its signature, the same at every
+    /// call. Every other name keeps the type its scope gave it, which the need must carry.
+    // Complexity tradeoff: one walk of the levels, O(s log s) for s nodes (the sort), once
+    // per remap: the result is kept by span in `remap_free`, as the remap's text does not
+    // change.
+    fn remap_free_names(&mut self, e: &Expr) -> Arc<[usize]> {
+        if let Some(names) = self.remap_free.get(&e.span) {
+            return names.clone();
+        }
+        let mut ids = Vec::new();
+        let mut stack = Vec::new();
+        if let ExprKind::Remap {
+            levels: Some(levels),
+            ..
+        } = &e.kind
+        {
+            for l in levels {
+                stack.extend(l.key.iter());
+                stack.extend(l.reduce.iter());
+            }
+        }
+        while let Some(x) = stack.pop() {
+            if let (ExprKind::Name(_), Some(Ref::Bound(b))) =
+                (&x.kind, self.t.res.uses.get(&x.span))
+            {
+                ids.extend(b.iter().copied().filter(|&id| {
+                    let at = self.t.res.binders[id].span;
+                    !self.t.funcs.contains_key(&id)
+                        && !(e.span.start <= at.start && at.end <= e.span.end)
+                }));
+            }
+            zedc_syntax::ast::expr_kids(&x.kind, zedc_syntax::ast::Blocks::Enter, &mut |k| {
+                stack.push(k)
+            });
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        let names: Arc<[usize]> = ids.into();
+        self.remap_free.insert(e.span, names.clone());
+        names
     }
 
     /// The source type of the remap need `n`, whose source type is `src`, checked on `on`:
@@ -5148,7 +5208,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     // the source again in `meet`; O(the size of the source + its key levels) once more per
     // check of a remap need, the cost of the walk `remap_pending` makes on it anyway.
     fn remap_goes_on(&mut self, n: &Need, t: &Ty) -> bool {
-        let NeedKind::Remap { at, src, rank } = &n.kind else {
+        let NeedKind::Remap { at, src, rank, .. } = &n.kind else {
             return true;
         };
         // A remap need is recorded only by `remap_need`, which first records its remap.
@@ -5557,6 +5617,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                 return out.union(&acc);
             }
             let g = gives.carriers();
+            // A body of projections settles where `fold_projections` says, kept only where one
+            // more application gives a subtype, the test above (row
+            // PERF-fold-projection-fast-path); else the rounds run on.
+            if round == 0
+                && let Some(st) = step
+                && let Some(t) = self.fold_projections(st, right, &acc, &g)
+            {
+                let (a, v) = (Arg::of(t.clone()), Arg::of(values.clone()));
+                let args = match right {
+                    false => vec![Some(a), Some(v)],
+                    true => vec![Some(v), Some(a)],
+                };
+                let again = self.apply(what, &fsig, args, false, span).0;
+                if self.subtype(&again, &t) {
+                    return out.union(&t);
+                }
+            }
             let (c, _) = forms.of_in(&g, true, &known_vars, known_classes);
             if let Some(before) = canon.get(&c) {
                 break (before.clone(), gives);
@@ -6030,6 +6107,161 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         // Step 7.
         Some(1 + bc.into_iter().max().unwrap_or(0).max(0) as u64)
+    }
+
+    /// The accumulator type the rounds of [`Self::fold_dir_end`] settle at, found without
+    /// them, where the step function's body is a tuple `(e_0, ..., e_{n-1})` each part of
+    /// which is `a[c_i]` (`a` the accumulator's parameter itself, `c_i < n` an integer
+    /// literal) or does not read the accumulator (plan row PERF-fold-projection-fast-path).
+    /// `step` is the step function ([`Self::fold_step`]), `init` the start value's carriers
+    /// `A_1`, and `g` the carriers `G_1` of round 1's result, which did not settle. `None`
+    /// where the body is not such a tuple, or where `init` or `g` is not one closed row of `n`
+    /// parts with no atom, function, variable or dynamic part, at any depth for variables.
+    ///
+    /// The rounds on such a body, as `fold_dir_end` runs them. Write `I_u` for part `u` of
+    /// `init`'s one row and `K_i` for part `i` of `G_1` where `e_i` does not read `a`.
+    /// 1. Such an `e_i` has type `K_i` in every round: only the accumulator's type changes
+    ///    between rounds, and `g` holds no variable, so no class that later rounds could meet
+    ///    is shared with it (the precondition the row names, guarded here).
+    /// 2. `a[c_i]` on an accumulator of rows `r` is the join of the `r[c_i]`. The accumulator
+    ///    of round `k + 1` is `init`'s row, unless `G_k` holds it, and `G_k` (the older results
+    ///    are held by `G_k`, step 3, and dropped). So `G_{k+1}[i] = I_{c_i} | G_k[c_i]` for a
+    ///    projection while `init`'s row is kept, and `G_k[c_i]` once it is dropped, when
+    ///    `I_{c_i} <: G_k[c_i]` already; `G_{k+1}[i] = K_i` otherwise.
+    /// 3. By induction on `k`, `G_k <: G_{k+1}` part by part: `G_1[i]` is `I_{c_i}` or `K_i`,
+    ///    and `G_2[i]` is `I_{c_i} | G_1[c_i]` or `K_i`; the step of 2 is monotone.
+    /// 4. Write `V[p]` for the least types with `V[p] = I_p | K_p` where `e_p` does not read
+    ///    `a`, and `V[p] = I_p | V[c_p]` where it does. Unfolding 2, `G_k[i]` for a projection
+    ///    is the join of `I` over the first `k` parts of the path `c_i, c_{c_i}, ...` (and `K`
+    ///    of an `a`-free part met on it), so the rounds' least upper bound is
+    ///    `G∞[i] = V[c_i]` for a projection and `K_i` otherwise. The graph `p -> c_p` has one
+    ///    edge out of each projection: its strongly connected components are cycles and
+    ///    single parts, numbered by `zed_graph::components` so that edges go to lower
+    ///    numbers. Taken in increasing order, each component `C` gets the join of `I_u` (and
+    ///    `K_u` for an `a`-free `u`) over its members, joined with the `V` of each component
+    ///    an edge leaves `C` for; a cycle's members all reach each other, so they share it.
+    /// 5. The rounds return `A_1` when `G_1 <: A_1` (handled before this is called; then
+    ///    `G∞ <: A_1` too, so that case does not arise here), else the accumulator they settle
+    ///    at: `G∞` alone once `init`'s row is dropped (`A_1 <: G∞`), or `A_1 | G∞`. This
+    ///    returns the same, where the rounds end only at `G∞`, which the guard of 6 ensures.
+    ///    (The pruning of `fold_dir_end` runs on each round that does not settle, with that
+    ///    round's result, so `init`'s row is dropped exactly when `A_1 <: G∞`.)
+    /// 6. The rounds end at round `k + 1` where `G_{k+1} <: A_1 | G_k`, the union of two rows.
+    ///    Read as sets of values, a product `P` held by the union of the products `I` and `Q`
+    ///    with `P` larger than `Q` in a part `j` has, for a value `x_j` of `P_j` outside `Q_j`
+    ///    and any values of its other parts, the tuple in `I`; so `P_i <: I_i` for every
+    ///    `i != j`. With `G_1 <: G_{k+1}` (step 3), every part of `G_1` but one is then in
+    ///    `init`'s. So where two parts of `G_1` are not, the rounds end only where
+    ///    `G_{k+1} <: G_k`, that is at `G∞`; otherwise this returns `None` and the rounds run.
+    ///    (`subtype` may answer no where the sets are held, which only makes the rounds go on
+    ///    to `G∞`; it never answers yes where they are not, being sound.)
+    ///
+    /// Steps 2 to 5 give the type the rounds give, not its soundness: the caller applies `f`
+    /// once more to the answer and keeps it only where the result is a subtype, the test the
+    /// rounds end by, whose soundness `fold_dir_end` proves; else it runs the rounds. So an
+    /// error in this reading can cost time or precision, never a wrong type. Tested against
+    /// the rounds on random folds (`l03_02_map_run::folds::
+    /// a_projection_fold_takes_the_type_the_rounds_give`, which writes each body once as a
+    /// tuple and once inside a block, which this does not read, so the rounds check it).
+    ///
+    /// Complexity: O(size of the body) to read it, O(n) for the components (Tarjan), and one
+    /// join per part and edge, each linear in the types joined. The rounds took `n + 1`
+    /// applications of `f` for a rotation of `n` parts, Θ(n²) at best.
+    fn fold_projections(&self, step: StepFn<'a>, right: bool, init: &Ty, g: &Ty) -> Option<Ty> {
+        let ([p0, p1], body) = step;
+        let acc = if right { p1 } else { p0 }?;
+        let ExprKind::Tuple(es) = &body.kind else {
+            return None;
+        };
+        let n = es.len();
+        let one_row = |t: &Ty| -> Option<Vec<Ty>> {
+            let [r] = &t.tuples.iter().collect::<Vec<_>>()[..] else {
+                return None;
+            };
+            let plain = t.set.is_empty()
+                && t.family.is_empty()
+                && t.fns.is_empty()
+                && t.payloads.is_empty()
+                && t.vars.is_empty()
+                && !t.dynamic;
+            (plain && !r.open() && !r.dynamic() && !r.holds_vars() && r.len() == n)
+                .then(|| r.to_vec())
+        };
+        let (i, k) = (one_row(init)?, one_row(g)?);
+        // The guard of step 6: no answer unless two or more parts grew in the first round.
+        (0..n).filter(|&p| !self.subtype(&k[p], &i[p])).nth(1)?;
+        let of_acc = |e: &Expr| {
+            matches!(
+                (&e.kind, self.t.res.uses.get(&e.span)),
+                (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.iter().any(|&b| b == acc)
+            )
+        };
+        // `reads[p]`: `Some(c_p)` for a projection, `None` for a part that does not read `a`.
+        let mut reads: Vec<Option<usize>> = Vec::with_capacity(n);
+        for e in es {
+            let c = match &e.kind {
+                ExprKind::Index(of, c) if of_acc(of) => match &c.kind {
+                    ExprKind::Int { radix, digits } => match Value::int_text(digits, *radix) {
+                        Ok(Some(Value::Int(c))) => usize::try_from(c).ok().filter(|&c| c < n),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            };
+            match c {
+                Some(c) => reads.push(Some(c)),
+                None if self.reads_binder(e, acc) => return None,
+                None => reads.push(None),
+            }
+        }
+        let out: Vec<Vec<usize>> = reads.iter().map(|c| c.iter().copied().collect()).collect();
+        let comp = zed_graph::components(&out, |&t| t);
+        let count = comp.iter().max().map_or(0, |&c| c + 1);
+        let mut members: Vec<Vec<usize>> = vec![Vec::new(); count];
+        for (p, &c) in comp.iter().enumerate() {
+            members[c].push(p);
+        }
+        let mut v: Vec<Ty> = vec![Ty::empty(); count];
+        for c in 0..count {
+            let mut t = Ty::empty();
+            for &u in &members[c] {
+                t = t.union(&i[u]);
+                match reads[u] {
+                    None => t = t.union(&k[u]),
+                    Some(cu) if comp[cu] != c => t = t.union(&v[comp[cu]]),
+                    Some(_) => {}
+                }
+            }
+            v[c] = t;
+        }
+        let parts = (0..n).map(|p| match reads[p] {
+            Some(c) => v[comp[c]].clone(),
+            None => k[p].clone(),
+        });
+        let limit = Ty::tuple(parts.collect());
+        Some(match self.subtype(init, &limit) {
+            true => limit,
+            false => init.union(&limit),
+        })
+    }
+
+    /// Whether `e` holds, at any depth, lambdas and blocks within it included, a name whose
+    /// binder is `id`.
+    fn reads_binder(&self, e: &Expr, id: usize) -> bool {
+        let mut stack = vec![e];
+        while let Some(e) = stack.pop() {
+            if let (ExprKind::Name(_), Some(Ref::Bound(ids))) =
+                (&e.kind, self.t.res.uses.get(&e.span))
+                && ids.iter().any(|&b| b == id)
+            {
+                return true;
+            }
+            zedc_syntax::ast::expr_kids(&e.kind, zedc_syntax::ast::Blocks::Enter, &mut |k| {
+                stack.push(k)
+            });
+        }
+        false
     }
 
     /// The operator of `x >< f`, `f` of type `f` and not an operator section (step L3.2;
@@ -8524,6 +8756,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                     past_f64: None,
                 });
             }
+            // On a base of unknown value the exponent keeps its class, which no use may fix to
+            // one carrier: in `f64(b) ^ (2^64)` both `f64 ^ int` and `f64 ^ f64` take it (plan
+            // row POW-domains), and its step printed the class, `int | f64`. Its value is kept
+            // for the steps alone, which then show it, "this `^` gives 2^64", as they do above
+            // (l01_29 `commands_binary::zedc_run_prints_the_type_of_an_operation_on_wide_
+            // literals_not_its_literals`, b22-checkwalk10, 2026-11-24); its type is unchanged.
+            // The same O(1) per node as above.
+            if op == BinaryOp::Pow
+                && !known_base
+                && self.level > 0
+                && y.lit.is_none()
+                && let Some(k) = self.class_of_ty(&y.ty)
+                && self.classes[self.find(k)].generic
+            {
+                _ = self.int_exponent_at(b);
+            }
             // Two generic operands, as in `1 + 2`, make a class of their own inside a
             // function: generic, it takes the carrier of what it meets, the first operand
             // taking it from a parameter of the class and the second following the first; it
@@ -8825,11 +9073,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if op == BinaryOp::Mod {
                     self.modulus(&y, b, span);
                 }
+                // A power alone builds nothing: the kernel keeps it as atoms with exponents
+                // (`Rat::pow`; DESIGN.md step L1.17c), so it is judged by what reads it.
                 if op == BinaryOp::Pow {
                     self.exponent(&x, &y, b, span);
-                    if let Some(a) = x.expr {
-                        over_space = self.too_large_power(a, b, span);
-                    }
                 }
                 if matches!(op, BinaryOp::Mul | BinaryOp::Div)
                     && let Some(a) = x.expr
@@ -8843,13 +9090,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     BinaryOp::Mod => Some(Prim::Mod),
                     _ => binary_prim(op),
                 };
-                if let (Some(a), Some(p)) = (x.expr, p) {
-                    match over_space {
-                        // Past the address space it is not sized again, but a repair of a power
-                        // inside it is checked with it.
-                        true => self.note_build_parent(p, &[a, b], span),
-                        false => self.too_large_build(p, &[a, b], span),
-                    }
+                if !over_space && let (Some(a), Some(p)) = (x.expr, p) {
+                    self.too_large_build(p, &[a, b], span);
                 }
                 let zero = if divides {
                     self.zero_divisor(op, &x, &y, b)
@@ -8864,15 +9106,42 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 let mut sig = op_sig(Operator::Binary(op));
                 // A decimal literal base with no suffix meets an `int` exponent at `rat`, its
-                // one carrier there (DESIGN.md L1.17, `0.5 ^ n`): the arrow `f32 ^ int` is for
-                // a base already an `f32`, and the literal does not take `f32` through it.
+                // one carrier there (DESIGN.md L1.17, `0.5 ^ n`): the arrows `f32 ^ int` and
+                // `f64 ^ int` are for a base already a float, and the literal takes neither
+                // carrier through them. Plan row POW-domains asks instead that such a base take
+                // the carrier a use fixes, `f64` where none does; the literal classes follow no
+                // operand that is not a literal ([`Self::lit_op_meets`]), so through `f64 ^ int`
+                // `g(0.5 ^ n)` with `g` taking a `rat` was refused (found 2026-11-24, b22-
+                // checkwalk10), and the base keeps `rat` here until they do.
                 if op == BinaryOp::Pow
                     && x.lit
                         .as_ref()
                         .is_some_and(|l| l.bare && is_decimal(&l.value))
                 {
-                    let mixed = [Ty::carrier(Carrier::F32), Ty::carrier(Carrier::Int)];
-                    sig.arrows.retain(|a| a.params != mixed);
+                    let mixed = |c| [Ty::carrier(c), Ty::carrier(Carrier::Int)];
+                    sig.arrows.retain(|a| {
+                        a.params != mixed(Carrier::F32) && a.params != mixed(Carrier::F64)
+                    });
+                }
+                // An exponent that is an operation on integer literals alone beside an `f32`
+                // base keeps both carriers of its class, `int | f32`, since `^` takes `f32 ^
+                // int` and `f32 ^ f32`; beside an `f64` base the class takes `f64` alone. Its
+                // steps are shown by the exponent's value as beside an `f64` base, "this `^`
+                // gives 2^64", not by the class's carriers ([`Ck::derive`] reads
+                // [`Ck::int_exponents`]; row DIAG-too-large-with-type-error, point (2), test
+                // l01_29 commands_binary
+                // `zedc_run_prints_the_value_of_an_exponent_beside_an_f32_base_as_beside_an_f64_one`).
+                // One read of the exponent, kept by operation ([`Self::int_exponent_at`]).
+                if op == BinaryOp::Pow
+                    && y.lit.is_none()
+                    && !(&x.ty.set & &KType::f32()).is_empty()
+                    && let Some(k) = self.class_of_ty(&y.ty)
+                    && {
+                        let c = &self.classes[self.find(k)];
+                        c.generic && c.mask & Carrier::Int.bit() != 0
+                    }
+                {
+                    self.int_exponent_at(b);
                 }
                 let a = x.expr;
                 let r = self.apply(
@@ -12323,12 +12592,46 @@ impl<'t, 'a> Ck<'t, 'a> {
             let arrow = &s.e.arrows[s.a];
             if !s.entered {
                 s.entered = true;
+                // The lambda's own type variables (row PROOF-push-vars-a2-complete): a type
+                // variable that a parameter is written as alone, `s` in
+                // `(positional s: T, positional u: T) -> s ++ u`, and that no function around
+                // names, is bound at this arrow to the join of the types the arrow passes at
+                // the parameters written so; every written type of the lambda's parameters
+                // then reads it as that type. DESIGN.md sec:type_resolution, rule 4: `T` is a
+                // type variable, one type at each place it is written, and a lambda fits an
+                // arrow where it takes every value the arrow passes (contravariance), so the
+                // join is the least type that `T` may stand for here. Before, `written(a,
+                // false)` left `T` a variable of no class, read as `_`: the lambda was refused
+                // ("the lambda's parameter `s` is _, and `(String, String) -> String` passes
+                // String"), and a push of `s` in its body reached the arm (a2) of
+                // [`Self::push_vars`] (found by the sweep of the row, 2026-11-24). Soundness
+                // does not rest on the choice: each parameter is still checked to take what
+                // the arrow passes (`subtype` below), and the body is checked with the bound
+                // types. A variable written only inside another type, `(positional s: [T])`,
+                // gets no binding here and is refused as before.
+                // Complexity tradeoff: one more read of each written type, O(|a|), and one
+                // union per parameter written as a variable, O(p·|t|) an arrow; no
+                // unification of written types against the arrow's. Benchmark
+                // `bench::bubble::lambdas_of_their_own_type_variable_scale`: 7.93 times the
+                // instructions at 8n (n = 100, zed_icount, 2026-11-24).
+                let mut own = Binds::new();
+                for (j, o) in s.order.iter().enumerate() {
+                    let Some(a) = o.and_then(|i| s.params[i].ty.as_ref()) else {
+                        continue;
+                    };
+                    let a = self.written(a, false);
+                    if let Some(v) = a.as_var().filter(|v| !self.is_class(v)) {
+                        let t = &arrow.params[j];
+                        let u = own.get(v).map_or_else(|| t.clone(), |u| u.union(t));
+                        own.insert(v.clone(), u);
+                    }
+                }
                 for (j, o) in s.order.iter().enumerate() {
                     if let Some(i) = o {
                         let p = &s.params[*i];
                         let mut t = arrow.params[j].clone();
                         if let Some(a) = &p.ty {
-                            let a = self.written(a, false);
+                            let a = self.written(a, false).replace(&own);
                             if !self.subtype(&t, &a) {
                                 let why = t.refused(&a);
                                 let (ta, tt) = (self.text(&a), self.text(&t));
@@ -14571,13 +14874,17 @@ impl<'a> Ck<'_, 'a> {
     /// at equal arguments cost the body once, O(k) in all as measured
     /// (`arm_test_through_call::bench::tests_calling_one_deep_callee_scale`: 8.07 times the
     /// instructions at 8 times `k`, where reading the body in each test took 54.0 times). An `if`
-    /// with none inside it is kept in place, since a test of a sum of `d` names, each with its
-    /// summary, costs O(d²) (CHECK-sum-of-summarized-names), where a sum of `d` such `if`s
-    /// costs O(d log d) (`follow::bench::nested_sums_of_one_input_scale`, "a sum of d
-    /// ramps"). Prior work: a per-function summary in abstract interpretation reads a callee
-    /// once for all its call sites (Sharir and Pnueli, "Two approaches to interprocedural
-    /// data flow analysis", in S. S. Muchnick and N. D. Jones (eds.), *Program Flow Analysis:
-    /// Theory and Applications*, Prentice-Hall, 1981, the functional approach; a book chapter
+    /// with none inside it is kept in place, and a sum of `d` such `if`s costs O(d log d)
+    /// (`follow::bench::nested_sums_of_one_input_scale`, "a sum of d ramps"). A test of a sum
+    /// of `d` names, each with its summary, was filed as O(d²) (CHECK-sum-of-summarized-names,
+    /// 46 times at 8 times `d`), but `d` names bound to `if`s in the program measure O(d):
+    /// 7.418 at d = 32 and 256 on c95bec442, where the row was filed, and 8.479 on this branch
+    /// (`arm_test_through_call::bench::a_test_of_a_sum_of_summarized_names_scales`,
+    /// b22-checkwalk10, 2026-11-24). Prior work: a per-function summary in abstract
+    /// interpretation reads a callee once for all its call sites (Sharir and Pnueli, "Two
+    /// approaches to interprocedural data flow analysis", in S. S. Muchnick and N. D. Jones
+    /// (eds.), *Program Flow Analysis: Theory and Applications*, Prentice-Hall, 1981, the
+    /// functional approach; a book chapter
     /// with no DOI, not found on Crossref. The chapter was not found; read 2026-11-21 instead
     /// is the technical report it grew from, same title, NYU Courant Institute, Computer
     /// Science Department, Report No. 002, September 1978, a scan: the introduction says the
@@ -14627,8 +14934,9 @@ impl<'a> Ck<'_, 'a> {
                         let t = Term::If(Shared::new(c), Shared::new(a), Shared::new(b));
                         // An `if` with no `if` inside it, and no name bound to an `if` or a
                         // call, is kept in place: a test of a sum of `d` such `if`s is read as
-                        // one sum, O(d log d), where `d` names, each with its summary, cost
-                        // O(d²) (CHECK-sum-of-summarized-names). An `if` with one inside it is
+                        // one sum, O(d log d). The O(d²) filed for `d` names, each with its
+                        // summary (CHECK-sum-of-summarized-names), was not reproduced: such
+                        // names measure O(d) ([`Self::term_for`]). An `if` with one inside it is
                         // a name of its own, so that `d` nested in each other's tests cost
                         // O(d) and not O(d²).
                         match defined || parts.ifs == m[4] {
@@ -16701,9 +17009,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 site,
             } => {
                 let mut arg = |ck: &mut Self, p: usize, t: &Ty| {
-                    let via = ck.need_arg_via(n, p, t);
+                    let (via, below) = ck.need_arg_via(n, p, t).unzip();
                     ArgSrc::Got(Box::new(Arg {
                         via,
+                        below: below.flatten(),
                         ..Arg::of(ck.bound(t, binds))
                     }))
                 };
@@ -16764,9 +17073,49 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.strings_from = self.strings_sources(word, tys, span);
                 self.strings_end(word, args, span, Self::need)
             }
-            NeedKind::Remap { at, src, .. } => {
+            NeedKind::Remap { at, src, free, .. } => {
+                // Why the check of the need is the check of the remap at the call's types
+                // (FAIL-remap-need-free-names-unbound). The need stands for the walk of the
+                // remap's levels (`remap_alone`) that its body could not make, its source's
+                // class being unknown there. That walk reads three kinds of names:
+                // (1) a binder of the remap's own `as` pattern, or of a lambda or block inside
+                //     it: its type is set during the walk, from `src`;
+                // (2) a declared function: its type is its signature, the same at every call;
+                // (3) any other name, bound outside the remap (`remap_free_names`): its type is
+                //     what its scope gave it where the remap is, `env[id]` when `remap_need`
+                //     made the need, which `free` records as `(id, type)`.
+                // So the inputs of the walk are `src` and the types of (3), and nothing else of
+                // the scope. Where a signature takes the need, `Need::map_tys` renames every
+                // type `Need::tys` lists, `src` and the types of `free` alike, by one renaming;
+                // here each is bound by one binding, `binds` with the need's own variable at
+                // `on` (`remap_src`). Hence every input is the body's type under the call's
+                // substitution, which is what a walk of the body at the call's argument types
+                // reads at the remap: the walk below goes through the same steps. Before the
+                // fix (3) read `env` as the walk last left it: the body's own types, as the
+                // class `$f` of a parameter `f`, which no call binds, so `f(v)` recorded its
+                // call on `$f` and the lambda passed for `f` was never checked against `v`.
+                // A name of (3) with no type where the need was made is left out of `free` and
+                // read in the scope, as before. `env` is restored after the walk, each entry to
+                // what it held (or removed if it held none), so the check of a need changes no
+                // type of the scope it is checked in. A need made during the walk below (a
+                // nested remap's) reads `env` while it holds the bound types, so it records
+                // those, which is the same substitution applied once: correct and final.
+                // Complexity tradeoff: O(names + their types' size) per check of the need, the
+                // binding `remap_src` makes of `src`, once more for each name.
                 let src = self.remap_src(n, src, &on, binds);
-                self.remap_met(*at, &src)
+                let mut was = Vec::with_capacity(free.len());
+                for (id, t) in free {
+                    let t = self.remap_src(n, t, &on, binds);
+                    was.push((*id, self.env.insert(*id, t)));
+                }
+                let out = self.remap_met(*at, &src);
+                for (id, w) in was.into_iter().rev() {
+                    match w {
+                        Some(w) => self.env.insert(id, w),
+                        None => self.env.remove(&id),
+                    };
+                }
+                out
             }
             NeedKind::Reduce(op, site, form) => self.fold_level(*op, &on, span, *site, *form),
             NeedKind::Fold {
@@ -17981,121 +18330,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         out
     }
 
-    /// The power `a ^ e` at `span`, rejected when its result is proved larger than the
-    /// target's address space, whether or not its branch is taken (DESIGN.md
-    /// sec:checking_in_zed, sec:diagnostics "Number too large for any memory of the target";
-    /// QUESTIONS A100; plan row CONST-too-large). The text fixes the base `a`, and every
-    /// exponent `e` may take is at least `k` in magnitude. Each part of `a` that `^` builds,
-    /// its numerator or denominator where wider than 64 bits ([`Rat::built_widths`]), of `L`
-    /// bits, is at least `2^(L - 1)` in magnitude, so its power has at least
-    /// `k * (L - 1) + 1` bits: `k * ⌊log₂ |x|⌋ + 1`. A base within 64 bits, or one kept as
-    /// prime powers, as in `2^(2^70)`, builds nothing, and an exponent that may be 0, or one
-    /// the text does not bound, as in `2r^(2^k)`, proves nothing: both are left to the run.
-    /// Only exact `int` and `rat` values are covered, not texts or collections.
-    ///
-    /// The bound is the target's ([`ADDRESS_BYTES_LOG2`], the same for every target zedc
-    /// builds for), named as `build.target` names it where the build gives it
-    /// ([`Tables::target`]). The check reads nothing of the machine that builds, so a program
-    /// is accepted or refused alike on every machine.
-    ///
-    /// Complexity tradeoff: the naive method builds the power, as the run would, which costs
-    /// the size of the result (128 EiB for `(2^64 + 13) ^ (2^64)`) and depends on the memory
-    /// of the machine that builds. Used: what the text gives of the base and of the exponent's
-    /// interval ([`Self::fixed_value`], [`Self::ints_here`]), the bit lengths of the base's
-    /// two parts, and one comparison of the least exponent with a word: O(1) per power, plus
-    /// the size of the numbers a rejection's message writes. The bound is DESIGN's, not the
-    /// tightest: `k * log₂ |x|` would be larger by up to `k` bits per part, and a power
-    /// between the two is left to the run.
-    ///
-    /// A base the text does not fix is bounded by [`Self::least_built`] (plan row
-    /// CONST-too-large-products-unproved, case (c)): in `(x * x) ^ 2` with `x = b ^ (2^59)`,
-    /// `x * x` has at least `2^66 + 1` bits, so the power has at least `2 * 2^66 + 1`. Only a
-    /// part proved past 64 bits counts, since `Rat::pow` factors a part within 64 bits into
-    /// kept primes; a base proved past the address space is reported at its own operation.
-    /// Complexity tradeoff: the naive method builds the base, as the run would, at the cost of
-    /// its size; used: the base's bounds, read once by span ([`Self::least_built`]), and the
-    /// same O(1) comparison as for a fixed base.
-    // The bound in full: a part x of L bits has |x| >= 2^(L - 1); with |k'| >= k >= 1 for each
-    // exponent k', |x^k'| >= 2^(k(L - 1)) (L >= 2 for a part past 64 bits, so |x| >= 2 and the
-    // power grows with |k'|), and a number at least 2^m has at least m + 1 bits.
-    // Tests: tests/steps/l01_29_repairs_and_printing/too_large.rs
-    // `a_power_past_the_address_space_is_rejected_with_its_least_size`,
-    // `the_bound_is_exact_at_the_address_space` (exponents 2^61 - 1 and 2^61 on each side of
-    // 2^67 bits),
-    // `a_negative_exponent_is_bounded_by_its_magnitude` and
-    // `a_power_of_a_base_the_types_bound_is_rejected`. Chosen programs, not a proof.
-    fn too_large_power(&mut self, a: &'a Expr, e: &'a Expr, span: Span) -> bool {
-        let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
-        let (rat, widths, exact, proof) = match self.fixed_value(a) {
-            Some(base) => {
-                let (Value::Big(r) | Value::Rat(r)) = &base else {
-                    return false;
-                };
-                let widths = r.built_widths().map(|l| l.map(u128::from));
-                (matches!(base, Value::Rat(_)), widths, true, None)
-            }
-            None => {
-                let w = self.least_built(a);
-                let room = Num::from(space_bits as i128);
-                if w.parts[0].bits == Num::ZERO || w.size() > room {
-                    return false;
-                }
-                // Each part within the room, so below 2^67 bits.
-                let widths = w.parts.clone().map(|c| match c.bits.to_i128() {
-                    Some(l) if !c.one && l > 64 => Some(l as u128),
-                    _ => None,
-                });
-                (!w.parts[1].one, widths, false, w.proof)
-            }
-        };
-        // `F`, the sum of `L - 1` over the built parts, at least 64 for each, and their count.
-        let floor_log: u128 = widths.iter().flatten().map(|l| l - 1).sum();
-        let built = widths.iter().flatten().count() as u64;
-        if built == 0 {
-            return false;
-        }
-        let (ints, _) = self.ints_here(e);
-        let Some(k) = least_magnitude(&ints) else {
-            return false;
-        };
-        // The result has more than 2^67 bits, 2^64 bytes, exactly when `k * F + built` does,
-        // that is when `k` reaches `(2^67 + 1 - built) / F` rounded up: below 2^61, as
-        // `F >= 64`, so the comparison is of words.
-        let limit = (space_bits + 1 - u128::from(built)).div_ceil(floor_log);
-        let over_space = k >= Num::from(u64::try_from(limit).expect("a quotient below 2^61"));
-        let p = WidePower {
-            a,
-            e,
-            span,
-            rat,
-            widths,
-            exact,
-            floor_log,
-            built,
-            bits: &(&k * &Num::from(floor_log as i128)) + &Num::from(built),
-            // Every exponent below 0, as `x ^ -(2^64)` on a `rat`: the repair keeps the sign.
-            negative: matches!(ints.bounds(), Some((_, Fin(hi))) if hi.signum() < 0),
-            k,
-            proof,
-        };
-        if p.proof.is_some() {
-            // The base's bounds rest on roots made by products, judged once the walk has met
-            // every root ([`Self::judge_proved`]); a repair tried judges none.
-            if !self.trying {
-                self.wide_powers.entry(span).or_insert(p);
-            }
-            return false;
-        }
-        if over_space {
-            self.power_too_large(&p, None);
-        } else if !self.trying {
-            // Judged against the memory limit of `main` once the walk is over and the limits
-            // are read ([`Self::powers_over_main_limit`]), from what the walk first found here.
-            self.wide_powers.entry(span).or_insert(p);
-        }
-        over_space
-    }
-
     /// Reads the limits written before the unit's `main` in `unit` into [`Info::limits`]
     /// (DESIGN.md sec:ports, "`main` may limit its own run"), rejecting each argument that is
     /// not a positive constant, and keeps the memory limit with its spans for
@@ -18175,12 +18409,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         (code, self.fixed_value(self.through_names(e)))
     }
 
-    /// Judges the powers and products whose bounds rest on roots made by products
+    /// Judges the products whose bounds rest on roots made by products
     /// ([`Built::proof`]), once the walk has met every root (plan row
     /// CONST-too-large-coprime-base): one whose proof fails is dropped, as the kernel may
     /// cancel there and the run decides; one past the address space is rejected, as
-    /// [`Self::too_large_power`] and [`Self::too_large_product`] reject one at once; the rest
-    /// are left to [`Self::powers_over_main_limit`]. Called after the walk and
+    /// [`Self::too_large_product`] rejects one at once; the rest are left to
+    /// [`Self::powers_over_main_limit`]. Called after the walk and
     /// [`Self::main_limits`], before [`Self::powers_over_main_limit`].
     ///
     /// Complexity tradeoff: deciding each proof as the walk meets it would split each new
@@ -18189,58 +18423,34 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ([`coprime::Roots::settle`]), then one lookup per judged operation. Nothing is built
     /// where no operation waits for a proof.
     pub(super) fn judge_proved(&mut self) {
-        let powers: Vec<Span> = (self.wide_powers.iter())
-            .filter(|(_, p)| p.proof.is_some())
-            .map(|(s, _)| *s)
-            .collect();
         let products: Vec<Span> = (self.wide_products.iter())
             .filter(|(_, p)| p.r.proof.is_some())
             .map(|(s, _)| *s)
             .collect();
-        if !(powers.is_empty() && products.is_empty()) {
-            let holds = self.roots.settle();
-            let held = |p: Option<coprime::ProofId>| p.is_none_or(|p| holds[p as usize]);
-            let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
-            for s in powers {
-                let p = (self.wide_powers.remove(&s)).expect("a span read from wide_powers above");
-                if !held(p.proof) {
-                    continue;
-                }
-                match p.bits > room {
-                    true => self.power_too_large(&p, None),
-                    false => _ = self.wide_powers.insert(s, p),
-                }
+        if products.is_empty() {
+            return;
+        }
+        let holds = self.roots.settle();
+        let held = |p: Option<coprime::ProofId>| p.is_none_or(|p| holds[p as usize]);
+        let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
+        for s in products {
+            let p = (self.wide_products.remove(&s)).expect("a span read from wide_products above");
+            if !held(p.r.proof) {
+                continue;
             }
-            for s in products {
-                let p =
-                    (self.wide_products.remove(&s)).expect("a span read from wide_products above");
-                if !held(p.r.proof) {
-                    continue;
-                }
-                match p.r.size() > room {
-                    true => {
-                        let derived = self.derive(&[p.span]);
-                        self.space_products.push((p, derived));
-                    }
-                    false => _ = self.wide_products.insert(s, p),
-                }
+            match p.r.size() > room {
+                true => self.product_too_large(&p, None),
+                false => _ = self.wide_products.insert(s, p),
             }
         }
-        // The products past the address space, with the operations around each now known,
-        // each repaired by a smaller power operand where one fits ([`Self::product_too_large`]).
-        let powers = std::mem::take(&mut self.wide_powers);
-        for (p, derived) in std::mem::take(&mut self.space_products) {
-            self.product_too_large(&p, derived, &powers, None);
-        }
-        let added = std::mem::replace(&mut self.wide_powers, powers);
-        self.wide_powers.extend(added);
     }
 
-    /// The powers [`Self::too_large_power`] found within the address space, rejected where
+    /// The products and builds the walk found within the address space, rejected where
     /// their least size passes the memory limit written before `main` (DESIGN.md sec:ports,
     /// "`main` may limit its own run"; sec:diagnostics, row "Number too large for any memory
     /// of the target"): `8 * b` bits against the least bit length the walk found, one
-    /// comparison of numbers below 2^67 per power. Called after [`Self::main_limits`], since a
+    /// comparison of numbers below 2^67 each. A power alone builds nothing (DESIGN.md step
+    /// L1.17c) and is not among them. Called after [`Self::main_limits`], since a
     /// limit's argument may name a binding the walk reads.
     ///
     /// Where `main` declares no memory limit, the bound is the default (DESIGN.md
@@ -18262,21 +18472,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         // where no operation inside it is past the limit too, so `String(x * x)` with `x * x`
         // past the limit is reported at `x * x` alone, the one cause.
         let mut over: BTreeSet<(usize, usize)> = BTreeSet::new();
-        let powers = std::mem::take(&mut self.wide_powers);
-        for p in powers.values() {
-            if p.bits > room {
-                over.insert((p.span.start, p.span.end));
-                self.power_too_large(p, main_limit);
-            }
-        }
         // A product is judged as at the address space ([`Self::too_large_product`]): an
         // operand past the limit is reported at its own operation, not again here.
         for p in std::mem::take(&mut self.wide_products).into_values() {
             if p.r.size() > room {
                 over.insert((p.span.start, p.span.end));
                 if p.x.size() <= room && p.y.size() <= room {
-                    let derived = self.derive(&[p.span]);
-                    self.product_too_large(&p, derived, &powers, main_limit);
+                    self.product_too_large(&p, main_limit);
                 }
             }
         }
@@ -18348,8 +18550,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// before `main`.
     fn main_limit_fix(&self, bits: &Num, m: MainMemory) -> Option<Rewrite> {
         // The `expect` holds: the three callers pass a size the walk kept within the address
-        // space, at most 2^67 bits (a power, product or build past it is rejected where it is
-        // found and never enters `wide_powers`, `wide_products` or `wide_builds`), so it
+        // space, at most 2^67 bits (a product or build past it is rejected where it is
+        // found and never enters `wide_products` or `wide_builds`), so it
         // fits an i128 and `need` is at most 2^64 bytes. It is above the limit of at least 1
         // byte, so `need >= 2`; `ceil_log2` is total at 0 and 1 in any case
         // ([`BitLen::ceil_log2`]). Test: main_limits.rs
@@ -18415,168 +18617,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// Rejects the power `p`, larger than the target's address space, or, with `main_limit`,
-    /// the memory limit of `main` in bytes, its `@limits` and the argument of `memory:`, than
-    /// that limit: the message, the derivation of the least size, and the repairs, a smaller
-    /// exponent and, for the limit, a larger limit.
-    fn power_too_large(&mut self, p: &WidePower<'a>, main_limit: Option<MainMemory>) {
-        let WidePower {
-            a,
-            e,
-            span,
-            rat,
-            widths,
-            exact,
-            floor_log,
-            built,
-            ref bits,
-            negative,
-            ref k,
-            proof: _,
-        } = *p;
-        let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
-        let room_bits = main_limit.map_or(space_bits, MainMemory::room_bits);
-        let power = self.code(Some(span)).unwrap_or("this power");
-        let base_code = self.code(Some(a.span)).unwrap_or("the base");
-        let exponent_code = self.code(Some(e.span)).unwrap_or("the exponent");
-        let message = match main_limit {
-            Some(m) => self.main_limit_headline(power, bits, m),
-            None => self.too_large_headline(power, bits),
-        };
-        // Where each operand comes from, the literal or the declaration, and its least size.
-        let mut notes = self.derive(&[span]);
-        let part_names = match rat {
-            true => [Some("numerator"), Some("denominator")],
-            false => [None, None],
-        };
-        // `x` names the base, or `p` each part of a `rat` base, as the formula does. For a
-        // base the text does not fix, `⌊log₂ |x|⌋` is a lower bound, as `2^66`, written
-        // exactly ([`exact_text`]).
-        let var = if part_names[0].is_some() { "p" } else { "x" };
-        let low_text = |l: u128| exact_text(&Num::from((l - 1) as i128));
-        let base_is = (widths.iter().zip(part_names))
-            .filter_map(|(l, name)| {
-                let low = low_text((*l)?);
-                let (magnitude, floor) = match (exact, low.contains(['^', ' '])) {
-                    (true, _) => (format!("2^{low}"), format!("is {low}")),
-                    (false, false) => (format!("2^{low}"), format!("is at least {low}")),
-                    (false, true) => (format!("2^({low})"), format!("is at least {low}")),
-                };
-                Some(match name {
-                    Some(name) => format!(
-                        "the {name} p of the base `{base_code}` is at least {magnitude} in \
-                         magnitude, so ⌊log₂ |p|⌋ {floor}"
-                    ),
-                    None => format!(
-                        "the base x, `{base_code}`, is at least {magnitude} in magnitude, so \
-                         ⌊log₂ |x|⌋ {floor}"
-                    ),
-                })
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-        notes.push(Note {
-            span: self.fixed_at(a),
-            text: base_is.into(),
-        });
-        notes.extend(self.base_origins(a));
-        let k_text = number_text(k);
-        let exponent_is = match negative {
-            true => format!("the exponent k, `{exponent_code}`, is at most -{k_text}"),
-            false => format!("the exponent k, `{exponent_code}`, is at least {k_text}"),
-        };
-        notes.push(Note {
-            span: self.fixed_at(e),
-            text: exponent_is.into(),
-        });
-        let each = (widths.iter().zip(part_names))
-            .filter_map(|(l, name)| {
-                let bits = format!("{k_text} * {} + 1 bits", low_text((*l)?));
-                Some(match name {
-                    Some(name) => format!("{bits} from the base's {name}"),
-                    None => bits,
-                })
-            })
-            .collect::<Vec<_>>();
-        let each = and_list(&each);
-        notes.push(Note {
-            span,
-            text: format!(
-                "so `{power}` has at least {each}: |k| * ⌊log₂ |{var}|⌋ + 1 at the least \
-                 |{var}| and |k|"
-            )
-            .into(),
-        });
-        if let Some(m) = main_limit {
-            notes.push(self.main_limit_note(m));
-        }
-        notes.push(Note {
-            span,
-            text: match main_limit {
-                Some(MainMemory::Declared(..)) => {
-                    "or read the exponent from the input: the run then stops at the \
-                            memory limit of `main` if the result passes it"
-                }
-                _ => {
-                    "or read the exponent from the input: the run then stops if no memory \
-                         holds the result"
-                }
-            }
-            .to_string()
-            .into(),
-        });
-        notes.push(Note {
-            span,
-            text: format!("or delete `{power}` if its result is not used").into(),
-        });
-        // The repair: the largest exponent `2^j` whose power fits, `2^j * F + built` bits at
-        // most the bound, 2^67 or `8 * b`, as `b ^ (2^60)` for a base of 65 bits; none where
-        // only an exponent of 1 does, as for a base past half the bound, since `x ^ 1` is the
-        // base itself. The operations around the power are sized too, as `String` of it, and
-        // `j` lowered until they fit ([`Self::shrunk_power_fits`]).
-        let mut fixes = Vec::new();
-        let most = room_bits.saturating_sub(u128::from(built)) / floor_log;
-        let fitting = (most > 1).then(|| most.ilog2()).and_then(|top| {
-            (1..=top).rev().find(|&j| {
-                let least = (1u128 << j) * floor_log;
-                self.shrunk_power_fits(a, span, j, negative, least, room_bits)
-            })
-        });
-        if let Some(j) = fitting {
-            let with = match negative {
-                true => format!("-(2^{j})"),
-                false => format!("(2^{j})"),
-            };
-            let fits_bits = (1u128 << j) * floor_log + u128::from(built);
-            let fits = bytes_text_of(&Num::from(
-                i128::try_from(fits_bits / 8).expect("below 2^65"),
-            ));
-            // The power with the exponent rewritten; the exponent lies in the power's text.
-            let alone = match self.code(Some(span)) {
-                Some(code) => format!(
-                    "{}{with}{}",
-                    &code[..e.span.start - span.start],
-                    &code[e.span.end - span.start..],
-                ),
-                None => format!("{base_code} ^ {with}"),
-            };
-            fixes.push(Rewrite::new(
-                &[(e.span, &with)],
-                &format_args!("needs at least {fits}"),
-                &alone,
-            ));
-        }
-        if let Some(m) = main_limit {
-            fixes.push(self.main_limit_fix(bits, m));
-        }
-        self.reject(
-            Some(Row::NumberOverAddressSpace),
-            span,
-            Msg::new(message, fixes),
-            notes,
-        );
-    }
-
     /// The headline of a number `code` proved to need at least `bits` bits, more than the
     /// target's address space: "Number too large for any memory of the target: `b ^ (2^64)`
     /// needs at least 128 EiB; Linux x86_64 addresses 16 EiB".
@@ -18600,16 +18640,18 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The product or quotient `a * b` or `a / b` at `span`, rejected when its result is proved
-    /// larger than the target's address space, whether or not its branch is taken, as a power
-    /// is ([`Self::too_large_power`]; DESIGN.md sec:checking_in_zed, sec:diagnostics "Number
+    /// larger than the target's address space, whether or not its branch is taken
+    /// (DESIGN.md sec:checking_in_zed, sec:diagnostics "Number
     /// too large for any memory of the target"; plan row CONST-too-large-products). Each part
     /// of the result, its numerator or denominator, is a product of a part of `a` and a part
     /// of `b`, at least `2^(La - 1) * 2^(Lb - 1)` in magnitude for parts of `La` and `Lb`
     /// bits, so it has at least `La + Lb - 1` bits: the bit lengths of the least factors
     /// added, less one. What each operand's parts are at least comes from
-    /// [`Self::least_built`], so `(b ^ (2^60)) * (b ^ (2^60))` with `b = 2^64 + 13`, each
-    /// factor of `2^66 + 1` bits, needs more than 16 EiB. An operand already past the address
-    /// space is not reported again here: its own operation is.
+    /// [`Self::least_built`], so `x * x` with `x` read from the input and proved past
+    /// `2^66` bits needs more than 16 EiB, while `(b ^ (2^60)) * (b ^ (2^60))` with
+    /// `b = 2^64 + 13` builds nothing: each power is the wide atom `b` kept with its exponent,
+    /// and the product adds the exponents (DESIGN.md step L1.17c). An operand already past the
+    /// address space is not reported again here: its own operation is.
     ///
     /// The bound is of the reduced result, the number the program holds, as DESIGN states it,
     /// so it holds only where the kernel cancels nothing ([`product_built`]): the parts a
@@ -18678,7 +18720,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let over_space = p.r.size() > room;
         if over_space {
-            self.product_past_space(p);
+            self.product_too_large(&p, None);
         } else if !self.trying {
             self.wide_products.entry(span).or_insert(p);
         }
@@ -18687,17 +18729,9 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Rejects the product or quotient `p`, larger than the target's address space, or, with
     /// `main_limit`, the memory limit of `main` in bytes, its `@limits` and the argument of
-    /// `memory:`, than that limit: the message, the derivation of the least size, the larger
-    /// operand made smaller where it is one of the powers `powers` ([`Self::product_operand_fix`])
-    /// and, for the limit, a larger limit. `derived` is the derivation of the product's type,
-    /// [`Self::derive`] at its span, taken where the product was met.
-    fn product_too_large(
-        &mut self,
-        p: &WideProduct<'a>,
-        derived: Vec<Note>,
-        powers: &BTreeMap<Span, WidePower<'a>>,
-        main_limit: Option<MainMemory>,
-    ) {
+    /// `memory:`, than that limit: the message, the derivation of the least size, and, for the
+    /// limit, a larger limit.
+    fn product_too_large(&mut self, p: &WideProduct<'a>, main_limit: Option<MainMemory>) {
         let WideProduct {
             op,
             a,
@@ -18717,7 +18751,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         // Where each operand comes from, the literal, the power or the declaration, and its
         // least size.
-        let mut notes = derived;
+        let mut notes = self.derive(&[span]);
         for (o, w, name) in [(a, x, "the left operand"), (b, y, "the right operand")] {
             let o_code = self.code(Some(o.span)).unwrap_or(name);
             notes.push(Note {
@@ -18770,90 +18804,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             span,
             text: format!("or delete `{code}` if its result is not used").into(),
         });
-        let mut fixes = vec![self.product_operand_fix(p, powers, main_limit)];
-        if let Some(m) = main_limit {
-            fixes.push(self.main_limit_fix(&r.size(), m));
-        }
+        let fixes = match main_limit {
+            Some(m) => vec![self.main_limit_fix(&r.size(), m)],
+            None => Vec::new(),
+        };
         self.reject(
             Some(Row::NumberOverAddressSpace),
             span,
             Msg::new(message, fixes),
             notes,
         );
-    }
-
-    /// Rejects the product or quotient `p`, past the address space, once the walk is over
-    /// ([`Self::judge_proved`]), when the operations around it are known. A repair tried
-    /// fails at once, as before, with no repair of its own.
-    fn product_past_space(&mut self, p: WideProduct<'a>) {
-        let derived = self.derive(&[p.span]);
-        match self.trying {
-            true => self.product_too_large(&p, derived, &BTreeMap::new(), None),
-            false => self.space_products.push((p, derived)),
-        }
-    }
-
-    /// The repair of the product or quotient `p` past the bound, the address space or the
-    /// memory limit of `main`, by its larger operand made smaller (DESIGN.md sec:diagnostics,
-    /// "Number too large for any memory of the target": "an operand made smaller, written as
-    /// the rewritten line"; plan row CONST-too-large-products-fix): where that operand is a
-    /// power the walk sized (`powers`, by span), its exponent lowered to the largest `±2^j`
-    /// with which the result fits, checked with the operations around the power as the
-    /// power's own repair is ([`Self::shrunk_power_fits`]). `None` where the operand is no
-    /// such power, or where no exponent above 1 fits.
-    ///
-    /// Each part of the result has at least `La + Lb - 1` bits for parts of `La` and `Lb` bits
-    /// ([`Self::too_large_product`]); the power's parts have at most `2^j * F + 1 + built`
-    /// bits in all for `F` the sum of `⌊log₂⌋` of its base's parts, so the result fits where
-    /// `2^j * F + 1 + built` and the other operand's least bits `Lo` fit the bound together.
-    /// That is a bound from above on the least size the rejection reads, so a repair offered
-    /// is one that rejection accepts.
-    fn product_operand_fix(
-        &mut self,
-        p: &WideProduct<'a>,
-        powers: &BTreeMap<Span, WidePower<'a>>,
-        main_limit: Option<MainMemory>,
-    ) -> Option<Rewrite> {
-        let (big, other) = match p.x.size() >= p.y.size() {
-            true => (p.a, &p.y),
-            false => (p.b, &p.x),
-        };
-        let w = powers.get(&big.span)?;
-        let (a, e, span, floor_log, built, negative) =
-            (w.a, w.e, w.span, w.floor_log, w.built, w.negative);
-        let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
-        let room_bits = main_limit.map_or(space_bits, MainMemory::room_bits);
-        let other_bits = other
-            .size()
-            .to_i128()
-            .and_then(|b| u128::try_from(b).ok())?;
-        let most = room_bits
-            .checked_sub(other_bits)?
-            .checked_sub(u128::from(built) + 1)?
-            / floor_log;
-        let top = (most > 1).then(|| most.ilog2())?;
-        let j = (1..=top).rev().find(|&j| {
-            let least = (1u128 << j) * floor_log;
-            self.shrunk_power_fits(a, span, j, negative, least, room_bits)
-        })?;
-        let with = match negative {
-            true => format!("-(2^{j})"),
-            false => format!("(2^{j})"),
-        };
-        // The least the result then has: `La + Lb - 1` with `La` at least `2^j * F + 1`.
-        let fits = (1u128 << j) * floor_log + other_bits;
-        let fits = bytes_text_of(&Num::from(i128::try_from(fits / 8).expect("below 2^68")));
-        let code = self.code(Some(p.span))?;
-        let alone = format!(
-            "{}{with}{}",
-            &code[..e.span.start - p.span.start],
-            &code[e.span.end - p.span.start..],
-        );
-        Rewrite::new(
-            &[(e.span, &with)],
-            &format_args!("needs at least {fits}"),
-            &alone,
-        )
     }
 
     /// The operation `p` at `span` on the operands `args`, rejected where the text fixes them
@@ -18865,9 +18825,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// powers its operands share (`2^(2^70) + 1`), the exponent of a power whose base is not
     /// 0, 1 or -1 (`3^(2^(2^70))`), the listed `div` and `mod` cases (`-5 mod 2^(2^70)`),
     /// printing (`String(2^(2^70))`), and a comparison or a rounding that reads the numbers
-    /// that far. A power whose base has a part wider than 64 bits is
-    /// [`Self::too_large_power`]'s, and a product it proves [`Self::too_large_product`]'s;
-    /// the caller passes those only when neither rejected them.
+    /// that far. A power alone builds nothing, its base kept as prime or wide atoms (DESIGN.md
+    /// step L1.17c), and a product the text proves is [`Self::too_large_product`]'s; the
+    /// caller passes one only when that did not reject it.
     ///
     /// The size is the kernel's: the operation runs by the kernel's evaluator under the fold
     /// bound, and a step refused there names the bits it builds, which the run builds at that
@@ -18890,7 +18850,6 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// has a part wider than 64 bits is not run, since its result is the build and the kernel
     /// would compute it up to the bound for no verdict.
     fn too_large_build(&mut self, p: Prim, args: &[&'a Expr], span: Span) {
-        self.note_build_parent(p, args, span);
         // A number the checker already folded at `span` is measured as it stands; `String`
         // gives a text, so its operand is read instead.
         let folded = match p {
@@ -18941,145 +18900,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
         if w.bits > room {
             self.build_too_large(&w, None);
-            // A power or product judged at this span from its bounds is reported here.
-            self.wide_powers.remove(&span);
+            // A product judged at this span from its bounds is reported here.
             self.wide_products.remove(&span);
-        } else if !self.trying
-            && !self.wide_powers.contains_key(&span)
-            && !self.wide_products.contains_key(&span)
-        {
+        } else if !self.trying && !self.wide_products.contains_key(&span) {
             self.wide_builds.entry(span).or_insert(w);
         }
-    }
-
-    /// Keeps the operation `p` at `span` on the operands `args` as the one that builds from the
-    /// value of each operand, for [`Self::shrunk_power_fits`]. The walk's, not a trial's.
-    fn note_build_parent(&mut self, p: Prim, args: &[&'a Expr], span: Span) {
-        if self.trying {
-            return;
-        }
-        for a in args {
-            self.build_parents
-                .entry(a.span)
-                .or_insert_with(|| BuildParent {
-                    p,
-                    args: args.to_vec(),
-                    span,
-                });
-        }
-    }
-
-    /// Whether the power at `span` of the base `a`, its exponent rewritten by a repair to
-    /// `±2^j` (`negative`), fits `room_bits` in each operation around it that builds from its
-    /// value, as the rejection sizes them (row CONST-repair-build-trial): `String(b ^ (2^16))`
-    /// prints about 1.26 million digits, past a limit of 1 MiB that the power's 512 KiB fits.
-    /// `least` is a lower bound of `⌊log₂⌋` of the power's magnitude, `2^j * ⌊log₂ |x|⌋`.
-    ///
-    /// Each operation is sized by [`kernel_build`] on the values the text fixes, the power
-    /// folded with the new exponent ([`kernel_folded`]), as [`Self::too_large_build`] sizes it.
-    /// Where the power does not fold, past the fold bound or with a base the text does not
-    /// fix, a `String` of it is sized from `least` as [`Rat::text_least`] sizes a text, at
-    /// least `⌊least * log₁₀ 2⌋ + 1` digits a byte each, and a power of it by a positive
-    /// exponent the text fixes, `k`, from `k * least`. An operation sized neither way, as a sum
-    /// with an operand the text does not fix, is not judged, and the repair is kept, as before
-    /// this check.
-    //
-    // Complexity tradeoff: the naive method checks the program with the repair written in,
-    // a second check of the whole unit for each exponent tried. Used: the operations around
-    // the power only, kept by operand span during the walk (`Self::note_build_parent`), each
-    // sized by one kernel operation under the fold bound, at most the cost of the fold the
-    // walk does at that span; a fold past the bound is refused before it allocates.
-    fn shrunk_power_fits(
-        &mut self,
-        a: &'a Expr,
-        span: Span,
-        j: u32,
-        negative: bool,
-        least: u128,
-        room_bits: u128,
-    ) -> bool {
-        let room = BigUint::from(room_bits);
-        let mut value = i64::try_from(1u128 << j).ok().and_then(|k| {
-            let k = if negative { -k } else { k };
-            prim_folded(Prim::Pow, vec![self.fixed_value(a)?, Value::Int(k)])
-        });
-        let mut least = Some(least);
-        let mut at = span;
-        while let Some(up) = self.build_parents.get(&at).cloned() {
-            let mut vals = Vec::with_capacity(up.args.len());
-            for x in &up.args {
-                vals.push(match x.span == at {
-                    true => value.clone(),
-                    false => self.fixed_value(x),
-                });
-            }
-            let mut vals: Option<Vec<Value>> = vals.into_iter().collect();
-            // The run reads both operands of `/`, and an `int` beside a `rat`, at `rat`.
-            if let Some(v) = &vals
-                && (up.p == Prim::Div || v.iter().any(|v| matches!(v, Value::Rat(_))))
-            {
-                vals = v.iter().cloned().map(at_rat).collect();
-            }
-            // The power is the base of `up` at `up.args[0]`, raised to the positive `int` `k`.
-            let raised = match (up.p, &up.args[..]) {
-                (Prim::Pow, [b, e]) if b.span == at => match self.fixed_value(e) {
-                    Some(Value::Int(k)) if k > 0 => Some(k.unsigned_abs()),
-                    _ => None,
-                },
-                _ => None,
-            };
-            let bits = match (&vals, up.p, least) {
-                (Some(v), ..) => kernel_build(up.p, v.clone()),
-                (None, Prim::Show, Some(l)) => {
-                    // `log₁₀ 2 > 1233 / 4096`, as [`Rat::text_least`] reads it.
-                    Some(BigUint::from(((l.saturating_mul(1233)) >> 12) + 1) << 3u32)
-                }
-                (None, Prim::Pow, Some(l)) => match raised {
-                    Some(k) => Some(BigUint::from(l) * k),
-                    None => return true,
-                },
-                // A part of a product or quotient is a product of a part of each operand: at
-                // least `(l + 1) + Lo - 1` bits for the other operand's least bits `Lo`
-                // ([`Self::too_large_product`]), and `l + Lo - 1` its `⌊log₂⌋`. A gcd the
-                // kernel cancels could make it smaller, so the bound may refuse an exponent
-                // that fits; a smaller one is then offered, which fits too.
-                (None, Prim::Mul | Prim::Div, Some(l)) => {
-                    let other = (up.args.iter()).find(|x| x.span != at).copied();
-                    let lo = other
-                        .map(|x| self.least_built(x).size())
-                        .and_then(|b| b.to_i128())
-                        .and_then(|b| u128::try_from(b).ok());
-                    let Some(lo) = lo else { return true };
-                    let bits = l.saturating_add(lo);
-                    if bits > room_bits {
-                        return false;
-                    }
-                    least = Some(bits.saturating_sub(1));
-                    value = None;
-                    at = up.span;
-                    continue;
-                }
-                _ => return true,
-            };
-            if bits.is_some_and(|b| b > room) {
-                return false;
-            }
-            if matches!(up.p, Prim::Show | Prim::CastF64 | Prim::CastF32) {
-                return true;
-            }
-            least = match (raised, least) {
-                (Some(k), Some(l)) => l.checked_mul(u128::from(k)),
-                _ => None,
-            };
-            value = vals
-                .and_then(|v| prim_folded(up.p, v))
-                .filter(|v| matches!(v, Value::Int(_) | Value::Big(_) | Value::Rat(_)));
-            if value.is_none() && least.is_none() {
-                return true;
-            }
-            at = up.span;
-        }
-        true
     }
 
     /// Rejects the operation `w`, which builds more than the target's address space, or, with
@@ -19159,53 +18984,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         );
     }
 
-    /// Where the base `a` of a power too large comes from, past the note [`Self::fixed_at`]
-    /// puts at it: the declaration of the name a cast of the base reads (`b` in `rat(b)`),
-    /// and of each name that name is bound to in turn (`b = c; c = 2^64 + 13`), each a note
-    /// "`b` is bound here to `c`". DESIGN.md sec:diagnostics, "Number too large for any memory
-    /// of the target": the least `|x|` "with where it came from, the literal or the
-    /// declaration" (row MSG-too-large-cast-origin; before, `rat(b)` named no declaration).
-    /// A bare name's own declaration is the base note's place already, so its chain starts at
-    /// the value it is bound to. O(names in the chain), each a lookup; `seen` is the visited
-    /// set (P207), though the statements' dependency order already rules out a cycle.
-    fn base_origins(&self, a: &'a Expr) -> Vec<Note> {
-        let mut x = match &a.kind {
-            ExprKind::Call {
-                callee,
-                positional,
-                named,
-                curry: false,
-                ..
-            } if named.is_empty()
-                && positional.len() == 1
-                && matches!(&callee.kind, ExprKind::Name(w) if ["rat", "int", "f64", "f32"].contains(&w.as_str()))
-                && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_))) =>
-            {
-                &positional[0]
-            }
-            ExprKind::Name(_) => match self.bound_value(a) {
-                Some(v) => v,
-                None => return Vec::new(),
-            },
-            _ => return Vec::new(),
-        };
-        let mut notes = Vec::new();
-        let mut seen = HashSet::new();
-        while let (ExprKind::Name(n), Some(Ref::Bound(b))) = (&x.kind, self.t.res.uses.get(&x.span))
-            && b.len() == 1
-            && seen.insert(b[0])
-        {
-            let Some(v) = self.bound_value(x) else { break };
-            let code = self.code(Some(v.span)).unwrap_or("its value");
-            notes.push(Note {
-                span: self.t.res.binders[b[0]].span,
-                text: format!("`{n}` is bound here to `{code}`").into(),
-            });
-            x = v;
-        }
-        notes
-    }
-
     /// Where the text fixes `x`: the declaration of the one binder a name names, else `x`
     /// itself, a literal or an operation.
     fn fixed_at(&self, x: &Expr) -> Span {
@@ -19222,9 +19000,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// a `rat(x)` cast of a fixed `x` widens, as in `rat(b) ^ (2^64)`, and, at `rat`, the value
     /// of a name bound by `name = e` to such an expression and of a `-`, `+`, `*` or `/` of
     /// such expressions, as `x` in `x = rat(b) / rat(b + 1); x ^ (2^62)` (plan row
-    /// CONST-too-large-rat-names). Each value is the kernel's, by its one evaluator, as for
-    /// [`Self::rat_folded`] ([`prim_folded`]); nothing is read of a function's body, a
-    /// parameter or the input.
+    /// CONST-too-large-rat-names), and of a `^` of a fixed `rat` by a fixed `int`. A `+` or
+    /// `-` that would build a part wider than every part its operands hold built, as
+    /// `3r^(10^6) + 1r`, has no value here: it is sized, not built. Each value is the
+    /// kernel's, by its one evaluator, as for [`Self::rat_folded`] ([`prim_folded`]); nothing
+    /// is read of a function's body, a parameter or the input.
     ///
     /// Complexity tradeoff: the naive method reads the base's text afresh at each power,
     /// recursing through names and operations: a chain of `n` names, each bound to a `/` of the
@@ -19261,7 +19041,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             ExprKind::Name(_) => self.bound_value(e).into_iter().collect(),
             ExprKind::Unary(UnaryOp::Neg, a) => vec![&**a],
             ExprKind::Binary(
-                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div,
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow,
                 a,
                 b,
             ) => vec![&**a, &**b],
@@ -19297,7 +19077,56 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if *op != BinaryOp::Div && !rat(&x) && !rat(&y) {
                     return None;
                 }
-                prim_folded(binary_prim(*op)?, vec![at_rat(x)?, at_rat(y)?])
+                let (x, y) = (at_rat(x)?, at_rat(y)?);
+                // A sum that writes out a kept power or a wide atom is not folded: its value is
+                // unknown, as before powers were folded, and what it builds is sized
+                // ([`Self::too_large_build`], `sum_build`) and not built.
+                //
+                // Which sums those are, from sizes alone. Let `P` be the bit lengths of the
+                // plain parts `num` and `den` of both operands added (`Rat::kept`, the parts
+                // apart from the prime powers and wide atoms). Proof that a sum of operands
+                // with no kept powers or atoms builds at most `2P + 1` bits: (1) the operands
+                // are `p/q` and `r/s`; (2) the sum is `(p s ± r q) / (q s)`, reduced or not;
+                // (3) `bits(p s) <= bits p + bits s` and `bits(r q) <= bits r + bits q`, each
+                // at most `P`, so `bits(p s ± r q) <= P + 1`; (4) `bits(q s) <= bits q +
+                // bits s <= P`; (5) the two together build at most `2P + 1`. So a sized build
+                // past both `2P + 1` and the 64 bits of a word, which `Rat` keeps unbuilt
+                // (`sum_build` gives `None` within it), writes out a kept power or an atom:
+                // `3r^k + 1r`, where `P` is 4 and the build is `k log2 3` bits. The converse
+                // does not hold, and need not: a sum whose kept part is small enough to stay
+                // within `2P + 1` is folded, at a cost within twice the operands' plain parts.
+                //
+                // Complexity tradeoff: since a fixed `rat ^ int` is folded as kept powers,
+                // folding `3r^k + 1r` would build the digits of `3^k`, O(M(k)) in the check,
+                // for no verdict (`bench::scaling::operations_on_literals_typed_by_their_value_
+                // check_in_linear_time_a_power_divisor`, l01_26a, order 0). Sizing the sum
+                // costs O(primes kept) (`Rat::sum_least`). Every sum of plain parts is still
+                // folded, `rat(b) + 1 / 3` with `b = 2^64 + 13` included (`too_large::
+                // a_rat_base_is_read_through_names_and_operations`), so a chain of `+` and `*`
+                // on built numbers keeps its value, at the cost of the run's own operations.
+                // The constants 2 and 1 are those of the proof, and 64 is the word `Rat` keeps
+                // unbuilt (KEPT-ast-normal-form keeps such a sum as an expression instead).
+                if let (BinaryOp::Add | BinaryOp::Sub, Value::Rat(a), Value::Rat(b)) = (op, &x, &y)
+                    && let Some(bits) = sum_build(a, b)
+                {
+                    // `2P + 1`, computed and proved once (`Rat::plain_sum_bits`), shared with
+                    // the bound normal form's sum rule (`Rat::sum_folds`).
+                    if bits > BigUint::from(a.plain_sum_bits(b)) {
+                        return None;
+                    }
+                }
+                prim_folded(binary_prim(*op)?, vec![x, y])
+            }
+            // A `rat` power of an `int` exponent the text fixes: the kernel keeps it as atoms
+            // with exponents and builds nothing (`Rat::pow`, DESIGN.md step L1.17b), so it is
+            // folded at any exponent, and what reads it, a `String` or a sum, is sized from
+            // the value ([`Self::too_large_build`]). An `int` power is [`Self::known`]'s.
+            ExprKind::Binary(BinaryOp::Pow, a, b) => {
+                let (x, y) = (memo(a)?, memo(b)?);
+                if !matches!(x, Value::Rat(_)) || matches!(y, Value::Rat(_)) {
+                    return None;
+                }
+                prim_folded(Prim::Pow, vec![x, y])
             }
             ExprKind::Call {
                 callee,
@@ -19320,8 +19149,8 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// What the text proves of the coefficients the kernel holds for `e`'s value ([`Built`]):
     /// exactly, for a value the text fixes ([`Self::fixed_value`]); for a power `a ^ k` of a
-    /// base `a` it bounds, where every `k` is at least 1 in magnitude, as [`Self::too_large_power`]
-    /// bounds it ([`Self::power_built`]); the same through a name bound by `name = e`, a `-`
+    /// base `a` it bounds, where every `k` is at least 1 in magnitude, which keeps every part
+    /// ([`Self::power_built`]); the same through a name bound by `name = e`, a `-`
     /// and a `rat(x)` cast; and for a `*` or `/` of two such values by [`product_built`].
     /// Anything else proves nothing ([`Built::unknown`]). An exponent is read by
     /// [`Self::known`], not under the tests of the arm being checked, so each bound holds at
@@ -19423,11 +19252,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let w = memo(a)?;
                 let roots = &mut self.roots;
                 let all = either_root(roots, &w.parts[0], &w.parts[1]);
-                // The kernel factors a part within 64 bits into kept primes, and builds the
-                // power of a wider one.
+                // The kernel factors a part within 64 bits into kept primes, and keeps a wider
+                // one whole as a wide atom: every part is kept.
                 let mut kept = w.kept;
                 for c in &w.parts {
-                    if !c.one && !(w.exact && c.bits > Num::from(64i64)) {
+                    if !c.one {
                         kept = kept.zip(c.root).map(|(a, b)| roots.union(a, b));
                     }
                 }
@@ -19458,17 +19287,16 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The coefficients of `a ^ k` for an exponent every value of which is at least 1 in
     /// magnitude, as the kernel's `Rat::pow` makes them, from what the text proves of the base
-    /// ([`Self::least_built`]): a part proved beyond 64 bits, at least `L` bits, is built, of
-    /// at least `|k| * (L - 1) + 1` bits, the bound of [`Self::too_large_power`], with the
-    /// base's roots; a part the text fixes within 64 bits, other than 1, is factored into kept
-    /// prime powers, leaving 1, and the primes are its own, so its value joins the roots of the
-    /// kept primes; a part proved neither is at least 1 bit, and the kept primes are
-    /// then not proved. A negative exponent swaps the parts, and one that may take either sign
-    /// gives each part the lesser of the two.
+    /// ([`Self::least_built`]). `Rat::pow` builds nothing (DESIGN.md step L1.17b): a part
+    /// within 64 bits is factored into kept prime powers and a wider one is kept whole as a
+    /// wide atom, so each part other than 1 leaves 1 and its primes are its own, joining the
+    /// roots of the kept primes. A part whose roots the text does not give leaves 1 as well,
+    /// and the kept primes are then not proved. A negative exponent swaps the parts, and one
+    /// that may take either sign gives each part the lesser of the two.
     ///
     /// Complexity tradeoff: the naive method builds the power, at the cost of its size; used:
-    /// a product and a subtraction of bit lengths per part, and at most two unions of the kept
-    /// roots with a part's, O(1) each ([`coprime::Roots::union`]).
+    /// at most two unions of the kept roots with a part's, O(1) each
+    /// ([`coprime::Roots::union`]).
     fn power_built(&mut self, a: &'a Expr, k: &'a Expr) -> Built {
         let base = self
             .built
@@ -19476,41 +19304,26 @@ impl<'t, 'a> Ck<'t, 'a> {
             .cloned()
             .unwrap_or_else(Built::unknown);
         let ints = self.known(k).ints;
-        let Some(least) = least_magnitude(&ints) else {
+        if least_magnitude(&ints).is_none() {
             return Built::unknown();
-        };
+        }
         if base.parts[0].bits == Num::ZERO {
             return Built::unknown();
         }
-        let word = Num::from(64i64);
         let mut kept = base.kept;
         let roots = &mut self.roots;
         let [n, d] = base.parts.map(|c| {
             if c.one {
                 return c;
             }
-            if c.bits > word {
-                return Coef {
-                    bits: &(&least * &(&c.bits - &Num::ONE)) + &Num::ONE,
-                    one: false,
-                    root: c.root,
-                };
-            }
-            match (base.exact, c.root, &mut kept) {
-                (true, Some(r), Some(kept)) => *kept = roots.union(*kept, r),
+            match (c.root, &mut kept) {
+                (Some(r), Some(kept)) => *kept = roots.union(*kept, r),
                 _ => kept = None,
             }
-            match base.exact {
-                true => Coef {
-                    bits: Num::ONE,
-                    one: true,
-                    root: Some(coprime::EMPTY),
-                },
-                false => Coef {
-                    bits: Num::ONE,
-                    one: false,
-                    root: c.root,
-                },
+            Coef {
+                bits: Num::ONE,
+                one: true,
+                root: Some(coprime::EMPTY),
             }
         });
         let positive = matches!(ints.bounds(), Some((Fin(lo), _)) if lo.signum() > 0);
@@ -19530,7 +19343,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         Built {
             parts,
             kept,
-            exact: false,
             proof: base.proof,
         }
     }
@@ -20906,23 +20718,73 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   at the outer end (test
     ///   `bubble::a_push_in_an_inner_function_of_a_class_around_and_its_own_parameter_is_checked`).
     /// - A push written in the body ([`Self::pushed`] from the statement): the value's type
-    ///   is the type of an expression of the body being checked. Not proved: that such a type
-    ///   holds only classes, the level rule of `generalize` (a class of an ended inner level
-    ///   is named only if no class of a level around was joined to it, and an inner function
-    ///   is seen around it only through its signature, instantiated with new classes). One
-    ///   route was found and closed (chk5, 2026-11-20): a test `x is T` against a type
-    ///   variable written nowhere else read `T` with no class made (`written(ty, false)` at
-    ///   `Frame::CondIs`), so `x` narrowed to `old & T` held a variable of no class, and
-    ///   `h(x, out: Lines) { if x is T { out <- x; }; }` reached this arm; `T` is now a class
-    ///   of the function (`fresh: true`), and the push waits on it (test
-    ///   `bubble::a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it`, benchmark
-    ///   `bench::bubble::pushes_narrowed_by_tests_against_type_variables_scale`). Other
-    ///   probe programs of row PROOF-push-vars-other-route found none that reaches this arm:
-    ///   locals bound to lambdas and to functions defined after, calls of functions defined
-    ///   later, functions passed to and returned by calls (`two(later)(x)`), `map` with a
-    ///   named function, inner functions with their own port parameter, and pushes in lambdas
-    ///   of a class around; recursion, a declared type on a local and a struct's type
-    ///   parameters are refused before the check in this version.
+    ///   is the type of an expression of the body being checked. The argument, step by step
+    ///   (row PROOF-push-vars-a2-complete, 2026-11-24):
+    ///   1. A variable in a type the checker builds comes from one of these sources: (i) a
+    ///      new class `$k` ([`Self::class`]); (ii) a written type read by [`Self::written`],
+    ///      which reads a name the scope binds as its class, a name it does not bind as a new
+    ///      class with `fresh: true`, and as the bare name, a variable of no class, with
+    ///      `fresh: false`; (iii) the names a function's classes get when its level ends
+    ///      (`names`, the renames of `generalize`), the `written <param>` names of
+    ///      `written_param_names`, the tagged results of `r10_decode_fwd_needs`, the
+    ///      variables of a declared signature (`Denote`), and the closed variables of a
+    ///      range; all of (iii) are written into signatures (`Sig`) only.
+    ///   2. (i) is a class while its level is open, and a push in a body is checked while
+    ///      the level of that body is open; so (i) never reaches this arm from a body.
+    ///   3. (ii) with `fresh: true` makes a class (step 2). The calls with `fresh: false`,
+    ///      audited by name:
+    ///      - [`Self::written_params`]: its result is kept only when it holds no variable
+    ///        (`vs.order.is_empty()`), so no variable leaves it.
+    ///      - [`Self::written_take`]: its result goes only into a `subtype` test, which
+    ///        returns a bool; no type leaves it.
+    ///      - [`Self::fit_step`], the lambda fitted to an arrow: its result is the type of
+    ///        the lambda's parameter in the body (`self.env.insert`). A parameter written as
+    ///        a bare variable `T` of no class is bound to the join of what the arrow passes
+    ///        there, so no variable of no class leaves it in that form (the route the sweep
+    ///        of the row found; test
+    ///        `bubble::a_lambda_s_own_type_variable_takes_what_the_arrow_passes`). A variable
+    ///        written inside another type, `(positional s: [T])`, keeps `T` with no class,
+    ///        and a push of `s` reaches this arm: NOT PROVED to be harmless, so it is
+    ///        refused here as [`PushVars::Unfollowed`] (same test, program `inside`; the
+    ///        lambda is also refused, since `[String]` is not a subtype of `[_]`).
+    ///      - `Frame::CondIs` was such a call until chk5 (2026-11-20): `x is T` with `T`
+    ///        written nowhere else read `T` with no class, and
+    ///        `h(x, out: Lines) { if x is T { out <- x; }; }` reached this arm; it reads
+    ///        with `fresh: true` now (test
+    ///        `bubble::a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it`,
+    ///        benchmark `bench::bubble::pushes_narrowed_by_tests_against_type_variables_scale`).
+    ///   4. (iii) reaches a body only through a signature, at a call of the function or a
+    ///      use of it as a value. NOT PROVED for every expression: that each such use
+    ///      replaces the signature's variables by classes of the caller's level
+    ///      ([`Self::instantiated`] binds those an argument fixes; the rest are left to the
+    ///      application) and that a named root of an ended inner level is never seen around
+    ///      it but through its signature (the level rule of `generalize`). One use is known
+    ///      to leave one, and is refused here as [`PushVars::Unfollowed`]: a local lambda
+    ///      whose body tests its parameter against a type variable,
+    ///      `f = (positional v) -> if v is T { v } else { "b" }; out <- f(x);`, gives a
+    ///      result holding a class of the lambda's ended level (`$2`), which is no class
+    ///      when the push reads it (test
+    ///      `bubble::a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it`, which
+    ///      expects that refusal; elaboration refuses the test against `T` as well).
+    ///   5. So from a body, this arm is reached by the form named NOT PROVED in step 3, by
+    ///      the lambda of step 4 and, if any, by another form of step 4; each is refused,
+    ///      never left to the run.
+    ///
+    /// Evidence for step 4, which is a search and not a proof: a build in which this arm
+    /// always panics, as the feature `push-vars-sweep` makes it, ran the test pieces of every
+    /// step group and of zedc_check (`tools/run_tests.sh`, 3237 pieces; 2026-11-24, on
+    /// 65df19b3c with the fit-step change above) and the probes of the rows
+    /// PROOF-push-vars-other-route and PROOF-push-vars-a2-complete: locals bound to lambdas
+    /// and to functions defined after, calls of functions defined later, functions passed to
+    /// and returned by calls (`two(later)(x)`), `map` with a named function, inner functions
+    /// with their own port parameter, pushes in lambdas of a class around, and lambdas whose
+    /// parameters are written `T`, `[T]` or `T` twice. The one piece that reached this arm was
+    /// the lambda of step 4. Not covered: 17 pieces that ran past their time limit on the
+    /// 2-core machine (l01_17, l01_23, l01_36b, l01_39 `s4_model` and `families`, m0_12
+    /// `seeds`). Recursion, a declared type on a local and a struct's type parameters are
+    /// refused before the check in this version. Negative control: with `Frame::CondIs` read
+    /// with `fresh: false`, the same build panics in this arm on `if x is T { out <- x; }` and
+    /// on `out <- if x is T { x } else { "b" }`, and not where the signature binds `T`.
     ///
     /// So the verdict relies on no claim about such a variable (standing rule: refuse what
     /// is not proved): it is read as no value; the push is
@@ -25395,15 +25257,18 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the call being checked places at a whole argument ([`CallFrame::place`]), as `v` of
     /// `run(g, v) = g(x: v)`, that argument as the call writes it; for `t` of no variable, as
     /// `small` of `twice(g) = g(x: small)`, the argument each use the need stands for writes
-    /// ([`Ck::call_written`]), whose value no type the body is checked for changes. Else
-    /// `None`, and a function the argument passes to a partial slot is refused.
-    fn need_arg_via(&mut self, n: &Need, p: usize, t: &Ty) -> Option<Rc<[Span]>> {
+    /// ([`Ck::call_written`]), whose value no type the body is checked for changes. With
+    /// them, where in those arguments the value lies ([`Arg::below`]): `None` where it is
+    /// each whole, else the path [`CallFrame::place`] found, as the component `p[0]` of
+    /// `run(g, p) = g(x: p[0])` or an entry of `m` in `m.map(...)`, so a function the value
+    /// passes to a partial slot is rebuilt at that part of the argument
+    /// (PLACE-value-inside-arg; [`Self::coerce_forwarded`] rebuilds by the same path at the
+    /// argument's own need). Else `None`, and such a function is refused.
+    fn need_arg_via(&mut self, n: &Need, p: usize, t: &Ty) -> Recv {
         if t.as_var().is_some() {
             let frame = self.call_frames.last()?;
-            return match frame.place(t)? {
-                (i, None) => frame.written(i),
-                (_, Some(_)) => None,
-            };
+            let (i, up) = frame.place(t)?;
+            return Some((frame.written(i)?, up));
         }
         if t.holds_vars() {
             return None;
@@ -25414,7 +25279,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // `l01_26_type_resolution::bench::function_variance::many_calls_of_a_body_with_many_named_calls_scale`,
         // which fails on a list made at every meeting, and
         // `a_kept_list_is_the_fresh_list_after_every_addition`.
-        self.call_written.get_mut(&n.span)?.arg_via(p)
+        Some((self.call_written.get_mut(&n.span)?.arg_via(p)?, None))
     }
 
     /// Refuses the value at `span`, passed where a partial function type is expected, whose
@@ -28519,6 +28384,47 @@ impl<'t, 'a> Ck<'t, 'a> {
             let t = self.min_max_tuples(what.text(), sig, &x.ty, &y.ty, written.clone(), span);
             return (out.union(&t), Vec::new());
         }
+        // `min` and `max` refuse two strings, which `<=` and `>=` order (DESIGN.md
+        // sec:reduction, item 5): the repair is the selection written with them, `if a <= b {
+        // a } else { b }` for `min` and `>=` for `max`, the operands as the program writes them
+        // (row TEST-minmax-struct-menu-compiles; tests l01_18 tuple_min_max
+        // `the_repair_offered_for_min_and_max_of_strings_checks` and words.rs). Two structs or
+        // two records are not reached: this zedc refuses a struct declaration and a record
+        // display before the check. On the error path only: one lex and parse of each
+        // operand's code.
+        if let [Some(x), Some(y)] = args.as_slice()
+            && let Some(w @ ("min" | "max")) = sig.word.as_deref()
+            && [x, y].iter().all(|a| {
+                a.ty.vars.is_empty() && !a.ty.is_empty() && a.ty.subtype(&Ty::carrier(Carrier::Str))
+            })
+            && let (Some(cx), Some(cy)) = (self.operand_text(x.at), self.operand_text(y.at))
+        {
+            let op = if w == "min" { "<=" } else { ">=" };
+            let bop = if w == "min" {
+                BinaryOp::Le
+            } else {
+                BinaryOp::Ge
+            };
+            let test = format!(
+                "{} {op} {}",
+                zedc_syntax::format::code_as_operand(&cx, bop, false),
+                zedc_syntax::format::code_as_operand(&cy, bop, true)
+            );
+            let test = zedc_syntax::format::code_as_head(&test);
+            let who = match what.text() {
+                t if t == format!("`{w}`") => t.to_string(),
+                t => format!("{t}, which is `{w}`,"),
+            };
+            self.error_with(
+                span,
+                format!(
+                    "{who} does not take two strings, only two numbers or two tuples. Try `if \
+                     {test} {{ {cx} }} else {{ {cy} }}` instead."
+                ),
+                Vec::new(),
+            );
+            return (out, Vec::new());
+        }
         if self.level == 0 && matches!(sig.word.as_deref(), Some("min" | "max")) {
             self.min_max_lit_ops(sig, &mut args);
         }
@@ -30493,9 +30399,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // already an `f32` (DESIGN.md L1.17): in `2 ^ (2^100 - 1)` the base
                         // keeps `f32` only through `f32 ^ f32`, whose exponent the literal one
                         // does not fit, and so takes no `f32` (plan row
-                        // LIT-f32-inexact-exponent). It takes `rat` through `rat ^ int`. L1.17
-                        // names `f32` alone: a decimal base with an `int` exponent takes `f64`,
-                        // through the arrow `f64 ^ int` plan row POW-domains adds.
+                        // LIT-f32-inexact-exponent). It takes `rat` through `rat ^ int`. The
+                        // same holds for `f64` through the arrow `f64 ^ int` of plan row
+                        // POW-domains: through it the literal base of `2 ^ (2^100 - 1) / 3` took
+                        // `f64`, so the repair listed `2.0f64 ^ ...` beside a second refusal that
+                        // read the exponent at `f64` (l01_26a `top_body_agree::an_exponent_no_
+                        // float_format_holds_leaves_rat_alone_and_is_rejected_in_every_place`,
+                        // b22-checkwalk10, 2026-11-24). A bare decimal base meets neither mixed
+                        // arrow ([`Self::binary_op`], at `BinaryOp::Pow`).
                         Some(p) if let Some(k) = self.class_of(p) => {
                             let literal = (a.as_ref())
                                 .is_some_and(|a| a.lit.is_some() || a.branches.is_some())
@@ -30505,7 +30416,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 let ps = &sig.arrows[j].params;
                                 let mut b = mask_of(&ps[i]);
                                 if literal && ps.iter().any(|q| q != &ps[i]) {
-                                    b &= !Carrier::F32.bit();
+                                    b &= !(Carrier::F32.bit() | Carrier::F64.bit());
                                 }
                                 m[j] &= b;
                             }
@@ -30905,7 +30816,6 @@ impl Built {
                 },
             ],
             kept: None,
-            exact: false,
             proof: None,
         }
     }
@@ -30942,20 +30852,21 @@ impl Built {
                     coef(&BigUint::from(1u8), 1),
                 ],
                 kept: Some(coprime::EMPTY),
-                exact: true,
                 proof: None,
             },
             Value::Big(r) | Value::Rat(r) => {
                 let (num, den, pows) = r.kept();
                 let parts = [coef(num.magnitude(), 0), coef(den.magnitude(), 1)];
+                // The wide atoms (`Rat::wide`) are kept as the primes are, never built, and
+                // are coprime to them and to each other, so their bases join the product.
                 let kept = kept.unwrap_or_else(|| {
                     let primes: Vec<u64> = pows.iter().map(|(p, _)| *p).collect();
-                    roots.leaf(product_of(&primes))
+                    let wide = r.wide().iter().map(|(q, _)| q);
+                    roots.leaf(wide.fold(product_of(&primes), |m, q| m * q))
                 });
                 Built {
                     parts,
                     kept: Some(kept),
-                    exact: true,
                     proof: None,
                 }
             }
@@ -31082,7 +30993,6 @@ fn product_built(roots: &mut coprime::Roots, op: BinaryOp, x: &Built, y: &Built)
     Some(Built {
         parts,
         kept: Some(roots.union(kx, ky)),
-        exact: false,
         proof: roots.proof([x.proof, y.proof], checks),
     })
 }
@@ -34105,9 +34015,10 @@ fn one_tuple(t: &Ty) -> Option<usize> {
     t.tuples.only().filter(|_| alone).map(|r| r.len())
 }
 
-/// Where the receiver of `map` or `where` lies in values the program writes ([`Ck::map_end`]):
-/// the spans of those values, and the parts taken in them to reach the receiver, innermost
-/// first (`None` where it is each whole).
+/// Where the receiver of `map` or `where` ([`Ck::map_end`]), or a value passed on from inside
+/// an argument ([`Ck::need_arg_via`]), lies in values the program writes: the spans of those
+/// values, and the parts taken in them to reach it, innermost first (`None` where it is each
+/// whole).
 type Recv = Option<(Rc<[Span]>, Option<Rc<Taken>>)>;
 
 /// Whether `on` is one family and nothing else, of one key and keys of no tuple, whose
@@ -35049,6 +34960,7 @@ mod tests {
                 at: e.span,
                 src,
                 rank: (1, 1),
+                free: Vec::new(),
             },
             result: None,
             span: e.span,

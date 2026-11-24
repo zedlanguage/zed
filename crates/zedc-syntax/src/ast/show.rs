@@ -767,6 +767,30 @@ fn pattern<'a>(p: &'a Pattern, out: &mut Vec<Show<'a>>) {
             }
             return out.push(Text(")"));
         }
+        Pattern::List { items, rest, .. } => {
+            out.push(Text("["));
+            let mut sep = "";
+            for p in items {
+                out.extend([Text(sep), Show::Pattern(p)]);
+                sep = ", ";
+            }
+            if let Some((r, _)) = rest {
+                out.extend([Text(sep), Text(".."), Text(r)]);
+            }
+            return out.push(Text("]"));
+        }
+        Pattern::Record(fields, _) => {
+            out.push(Text("{"));
+            let mut sep = "";
+            for (n, p) in fields {
+                out.extend([Text(sep), Text(n), Text(":")]);
+                if let Some(p) = p {
+                    out.extend([Text(" "), Show::Pattern(p)]);
+                }
+                sep = ", ";
+            }
+            return out.push(Text("}"));
+        }
     };
     out.push(Text("("));
     let mut sep = "";

@@ -35,7 +35,7 @@ use zed_graph::MinHeap;
 
 use crate::digest::{Digest, step};
 use crate::machine_int::BitLen;
-use crate::num::{mul_cost, mul_int, mul_uint, pow_uint, squares_by_transform};
+use crate::num::{gcd_uint, mul_cost, mul_int, mul_uint, pow_uint, squares_by_transform};
 use crate::term::{Prim, Term};
 use crate::value::Value;
 use zed_numtheory::m61::{self, P};
@@ -1171,7 +1171,7 @@ impl<'t> Identity<'t> {
             };
             let negative = c.is_negative();
             let constant = form.terms.len() == 1 && *first == K::unit();
-            let content = form.terms.iter().fold(BigInt::zero(), |g, (_, c)| g.gcd(c));
+            let content = content(form.terms.iter().map(|(_, c)| c));
             for s in 0..2 {
                 minus[s] ^= negative && e[s] % 2 == 1;
             }
@@ -1489,7 +1489,7 @@ impl<'t> Identity<'t> {
     /// (COMPLEXITY.md POLY-nf-wide-root).
     fn expanded_witness<K: Key>(&self, diff: &Poly<K>, ctx: &Packing) -> Option<Point> {
         // The numerators modulo P, after dividing out their content, so not all zero.
-        let content = diff.terms.iter().fold(BigInt::zero(), |g, (_, c)| g.gcd(c));
+        let content = content(diff.terms.iter().map(|(_, c)| c));
         let mut cur: Vec<(K, u64)> = diff
             .terms
             .iter()
@@ -1680,6 +1680,28 @@ fn small(i: u64) -> i128 {
 fn small_mod(v: i128) -> u64 {
     let p = i128::from(P);
     u64::try_from(v.rem_euclid(p)).expect("a residue is below P")
+}
+
+/// The content of the coefficients `cs`: the gcd of their magnitudes, 0 when there are none.
+///
+/// The fold stops once the gcd is 1, since `gcd(1, c) = 1` for every `c`, and each step is the
+/// kernel's gcd (`num::gcd_uint`: the powers of 2 by shifts, a remainder by a word streamed
+/// when one odd part fits in 64 bits, the half gcd otherwise). Complexity tradeoff: the fold
+/// with `Integer::gcd` (num-bigint's Stein gcd, O(n^2) in the n bits of the wider operand, one
+/// shift per step) went on past 1, so the content of the factor `p * q + q` of
+/// `poly::tests::one_decide_spends_at_most_four_budgets`, 701^2 coefficients of about 700
+/// bits, cost about 700 shifts of 11 words per coefficient, 64% of that test's time
+/// (FAIL-poly-four-budgets-time, perf on the VM); now the fold reads coefficients only until
+/// their gcd is 1, the first few for a form with no common factor.
+fn content<'a>(cs: impl IntoIterator<Item = &'a BigInt>) -> BigInt {
+    let mut g = BigUint::zero();
+    for c in cs {
+        if g.is_one() {
+            break;
+        }
+        g = gcd_uint(&g, c.magnitude());
+    }
+    BigInt::from(g)
 }
 
 /// `a` modulo `P`, in `0..P`.

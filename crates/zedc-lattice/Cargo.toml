@@ -13,6 +13,8 @@ publish.workspace = true
 crate-type = ["rlib", "dylib"]
 
 [dependencies]
+num-bigint.workspace = true
+num-traits.workspace = true
 zed-collections.workspace = true
 zed-graph.workspace = true
 zed-kernel.workspace = true

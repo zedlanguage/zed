@@ -1654,15 +1654,32 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Leaf(site),
             Dbg::Text(" }"),
         ]),
-        NeedKind::Remap { at, src, rank } => parts.extend([
-            Dbg::Text("Remap { at: "),
-            Dbg::Leaf(at),
-            Dbg::Text(", src: "),
-            Dbg::Ty(src),
-            Dbg::Text(", rank: "),
-            Dbg::Leaf(rank),
-            Dbg::Text(" }"),
-        ]),
+        NeedKind::Remap {
+            at,
+            src,
+            rank,
+            free,
+        } => {
+            parts.extend([
+                Dbg::Text("Remap { at: "),
+                Dbg::Leaf(at),
+                Dbg::Text(", src: "),
+                Dbg::Ty(src),
+                Dbg::Text(", rank: "),
+                Dbg::Leaf(rank),
+                Dbg::Text(", free: "),
+            ]);
+            debug_list(parts, "[", free, "]", |p, (id, t)| {
+                p.extend([
+                    Dbg::Text("("),
+                    Dbg::Leaf(id),
+                    Dbg::Text(", "),
+                    Dbg::Ty(t),
+                    Dbg::Text(")"),
+                ]);
+            });
+            parts.push(Dbg::Text(" }"));
+        }
         NeedKind::Call {
             what,
             positional,
@@ -5791,6 +5808,13 @@ pub enum NeedKind {
         /// makes the source further along, a later level or fewer such variables at this one,
         /// so a chain of checks ends (the proof is at `remap_of`, crates/zedc-check).
         rank: (usize, usize),
+        /// Each name the remap's key and leaf expressions read that is bound outside the
+        /// remap (a binder id of the unit), with its type where the need is made, as a
+        /// parameter `f` of the function whose body holds `m as (k -> v) into (k -> f(v))`.
+        /// The check of the need reads each name at this type, renamed as the need is and
+        /// bound as the call binds it, not at the type the body left in scope
+        /// (FAIL-remap-need-free-names-unbound, `Ck::remap_met` in crates/zedc-check).
+        free: Vec<(usize, Ty)>,
     },
     /// `v >< (op)` at the fold written at the span: the value is a family whose entries `op`
     /// folds, and the use gives the fold (step L3.2; DESIGN.md sec:reduction). The span is the
@@ -7368,10 +7392,17 @@ impl Need {
                     f: f(g),
                     site: *site,
                 },
-                NeedKind::Remap { at, src, rank } => NeedKind::Remap {
+                // `src` before `free`, the order [`Need::tys`] gives them in.
+                NeedKind::Remap {
+                    at,
+                    src,
+                    rank,
+                    free,
+                } => NeedKind::Remap {
                     at: *at,
                     src: f(src),
                     rank: *rank,
+                    free: free.iter().map(|(id, t)| (*id, f(t))).collect(),
                 },
                 NeedKind::Reduce(op, site, form) => NeedKind::Reduce(*op, *site, *form),
                 NeedKind::Fold { tys, right, by } => NeedKind::Fold {
@@ -7696,8 +7727,8 @@ impl Need {
                 | NeedKind::Zip { other: k, .. }
                 | NeedKind::Map { f: k, .. }
                 | NeedKind::Group { f: k, .. }
-                | NeedKind::Level { f: k, .. }
-                | NeedKind::Remap { src: k, .. } => (Some(k), &[], &[], &[], &[], &[]),
+                | NeedKind::Level { f: k, .. } => (Some(k), &[], &[], &[], &[], &[]),
+                NeedKind::Remap { src, free, .. } => (Some(src), &[], &[], free, &[], &[]),
                 NeedKind::Call {
                     positional, named, ..
                 } => (None, positional, named, &[], &[], &[]),
@@ -7742,13 +7773,15 @@ impl Need {
             | NeedKind::Map { f: t, .. }
             | NeedKind::Group { f: t, .. }
             | NeedKind::Level { f: t, .. }
-            | NeedKind::Remap { src: t, .. }
             | NeedKind::Into { ty: t, .. }
             | NeedKind::SumMethod { beside: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Concat { other: t, .. }
             | NeedKind::Zip { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
+            NeedKind::Remap { src, free, .. } => std::iter::once(src)
+                .chain(free.iter().map(|(_, t)| t))
+                .collect(),
             NeedKind::Call {
                 positional, named, ..
             } => positional
@@ -7790,13 +7823,15 @@ impl Need {
             | NeedKind::Map { f: t, .. }
             | NeedKind::Group { f: t, .. }
             | NeedKind::Level { f: t, .. }
-            | NeedKind::Remap { src: t, .. }
             | NeedKind::Into { ty: t, .. }
             | NeedKind::SumMethod { beside: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Concat { other: t, .. }
             | NeedKind::Zip { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
+            NeedKind::Remap { src, free, .. } => std::iter::once(src)
+                .chain(free.into_iter().map(|(_, t)| t))
+                .collect(),
             NeedKind::Call {
                 mut positional,
                 named,
@@ -13675,6 +13710,26 @@ impl<'m, 's> Comparing<'m, 's> {
         binds: &mut Binds,
     ) -> bool {
         let filed = self.filed(t, search);
+        // No tuple shape of `t` has the length of `cs`: the answer is no, and no split is made
+        // (PERF-fold-projection-fast-path). Proof that it is the answer the splits below give:
+        // [`Comparing::row_in_one`] answers no for a row of a length `filed` has no shapes of,
+        // before it tries, binds or refuses anything, and each row a split makes has the
+        // length of the row it splits. So `cs` is not held, [`Comparing::split_at`] with no
+        // shape tried returns the first component of two or more pieces or none, and every
+        // row of the split is refused in turn down to one of single pieces, where `split_at`
+        // gives none and the answer is no; `binds` and `search` are left as they were, since
+        // nothing was bound or searched. Test: l01_26 `fits::a_joined_tuple_within_a_variable_
+        // binds_it`.
+        //
+        // Complexity tradeoff: naive, as before, the row was split at each component of two or
+        // more pieces in turn before the no, each split building rows of the row's width: a row
+        // of n components of two carriers each within a bare variable cost n splits of O(n),
+        // Θ(n²) (1.07 s at n = 512 in the check of the l03_02 rotated-tuple fold). Used: one
+        // lookup, O(1) expected. Bench: l01_26
+        // `bench::fits::a_joined_tuple_within_a_variable_scales`.
+        if !filed.rows.contains_key(&cs.len()) {
+            return false;
+        }
         // The shapes each row was tried in and failed, in the order tried, for
         // [`Comparing::split_at`].
         let tried = RefCell::new(Vec::new());
@@ -33205,12 +33260,22 @@ pub mod r10_hash {
                     self.emit_ty(f);
                     self.emit_span(*site);
                 }
-                NeedKind::Remap { at, src, rank } => {
+                NeedKind::Remap {
+                    at,
+                    src,
+                    rank,
+                    free,
+                } => {
                     self.emit(TAG_NK_REMAP);
                     self.emit_span(*at);
                     self.emit_ty(src);
                     self.emit_usize(rank.0);
                     self.emit_usize(rank.1);
+                    self.emit_usize(free.len());
+                    for (id, t) in free {
+                        self.emit_usize(*id);
+                        self.emit_ty(t);
+                    }
                 }
                 NeedKind::Reduce(red, site, ff) => {
                     self.emit(TAG_NK_REDUCE);

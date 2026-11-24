@@ -16,7 +16,7 @@ use zed_tests::step_helpers::l01_26_type_resolution::Resolved;
 
 use super::super::scaling::{
     calls, calls_of_divisions, calls_with_divisor, decimals, deep_exponent, divisor_chain,
-    flat_exponent, half_of_a_power, if_of_a_power, int_pair_of_a_power, long,
+    flat_exponent, half_of_a_power, if_of_a_power, if_of_a_wide_power, int_pair_of_a_power, long,
     main_of_an_if_of_a_power, main_of_an_if_of_a_sum, nested_argument, nested_argument_two_sides,
     nested_divisions, nested_quotients, pair_of_a_power, pairs, power_divisor, powers_at_the_top,
     powers_in_a_body, powers_of_two, product, quotients, squares_divisor, sum, sum_of_divisions,
@@ -479,17 +479,30 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time_a_power_divi
     );
 }
 
-/// Besides its ratio: no type error. Small instance:
-/// `scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier`, with the
-/// signatures and values in `scaling::operations_on_literals_are_typed_by_their_value`.
+/// Besides its ratio: one rejection, the sum `3r^(2^n) + 1r` past the address space (DESIGN.md
+/// sec:diagnostics, "Number too large for any memory of the target"). Before KEPT-power-form
+/// the checker did not fix the power and accepted the text, which DESIGN rejects. Small
+/// instances: `scaling::nested_squares_are_sized_at_the_sum`, and the signatures in
+/// `scaling::operations_on_literals_are_typed_by_their_value`.
 #[test]
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_squares() {
-    accepted_scales(
-        "checking a divisor of n nested squares of 3",
-        2000,
-        1,
-        squares_divisor,
-    );
+    scaling::on_a_thread(1 << 29, || {
+        let n = 2000;
+        let what = "rejecting a divisor of n nested squares of 3";
+        let units = scaling::inputs(n, |m| Resolved::new(&squares_divisor(m)));
+        for u in units.values() {
+            let [e] = &u.type_errors()[..] else {
+                panic!("{what}: one rejection")
+            };
+            assert!(
+                e.starts_with("Number too large for any memory of the target"),
+                "{what}: {e}"
+            );
+        }
+        scaling::check_order(what, n, 1, |m| {
+            std::hint::black_box(units[&m].type_errors());
+        });
+    });
 }
 
 /// Checks `make(m)` at `n` and `8n`, rejected `count` times each, as work of order 0.
@@ -592,6 +605,36 @@ fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_when_checked()
         scaling::check_order("the checking of an `if` of 3^(200 n)", n, 0, |m| {
             std::hint::black_box(units[&m].type_errors());
         });
+    });
+}
+
+// The same for a base wider than 64 bits, `(2^64 + 13)^K` (plan row LIT-power-wide-base): the
+// base is kept as one atom with the exponent, so the checking costs the text, which does not
+// grow with K = 200 n (order 0). Before, `Rat::pow` built the power with `num::fast::pow`,
+// O(M(64 K)) in its 64 K bits, 13 million bits at K = 200,000.
+
+/// Besides its ratio: no type error, and the signature writes the power. Small instance:
+/// `scaling::the_type_of_an_if_holding_a_power_of_a_wide_base_prints_the_power`.
+#[test]
+fn the_type_of_an_if_holding_a_power_of_a_wide_base_prints_the_power_when_checked() {
+    scaling::on_a_thread(1 << 29, || {
+        let n = 500;
+        let units = scaling::inputs(n, |m| Resolved::new(&if_of_a_wide_power(m)));
+        for (m, u) in &units {
+            assert_eq!(
+                zed_tests::step_helpers::l01_26_type_resolution::sig(&if_of_a_wide_power(*m), "f"),
+                format!("(b: bool) -> 2 | 18446744073709551629^{}", 200 * m)
+            );
+            assert_eq!(u.type_errors(), Vec::<String>::new());
+        }
+        scaling::check_order(
+            "the checking of an `if` of (2^64 + 13)^(200 n)",
+            n,
+            0,
+            |m| {
+                std::hint::black_box(units[&m].type_errors());
+            },
+        );
     });
 }
 

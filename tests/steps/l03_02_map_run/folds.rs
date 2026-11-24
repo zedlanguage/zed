@@ -905,3 +905,79 @@ fn propagated_and_else_reads_of_the_accumulator_check() {
         );
     }
 }
+
+/// The signature of `f`, a fold over `[1, 2, 3]` from `init` whose function gives the tuple of
+/// `parts`, each written over the accumulator `a`; with `block`, the function binds `b = a`
+/// and gives the parts over `b` inside a block, a body `fold_projections` does not read, so
+/// the checker's rounds type it. Checked to hold no error.
+fn projection_sig(init: &str, parts: &[String], left: bool, block: bool) -> String {
+    use zed_tests::step_helpers::l01_26_type_resolution::{info, sig};
+    let tuple = match parts.len() {
+        1 => format!("({},)", parts[0]),
+        _ => format!("({})", parts.join(", ")),
+    };
+    let body = match block {
+        false => tuple,
+        true => format!("{{ b = a; {} }}", tuple.replace("a[", "b[")),
+    };
+    let src = match left {
+        true => format!("f() = [1, 2, 3].foldl({init}, (a, x) -> {body});\n"),
+        false => format!("f() = [1, 2, 3].foldr((x, a) -> {body}, {init});\n"),
+    };
+    assert!(
+        info(&src).0.errors.is_empty(),
+        "{src}: {:?}",
+        info(&src).0.errors
+    );
+    sig(&src, "f")
+}
+
+/// A fold whose function gives a tuple of projections `a[c]` and parts that do not read `a`
+/// takes, by `fold_projections` (row PERF-fold-projection-fast-path), the type the checker's
+/// rounds give the same function written in a block: random folds of 1 to 6 scalar parts of
+/// `int`, `f64`, `String` and an atom, by `foldl` and by `foldr`. Chosen cases come first: a
+/// rotation, a swap beside a fixed part, a chain that ends at a part reading the element, and
+/// the three of the Gemini seat written in the plan row, where one joined tuple is not the
+/// answer: `(#a, #b, #c)` with `(a[1], a[2], a[2])` settles at `(#a, #b, #c) | (#b | #c, #c,
+/// #c)`, `(#a, #b)` with `(a[1], #c)` at `(#a, #b) | (#b | #c, #c)`, and `(#a, #b)` with
+/// `(#c, #d)` at `(#a, #b) | (#c, #d)`.
+#[test]
+fn a_projection_fold_takes_the_type_the_rounds_give() {
+    use zed_tests::instances::Rng;
+    let own = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let mut cases: Vec<(String, Vec<String>)> = vec![
+        ("(1.5, 0, 0)".into(), own(&["a[1]", "a[2]", "a[0]"])),
+        ("(1.5, 0, \"s\")".into(), own(&["a[1]", "a[0]", "a[2]"])),
+        ("(0, 0, 0)".into(), own(&["a[1]", "a[2]", "x"])),
+        ("(#a, #b, #c)".into(), own(&["a[1]", "a[2]", "a[2]"])),
+        ("(#a, #b)".into(), own(&["a[1]", "#c"])),
+        ("(#a, #b)".into(), own(&["#c", "#d"])),
+    ];
+    let scalars = ["0", "1.5", "\"s\"", "#p"];
+    let free = ["x", "0", "2.5", "\"t\"", "#q"];
+    let mut rng = Rng::new(0x5eed_f01d);
+    for _ in 0..120 {
+        let n = rng.int(1, 6) as usize;
+        let init: Vec<&str> = (0..n).map(|_| scalars[rng.int(0, 3) as usize]).collect();
+        let parts = (0..n)
+            .map(|_| match rng.int(0, 2) {
+                0 => free[rng.int(0, 4) as usize].to_string(),
+                _ => format!("a[{}]", rng.int(0, n as i64 - 1)),
+            })
+            .collect();
+        let init = match n {
+            1 => format!("({},)", init[0]),
+            _ => format!("({})", init.join(", ")),
+        };
+        cases.push((init, parts));
+    }
+    for (init, parts) in &cases {
+        for left in [true, false] {
+            assert_eq!(
+                projection_sig(init, parts, left, false),
+                projection_sig(init, parts, left, true),
+                "init {init}, parts {parts:?}, foldl {left}"
+            );
+        }
+    }
+}

@@ -204,3 +204,38 @@ fn a_wrong_table_is_caught() {
             .all(|f| f.starts_with("Min") && f.contains("no arrow"))
     );
 }
+
+/// `f64 ^ int` (plan row POW-domains): the IEEE power of the exponent as an `f64`, with no atom;
+/// a zero to a negative power is the infinity of the zero's sign at an odd exponent, the
+/// positive one at an even one; an exponent past ±2^53 keeps its parity; the NaN gives the NaN.
+/// Corner cases: ±2^53 itself, 2^53 + 1, and a negative exponent past it. Negative control: the
+/// same power at `f32`, whose arrow was there before, agrees with it rounded to `f32`.
+#[test]
+fn float_to_an_int_power() {
+    let pow = |x: f64, n: Value| match prim_data(Prim::Pow, vec![Value::float(x), n]) {
+        Ok(Value::Float(r)) => r.get(),
+        other => panic!("f64 ^ int gave {other:?}"),
+    };
+    let big = |s: &str| Value::integer(Rat::int(s.parse::<BigInt>().expect("digits")));
+    assert_eq!(pow(2.0, Value::Int(10)), 1024.0);
+    assert_eq!(pow(2.0, Value::Int(-2)), 0.25);
+    assert_eq!(pow(0.0, Value::Int(-1)), f64::INFINITY);
+    assert_eq!(pow(-0.0, Value::Int(-1)), f64::NEG_INFINITY);
+    assert_eq!(pow(-0.0, Value::Int(-2)), f64::INFINITY);
+    assert_eq!(pow(0.0, Value::Int(0)), 1.0);
+    assert!(pow(f64::NAN, Value::Int(0)).is_nan());
+    assert_eq!(pow(-1.0, Value::Int(1 << 53)), 1.0);
+    assert_eq!(pow(-1.0, big("9007199254740993")), -1.0);
+    assert_eq!(pow(-1.0, big("-9007199254740993")), -1.0);
+    assert_eq!(pow(-1.0, big("100000000000000000000")), 1.0);
+    assert_eq!(pow(2.0, big("100000000000000000000")), f64::INFINITY);
+    assert_eq!(pow(-2.0, big("-100000000000000000001")), -0.0);
+    assert!(pow(-2.0, big("-100000000000000000001")).is_sign_negative());
+    for (x, n) in [(1.5f32, 7i64), (-3.0, -3), (0.1, 20)] {
+        let at32 = prim_data(Prim::Pow, vec![Value::float32(x), Value::Int(n)]);
+        let Ok(Value::Float32(r)) = at32 else {
+            panic!("f32 ^ int gave {at32:?}")
+        };
+        assert_eq!(r.get(), pow(f64::from(x), Value::Int(n)) as f32);
+    }
+}

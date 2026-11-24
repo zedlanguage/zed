@@ -17,11 +17,13 @@ use super::fast::{self, built};
 use super::room::{LiteralRounding, TooLarge, room};
 use crate::machine_int::BitLen;
 
-/// `coef * prod p^e`, every exponent positive; the coefficient is borrowed from the number it
-/// bounds where it can be, so a wide one is not copied.
+/// `coef * prod p^e * prod q^f`, every exponent positive, `q` the wide atoms of a `Rat` (each
+/// wider than 64 bits); the coefficient and the atoms are borrowed from the number it bounds
+/// where they can be, so a wide one is not copied.
 pub(super) struct Product<'a> {
     pub(super) coef: Cow<'a, BigUint>,
     pub(super) pows: Vec<(u64, BigUint)>,
+    pub(super) wide: Vec<(Cow<'a, BigUint>, BigUint)>,
 }
 
 /// The positive number `m * 2^e`.
@@ -148,23 +150,49 @@ impl Product<'_> {
         for (p, e) in &self.pows {
             b += e * p.bit_len();
         }
+        for (q, f) in &self.wide {
+            b += f * q.bits();
+        }
         b
     }
 
-    /// The product itself, built by [`built`] and [`fast::mul`], O(n log n) in its width;
-    /// [`TooLarge`] as for [`built`].
+    /// The product itself, built by [`built`], [`fast::pow`] and [`fast::mul`], O(n log n) in
+    /// its width; [`TooLarge`] as for [`built`], and for an atom's exponent beyond a word.
     fn materialize(&self) -> Result<BigUint, TooLarge> {
-        let pows = built(&self.pows)?.into_parts().1;
-        Ok(fast::mul(&self.coef, &pows))
+        let mut x = fast::mul(&self.coef, &built(&self.pows)?.into_parts().1);
+        for (q, f) in &self.wide {
+            let Some(k) = f.to_u64() else {
+                return Err(TooLarge {
+                    size: self.bits(),
+                    ask: self.bits(),
+                });
+            };
+            x = fast::mul(&x, &fast::pow(q, k));
+        }
+        Ok(x)
     }
 
     /// The widest exponent, in bits.
     fn exp_bits(&self) -> u64 {
-        self.pows.iter().map(|(_, e)| e.bits()).max().unwrap_or(0)
+        let pows = self.pows.iter().map(|(_, e)| e.bits());
+        pows.chain(self.wide.iter().map(|(_, f)| f.bits()))
+            .max()
+            .unwrap_or(0)
     }
 
     /// A lower bound, or an upper one when `up`, kept to `k` bits.
     fn bound(&self, k: u64, up: bool) -> Bound {
+        /// `base^e` by squaring from 1, each product rounded to `k` bits.
+        fn power(base: &Bound, e: &BigUint, k: u64, up: bool) -> Bound {
+            let mut power = Bound::exact(BigUint::one());
+            for i in (0..e.bits()).rev() {
+                power = power.mul(&power, k, up);
+                if e.bit(i) {
+                    power = power.mul(base, k, up);
+                }
+            }
+            power
+        }
         let mut b = Bound::of(&self.coef, k, up);
         for (p, e) in &self.pows {
             if *p == 2 {
@@ -172,15 +200,12 @@ impl Product<'_> {
                 b.e += BigInt::from(e.clone());
                 continue;
             }
-            let base = Bound::exact(BigUint::from(*p));
-            let mut power = Bound::exact(BigUint::one());
-            for i in (0..e.bits()).rev() {
-                power = power.mul(&power, k, up);
-                if e.bit(i) {
-                    power = power.mul(&base, k, up);
-                }
-            }
-            b = b.mul(&power, k, up);
+            b = b.mul(&power(&Bound::exact(BigUint::from(*p)), e, k, up), k, up);
+        }
+        // A wide atom's base is itself rounded to `k` bits first, in the bound's direction, so
+        // the power bounds `q^f` the same way ([`cap`] counts this rounding).
+        for (q, f) in &self.wide {
+            b = b.mul(&power(&Bound::of(q, k, up), f, k, up), k, up);
         }
         b
     }
@@ -199,6 +224,10 @@ fn by_bit_length(n: &Product<'_>, d: &Product<'_>) -> Option<Ordering> {
             let bits = u64::from(p.bit_len());
             low += e * (bits - 1);
             high += e * bits;
+        }
+        for (q, f) in &x.wide {
+            low += f * (q.bits() - 1);
+            high += f * q.bits();
         }
         (low, high)
     };
@@ -260,6 +289,19 @@ fn log2_sum(x: &Product<'_>) -> Option<(f64, usize)> {
         }
         let e = m * 2f64.powi(s as i32);
         sum += e * (*p as f64).log2();
+        terms += 1;
+    }
+    // A wide atom's term `f log2 q`, with `log2 q = s + log2 m` from its leading 64 bits, as
+    // the coefficient's: within a relative `(2.04c + 5)u` of `log2 q` (`q > 2^64`, so `s > 0`
+    // and `log2 q >= 64`), then times `fl(f)` within `2u` and the product rounded by `u`, inside
+    // the `r` of the analysis at [`by_logs`].
+    for (q, f) in &x.wide {
+        let (m, s) = leading(f);
+        if s > 900 {
+            return None;
+        }
+        let (mq, sq) = leading(q);
+        sum += m * 2f64.powi(s as i32) * (sq as f64 + mq.log2());
         terms += 1;
     }
     Some((sum, terms))
@@ -357,7 +399,10 @@ fn ln_up(x: &BigUint) -> f64 {
 /// ln d` with `b1, b2` positive integers. The `α` are integers above 1, so real and positive
 /// with positive logarithms, and `D = 1 / 1 = 1`. Independence: the caller (`Rat`'s
 /// `magnitude_order`) passes coefficients coprime to every listed atom and listed atoms that
-/// are pairwise coprime, so with one `a` listed the two `a` are coprime; then `a_1^x = a_2^y`
+/// are pairwise coprime, a wide atom of a `Rat` (`Product::wide`) among them, since a `Rat`'s
+/// wide atoms are coprime to each other, to its listed primes and to its coefficients, and a
+/// pair with one goes through the quotient of the two, one `Rat`; so with one `a` listed the
+/// two `a` are coprime; then `a_1^x = a_2^y`
 /// with `x, y` not both 0 is impossible, since `x, y > 0` puts a prime of `a_1` into `a_2`, and
 /// one of them 0 makes a number above 1 equal 1. The height of an integer `a > 1` is `ln a`,
 /// so any `ln A_i >= max(ln a_i, 1)` meets the condition, and the bound holds for every such
@@ -373,9 +418,10 @@ fn ln_up(x: &BigUint) -> f64 {
 pub(super) fn laurent_bits(n: &Product<'_>, d: &Product<'_>) -> Option<u64> {
     // `(ln_up a, b, listed)` for a product that is one power `a^b`, `a > 1`.
     fn single(x: &Product<'_>) -> Option<(f64, BigUint, bool)> {
-        match (x.coef.is_one(), &x.pows[..]) {
-            (true, [(p, e)]) => Some((ln_up(&BigUint::from(*p)), e.clone(), true)),
-            (false, []) => Some((ln_up(&x.coef), BigUint::one(), false)),
+        match (x.coef.is_one(), &x.pows[..], &x.wide[..]) {
+            (true, [(p, e)], []) => Some((ln_up(&BigUint::from(*p)), e.clone(), true)),
+            (true, [], [(q, f)]) => Some((ln_up(q), f.clone(), true)),
+            (false, [], []) => Some((ln_up(&x.coef), BigUint::one(), false)),
             _ => None,
         }
     }
@@ -396,23 +442,73 @@ pub(super) fn laurent_bits(n: &Product<'_>, d: &Product<'_>) -> Option<u64> {
 }
 
 /// A precision `k` at which the rounds of [`cmp`] must tell `n` and `d` apart, when
-/// [`laurent_bits`] gives `P`: `P + eb + 8`, `eb` the widest exponent in bits, at least 1.
+/// [`laurent_bits`] gives `P`: `P + eb + 9`, `eb` the widest exponent in bits, at least 1.
 ///
 /// Proof. A rounding to `k` bits ([`Bound::of`], [`Bound::round`]) keeps `m >= 2^(k - 1)` units
 /// of `2^drop` and moves the value `v` by less than one unit, so by less than `δ v` with `δ =
 /// 2^(1 - k)`; in logarithms by at most `ln(1 + δ) <= δ` up and `-ln(1 - δ) <= 2δ` down, so
 /// `2^(2 - k)` either way. A power `p^e` by squaring from 1 rounds twice a step at most, so its
 /// error in logarithms after step `j` is `E_j <= 2 E_(j-1) + 2^(3 - k)`, `E_0 = 0`, hence
-/// `E_t <= 2^(3 - k) (2^t - 1) < 2^(4 - k) e` for `t` the bits of `e`; the coefficient adds one
-/// rounding and the product of the two one more. So each side's bound is within `2^(3 - k) (1 +
-/// 2e) <= 2^(5 + eb - k)` of the side in logarithms, up and down alike, and its interval
-/// `[low, high]` has `ln(high / low) <= 2^(6 + eb - k)`. When neither `low_n > high_d` nor
-/// `high_n < low_d`, the two intervals meet, so `|ln n - ln d| <= ln(high_n / low_n) +
-/// ln(high_d / low_d) <= 2^(7 + eb - k)`, which at `k >= P + eb + 8` is below `2^-P <= |ln n -
-/// ln d|`, a contradiction. A power of 2 is bounded exactly and only tightens this.
+/// `E_t <= 2^(3 - k) (2^t - 1) < 2^(4 - k) e` for `t` the bits of `e`. A wide atom's base is
+/// rounded once first, by at most `2^(2 - k)` in logarithms, which its power multiplies by `e`:
+/// `2^(2 - k) e` more, so a power is within `2^(4 - k) e + 2^(2 - k) e < 2^(5 - k) e`. The
+/// coefficient adds one rounding and the product of the two one more. So each side's bound is
+/// within `2^(3 - k) + 2^(5 - k) e <= 2^(6 + eb - k)` of the side in logarithms, up and down
+/// alike, and its interval `[low, high]` has `ln(high / low) <= 2^(7 + eb - k)`. When neither
+/// `low_n > high_d` nor `high_n < low_d`, the two intervals meet, so `|ln n - ln d| <=
+/// ln(high_n / low_n) + ln(high_d / low_d) <= 2^(8 + eb - k)`, which at `k >= P + eb + 9` is
+/// below `2^-P <= |ln n - ln d|`, a contradiction. A power of 2 is bounded exactly and only
+/// tightens this.
 fn cap(n: &Product<'_>, d: &Product<'_>) -> Option<u64> {
     let eb = n.exp_bits().max(d.exp_bits()).max(1);
-    laurent_bits(n, d).map(|p| p + eb + 8)
+    laurent_bits(n, d).map(|p| p + eb + 9)
+}
+
+/// `n` and `d` with every exponent divided by `g`, the greatest common divisor of all the
+/// exponents of both, when `g > 1` and both coefficients are 1; `None` otherwise.
+///
+/// Proof that the order is kept: with coefficient 1 each side is `prod x^(g k_x)`, so it is
+/// `r^g` for `r = prod x^(k_x)`, the side returned, and `r > 0`. For an integer `g >= 1`,
+/// `t -> t^g` is strictly increasing on the positive reals, so `r_n^g` and `r_d^g` order as
+/// `r_n` and `r_d`. A side with no exponent at all is 1 and stays 1.
+///
+/// Complexity tradeoff: the rounds of [`cmp_at`] raise `k`-bit bounds to each exponent by
+/// squaring, `O(log e M(k))` a round, and two sides that agree in their first `m` bits take `k`
+/// near `m`. Two products of wide powers with one exponent `e`, `(a b)^e` against `(b c)^e`, agree
+/// in as many bits as `a / c` is near 1, about the bits of the atoms when they are close, so the
+/// rounds cost `O(log e M(m))` against the `O(M(m))` of comparing the roots `a` and `c` (or with
+/// small exponents, built in full). Measured on `(a b)^(2^64)` against `(b c)^(2^64)`, `a`, `b`,
+/// `c` within 64 of `2^(m - 1)`: 175 ms at `m = 2^16` and 2.93 s at `2^19` without this, 16.7
+/// times for 8 times the bits (2026-11-24, Colab). The gcd costs `O(terms)` gcds of exponents,
+/// a word or two each, beside the rounds' products of `k`-bit numbers.
+fn common_root<'a>(n: &Product<'a>, d: &Product<'a>) -> Option<(Product<'a>, Product<'a>)> {
+    if !n.coef.is_one() || !d.coef.is_one() {
+        return None;
+    }
+    let mut g = BigUint::zero();
+    for x in [n, d] {
+        for e in x
+            .pows
+            .iter()
+            .map(|(_, e)| e)
+            .chain(x.wide.iter().map(|(_, f)| f))
+        {
+            g = g.gcd(e);
+            if g.is_one() {
+                return None;
+            }
+        }
+    }
+    // `g = 0`: both sides are 1, which the bit lengths already ordered.
+    if g.is_zero() {
+        return None;
+    }
+    let root = |x: &Product<'a>| Product {
+        coef: x.coef.clone(),
+        pows: x.pows.iter().map(|(p, e)| (*p, e / &g)).collect(),
+        wide: x.wide.iter().map(|(q, f)| (q.clone(), f / &g)).collect(),
+    };
+    Some((root(n), root(d)))
 }
 
 /// The order of two positive products. The system is asked for the memory of each precision
@@ -438,6 +534,9 @@ fn cmp_at(n: &Product<'_>, d: &Product<'_>) -> Result<(Ordering, u64), TooLarge>
     // bounds alone was already free of the digits, at O(log^2 e) word operations.
     if let Some(o) = by_bit_length(n, d).or_else(|| by_logs(n, d, 1.0)) {
         return Ok((o, 0));
+    }
+    if let Some((n, d)) = common_root(n, d) {
+        return cmp_at(&n, &d);
     }
     let cost = n.bits() + d.bits();
     let mut k = start(n, d);
@@ -658,6 +757,7 @@ mod tests {
         Product {
             coef: Cow::Owned(coef),
             pows: pows.iter().map(|&(p, e)| (p, BigUint::from(e))).collect(),
+            wide: Vec::new(),
         }
     }
 
@@ -838,5 +938,34 @@ mod tests {
             }
         }
         assert!(wrong > 0, "no exponent gave a wrong verdict with no margin");
+    }
+
+    /// [`common_root`] divides every exponent by their gcd, leaves a coefficient other than 1
+    /// and coprime exponents alone, and the order of two close wide powers with one exponent
+    /// `2^64` is that of their atoms.
+    #[test]
+    fn a_common_root_of_both_sides_keeps_their_order() {
+        let m = 1u64 << 12;
+        let odd = |k: u32| (BigUint::one() << (m - 1)) + BigUint::from(2 * k + 1);
+        let (a, c) = (odd(7), odd(28));
+        let e = BigUint::one() << 64u32;
+        let wide = |q: &BigUint, f: &BigUint, p: &[(u64, u64)]| Product {
+            coef: Cow::Owned(BigUint::one()),
+            pows: p.iter().map(|&(p, k)| (p, BigUint::from(k) * f)).collect(),
+            wide: vec![(Cow::Owned(q.clone()), f.clone())],
+        };
+        let (n, d) = (wide(&a, &e, &[(3, 2)]), wide(&c, &e, &[(3, 2)]));
+        let (rn, rd) = common_root(&n, &d).expect("a common root");
+        assert_eq!(rn.pows, vec![(3, BigUint::from(2u32))]);
+        assert_eq!(rn.wide[0].1, BigUint::one());
+        assert_eq!(rd.wide[0].1, BigUint::one());
+        assert_eq!(cmp(&n, &d), Ok(Ordering::Less));
+        assert_eq!(cmp(&d, &n), Ok(Ordering::Greater));
+        // Exponents 2^64 and 2^64 + 1 are coprime; a coefficient of 2 is not a power.
+        let f = &e + BigUint::one();
+        assert!(common_root(&n, &wide(&c, &f, &[])).is_none());
+        let mut two = wide(&c, &e, &[]);
+        two.coef = Cow::Owned(BigUint::from(2u32));
+        assert!(common_root(&n, &two).is_none());
     }
 }

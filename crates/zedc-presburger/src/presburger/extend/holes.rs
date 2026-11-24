@@ -249,22 +249,62 @@ impl Holes {
         out
     }
 
+    /// The holes of the runs `runs` of a call node's set (`HoleSet::runs`, sorted and
+    /// disjoint), read over the node's term itself: scale 1, shift 0 (LOAD-call-disj-spread,
+    /// META3 H7). Read over the one atom `a` of a term `k * a + e` through
+    /// [`Holes::through`]`(k, e)`. O(n log n) expected for n runs, made once a set
+    /// (`Faces::leaf` keeps it).
+    pub(super) fn of_runs(runs: &[(Int, Int)]) -> Holes {
+        let mut h = Holes::new();
+        for (lo, hi) in runs {
+            h.cut(lo, hi);
+        }
+        h
+    }
+
     /// The holes added to those of `other`, the smaller set cut into the larger. O(the smaller
-    /// times log of the larger).
+    /// times log of the larger), and O(1) when both are one tree read through one map.
+    ///
+    /// The second case, a set merged with itself, is the call node read at each link of a
+    /// chain: its holes are in the face of the link before and in the link's own node, over
+    /// one tree (`Faces::leaf` reads one tree a set) through one binding. A union of a set with
+    /// itself is the set, so `self` is returned unchanged (design-b22-load5.md section 2, Cost:
+    /// "a merge of two leaves of the same payload and the same total binding is idempotent and
+    /// skips the walk", Codex C4); without it each link cut the n runs again, Θ(n log n) a link.
+    /// Counted (`counts::HOLES_SAME`).
     pub(super) fn merged(self, other: Holes) -> Holes {
+        if self.same(&other) {
+            super::counts::add(super::counts::HOLES_SAME, 1);
+            return self;
+        }
         let (mut big, small) = match self.len() >= other.len() {
             true => (self, other),
             false => (other, self),
         };
+        super::counts::add(super::counts::HOLES_MERGED_RUNS, small.len());
         for (lo, hi) in small.intervals() {
             big.cut(&lo, &hi);
         }
         big
     }
 
-    /// The holes over `a` written as clauses, `a <= lo - 1 || a >= hi + 1` for each. Time of
-    /// the holes.
+    /// Whether `self` and `other` are one tree read through one map, so that they hold the
+    /// same values. O(1) but for the two maps' bit lengths. Not equality of the sets: two trees
+    /// built apart over the same intervals are not the same here.
+    pub(super) fn same(&self, other: &Holes) -> bool {
+        let one = match (&self.tree, &other.tree) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        one && self.scale == other.scale && self.shift == other.shift
+    }
+
+    /// The holes over `a` written as clauses, `a <= lo - 1 || a >= hi + 1` for each, counted
+    /// (`counts::HOLES_WRITTEN`, the clause emissions of the hole route, META3 H7). Time of the
+    /// holes.
     pub(super) fn clauses(&self, a: &Atom) -> Vec<Formula> {
+        super::counts::add(super::counts::HOLES_WRITTEN, self.len());
         let y = Lin::atom(a.clone());
         (self.intervals().into_iter())
             .map(|(lo, hi)| {
@@ -396,5 +436,35 @@ mod tests {
         h.cut(&int(1), &int(1));
         assert_eq!(h.len(), 1);
         assert_eq!(h.intervals(), vec![(int(0), int(1))]);
+    }
+
+    /// `Holes::merged` of one tree with itself through one map is the set unchanged, taken
+    /// without a walk (`counts::HOLES_SAME`); the same intervals built apart, or one tree read
+    /// through another map, are merged by the walk and give the union.
+    #[test]
+    fn holes_merged_with_themselves_are_taken_whole() {
+        let runs: Vec<(Int, Int)> = (0..20).map(|j| (int(3 * j), int(3 * j + 1))).collect();
+        let h = Holes::of_runs(&runs);
+        super::super::counts::take();
+        let m = h.clone().merged(h.clone());
+        assert_eq!(
+            super::super::counts::take()[super::super::counts::HOLES_SAME],
+            1
+        );
+        assert!(m.same(&h));
+        assert_eq!(m.intervals(), h.intervals());
+        let apart = Holes::of_runs(&runs);
+        assert!(!apart.same(&h));
+        assert_eq!(h.clone().merged(apart).intervals(), h.intervals());
+        let shifted = h.through(&int(1), &int(1));
+        assert!(!shifted.same(&h));
+        let want = values(&[(-1, 1)]);
+        let both = h.clone().merged(shifted);
+        let got: Vec<i64> = (-1..2).filter(|&z| both.holds(&int(z))).collect();
+        assert_eq!(got, want);
+        assert_eq!(
+            super::super::counts::take()[super::super::counts::HOLES_SAME],
+            0
+        );
     }
 }

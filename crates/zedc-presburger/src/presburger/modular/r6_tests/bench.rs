@@ -249,8 +249,11 @@ fn fibonacci_pair(n: usize) -> (Int, Int) {
 /// 12.5 at n = 4096 and 12.7 at n = 2,843 bits. At these widths the products are Karatsuba
 /// (zed-kernel `karatsuba_mul`, which allocates only the product), so the measured ratios are
 /// near that prediction: 13.635 in instructions and 11.48 in bytes (b22-presburger10, 2026-11-24,
-/// v5e VM). With num-bigint's own products, which allocate at each level, the bytes grew 15.28
-/// times (PERF-bezout-bytes). The test catches a step to a worse order, not the constant:
+/// VM v5e4), 13.532 and 11.48 (b22-presburger11, VM v5e1, the same on two runs). The bytes are the
+/// same on both VMs and the instructions are not, so the instruction ratio depends on the VM the
+/// test runs on, by about 0.1 (COMPLEXITY.md C31b). With num-bigint's own products, which
+/// allocate at each level, the bytes grew 15.28 times (PERF-bezout-bytes). The test catches a
+/// step to a worse order, not the constant:
 /// Euclid's quadratic extended gcd (`Int::euclid_bezout`) on the same pairs measured 11.7x in
 /// instructions, under the limit, since its word steps are cheap at these widths, but 42.4x in
 /// bytes, a new

@@ -759,13 +759,43 @@ impl Extending {
 #[derive(Default)]
 struct Faces {
     by: HashMap<Id, Option<Face>>,
+    /// The holes of each call node's set read over its term ([`Holes::of_runs`]), by the set's
+    /// id: made once a set and shared by every node of it, so that two nodes of one set read
+    /// through one binding are one tree ([`Holes::same`]).
+    sets: std::cell::RefCell<HashMap<u64, Holes>>,
 }
 
-/// What [`Faces::read`] gives: the question, the holes of the faces read, and the atoms those
-/// faces project out.
-type Read<'s> = (Formula, Vec<(&'s Atom, &'s Holes)>, HashSet<Atom>);
+/// What [`Faces::read`] gives: the question, the holes of the faces read and of the call nodes
+/// beside them ([`Faces::leaf`]), and the atoms those faces project out.
+type Read = (Formula, Vec<(Atom, Holes)>, HashSet<Atom>);
 
 impl Faces {
+    /// The call node `f` read as the holes of the one atom `a` of its term `k * a + e`, `k` not
+    /// 0 (LOAD-call-disj-spread, META3 H7, the hole route): `(a, holes)` with `a` in a hole
+    /// exactly where `k * a + e` lies in a run of the node's set, so that the node holds exactly
+    /// where `a` lies in no hole. `None` for any other formula, and for a node whose term reads
+    /// two atoms or more, which keeps the generic route (its clauses, counted, E9).
+    ///
+    /// Proof: [`Holes::of_runs`] holds the runs over the base coordinate `s`; read through
+    /// `(k, e)` ([`Holes::through`]), a value `v` of `a` is in a hole exactly where
+    /// `s = 1 * (k * v + e) + 0` is in a run, which is `k * v + e` in a run. Cost: O(1) and a
+    /// hash lookup once the set's tree is made, which is O(n log n) expected once a set
+    /// ([`Faces::sets`]); counted (`counts::HOLES_ROUTED`).
+    fn leaf(&self, f: &Formula) -> Option<(Atom, Holes)> {
+        let Formula::Holes(b) = f else {
+            return None;
+        };
+        let mut terms = b.term().terms.iter();
+        let (Some((a, k)), None, true) = (terms.next(), terms.next(), counts::route_on()) else {
+            return None;
+        };
+        let base = (self.sets.borrow_mut().entry(Shared::number(b.set())))
+            .or_insert_with(|| Holes::of_runs(b.set().runs()))
+            .clone();
+        counts::add(counts::HOLES_ROUTED, 1);
+        Some((a.clone(), base.through(k, &b.term().constant)))
+    }
+
     /// The faces of the kept parts among `roots` and of the kept parts under them, each made
     /// once, after those of its own kept parts: an explicit stack, since the parts nest as deep
     /// as the chain of calls, and the faces made are the visited set.
@@ -828,6 +858,10 @@ impl Faces {
         // conjunctions of constraints (LOAD-disj-residue).
         let mut ors: Vec<Formula> = Vec::new();
         let mut parts: Vec<(&Known, &Face)> = Vec::new();
+        // Its call nodes over one atom, read as that atom's holes ([`Faces::leaf`]), each with
+        // the node, which is kept whole as a disjunction is where its atom is neither kept nor
+        // bound (below).
+        let mut leaves: Vec<(Atom, Holes, &Formula)> = Vec::new();
         for h in g.kids() {
             match h {
                 Formula::Con(c) => rows.push(c.clone()),
@@ -835,8 +869,12 @@ impl Faces {
                     let id = Id::any(h);
                     parts.push((known.get(&id)?, self.by.get(&id)?.as_ref()?));
                 }
-                // A call node is a conjunction of clauses kept whole (LOAD-call-disj-spread).
-                Formula::Not(_) | Formula::Or(_) | Formula::Holes(_) => ors.push(h.clone()),
+                Formula::Holes(_) => match self.leaf(h) {
+                    Some((a, holes)) => leaves.push((a, holes, h)),
+                    // A node over two atoms or more is a conjunction of clauses kept whole.
+                    None => ors.push(h.clone()),
+                },
+                Formula::Not(_) | Formula::Or(_) => ors.push(h.clone()),
             }
         }
         // The definitions its own constraints reach past its kept parts, whose own are in
@@ -848,6 +886,7 @@ impl Faces {
                 ors.iter()
                     .flat_map(|h| h.atoms().iter().flat_map(Atom::auxes).collect::<Vec<_>>()),
             )
+            .chain(leaves.iter().flat_map(|(a, _, _)| a.auxes()))
             .collect();
         while let Some(n) = todo.pop() {
             let a = Atom::Aux(n);
@@ -871,6 +910,7 @@ impl Faces {
         let own: HashSet<Atom> = (rows.iter())
             .flat_map(|c| c.lin.terms.keys().cloned())
             .chain(ors.iter().flat_map(Formula::atoms))
+            .chain(leaves.iter().map(|(a, _, _)| a.clone()))
             .collect();
         if own.iter().any(|a| matches!(a, Atom::Product(..))) {
             return None;
@@ -913,6 +953,20 @@ impl Faces {
                 }
             }
         }
+        // Its own call nodes, read as their parts' holes are (META3 H7: one joint normalization
+        // of own and inherited holes): over an atom kept, or read over the kept atom that binds
+        // it; otherwise the node is kept whole, its clauses written for [`projected`]
+        // (`BoundHoles::lowered`, counted). Exact as for the parts' holes: a hole set over `a`
+        // says what the node says ([`Faces::leaf`]), and `put` takes the union over one atom.
+        // A node read at each link merges with the same tree in its part's face, in O(1)
+        // ([`Holes::merged`]).
+        for (a, h, node) in leaves {
+            match (keep.contains(&a), bound.get(&a)) {
+                (true, _) => put(&mut holes, a, h),
+                (false, Some((c, b, d))) => put(&mut holes, b.clone(), h.through(c, d)),
+                (false, None) => ors.push(node.clone()),
+            }
+        }
         if ors.is_empty() {
             let rows = shadow(&rows, &|a| keep.contains(a), true)?;
             return Some(Face::of(rows, Vec::new(), &keep, &HashSet::new(), holes));
@@ -940,6 +994,7 @@ impl Faces {
     ) -> Option<Result<Option<Point>, Refusal>> {
         let kj = &known[&Id::any(&kids[j])];
         let (f, holes, gone) = self.read(known, kids, Some(j), m, def)?;
+        let holes: Vec<(&Atom, &Holes)> = holes.iter().map(|(a, h)| (a, h)).collect();
         let read = |a: &Atom| !kj.closure.contains(a) || m.contains_key(a);
         if !given(&kj.closure, m, &f) || !holes.iter().all(|(a, _)| read(a)) {
             return Some(Ok(None));
@@ -985,6 +1040,7 @@ impl Faces {
         def: &dyn Fn(u32) -> Formula,
     ) -> Option<(Result<bool, Refusal>, Option<Point>)> {
         let (f, holes, gone) = self.read(known, kids, None, &Point::new(), def)?;
+        let holes: Vec<(&Atom, &Holes)> = holes.iter().map(|(a, h)| (a, h)).collect();
         let within = match residues::read(&f, &holes) {
             Reading::Empty => return Some((Ok(false), None)),
             Reading::Within(within) => within,
@@ -1013,18 +1069,21 @@ impl Faces {
     /// face projects out is read beside it. Time of the faces, the other parts and the
     /// definitions reached, and, for each part read through its face, of the smaller of its
     /// atoms and each other part's.
-    fn read<'s>(
-        &'s self,
+    fn read(
+        &self,
         known: &HashMap<Id, Known>,
         kids: &[Formula],
         j: Option<usize>,
         m: &Point,
         def: &dyn Fn(u32) -> Formula,
-    ) -> Option<Read<'s>> {
+    ) -> Option<Read> {
         let mut faced: Vec<(&Known, &Face)> = Vec::new();
         let mut whole: Vec<&Known> = j.map(|j| &known[&Id::any(&kids[j])]).into_iter().collect();
         let mut rows: Vec<Formula> = Vec::new();
         let mut beside: HashSet<Atom> = HashSet::new();
+        // The call nodes beside the faces over one atom, read as that atom's holes ([`Faces::
+        // leaf`], META3 H7) beside the faces' holes, and not as clauses in the question.
+        let mut leaves: Vec<(Atom, Holes)> = Vec::new();
         for (i, h) in kids.iter().enumerate() {
             if Some(i) == j {
                 continue;
@@ -1037,13 +1096,19 @@ impl Faces {
                     rows.extend(face.rows.iter().cloned().map(Formula::Con));
                     rows.extend(face.clauses.iter().cloned());
                 }
-                None => {
-                    match k {
-                        Some(k) => whole.push(k),
-                        None => beside.extend(h.atoms()),
+                None => match (k, self.leaf(h)) {
+                    (None, Some((a, holes))) => {
+                        beside.insert(a.clone());
+                        leaves.push((a, holes));
                     }
-                    rows.push(h.clone());
-                }
+                    (k, _) => {
+                        match k {
+                            Some(k) => whole.push(k),
+                            None => beside.extend(h.atoms()),
+                        }
+                        rows.push(h.clone());
+                    }
+                },
             }
         }
         if faced.is_empty() {
@@ -1065,9 +1130,18 @@ impl Faces {
                 return None;
             }
         }
-        let holes = (faced.iter())
+        let mut holes: Vec<(Atom, Holes)> = (faced.iter())
             .flat_map(|(_, face)| face.holes.iter())
+            .map(|(a, h)| (a.clone(), h.clone()))
             .collect();
+        // A node's holes that a face already holds over its atom, one tree through one map,
+        // say nothing more and are left out ([`Holes::same`]): the node of a chain's callee is
+        // in the face of the link before. O(faces' holes) a node.
+        for (a, h) in leaves {
+            if !holes.iter().any(|(b, g)| *b == a && g.same(&h)) {
+                holes.push((a, h));
+            }
+        }
         // The atoms of the faces' rows and clauses that the faces project out, as the quotient a
         // clause alone reads: the solver gives each a value at a point of the question, but not
         // one its part holds at, since its definition is not read (`past`). The atoms of its
@@ -1683,9 +1757,21 @@ fn split(
             Formula::Con(ref c) => rows.push(c.clone()),
             Formula::And(_) => flat.extend(f.into_parts().expect("a conjunction")),
             Formula::Or(ref gs) if gs.is_empty() => return None,
-            // A call node is kept whole beside the disjunctions; `map_cons` below writes its
-            // clauses where a binding is put into them (LOAD-call-disj-spread).
-            Formula::Or(_) | Formula::Holes(_) => ors.push(f),
+            Formula::Or(_) => ors.push(f),
+            // A call node is read as its clauses, the generic route (META3 H7): kept whole, it
+            // went to the groups below as a disjunction, and a group whose one disjunction it
+            // was split into its parts, of which it has none, so the group read as `false`
+            // (wildcard-arm audit, b22-load10 step 0; test
+            // `tests::a_group_whose_one_disjunction_is_a_call_node_keeps_its_points`). O(runs)
+            // once a node (`BoundHoles::lowered`, through `Formula::opened`, which the imports
+            // tool reads by its one name).
+            Formula::Holes(_) => flat.push(f.opened().clone()),
+            // The signed leaf, before the generic arm (META3 H7, Codex B6): a negated node
+            // says the term lies in some run, a disjunction of one interval a run, which `nnf`
+            // writes from the node's clauses (`fold` reads a node as them), so it is pushed
+            // once and read as a disjunction; it never comes back as `Not(Holes)`, so the loop
+            // ends. O(runs). Test `tests::a_negated_call_node_in_a_group_keeps_its_points`.
+            Formula::Not(ref g) if matches!(**g, Formula::Holes(_)) => flat.push(nnf(&f, true)),
             Formula::Not(_) => flat.push(nnf(&f, true)),
         }
     }
@@ -2130,6 +2216,17 @@ fn with(defs: &[Formula], f: Formula) -> Formula {
 /// and the refusal when the solver refuses that question. Time of `f`, and O(log n) for each
 /// atom added to `m`.
 fn met(m: &Point, f: &Formula) -> Result<Option<Point>, Refusal> {
+    met_by(m, f, &fixed_fails)
+}
+
+/// [`met`], with `fails` the test of a top-level part that answers `Ok(None)` without the
+/// solver: [`fixed_fails`] in [`met`]; the tests also pass none and its mutants
+/// (`tests::met_answers_as_the_solver_with_its_shortcut_on_and_off`).
+fn met_by(
+    m: &Point,
+    f: &Formula,
+    fails: &dyn Fn(&Point, &Formula) -> bool,
+) -> Result<Option<Point>, Refusal> {
     let atoms = f.atoms();
     let mut at = read_at(m, &atoms);
     let mut out = m.clone();
@@ -2139,6 +2236,19 @@ fn met(m: &Point, f: &Formula) -> Result<Option<Point>, Refusal> {
             out.entry(a).or_insert(v);
         }
         return Ok(Some(out));
+    }
+    // A conjunct of `f` that fails with the values `m` gives it fails at every point the
+    // solver below can reach ([`fixed_fails`]): `f` holds at none, without the solver. A link
+    // whose new bound moves past its part's point (`x >= 2 i` at `x = 2 i - 1`) is settled
+    // here, and a call node beside it is read at one value, O(log n), not written out as its
+    // n clauses for the solver (LOAD-call-disj-spread, META3 H7). Only the top-level parts are
+    // read, each in O(its term), so the walk costs no more than `f.atoms()` above.
+    let kids = match f {
+        Formula::And(_) => f.kids(),
+        _ => std::slice::from_ref(f),
+    };
+    if kids.iter().any(|g| fails(m, g)) {
+        return Ok(None);
     }
     let mut fixed = vec![f.clone()];
     for a in atoms.iter().filter(|&a| m.contains_key(a)) {
@@ -2155,6 +2265,48 @@ fn met(m: &Point, f: &Formula) -> Result<Option<Point>, Refusal> {
         }
     }
     Ok(Some(out))
+}
+
+/// Whether the part `g` of a conjunction is a constraint or a call node, each of whose atoms
+/// is a symbol or an auxiliary variable that `m` gives a value, and fails at those values.
+/// O(g's term and log n an atom).
+///
+/// Proof that [`met`] answers `Ok(None)` by this test exactly where the solver of its last
+/// step would (LOAD-met-shortcut-exactness, b22-load11). Let A be `f.atoms()` and F the atoms
+/// of A that `m` gives. The last step asks the solver for a point of `f && a == m[a]` for each
+/// a in F, and answers `Ok(None)` when there is none. Let `g` be a part of `f`'s top-level
+/// conjunction (or `f` itself) that passes this test.
+/// 1. Every point where `f` holds is one where `g` holds, since `g` is one of its conjuncts.
+/// 2. Every atom of `g` is in F. `Formula::atoms` collects the atoms of each leaf that
+///    `walk_leaves` reaches from `f`, and it reaches each leaf of `g`, a part of `f` (a part
+///    shared between two places is read at its first, which adds the same atoms). A call
+///    node's atoms are those of its term on both routes: read as itself, or as its clauses
+///    (`BoundHoles::lowered`), each the term against a constant. This test asks `m` to give
+///    each atom of `g`. So in every point the solver can reach, each atom of `g` has the value
+///    `m` gives it.
+/// 3. With no product among its atoms, `g`'s value at those values is the one the solver
+///    reads. A constraint's term is read by `Lin::eval` here and by `Lin::eval_linear` in the
+///    solver, which differ only on a product atom (the first reads it as the product of its
+///    factors, the second as a variable of its own). A call node holds here when the term's
+///    value lies in no run (`HoleSet::run_of`); the solver reads it as its clauses, one a run
+///    `(lo, hi)`: `term <= lo - 1 || term >= hi + 1`. The runs are closed intervals, so the
+///    value avoids a run exactly when it is below `lo` or above `hi`, and avoids every run
+///    exactly when it lies in none.
+/// 4. So `g` fails at every point the solver can reach, and by 1 so does `f`: the solver
+///    finds no point, and `met` answers `Ok(None)` as it would. Where the solver would refuse
+///    the question, `met` gives this exact answer in place of the refusal.
+///
+/// Each condition is needed, and the tests catch the mutant that drops it: a part with an
+/// atom `m` does not give is read here with that atom at 0 (`Lin::eval`), where the solver
+/// may choose another value; a product atom that `m` gives a value other than the product of
+/// its factors' values fails here and may hold for the solver (step 3).
+fn fixed_fails(m: &Point, g: &Formula) -> bool {
+    if !matches!(g, Formula::Con(_) | Formula::Holes(_)) {
+        return false;
+    }
+    let ga = g.atoms();
+    let given = |a: &Atom| matches!(a, Atom::Sym(_) | Atom::Aux(_)) && m.contains_key(a);
+    ga.iter().all(given) && !g.holds(&read_at(m, &ga))
 }
 
 /// The values of `atoms` at `m`, with the factors of their products. O(log n) an atom.
@@ -2291,7 +2443,11 @@ fn fixed(m: &Point, f: &Formula) -> Model {
 /// checks the values against `f` before it uses them. Time of `f`.
 fn solved(at: &mut Model, f: &Formula) -> bool {
     let mut any = false;
-    for c in f.cons() {
+    // A call node's clauses are `>=` rows alone (`BoundHoles::lowered`), so it holds no
+    // equality and is skipped, not written out (META3 H7).
+    let mut cons = Vec::new();
+    f.walk_leaves(&mut |c| cons.push(c), Some(&mut |_| {}));
+    for c in cons {
         if c.rel != Rel::Eq {
             continue;
         }
@@ -6284,6 +6440,228 @@ mod tests {
             .collect();
         assert!(f.holds(&m));
         assert!(g.holds(&m), "the shared remainder was set to zero: {g:?}");
+    }
+
+    /// `x >= 0 && outside({0..3}, x)` projected onto no atom holds (`x == 4`). A group whose one
+    /// disjunction was a call node was split into the node's parts, of which it has none, so
+    /// the group read as a disjunction of no disjuncts, `false` (wildcard-arm audit, b22-load10
+    /// step 0).
+    #[test]
+    fn a_group_whose_one_disjunction_is_a_call_node_keeps_its_points() {
+        let set = super::super::HoleSet::of(vec![(Int::from(0), Int::from(3))]);
+        let items = vec![
+            Formula::Con(con(&[(0, 1)], 0, Rel::Ge)),
+            Formula::outside(&set, Lin::atom(a(0))),
+        ];
+        let (mut keep, mut inside) = (HashSet::new(), HashSet::new());
+        let f = project(items, &mut keep, &mut inside);
+        assert!(f.holds(&Model::new()), "{f:?}");
+    }
+
+    /// META3 H7, Codex B6: a negated node in `split` is read as the disjunction of its runs,
+    /// so the group ends and keeps its points: `a0 >= 0 && !outside({0..3, 10..12}, a0)` holds
+    /// (at 0), and with `a0 >= 4 && a0 <= 9` it holds nowhere.
+    #[test]
+    fn a_negated_call_node_in_a_group_keeps_its_points() {
+        let runs = vec![(Int::from(0), Int::from(3)), (Int::from(10), Int::from(12))];
+        let set = super::super::HoleSet::of(runs);
+        let not = || Formula::negate(Formula::outside(&set, Lin::atom(a(0))));
+        let items = vec![Formula::Con(con(&[(0, 1)], 0, Rel::Ge)), not()];
+        let (mut keep, mut inside) = (HashSet::new(), HashSet::new());
+        let f = project(items, &mut keep, &mut inside);
+        assert!(f.holds(&Model::new()), "{f:?}");
+        let items = vec![
+            Formula::Con(con(&[(0, 1)], -4, Rel::Ge)),
+            Formula::Con(con(&[(0, -1)], 9, Rel::Ge)),
+            not(),
+        ];
+        let (mut keep, mut inside) = (HashSet::new(), HashSet::new());
+        let f = project(items, &mut keep, &mut inside);
+        assert!(!f.holds(&Model::new()), "{f:?}");
+    }
+
+    /// META3 H7: the links `f{i} = f{i-1} && outside(S, x) && x >= 2 i`, one node of the set
+    /// `S` of the even values `0..2n` in every link, asked with an interface giving `x`, are
+    /// answered on the route: no node is written as clauses (`HOLES_LOWERED` 0), each link
+    /// reads the node as itself (`HOLES_ROUTED`), and each answer is the answer of the
+    /// same chain with the holes written as clauses `!(x == 2 j)` (the form the node replaces).
+    #[test]
+    fn a_chain_of_one_call_node_is_answered_through_its_holes() {
+        let n: i64 = 12;
+        let x = || Lin::atom(Atom::Sym("x".into()));
+        let ge = |a: Lin, b: Lin| Formula::Con(Con::ge(&a, &b));
+        let set = super::super::HoleSet::of(
+            (0..n)
+                .map(|j| (Int::from(2 * j), Int::from(2 * j)))
+                .collect(),
+        );
+        let node = Formula::outside(&set, x());
+        let written = Formula::and(
+            (0..n)
+                .map(|j| Formula::negate(Formula::Con(Con::eq(&x(), &Lin::constant(2 * j)))))
+                .collect(),
+        );
+        let chain = |holes: &Formula| {
+            let mut f = Formula::and(vec![
+                ge(x(), Lin::constant(0)),
+                ge(Lin::constant(1000), x()),
+            ]);
+            let mut out = Vec::new();
+            for i in 1..=n + 2 {
+                let link = vec![f, holes.clone(), ge(x(), Lin::constant(2 * i))];
+                f = Formula::and_keeping(link, |p| p < 2);
+                out.push(f.clone());
+            }
+            out
+        };
+        let iface = |_: &Formula| Some(vec![Atom::Sym("x".into())]);
+        let mut e = Extending::new();
+        let want: Vec<_> = (chain(&written).iter())
+            .map(|f| e.defined_with(f, &|_| Formula::top(), &iface))
+            .collect();
+        counts::take();
+        let mut e = Extending::new();
+        let got: Vec<_> = (chain(&node).iter())
+            .map(|f| e.defined_with(f, &|_| Formula::top(), &iface))
+            .collect();
+        let c = counts::take();
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert_eq!((&g.holds, &g.fails), (&w.holds, &w.fails), "link {i}");
+        }
+        assert_eq!(c[counts::HOLES_LOWERED], 0, "{c:?}");
+        assert!(c[counts::HOLES_ROUTED] >= n as u64, "{c:?}");
+    }
+
+    #[test]
+    fn a_call_node_over_its_one_point_is_empty_in_a_kept_part() {
+        // A control of META3 H7: `x = 0 && outside({0}, x)` is empty, and `x = 1 && ...` is
+        // not, each asked as a link of a kept part, as `front` asks a call's relation. The part
+        // alone is decided by the solver, which reads the node as its one clause (the generic
+        // route, counted by `HOLES_LOWERED`), so only the answers are asserted.
+        let x = || Lin::atom(Atom::Sym("x".into()));
+        let set = super::super::HoleSet::of(vec![(Int::ZERO, Int::ZERO)]);
+        let iface = |_: &Formula| Some(vec![Atom::Sym("x".into())]);
+        for (v, holds) in [(0, false), (1, true)] {
+            let at = Formula::Con(Con::eq(&x(), &Lin::constant(v)));
+            let part = Formula::and(vec![at, Formula::outside(&set, x())]);
+            let low = Formula::Con(Con::ge(&x(), &Lin::constant(-5)));
+            let link = Formula::and_keeping(vec![part, low], |p| p < 1);
+            counts::take();
+            let a = Extending::new().defined_with(&link, &|_| Formula::top(), &iface);
+            let c = counts::take();
+            assert_eq!(a.holds, Ok(holds), "x = {v}: {c:?}");
+        }
+    }
+
+    /// LOAD-met-shortcut-exactness (b22-load11): [`met`] with its shortcut ([`fixed_fails`])
+    /// gives the answer it gives with the shortcut off, the solver deciding each question, on
+    /// random conjunctions of constraints, call nodes and disjunctions over three symbols, two
+    /// auxiliary variables and a product, at random points that give some atoms values. Fixed
+    /// seed; the cases where the shortcut answers are counted and asserted. Negative controls:
+    /// the shortcut firing on a part with one atom the point does not give, and on a part with
+    /// a product atom, must each give a wrong answer on some case.
+    #[test]
+    fn met_answers_as_the_solver_with_its_shortcut_on_and_off() {
+        const CASES: usize = 3000;
+        let sym = |s: &str| Atom::Sym(s.into());
+        let pool = [
+            sym("x"),
+            sym("y"),
+            sym("z"),
+            a(0),
+            a(1),
+            Atom::product_of(Factor::Sym("x".into()), Factor::Sym("y".into())),
+        ];
+        fn leaf(g: &Formula) -> bool {
+            matches!(g, Formula::Con(_) | Formula::Holes(_))
+        }
+        let one_free = |m: &Point, g: &Formula| {
+            let ga = g.atoms();
+            let plain = ga.iter().all(|a| matches!(a, Atom::Sym(_) | Atom::Aux(_)));
+            let free = ga.iter().filter(|a| !m.contains_key(*a)).count();
+            leaf(g) && plain && free <= 1 && !g.holds(&read_at(m, &ga))
+        };
+        let products = |m: &Point, g: &Formula| {
+            let ga = g.atoms();
+            leaf(g) && ga.iter().all(|a| m.contains_key(a)) && !g.holds(&read_at(m, &ga))
+        };
+        type Fails = dyn Fn(&Point, &Formula) -> bool;
+        let mutants: [&Fails; 2] = [&one_free, &products];
+        let mut rng = crate::seed::Rng::new(0x3e7a_11b2);
+        let term = |rng: &mut crate::seed::Rng| {
+            let mut t = Lin::constant(rng.int(-3, 3));
+            let mut atoms = pool.to_vec();
+            rng.shuffle(&mut atoms);
+            for x in atoms.into_iter().take(1 + rng.below(2)) {
+                t.plus_assign(&Lin::atom(x).times(rng.pick(&[-2i64, -1, 1, 2])));
+            }
+            t
+        };
+        let (mut fired, mut answered_none, mut refused) = (0, 0, 0);
+        let mut caught = [0usize; 2];
+        for case in 0..CASES {
+            let mut kids = Vec::new();
+            for _ in 0..1 + rng.below(4) {
+                kids.push(match rng.below(6) {
+                    0 | 1 => Formula::Con(Con::ge(&term(&mut rng), &Lin::constant(0))),
+                    2 => Formula::Con(Con::eq(&term(&mut rng), &Lin::constant(0))),
+                    3 | 4 => {
+                        let runs = (0..1 + rng.below(3))
+                            .map(|_| {
+                                let lo = rng.int(-4, 4);
+                                (Int::from(lo), Int::from(lo + rng.int(0, 2)))
+                            })
+                            .collect();
+                        Formula::outside(&super::super::HoleSet::of(runs), term(&mut rng))
+                    }
+                    _ => Formula::or(vec![
+                        Formula::Con(Con::ge(&term(&mut rng), &Lin::constant(0))),
+                        Formula::Con(Con::ge(&term(&mut rng), &Lin::constant(0))),
+                    ]),
+                });
+            }
+            let f = Formula::and(kids);
+            let mut m = Point::new();
+            for x in &pool {
+                if rng.below(3) > 0 {
+                    m.insert(x.clone(), Int::from(rng.int(-3, 3)));
+                }
+            }
+            let on = met_by(&m, &f, &fixed_fails);
+            let off = met_by(&m, &f, &|_, _| false);
+            let parts = match &f {
+                Formula::And(_) => f.kids(),
+                _ => std::slice::from_ref(&f),
+            };
+            let fires = parts.iter().any(|g| fixed_fails(&m, g));
+            fired += usize::from(fires);
+            match &off {
+                Ok(o) => {
+                    answered_none += usize::from(o.is_none());
+                    assert_eq!(on.as_ref().ok(), Some(o), "case {case}: {f:?} at {m:?}");
+                }
+                Err(_) => {
+                    refused += 1;
+                    let want = if fires { Some(&None) } else { None };
+                    assert_eq!(on.as_ref().ok(), want, "case {case}: {f:?} at {m:?}");
+                }
+            }
+            for (i, mutant) in mutants.iter().enumerate() {
+                if let Ok(o) = &off
+                    && met_by(&m, &f, *mutant).ok().as_ref() != Some(o)
+                {
+                    caught[i] += 1;
+                }
+            }
+        }
+        let seen = (fired, answered_none, refused, caught);
+        eprintln!("shortcut fired, solver empty, refused, mutants caught: {seen:?}");
+        assert!(fired >= CASES / 10, "{seen:?}");
+        assert!(answered_none > fired, "{seen:?}");
+        assert!(
+            caught.iter().all(|&k| k > 0),
+            "a mutant was not caught: {seen:?}"
+        );
     }
 
     /// `k1 * a1 + k2 * a2 + ... + c` related to 0 by `rel`.

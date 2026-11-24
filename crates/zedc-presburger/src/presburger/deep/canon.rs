@@ -51,10 +51,32 @@ use num_bigint::BigUint;
 use num_traits::{One, Zero};
 use zed_collections::intern::Interner;
 
-use super::super::formula::{Con, Formula, Id};
+use super::super::formula::{BoundHoles, Con, Formula, Id, Shared};
 
 /// A symbol's number in the arena.
 type S = usize;
+
+/// A call node as an element of a parse: equal, and hashed alike, exactly when the two nodes
+/// have equal content ([`BoundHoles::cmp_content`], META3 H5), as [`Formula::cmp`] compares
+/// them. A node is a leaf (`Formula::kids` gives none), so it is an element like a constraint;
+/// read as a conjunction of no parts, every node was one symbol and two formulas that differ
+/// only in their nodes compared equal (wildcard-arm audit, b22-load10).
+#[derive(Clone)]
+struct Node(Shared<BoundHoles>);
+
+impl PartialEq for Node {
+    fn eq(&self, other: &Node) -> bool {
+        Shared::same(&self.0, &other.0) || self.0.cmp_content(&other.0) == Ordering::Equal
+    }
+}
+
+impl Eq for Node {}
+
+impl std::hash::Hash for Node {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.0.hash_content(h);
+    }
+}
 
 /// A symbol and how many times it is repeated in a row.
 type Entry = (S, BigUint);
@@ -64,6 +86,8 @@ type Entry = (S, BigUint);
 enum Sym {
     /// A constraint.
     Con(Con),
+    /// A call node.
+    Holes(Node),
     /// The negation of an element.
     Not(S),
     /// A conjunction or disjunction ([`Formula::rank`]), by the root of its flattened parts,
@@ -116,6 +140,10 @@ impl Canon {
                         let l = self.intern(Sym::Con(c.clone()));
                         seq.leaves.push(l);
                     }
+                    Formula::Holes(b) => {
+                        let l = self.intern(Sym::Holes(Node(b.clone())));
+                        seq.leaves.push(l);
+                    }
                     g => {
                         let v = self.value(g);
                         self.put(&mut seq, kind, g, v);
@@ -134,7 +162,7 @@ impl Canon {
     fn level(&self, s: S) -> usize {
         match &self.syms[s] {
             Sym::Run(l, ..) | Sym::Chunk(l, _) => *l,
-            Sym::Con(_) | Sym::Not(_) | Sym::Seq(..) => 0,
+            Sym::Con(_) | Sym::Holes(_) | Sym::Not(_) | Sym::Seq(..) => 0,
         }
     }
 
@@ -163,6 +191,10 @@ impl Canon {
             match top.left.next() {
                 Some(Formula::Con(c)) => {
                     let l = self.intern(Sym::Con(c.clone()));
+                    top.seq.leaves.push(l);
+                }
+                Some(Formula::Holes(b)) => {
+                    let l = self.intern(Sym::Holes(Node(b.clone())));
                     top.seq.leaves.push(l);
                 }
                 Some(g) => {
@@ -416,6 +448,10 @@ impl Canon {
                     Ordering::Equal => continue,
                     o => return o,
                 },
+                (Sym::Holes(p), Sym::Holes(q)) => match p.0.cmp_content(&q.0) {
+                    Ordering::Equal => continue,
+                    o => return o,
+                },
                 (Sym::Not(p), Sym::Not(q)) => (start(Some(*p)), start(Some(*q))),
                 (Sym::Seq(j, p), Sym::Seq(k, q)) if j == k => (start(*p), start(*q)),
                 _ => return self.rank(x).cmp(&self.rank(y)),
@@ -431,6 +467,8 @@ impl Canon {
             Sym::Con(_) => 0,
             Sym::Not(_) => 1,
             Sym::Seq(k, _) => *k,
+            // `Formula::rank` of a call node.
+            Sym::Holes(_) => 4,
             Sym::Run(..) | Sym::Chunk(..) => unreachable!("an element"),
         }
     }
@@ -446,7 +484,9 @@ impl Canon {
                 }
                 f.extend(xs.iter().rev().map(|&x| (x, BigUint::one())));
             }
-            Sym::Con(_) | Sym::Not(_) | Sym::Seq(..) => unreachable!("an element is not opened"),
+            Sym::Con(_) | Sym::Holes(_) | Sym::Not(_) | Sym::Seq(..) => {
+                unreachable!("an element is not opened")
+            }
         }
     }
 }

@@ -85,9 +85,9 @@ fn a_number_too_large_is_placed_at_its_operation() {
 
 /// The program raising `base` to `k`, `b = 2^64 + 13` or its rational, `k` 2^64 plus the
 /// program's first word read as an integer, so 2^64 when there are none. With `k` read from
-/// the input the types do not fix the size, so the checker leaves the power to the run; with
-/// `k` written as `2^64`, the power is rejected at compile time (CONST-too-large,
-/// l01_29_repairs_and_printing::too_large).
+/// the input the types do not fix the size, so the checker leaves the print to the run; with
+/// `k` written as `2^64`, the power is kept and its print rejected at compile time
+/// (CONST-too-large, KEPT-power-form, l01_29_repairs_and_printing::too_large).
 fn input_power(base: &str) -> String {
     format!(
         "main(m: MainArgs) {{\n    b = 2^64 + 13;\n    \
@@ -104,39 +104,44 @@ fn input_power(base: &str) -> String {
 /// says; the number has `64 · 2^64 + 19` bits (`2^64 · log2(1 + 13 / 2^64)` is about
 /// `13 / ln 2`, 18.8), so the figure is its own. Before, 65 bits a factor gave 130 EiB (plan
 /// row MSG-too-large-figure).
+///
+/// Since plan row KEPT-power-form (DESIGN step L1.17b) the kernel keeps `b ^ k` as the wide
+/// atom `b` with the exponent `k`, and builds nothing, so the run stops at `String`, whose
+/// text of about 3.6 × 10^20 digits (`64 · 2^64 · log10 2`) is built in full; the message
+/// names the `String` as written, with the size of its text.
 #[test]
-fn a_power_too_large_is_named_as_written_with_its_size() {
+fn a_power_too_large_to_print_is_named_as_written_with_its_size() {
     stops(
         "power",
         &input_power("b"),
         3,
         "",
         &format!(
-            "FILE:4:36: Number too large for memory: `b ^ k` needs a number of about \
-             3.6 × 10^20 digits (128 EiB){}.\n  [1] 4:36: the run stopped here\n      \
+            "FILE:4:29: Text too large for memory: `String(b ^ k)` would write about \
+             3.6 × 10^20 digits (308 EiB){}.\n  [1] 4:29: the run stopped here\n      \
              4 |     m.stdout <- if k >= 0 {{ String(b ^ k) }} else {{ \"\" }};\n        \
-               |                                    ^^^^^\n{}",
+               |                             ^^^^^^^^^^^^^\n{}",
             beyond_machine(),
-            out_of_memory_repairs("4:36")
+            out_of_memory_repairs("4:29")
         ),
     );
 }
 
 /// The same power of the rational `rat(b)`: the same size, named as written.
 #[test]
-fn a_rational_power_too_large_is_named_as_written_with_its_size() {
+fn a_rational_power_too_large_to_print_is_named_as_written_with_its_size() {
     stops(
         "rat_power",
         &input_power("rat(b)"),
         3,
         "",
         &format!(
-            "FILE:4:36: Number too large for memory: `rat(b) ^ k` needs a number of about \
-             3.6 × 10^20 digits (128 EiB){}.\n  [1] 4:36: the run stopped here\n      \
+            "FILE:4:29: Text too large for memory: `String(rat(b) ^ k)` would write about \
+             3.6 × 10^20 digits (308 EiB){}.\n  [1] 4:29: the run stopped here\n      \
              4 |     m.stdout <- if k >= 0 {{ String(rat(b) ^ k) }} else {{ \"\" }};\n        \
-               |                                    ^^^^^^^^^^\n{}",
+               |                             ^^^^^^^^^^^^^^^^^^\n{}",
             beyond_machine(),
-            out_of_memory_repairs("4:36")
+            out_of_memory_repairs("4:29")
         ),
     );
 }

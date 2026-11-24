@@ -379,19 +379,36 @@ pub(super) fn read(f: &Formula, holes: &[(&Atom, &Holes)]) -> Reading {
     // order.
     let mut rows: Vec<&Con> = Vec::new();
     let mut clauses: Vec<&Formula> = Vec::new();
+    // The call nodes over one atom, as that atom's holes (below).
+    let mut nodes: Vec<(&Atom, Holes)> = Vec::new();
     for g in f.conjunct_list().iter() {
         match g {
             Formula::And(_) => unreachable!("conjunct_list flattens every conjunction"),
             Formula::Con(c) => rows.push(c),
             Formula::Or(ds) if ds.is_empty() => return Reading::Empty,
             Formula::Or(_) | Formula::Not(_) => clauses.push(g),
-            // A call node's clauses, written once a node and counted
-            // ([`BoundHoles::lowered`](super::super::BoundHoles)): one run is one clause, more
-            // runs a conjunction of them. Each is then a hole of `hole_of` as before.
-            Formula::Holes(b) => match b.lowered() {
-                l @ Formula::Or(_) => clauses.push(l),
-                l => clauses.extend(l.kids()),
-            },
+            Formula::Holes(b) => {
+                let mut terms = b.term().terms.iter();
+                match (terms.next(), terms.next()) {
+                    // A node over one atom `k * a + e` cuts its runs into `a`'s holes directly,
+                    // with no clause written (META3 H7, the residue guard): `a` lies in a hole
+                    // exactly where the term lies in a run ([`Holes::through`]), which is where
+                    // the node fails. O(n log n) expected for n runs, as the n clauses cost
+                    // through `hole_of`; counted (`counts::HOLES_ROUTED`).
+                    (Some((a, k)), None) if super::counts::route_on() => {
+                        super::counts::add(super::counts::HOLES_ROUTED, 1);
+                        let h = Holes::of_runs(b.set().runs()).through(k, &b.term().constant);
+                        nodes.push((a, h));
+                    }
+                    // A node over more atoms: its clauses, written once a node and counted
+                    // ([`BoundHoles::lowered`](super::super::BoundHoles)): one run is one
+                    // clause, more runs a conjunction of them, which `hole_of` does not read.
+                    _ => match b.lowered() {
+                        l @ Formula::Or(_) => clauses.push(l),
+                        l => clauses.extend(l.kids()),
+                    },
+                }
+            }
         }
     }
     let none: HashSet<Atom> = HashSet::new();
@@ -442,7 +459,8 @@ pub(super) fn read(f: &Formula, holes: &[(&Atom, &Holes)]) -> Reading {
             }
         }
     }
-    for (a, h) in holes {
+    let nodes = nodes.iter().map(|(a, h)| (*a, h));
+    for (a, h) in holes.iter().map(|(a, h)| (*a, *h)).chain(nodes) {
         let (r, s, d) = lines.on(a);
         let line = lines.line(r);
         let mine = std::mem::replace(&mut line.holes, Holes::new());
@@ -800,6 +818,43 @@ mod tests {
             w,
             vec![con(&[(0, 1)], 0, Rel::Ge), con(&[(0, -1)], 10, Rel::Ge)]
         );
+    }
+
+    #[test]
+    fn a_call_node_over_one_atom_is_cut_into_its_holes() {
+        // META3 H7, the residue guard: `0 <= x <= 10`, x odd, beside the node "2 x + 1 lies
+        // in no run of {1..=5, 15..=21}" (x outside 0..=2 and 7..=10): the interval 3..=6, its
+        // odd values 3 and 5, with no clause written. With the runs {1..=13, 15..=21} (x
+        // outside 0..=6 and 7..=10) nothing is left. The control: the same node over the two
+        // atoms `x + a1` is read as its clauses, and the bounds stay.
+        let mut fs = between(0, 10);
+        fs.push(con(&[(0, 1), (1, -2)], -1, Rel::Eq));
+        let at = |runs: Vec<(i64, i64)>, term: Lin| {
+            let runs = runs
+                .into_iter()
+                .map(|(l, h)| (Int::from(l), Int::from(h)))
+                .collect();
+            Formula::outside(&super::super::super::HoleSet::of(runs), term)
+        };
+        let t = Lin::atom(a(0)).times(2).plus(&Lin::constant(1));
+        crate::presburger::extend::counts::take();
+        let mut f = fs.clone();
+        f.push(at(vec![(1, 5), (15, 21)], t.clone()));
+        let w = within(&and(f), &[]);
+        assert_eq!(
+            w,
+            vec![con(&[(0, 1)], -3, Rel::Ge), con(&[(0, -1)], 6, Rel::Ge)]
+        );
+        let mut f = fs.clone();
+        f.push(at(vec![(1, 13), (15, 21)], t));
+        assert!(is_empty(&and(f), &[]));
+        let c = crate::presburger::extend::counts::take();
+        use crate::presburger::extend::counts::{HOLES_LOWERED, HOLES_ROUTED};
+        assert_eq!((c[HOLES_LOWERED], c[HOLES_ROUTED]), (0, 2));
+        let mut f = fs;
+        f.push(at(vec![(1, 5)], Lin::atom(a(0)).plus(&Lin::atom(a(1)))));
+        assert!(!is_empty(&and(f), &[]));
+        assert_eq!(crate::presburger::extend::counts::take()[HOLES_LOWERED], 1);
     }
 
     #[test]

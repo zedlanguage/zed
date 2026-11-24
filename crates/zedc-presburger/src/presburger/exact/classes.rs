@@ -12,7 +12,7 @@
 //! difference of two classes is one class, or `l/m - 1` classes modulo `l` (the lcm of the
 //! moduli, `m` the one cut), or listed where listing makes fewer pieces ([`cut`]).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::lattice::{Congruence, Lattice};
@@ -131,35 +131,95 @@ impl ClassUnion {
     // `minus` under `cells_cover`; 2 s on origin/main, which lists the gap as ranges and charges
     // each piece). Used: each range made charged [`PIECE`], as main's listed gap charges each
     // piece, so at most `limit / PIECE` ranges are made before a refusal; the ranges of each
-    // class gathered and sorted once, O(P log P) in all, each class found in O(1) expected.
+    // class gathered and sorted once, O(P log P) in all.
+    //
+    // Complexity tradeoff: naive version (b76c672c7), every set left cut by each set of `other`
+    // and every range left charged each round, O(|self|·|other|) cuts and charges where the
+    // classes share no value: a gap of the `m - 1` classes `1..m mod m` less those same
+    // classes (the cover of `s == m·t`, `outside` dropping them) made (m - 1)^2 cuts, 6,893
+    // units at m = 16 and 140,513 at m = 128, 20.4 times at 8m
+    // (`exact::tests::bench::a_gap_of_classes_less_its_classes_is_linear_in_them`). Used: the
+    // sets left kept by class (modulus, then residue); a set of `other` of class `r mod m` cuts
+    // only the sets whose class meets it, those `r' mod m'` with `r' ≡ r (mod gcd(m, m'))`
+    // (`Congruence::meet`, Chinese remainder theorem): the others share no value with it, and
+    // `cut` gives them back unchanged. Those are found for each modulus `m'` held, by its
+    // residues that are so, or by reading its residues, whichever are fewer:
+    // O(D + Σ min(c_{m'}, m'/g)) lookups for D moduli held, `c_{m'}` classes of modulus `m'`,
+    // plus the cuts themselves; the m - 1 classes above each meet one, O(m log m) in all. Each
+    // round charges the ranges it made, not every range left.
     pub(super) fn minus(&self, other: &ClassUnion, work: &mut Work) -> Result<ClassUnion, Refusal> {
         if other.is_empty() {
             return Ok(self.clone());
         }
-        let mut left: Vec<Classed> = self.sets.clone();
+        // The ranges left of each class, by modulus, then residue: every set in the one form of
+        // `Classed::new` has a class `Class` with modulus at least 1, never `Bottom`.
+        let mut left: BTreeMap<Num, BTreeMap<Num, Vec<Classed>>> = BTreeMap::new();
+        let keep = |left: &mut BTreeMap<Num, BTreeMap<Num, Vec<Classed>>>, s: Classed| {
+            let Congruence::Class { modulus, residue } = &s.class else {
+                unreachable!("a nonempty set has a class")
+            };
+            let at = left.entry(modulus.clone()).or_default();
+            at.entry(residue.clone()).or_default().push(s);
+        };
+        for s in &self.sets {
+            keep(&mut left, s.clone());
+        }
         for b in &other.sets {
-            let mut next = Vec::new();
-            for a in &left {
-                next.extend(cut(a, b, work)?);
+            let Congruence::Class {
+                modulus: mb,
+                residue: rb,
+            } = &b.class
+            else {
+                unreachable!("a nonempty set has a class")
+            };
+            // The classes held that meet `b`'s, taken out to be cut.
+            let mut met: Vec<Classed> = Vec::new();
+            for (ma, by_residue) in left.iter_mut() {
+                let g = ma.gcd(mb);
+                let r0 = rb.rem_euclid(&g);
+                let step_count = ma.div_floor(&g);
+                let few = !matches!(step_count.to_i128(), Some(k) if k < by_residue.len() as i128);
+                let hits: Vec<Num> = if few {
+                    (by_residue.keys())
+                        .filter(|r| r.rem_euclid(&g) == r0)
+                        .cloned()
+                        .collect()
+                } else {
+                    let mut hits = Vec::new();
+                    let mut r = r0.clone();
+                    while &r < ma {
+                        if by_residue.contains_key(&r) {
+                            hits.push(r.clone());
+                        }
+                        r = &r + &g;
+                    }
+                    hits
+                };
+                for r in hits {
+                    met.extend(by_residue.remove(&r).unwrap_or_default());
+                }
             }
-            let ranges: usize = next.iter().map(|s| s.ranges.len()).sum();
+            left.retain(|_, by_residue| !by_residue.is_empty());
+            let mut ranges = 0usize;
+            for a in &met {
+                for s in cut(a, b, work)? {
+                    ranges += s.ranges.len();
+                    keep(&mut left, s);
+                }
+            }
             work.charge(PIECE.saturating_mul(ranges as u64 + 1))?;
-            left = next;
         }
-        // The ranges of each class, the classes in the order first met (no hash order read).
-        let mut order: Vec<Congruence> = Vec::new();
-        let mut pieces: HashMap<Congruence, Vec<(End, End)>> = HashMap::new();
-        for s in left {
-            let at = pieces.entry(s.class.clone()).or_insert_with(|| {
-                order.push(s.class.clone());
-                Vec::new()
-            });
-            at.extend(s.ranges.into_pieces());
-        }
+        // The ranges of each class gathered, in the order of the classes (no hash order read).
         let mut u = ClassUnion::empty();
-        for class in order {
-            let ranges = IntervalSet::from_pieces(pieces.remove(&class).unwrap_or_default());
-            u.add(Classed::new(ranges, class));
+        for (modulus, by_residue) in left {
+            for (residue, sets) in by_residue {
+                let pieces = sets.into_iter().flat_map(|s| s.ranges.into_pieces());
+                let ranges = IntervalSet::from_pieces(pieces.collect());
+                u.add(Classed::new(
+                    ranges,
+                    Congruence::new(modulus.clone(), residue),
+                ));
+            }
         }
         Ok(u)
     }

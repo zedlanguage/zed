@@ -30,6 +30,7 @@ pub mod trees;
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicUsize;
@@ -42,6 +43,7 @@ use zed_collections::sorted::sorted_get;
 
 use crate::machine_int::BitLen;
 use bound::{Format, Product};
+use coprime::coprime_base_exponents;
 use dec::Dec;
 #[doc(hidden)]
 pub use fast::crossover;
@@ -49,7 +51,7 @@ pub use fast::crossover;
 pub use fast::method_counts;
 use fast::{LEAF_DIGITS, built, read_digits_by};
 pub use fast::{
-    PRINT_HANDOFF, PRINT_WHOLE, mul as mul_uint, mul_int, pow as pow_uint, to_decimal,
+    PRINT_HANDOFF, PRINT_WHOLE, gcd_uint, mul as mul_uint, mul_int, pow as pow_uint, to_decimal,
     to_decimal_split, to_decimal_split_at,
 };
 pub(crate) use fast::{mul_cost, squares_by_transform};
@@ -61,7 +63,7 @@ pub use room::{
 };
 use room::{least_bits, least_log2};
 use zed_numtheory::m61::{self, P as MERSENNE_61};
-use zed_numtheory::{factor, gcd_big_u64, is_prime, mul_mod, pow_mod_big, rem_big_u64};
+use zed_numtheory::{factor, is_prime, mul_mod, pow_mod_big, rem_big_u64};
 
 /// How [`Rat::round_whole`] rounds a number to a whole one: the rules of `round` (ties to
 /// even), `round(x, ties: #away)`, `floor`, `ceil`, `trunc` and `awayFromZero` (DESIGN.md
@@ -134,12 +136,30 @@ pub enum Rounding {
 /// A value read from a decimal literal whose exponent does not fit an `i64`, such as `1eNr`
 /// with `N` of thousands of digits, holds that exponent as its decimal digits in `ten`: the
 /// value is then `num/den * prod p^e * 10^t` (see `Ten`).
+///
+/// A power of a base wider than 64 bits is kept in `wide` as atoms `(q, f)`, the value then
+/// `num/den * prod p^e * prod q^f` (DESIGN.md sec:domains, "Kept powers"; step L1.17b, plan row
+/// KEPT-power-form), so `(2^64 + 13) ^ (2^64)` is one atom and not `2^70` bits. The atoms keep
+/// these invariants, which `Rat::normal` makes: sorted by `q`; each `f` nonzero; each `q`
+/// wider than 64 bits, no perfect power, and divisible by no prime below 2^8
+/// (`TEXT_PRIMES`); the `q` pairwise coprime, and each coprime to `num`, `den` and every
+/// listed prime. So the form is in lowest terms, `N = |num| prod_(e > 0) p^e prod_(f > 0) q^f`
+/// and `D` likewise, and the residues of `N` and `D` ([`Rat::residues`]) are those of the value.
 #[derive(Clone)]
 pub struct Rat {
     num: BigInt,
     den: BigInt,
     pows: Box<[(u64, BigInt)]>,
+    wide: Box<[(BigUint, BigInt)]>,
     ten: Option<Box<Ten>>,
+}
+
+/// What a term of [`Rat::normal`] is: a coefficient, a listed prime, or a wide atom.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Term {
+    Coef,
+    Prime,
+    Atom,
 }
 
 /// The factor `10^t` of a [`Rat`], `t` held as its decimal digits (DESIGN.md sec:domains,
@@ -181,8 +201,337 @@ impl Rat {
             num,
             den,
             pows: Box::default(),
+            wide: Box::default(),
             ten: None,
         }
+    }
+
+    /// Whether it holds wide atoms.
+    fn has_wide(&self) -> bool {
+        !self.wide.is_empty()
+    }
+
+    /// Its wide atoms `(q, f)`, by increasing `q` (see [`Rat`]): beside [`Rat::kept`], the
+    /// value is `num/den * prod p^e * prod q^f`.
+    pub fn wide(&self) -> &[(BigUint, BigInt)] {
+        &self.bin().wide
+    }
+
+    /// The number kept as `num/den * prod p^e * prod q^f` ([`Rat::from_kept`] with the wide
+    /// atoms of [`Rat::wide`]), when the parts are in that form; `None` otherwise. The atoms
+    /// are checked by their own invariants ([`Rat`]): each wider than 64 bits, no perfect power
+    /// ([`fn@least_root`]), divisible by no prime of `TEXT_PRIMES`, and the natural coprime
+    /// base of the atoms, `num`, `den` and the listed primes has each atom as its own element.
+    pub fn from_kept_wide(
+        num: BigInt,
+        den: BigInt,
+        pows: Vec<(u64, BigInt)>,
+        wide: Vec<(BigUint, BigInt)>,
+    ) -> Option<Rat> {
+        let mut r = Rat::from_kept(num, den, pows)?;
+        if wide.is_empty() {
+            return Some(r);
+        }
+        let atoms_ok = !r.num.is_zero()
+            && wide.windows(2).all(|w| w[0].0 < w[1].0)
+            && wide.iter().all(|(q, f)| {
+                !f.is_zero()
+                    && q.to_u64().is_none()
+                    && text_primes_dividing(q).is_empty()
+                    && least_root(q.clone()).1.is_one()
+            });
+        if !atoms_ok {
+            return None;
+        }
+        // Pairwise coprime and coprime to the rest: every atom is an element of the base, so
+        // no other input shares a prime with it.
+        let mut xs: Vec<BigUint> = wide.iter().map(|(q, _)| q.clone()).collect();
+        xs.extend([r.num.magnitude().clone(), r.den.magnitude().clone()]);
+        xs.extend(r.pows.iter().map(|(p, _)| BigUint::from(*p)));
+        let base = coprime_base_exponents(&xs);
+        let alone = (0..wide.len()).all(|i| {
+            let [(e, 1)] = base.exponents[i][..] else {
+                return false;
+            };
+            (base.exponents.iter().enumerate()).all(|(j, ks)| j == i || ks.iter().all(|k| k.0 != e))
+        });
+        r.wide = wide.into_boxed_slice();
+        alone.then_some(r)
+    }
+
+    /// The same value with its wide atoms multiplied into `num` and `den`, borrowed when it
+    /// holds none; [`TooLarge`] when the system refuses the memory, or an exponent is beyond a
+    /// word. Every operation that does not read the atoms works on this, at the cost of the
+    /// value's digits, the cost it had before the atoms were kept.
+    ///
+    /// Complexity tradeoff: the memory asked for is eight times the width of the coefficients
+    /// and the atoms' powers together, the factor and measurement of [`Rat::to_integer`] for
+    /// the same build (powers by squaring, the products by `num::fast::mul`), whose peak was at
+    /// most 6.43 times a power's width; the refusal names the least bits of the powers.
+    fn flat(&self) -> Result<Cow<'_, Rat>, TooLarge> {
+        if !self.has_wide() {
+            return Ok(Cow::Borrowed(self));
+        }
+        debug_assert!(self.ten.is_none(), "a `Ten` is taken apart first");
+        let (mut least, mut bits) = (
+            BigUint::from(self.num.bits() + self.den.bits()),
+            BigUint::from(self.num.bits() + self.den.bits()),
+        );
+        for (q, f) in self.wide.iter() {
+            least += f.magnitude() * (q.bits() - 1);
+            bits += f.magnitude() * q.bits();
+        }
+        let ask = &bits << 3u32;
+        room(least.clone(), ask.clone())?;
+        let (mut up, mut down) = (BigUint::one(), BigUint::one());
+        for (q, f) in self.wide.iter() {
+            let Some(k) = f.magnitude().to_u64() else {
+                return Err(TooLarge { ask, size: least });
+            };
+            let x = fast::pow(q, k);
+            match f.is_positive() {
+                true => up = fast::mul(&up, &x),
+                false => down = fast::mul(&down, &x),
+            }
+        }
+        // The atoms are coprime to `num`, `den` and the listed primes, so the result is reduced
+        // and no listed prime divides its coefficients.
+        Ok(Cow::Owned(Rat {
+            num: fast::mul_int(&self.num, &BigInt::from(up)),
+            den: fast::mul_int(&self.den, &BigInt::from(down)),
+            pows: self.pows.clone(),
+            wide: Box::default(),
+            ten: None,
+        }))
+    }
+
+    /// `self * b`, or `self / b` when `minus`, both nonzero and holding no [`Ten`], with no
+    /// coprime base, when the atoms of one operand (`small`) are all atoms of the other
+    /// (`big`); `None` otherwise, and the caller takes [`Rat::normal`]. The atoms of the result
+    /// are those of `big`, each at its exponent plus (or minus) the one in `small`, dropped at
+    /// zero; the plain parts, coefficients and listed primes, are multiplied (or divided) by
+    /// the path for values with no atom ([`Rat::scaled`]). An atom `q` of `big` that `small`
+    /// lacks must share no prime with `small`'s plain part: checked by one gcd of each of
+    /// `small`'s coefficients with the product of those atoms; a coefficient that is `q`
+    /// times a number coprime to `q`, for the one atom `q` that `small` lacks, gives `q` to the
+    /// atom's exponent (so `q^e > q` builds nothing); anything else, and any listed prime of
+    /// `small` beside such atoms, goes to [`Rat::normal`].
+    ///
+    /// Proof that the result keeps the invariants of [`Rat`]: its atoms are `big`'s, pairwise
+    /// coprime. `big`'s plain part is coprime to them (the invariants of `big`); `small`'s
+    /// plain part is coprime to `small`'s atoms (its invariants) and to the others (the gcd
+    /// checks, and a coefficient `q c'` loses its `q`, leaving `c'` with `gcd(c', q) = 1`
+    /// checked). The plain product is a product of primes of the two plain parts, so it is
+    /// coprime to every atom, and [`Rat::scaled`] leaves it in normal form. Proof that the value
+    /// is kept: `big * small^(±1)` is the plain product times each atom at the summed exponent.
+    ///
+    /// Complexity tradeoff: one merge of the two sorted lists of atoms, O(atoms) comparisons,
+    /// plus at most one product of the lacked atoms and two gcds, O(M(n) log n) in their `n`
+    /// bits, against [`Rat::normal`]'s coprime base of every term, whose copies and asked
+    /// memory exceed 1 KiB on `(2^64 + 13)^(2^64)` squared (1297 bytes, 2026-11-23, Colab).
+    /// What it gives up: a product whose atoms share a factor without being equal (`(a b)^e`
+    /// times `(b c)^e`) still takes the coprime base. Tested by
+    /// `l01_17_value_representation::kept_powers::a_wide_power_allocates_under_a_kibibyte`
+    /// and, against the built numbers, `random_products_of_powers_order_as_the_built_numbers`.
+    fn merged(&self, b: &Rat, minus: bool) -> Result<Option<Rat>, TooLarge> {
+        let s = if minus { -1 } else { 1 };
+        // The atoms of the result, from `big`'s list, and whether `b` is `small`.
+        let (mut wide, lacked, small_is_b) = match (
+            atoms_within(&b.wide, &self.wide),
+            atoms_within(&self.wide, &b.wide),
+        ) {
+            (Some(lacked), _) => (merge_atoms(&self.wide, &b.wide, s), lacked, true),
+            (None, Some(lacked)) => (merge_atoms(&self.wide, &b.wide, s), lacked, false),
+            (None, None) => return Ok(None),
+        };
+        let plain = |r: &Rat| Rat {
+            num: r.num.clone(),
+            den: r.den.clone(),
+            pows: r.pows.clone(),
+            wide: Box::default(),
+            ten: None,
+        };
+        let (mut x, mut y) = (plain(self), plain(b));
+        if !lacked.is_empty() {
+            let small = if small_is_b { &mut y } else { &mut x };
+            if !small.pows.is_empty() {
+                return Ok(None);
+            }
+            let q = (lacked.iter()).fold(BigUint::one(), |p, q| fast::mul(&p, q));
+            // `+1` for the numerator, `-1` for the denominator, times the sign of `small`.
+            let side = if small_is_b { s } else { 1 };
+            for (part, sign) in [(&mut small.num, side), (&mut small.den, -side)] {
+                let g = gcd_uint(part.magnitude(), &q);
+                if g.is_one() {
+                    continue;
+                }
+                if lacked.len() > 1 || g != q {
+                    return Ok(None);
+                }
+                // `part = q c'`, as `g = q` divides it; `c'` must be coprime to `q`.
+                let (rest, _) = div_rem_uint(part.magnitude(), &q);
+                if !gcd_uint(&rest, &q).is_one() {
+                    return Ok(None);
+                }
+                *part = BigInt::from_biguint(part.sign(), rest);
+                let i = wide
+                    .binary_search_by(|(r, _)| r.cmp(&q))
+                    .expect("q is an atom of big");
+                wide[i].1 += sign;
+            }
+        }
+        wide.retain(|(_, e)| !e.is_zero());
+        let p = match minus {
+            true => x.scaled(&y.den, &y.num, &y.pows, |a, b| a - b)?,
+            false => x.scaled(&y.num, &y.den, &y.pows, |a, b| a + b)?,
+        };
+        Ok(Some(Rat {
+            wide: wide.into_boxed_slice(),
+            ..p
+        }))
+    }
+
+    /// The normal form of `(-1)^negative * prod x^e` over the terms `(x, e, kind)`, each `x`
+    /// positive (a [`Term::Prime`] a prime of a word, a [`Term::Atom`] an atom of a [`Rat`]),
+    /// none zero: [`Rat::mul`], [`Rat::div`] and their kin when an operand holds wide atoms.
+    /// [`TooLarge`] when the system refuses the memory.
+    ///
+    /// Method: each listed prime ([`Term::Prime`]) is its own element, with the sum of its
+    /// exponents in its own terms and its valuations in the others, which it is taken out of;
+    /// then the natural coprime base `B` of what is left ([`coprime_base_exponents`]; D. J.
+    /// Bernstein, "Factoring into coprimes in essentially linear time", J. Algorithms
+    /// 54(1):1-30, 2005, doi:10.1016/j.jalgor.2004.04.009, whose abstract defines a coprime base
+    /// for a set S as "a set P of pairwise coprime integers" with each element of S "a product
+    /// of powers of elements of P"). Each `x = prod_(b in B) b^(k_(x,b))`, so the value is
+    /// `prod_b b^(E_b)` with `E_b = sum_x k_(x,b) e_x`. Each `b` with `E_b` nonzero is then,
+    /// when it divides an atom, split by [`push_part`] into primes and at most one atom;
+    /// else `b^|E_b|` built into `num` or `den` by the sign of `E_b`.
+    ///
+    /// Proof that the result keeps the invariants of [`Rat`]: the `b` are pairwise coprime, so
+    /// the parts of distinct `b` share no prime: the atoms are pairwise coprime and coprime to
+    /// `num` and `den`, which are products of other `b`, each on one side, so `num/den` is
+    /// reduced; a listed prime was taken out of every other term, so it divides no `b`. Within
+    /// one `b`, [`push_part`] gives primes and an atom with no common prime. Proof that the
+    /// value is kept: each `b` is written as `b^(E_b)`, exactly.
+    ///
+    /// Complexity tradeoff: the coprime base costs O(M(N) log^2 N)-ish in the `N` bits of the
+    /// terms (Bernstein's bound, proved at `num::coprime`), against the O(M(N)) of a product
+    /// of plain coefficients, which keeps the old path ([`Rat::scaled`]) for operands with no
+    /// atom; a `b` built into a coefficient has at most the bits of the coefficients it came
+    /// from, and the atoms' powers are never built. The memory asked is sixteen times the
+    /// terms' bits, the factor [`Rat::scaled`] asks for its products and reduction; not
+    /// measured for the base itself (by_halves keeps its levels, at most `2N` bits each,
+    /// proved at `num::coprime`'s `split`).
+    fn normal(negative: bool, terms: Vec<(BigUint, BigInt, Term)>) -> Result<Rat, TooLarge> {
+        let bits: u64 = terms.iter().map(|(x, _, _)| x.bits()).sum();
+        room(BigUint::from(bits), BigUint::from(bits) << 4u32)?;
+        // The listed primes, each with the sum of its exponents, first from its own terms.
+        let mut primes: BTreeMap<u64, BigInt> = BTreeMap::new();
+        let mut rest: Vec<(BigUint, BigInt, Term)> = Vec::new();
+        for (x, e, kind) in terms {
+            match kind {
+                // Unreachable: a listed prime is a word.
+                Term::Prime => {
+                    *primes
+                        .entry(x.to_u64().expect("a listed prime is a word"))
+                        .or_default() += e;
+                }
+                _ if x.is_one() => {}
+                _ => rest.push((x, e, kind)),
+            }
+        }
+        // Each listed prime is taken out of the other terms: one remainder tree a term over all
+        // of them, then a valuation for each that divides it.
+        //
+        // Complexity tradeoff: a listed prime is known to be prime, so it is its own element
+        // of the coprime base, and taking it out by remainders costs O(M(N) log k) for a term
+        // of `N` bits and `k` primes ([`least_root::remainders`], Bernstein's remainder tree)
+        // and a [`valuation`] for each that divides. The alternative, the listed primes among
+        // the inputs of the coprime base, cost more as their count grew on the same wide
+        // atoms: on `(a b)^(2^64)` times `(b c)^(2^64)`, `a`, `b`, `c` within 64 of
+        // `2^(m - 1)`, the base took 4.4 ms on the two atoms alone at `m = 2^16` and 17 ms
+        // with 2 listed primes; at `m = 2^19` 32 ms alone and 360 ms with 6 (2026-11-24,
+        // Colab), 21 times for 8 times the bits.
+        if !primes.is_empty() {
+            let ps: Vec<u64> = primes.keys().copied().collect();
+            for (x, e, _) in &mut rest {
+                let rems = least_root::remainders(x, &ps);
+                for (&p, r) in ps.iter().zip(rems) {
+                    if r != 0 {
+                        continue;
+                    }
+                    let (v, y) = valuation(BigInt::from(std::mem::take(x)), p);
+                    *x = y.into_parts().1;
+                    *primes.get_mut(&p).expect("a listed prime") += &*e * v;
+                }
+            }
+            rest.retain(|(x, _, _)| !x.is_one());
+        }
+        let terms = rest;
+        let xs: Vec<&BigUint> = terms.iter().map(|(x, _, _)| x).collect();
+        let base = coprime_base_exponents(&xs);
+        let n = base.elements.len();
+        let mut exps = vec![BigInt::zero(); n];
+        let mut kinds = vec![Term::Coef; n];
+        for ((_, e, kind), ks) in terms.iter().zip(&base.exponents) {
+            for &(b, k) in ks {
+                exps[b as usize] += e * k;
+                // An atom marks every element of it.
+                if *kind == Term::Atom {
+                    kinds[b as usize] = Term::Atom;
+                }
+            }
+        }
+        let (mut num, mut den) = (BigUint::one(), BigUint::one());
+        let mut pows: Vec<(u64, BigInt)> =
+            (primes.into_iter()).filter(|(_, e)| !e.is_zero()).collect();
+        let mut wide: Vec<(BigUint, BigInt)> = Vec::new();
+        for ((b, e), kind) in base.elements.into_iter().zip(exps).zip(kinds) {
+            if e.is_zero() {
+                continue;
+            }
+            match kind {
+                // Unreachable: the listed primes were taken out of every term above.
+                Term::Prime => unreachable!("no listed prime is an input of the base"),
+                Term::Atom => push_part(b, &e, &mut pows, &mut wide),
+                Term::Coef => {
+                    // `|E_b|` is at most the sum of the multiplicities of `b` in the
+                    // coefficients, each below their bits, so it fits a word.
+                    let k = e
+                        .magnitude()
+                        .to_u64()
+                        .expect("below the coefficients' bits");
+                    let x = fast::pow(&b, k);
+                    match e.is_positive() {
+                        true => num = fast::mul(&num, &x),
+                        false => den = fast::mul(&den, &x),
+                    }
+                }
+            }
+        }
+        pows.sort_unstable_by_key(|(p, _)| *p);
+        wide.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let sign = if negative { Sign::Minus } else { Sign::Plus };
+        Ok(Rat {
+            num: BigInt::from_biguint(sign, num),
+            den: BigInt::from(den),
+            pows: pows.into_boxed_slice(),
+            wide: wide.into_boxed_slice(),
+            ten: None,
+        })
+    }
+
+    /// The terms of [`Rat::normal`] for `self^s`, `s` = 1 or -1: its coefficients, listed
+    /// primes and atoms with their exponents times `s`. It holds no [`Ten`].
+    fn terms(&self, s: i32) -> Vec<(BigUint, BigInt, Term)> {
+        debug_assert!(self.ten.is_none());
+        let mut t = vec![
+            (self.num.magnitude().clone(), BigInt::from(s), Term::Coef),
+            (self.den.magnitude().clone(), BigInt::from(-s), Term::Coef),
+        ];
+        t.extend((self.pows.iter()).map(|(p, e)| (BigUint::from(*p), e * s, Term::Prime)));
+        t.extend((self.wide.iter()).map(|(q, f)| (q.clone(), f * s, Term::Atom)));
+        t
     }
 
     /// It with the decimal exponent `t` of its [`Ten`] converted to binary and folded into the
@@ -205,13 +554,15 @@ impl Rat {
             num: self.num.clone(),
             den: self.den.clone(),
             pows: self.pows.clone(),
+            wide: self.wide.clone(),
             ten: None,
         }
     }
 
     /// It times `10^k`, `k` in binary; it holds no [`Ten`]. The exponents of 2 and 5 gain `k`,
     /// listed if they were not, and [`Rat::extract`] moves any 2 or 5 of the coefficients
-    /// into them, so the result is in normal form.
+    /// into them, so the result is in normal form; the wide atoms, which 2 and 5 do not divide,
+    /// are kept.
     fn times_ten(&self, k: &BigInt) -> Rat {
         debug_assert!(self.ten.is_none());
         if self.is_zero() {
@@ -224,7 +575,10 @@ impl Rat {
                 Err(i) => pows.insert(i, (p, k.clone())),
             }
         }
-        Rat::extract(self.num.clone(), self.den.clone(), pows)
+        Rat {
+            wide: self.wide.clone(),
+            ..Rat::extract(self.num.clone(), self.den.clone(), pows)
+        }
     }
 
     /// `rest * 10^t`, `rest` holding no [`Ten`] and nonzero: a [`Ten`] of `t` when it stays
@@ -236,6 +590,12 @@ impl Rat {
         debug_assert!(rest.ten.is_none() && !rest.is_zero());
         if let Some(k) = t.to_i64() {
             return rest.times_ten(&BigInt::from(k));
+        }
+        // A value with wide atoms holds no `Ten`, so the readers of the atoms see no decimal
+        // exponent: `t` is converted, O(n log^2 n) on its digits. Only a product of a literal
+        // beyond an `i64` exponent with a computed wide power takes this path.
+        if rest.has_wide() {
+            return rest.times_ten(&t.to_bigint());
         }
         // 2 and 5 moved out of the coefficients into the exponents.
         let rest = rest.times_ten(&BigInt::zero());
@@ -300,6 +660,7 @@ impl Rat {
             num,
             den,
             pows: out.into_boxed_slice(),
+            wide: Box::default(),
             ten: None,
         }
     }
@@ -450,6 +811,7 @@ impl Rat {
             num,
             den,
             pows: pows.into_boxed_slice(),
+            wide: Box::default(),
             ten: None,
         })
     }
@@ -461,11 +823,25 @@ impl Rat {
         self.t().is_none_or(|t| !t.is_negative())
             && self.den.is_one()
             && self.pows.iter().all(|(_, e)| !e.is_negative())
+            && self.wide.iter().all(|(_, f)| f.is_positive())
+    }
+
+    /// `sum |f| (bits(q) - 1)` and `sum |f| bits(q)` over the wide atoms whose exponent has
+    /// `sign`: since `2^(bits(q) - 1) <= q < 2^bits(q)`, a lower bound on `log2` of their
+    /// product and an upper bound on its bits, added to a side's own bounds by the readers of
+    /// sizes ([`Rat::least_size`], [`Rat::text_size`], [`Rat::text_least`]).
+    fn wide_bits(&self, sign: Sign) -> (BigUint, BigUint) {
+        let (mut low, mut high) = (BigUint::zero(), BigUint::zero());
+        for (q, f) in self.wide.iter().filter(|(_, f)| f.sign() == sign) {
+            low += f.magnitude() * (q.bits() - 1);
+            high += f.magnitude() * q.bits();
+        }
+        (low, high)
     }
 
     /// Whether it holds no prime powers: a plain reduced rational.
     fn is_plain(&self) -> bool {
-        self.pows.is_empty() && self.ten.is_none()
+        self.pows.is_empty() && self.wide.is_empty() && self.ten.is_none()
     }
 
     /// The integer it is, built, or [`TooLarge`] when the system refuses the memory for it.
@@ -473,6 +849,9 @@ impl Rat {
     pub fn to_integer(&self) -> Result<BigInt, TooLarge> {
         if self.ten.is_some() {
             return self.bin().to_integer();
+        }
+        if self.has_wide() {
+            return self.flat()?.to_integer();
         }
         // Complexity tradeoff: the memory asked for is eight times the integer's width, a
         // measured bound, not a proved one, on building it power by power (each power by
@@ -500,6 +879,9 @@ impl Rat {
     fn integer_built(&self) -> Result<BigInt, TooLarge> {
         if self.ten.is_some() {
             return self.bin().integer_built();
+        }
+        if self.has_wide() {
+            return self.flat()?.integer_built();
         }
         let pows: Vec<(u64, BigUint)> = self
             .pows
@@ -544,8 +926,9 @@ impl Rat {
 
     /// The integer it is, built, unless it is surely beyond 64 bits. It must be an integer.
     pub(crate) fn small_integer(&self) -> Option<BigInt> {
-        // A `Ten` of an integer is at least `10^(2^63)`.
-        if self.ten.is_some() {
+        // A `Ten` of an integer is at least `10^(2^63)`; a wide atom of an integer has `q >
+        // 2^64` and a positive exponent.
+        if self.ten.is_some() || self.has_wide() {
             return None;
         }
         // `|n| >= 2^(bits(n) - 1)` and `p^e >= 2^((bits(p) - 1) e)`, so past this bound the
@@ -567,6 +950,9 @@ impl Rat {
     pub fn numer_text(&self) -> Result<String, TooLarge> {
         if self.ten.is_some() {
             return self.bin().numer_text();
+        }
+        if self.has_wide() {
+            return self.flat()?.numer_text();
         }
         let sign = if self.is_negative() { "-" } else { "" };
         let pows = self
@@ -595,7 +981,7 @@ impl Rat {
         }
         let side = |coef: &BigInt, sign: Sign| {
             let pows = self.pows.iter().filter(move |(_, e)| e.sign() == sign);
-            least_bits(coef, pows.map(|(p, e)| (*p, e.magnitude())))
+            least_bits(coef, pows.map(|(p, e)| (*p, e.magnitude()))) + self.wide_bits(sign).0
         };
         side(&self.num, Sign::Plus) + side(&self.den, Sign::Minus)
     }
@@ -626,7 +1012,7 @@ impl Rat {
         }
         let side = |coef: &BigInt, sign: Sign| {
             let pows = self.pows.iter().filter(move |(_, e)| e.sign() == sign);
-            width(coef, pows.map(|(p, e)| (*p, e.magnitude())))
+            width(coef, pows.map(|(p, e)| (*p, e.magnitude()))) + self.wide_bits(sign).1
         };
         let bits = side(&self.num, Sign::Plus) + side(&self.den, Sign::Minus);
         // `log10(2) < 1234 / 4096`; a digit is one byte.
@@ -644,11 +1030,13 @@ impl Rat {
         }
         let side = |coef: &BigInt, sign: Sign| {
             let pows = self.pows.iter().filter(move |(_, e)| e.sign() == sign);
-            least_log2(coef, pows.map(|(p, e)| (*p, e.magnitude())))
+            least_log2(coef, pows.map(|(p, e)| (*p, e.magnitude()))) + self.wide_bits(sign).0
         };
         // `x >= 2^l` has at least `floor(l log10 2) + 1` digits, and `1233 / 4096 < log10 2`.
         let digits = |l: BigUint| ((l * 1233u32) >> 12u32) + 1u32;
-        let den = match self.den.is_one() && self.pows.iter().all(|(_, e)| e.is_positive()) {
+        let whole = self.pows.iter().all(|(_, e)| e.is_positive())
+            && self.wide.iter().all(|(_, f)| f.is_positive());
+        let den = match self.den.is_one() && whole {
             true => BigUint::zero(),
             false => digits(side(&self.den, Sign::Minus)),
         };
@@ -659,6 +1047,9 @@ impl Rat {
     pub fn denom_text(&self) -> Result<String, TooLarge> {
         if self.ten.is_some() {
             return self.bin().denom_text();
+        }
+        if self.has_wide() {
+            return self.flat()?.denom_text();
         }
         let pows = self
             .pows
@@ -678,6 +1069,11 @@ impl Rat {
     pub fn built_parts(&self) -> Result<(Cow<'_, BigUint>, Cow<'_, BigUint>), TooLarge> {
         if self.ten.is_some() {
             return self.bin().built_parts();
+        }
+        if self.has_wide() {
+            let flat = self.flat()?;
+            let (n, d) = flat.built_parts()?;
+            return Ok((Cow::Owned(n.into_owned()), Cow::Owned(d.into_owned())));
         }
         if !self.is_plain() {
             // Complexity tradeoff: the memory asked for is eight times the width of the two
@@ -734,6 +1130,11 @@ impl Rat {
             {
                 r = m61::mul(r, m61::pow(*p, e.magnitude()));
             }
+            // A wide atom `q^f` lies on the side of `f`'s sign; `q mod M` is 0 when `M` divides
+            // `q`, and then so is the residue, as of the digits.
+            for (q, f) in self.wide.iter().filter(|(_, f)| f.sign() == sign) {
+                r = m61::mul(r, m61::pow(rem_big_u64(q, MERSENNE_61), f.magnitude()));
+            }
             r
         };
         let (mut n, mut d) = (side(&self.num, Sign::Plus), side(&self.den, Sign::Minus));
@@ -773,6 +1174,9 @@ impl Rat {
         for (p, k) in self.pows.iter() {
             e = mul_mod(e, pow_mod_big(*p, k.magnitude(), q), q);
         }
+        for (a, f) in self.wide.iter() {
+            e = mul_mod(e, pow_mod_big(rem_big_u64(a, q), f.magnitude(), q), q);
+        }
         // A `Ten` of an integer has `t > 0`; `M - 1` is even, so 2 has no inverse modulo it and
         // Fermat does not apply: `10^t` is reduced by a power over the decimal digits of `t`,
         // O(n) ([`Dec::pow_mod`]), times the `p^e_p` of `pows` above.
@@ -794,6 +1198,14 @@ impl Rat {
     pub fn literal_text(&self) -> String {
         if self.is_zero() {
             return "0r".to_string();
+        }
+        // Wide atoms are written as the built number prints, so equal values print alike; when
+        // the system refuses the memory for it, as `Display` writes the number.
+        if self.has_wide() {
+            return match self.flat() {
+                Ok(f) => f.literal_text(),
+                Err(_) => self.to_string(),
+            };
         }
         let sign = if self.is_negative() { "-" } else { "" };
         // With a `Ten`, `10^t` is the value's whole power of ten (`Ten`'s invariants), so the
@@ -996,7 +1408,11 @@ impl Rat {
             true => (c, BigUint::zero()),
             false => least_root(c),
         };
+        // The wide atoms are outside the set as the listed primes are (none divisible by a prime
+        // of it), coprime to `c` and to the listed primes, so they join `others` in the gcd `m`
+        // and in the root, and the proof below holds with their exponents beside the `e_p`.
         let m = (others.iter()).fold(BigInt::from(k.clone()), |g, (_, e)| g.gcd(e));
+        let m = (self.wide.iter()).fold(m, |g, (_, f)| g.gcd(f));
         if !m.is_zero() {
             // `m` divides `k`, a bit count of `c`, so `k / m` fits a word.
             let km = (&k / m.magnitude()).to_u64().expect("below the bits of c");
@@ -1004,6 +1420,9 @@ impl Rat {
                 num: BigInt::from(fast::pow(&s, km)),
                 den: BigInt::one(),
                 pows: (others.iter()).map(|(p, e)| (*p, e / &m)).collect(),
+                wide: (self.wide.iter())
+                    .map(|(q, f)| (q.clone(), f / &m))
+                    .collect(),
                 ten: None,
             };
             match root.text_room().and_then(|()| root.integer_built()) {
@@ -1011,6 +1430,7 @@ impl Rat {
                 Err(_) => {
                     push_root(&mut atoms, &s, &BigInt::from(k));
                     atoms.extend(others.into_iter().map(|(p, e)| (BigUint::from(p), e)));
+                    atoms.extend(self.wide.iter().cloned());
                 }
             }
         }
@@ -1040,6 +1460,18 @@ impl Rat {
         if self.ten.is_some() || b.ten.is_some() {
             return self.bin().sum_least(b.bin());
         }
+        // A sum with a wide atom factors out the atoms both operands list ([`Rat::shared_wide`])
+        // and builds what is left of each in full ([`Rat::sum`]), each at least its own least
+        // size; the quotients by the shared atoms only subtract exponents.
+        if self.has_wide() || b.has_wide() {
+            let Some(g) = self.shared_wide(b) else {
+                return Ok(self.least_size().max(b.least_size()));
+            };
+            // Unreachable: `g` is a product of atoms greater than 1, so it is not zero.
+            let x = self.div(&g)?.expect("g is not zero");
+            let y = b.div(&g)?.expect("g is not zero");
+            return x.sum_least(&y);
+        }
         if self.is_plain() && b.is_plain() {
             let [na, da, nb, db] = [&self.num, &self.den, &b.num, &b.den].map(|x| x.bits());
             return Ok(BigUint::from(match self.den.is_one() && b.den.is_one() {
@@ -1065,6 +1497,32 @@ impl Rat {
         Ok(x.max(y))
     }
 
+    /// The atoms both `self` and `b` list ([`Rat::wide`]), each at the lesser of its two
+    /// exponents, as a `Rat` of those atoms alone; `None` where they share none. One merge of
+    /// the two sorted lists, O(atoms) comparisons.
+    fn shared_wide(&self, b: &Rat) -> Option<Rat> {
+        let mut shared = Vec::new();
+        let (mut i, mut j) = (0, 0);
+        while i < self.wide.len() && j < b.wide.len() {
+            let ((q, e), (r, f)) = (&self.wide[i], &b.wide[j]);
+            match q.cmp(r) {
+                Ordering::Less => i += 1,
+                Ordering::Greater => j += 1,
+                Ordering::Equal => {
+                    shared.push((q.clone(), e.min(f).clone()));
+                    (i, j) = (i + 1, j + 1);
+                }
+            }
+        }
+        (!shared.is_empty()).then(|| Rat {
+            num: BigInt::one(),
+            den: BigInt::one(),
+            pows: Box::default(),
+            wide: shared.into_boxed_slice(),
+            ten: None,
+        })
+    }
+
     /// `a + b`, or `a - b` when `minus`.
     fn sum(&self, b: &Rat, minus: bool) -> Result<Rat, TooLarge> {
         // Complexity tradeoff: a sum with a `Ten` converts its exponent, O(n log^2 n), where a
@@ -1072,6 +1530,28 @@ impl Rat {
         // full beyond its shared powers anyway (DESIGN.md "Kept powers", *Sums*).
         if self.ten.is_some() || b.ten.is_some() {
             return self.bin().sum(b.bin(), minus);
+        }
+        // A sum with a wide atom factors out `g`, the atoms both operands list, each at the
+        // lesser exponent, as the listed primes are below: `x + y = g (x/g + y/g)`. What is left
+        // of each operand is built from its remaining atoms ([`Rat::flat`]), so the cost is that
+        // of the sum above the shared powers (DESIGN.md "Kept powers", *Sums*), and
+        // `q^(2^64) + q^(2^64)` builds nothing. The atoms of `g` come from one operand's list,
+        // so they are pairwise coprime, coprime to its coefficients and primes, and `g` is a
+        // valid `Rat`; the quotients and the product go through [`Rat::normal`].
+        // Complexity tradeoff: an atom of one operand that shares a factor with a different
+        // atom of the other (`q r` beside `q`) is not shared here, so that part is built,
+        // where a joint coprime base of the two lists would share `q`; the plain lists that
+        // products and powers make for one value written two ways hold equal atoms, which this
+        // covers. Tested by `a_sum_of_equal_wide_powers_builds_nothing`.
+        if self.has_wide() || b.has_wide() {
+            let Some(g) = self.shared_wide(b) else {
+                let (x, y) = (self.flat()?, b.flat()?);
+                return Rat::sum(&x, &y, minus);
+            };
+            // Unreachable: `g` is a product of atoms greater than 1, so it is not zero.
+            let x = self.div(&g)?.expect("g is not zero");
+            let y = b.div(&g)?.expect("g is not zero");
+            return Rat::sum(&x, &y, minus)?.mul(&g);
         }
         let signed = |x: BigInt, y: BigInt| match minus {
             true => x - y,
@@ -1178,6 +1658,36 @@ impl Rat {
         ))
     }
 
+    /// `2P + 1`, `P` the bits of the plain parts `num` and `den` of both operands ([`Rat::kept`],
+    /// the parts apart from the prime powers and wide atoms): the most bits a sum of the plain
+    /// parts alone builds. Proof: (1) the plain parts are `p/q` and `r/s`; (2) their sum is
+    /// `(p s ± r q) / (q s)`, reduced or not; (3) `bits(p s) <= bits p + bits s` and
+    /// `bits(r q) <= bits r + bits q`, each at most `P`, so `bits(p s ± r q) <= P + 1`;
+    /// (4) `bits(q s) <= bits q + bits s <= P`; (5) the two together build at most `2P + 1`.
+    /// So a sum sized past both `2P + 1` and the 64 bits of a word builds out a kept power or a
+    /// wide atom, as `3r^k + 1r` does (P is 4, the build `k log2 3` bits). O(1).
+    pub fn plain_sum_bits(&self, b: &Rat) -> u64 {
+        let plain: u64 = [self, b]
+            .into_iter()
+            .map(|r| {
+                let (num, den, _) = r.kept();
+                num.bits() + den.bits()
+            })
+            .sum();
+        2 * plain + 1
+    }
+
+    /// The sum rule of the checker's constant folding and of the bound normal form
+    /// (DESIGN.md L1.17d, "a sum of constants is one constant when it constructs no more than
+    /// its operands hold"): whether `a + b` builds at most the larger of 64 bits (a word, kept
+    /// unbuilt) and [`Rat::plain_sum_bits`], sized by [`Rat::sum_least`] without building it.
+    /// So `2^64 + 2^63` is added (the shared `2^63` is factored out) and `3^(2^40) + 1` is not.
+    /// [`TooLarge`] as [`Rat::sum_least`]. O(primes kept).
+    pub fn sum_folds(&self, b: &Rat) -> Result<bool, TooLarge> {
+        let bits = self.sum_least(b)?;
+        Ok(bits <= BigUint::from(self.plain_sum_bits(b).max(64)))
+    }
+
     /// `a * b`, or [`TooLarge`] when the system refuses the memory for the products of the
     /// coefficients and their reduction, asked before anything is built. The kept powers add
     /// their exponents and are not built.
@@ -1207,6 +1717,17 @@ impl Rat {
             room(size.clone(), size << 3u32)?;
             return Ok(Rat::int(fast::mul_int(&self.num, &b.num)));
         }
+        if self.has_wide() || b.has_wide() {
+            if self.is_zero() || b.is_zero() {
+                return Ok(Rat::int(BigInt::zero()));
+            }
+            if let Some(p) = self.merged(b, false)? {
+                return Ok(p);
+            }
+            let mut terms = self.terms(1);
+            terms.extend(b.terms(1));
+            return Rat::normal(self.is_negative() != b.is_negative(), terms);
+        }
         self.scaled(&b.num, &b.den, &b.pows, |x, y| x + y)
     }
 
@@ -1226,6 +1747,17 @@ impl Rat {
             let rest = rest.expect("a nonzero divisor");
             return Ok(Some(Rat::with_ten(rest, t)));
         }
+        if self.has_wide() || b.has_wide() {
+            if self.is_zero() {
+                return Ok(Some(Rat::int(BigInt::zero())));
+            }
+            if let Some(q) = self.merged(b, true)? {
+                return Ok(Some(q));
+            }
+            let mut terms = self.terms(1);
+            terms.extend(b.terms(-1));
+            return Rat::normal(self.is_negative() != b.is_negative(), terms).map(Some);
+        }
         self.scaled(&b.den, &b.num, &b.pows, |x, y| x - y).map(Some)
     }
 
@@ -1241,8 +1773,27 @@ impl Rat {
     }
 
     /// `num * up / (den * down) * prod p^e`, the exponent of each prime `f` of this one's and
-    /// `pows`', a missing one zero; `down` is not zero. [`TooLarge`] when the system refuses
-    /// the memory for the two products and their reduction.
+    /// `pows`', a missing one zero; `down` is not zero, and `up` and `down` share no factor, as
+    /// a [`Rat`]'s parts do. [`TooLarge`] when the system refuses the memory for the two
+    /// products and their reduction.
+    ///
+    /// Method: Knuth's cross gcds (*The Art of Computer Programming*, vol. 2, 3rd ed., 1997,
+    /// sec. 4.5.1 "Fractions", pp. 330-331: "Another way to perform the multiplication is to
+    /// find d1 = gcd(u, v') and d2 = gcd(u', v); then the answer is w = (u/d1)(v/d2),
+    /// w' = (u'/d2)(v'/d1)"; GMP's `mpq_mul` does the same). Proof that the result is reduced,
+    /// for `u = num`, `u' = den`, `v = up`, `v' = down`, with `u ⊥ u'` and `v ⊥ v'`: (1) a
+    /// prime `p` dividing both `w` and `w'` divides one factor of each; (2) `u/d1` and `u'/d2`
+    /// divide `u` and `u'`, which share no prime, and so for `v/d2` and `v'/d1`; (3) so `p`
+    /// divides `u/d1` and `v'/d1`, or `v/d2` and `u'/d2`; (4) in the first case `p d1` divides
+    /// `u` and `v'`, against `d1` being their greatest common divisor, and the second is the
+    /// same with `d2`. The listed primes are then moved out as before ([`Rat::extract`]).
+    ///
+    /// Complexity tradeoff: the naive method multiplies first and takes one gcd of the two
+    /// products, `O(M(n) log n)` at their width `n` (half gcd) however narrow one operand is;
+    /// the cross gcds are of one part of each operand, so a product of an `n`-word number by
+    /// a one-word one costs `O(n)` (`gcd_uint`'s word path, then two divisions by a word),
+    /// and two wide operands cost no more than before. Measured: the chain of
+    /// `l01_29_repairs_and_printing::bench::too_large::bounding_a_chain_of_products_with_several_roots_scales`.
     fn scaled(
         &self,
         up: &BigInt,
@@ -1272,11 +1823,21 @@ impl Rat {
         // for its own memory, which needs a reduction written here rather than num-bigint's.
         let bits = self.num.bits() + self.den.bits() + up.bits() + down.bits();
         room(BigUint::from(bits), BigUint::from(bits) << 4u32)?;
-        Ok(Rat::build(
-            fast::mul_int(&self.num, up),
-            fast::mul_int(&self.den, down),
-            merge(&self.pows, pows, f),
-        ))
+        let (d1, d2) = (gcd(&self.num, down), gcd(up, &self.den));
+        // `d` divides `x` and is positive, so the floor is the exact quotient.
+        fn cut<'x>(x: &'x BigInt, d: &BigInt) -> Cow<'x, BigInt> {
+            match d.is_one() {
+                true => Cow::Borrowed(x),
+                false => Cow::Owned(fast::div_floor(x, d)),
+            }
+        }
+        let (u, v) = (cut(&self.num, &d1), cut(up, &d2));
+        let (u2, v2) = (cut(&self.den, &d2), cut(down, &d1));
+        let (mut num, mut den) = (fast::mul_int(&u, &v), fast::mul_int(&u2, &v2));
+        if den.is_negative() {
+            (num, den) = (-num, -den);
+        }
+        Ok(Rat::extract(num, den, merge(&self.pows, pows, f)))
     }
 
     /// `-a`.
@@ -1287,6 +1848,7 @@ impl Rat {
             num: -&self.num,
             den: self.den.clone(),
             pows: self.pows.clone(),
+            wide: self.wide.clone(),
             ten: (self.t()).map(|t| {
                 Box::new(Ten {
                     t: t.clone(),
@@ -1319,11 +1881,10 @@ impl Rat {
         }
     }
 
-    /// The bit lengths of the numerator and the denominator, each where [`Rat::pow`] builds
-    /// its power: where it is wider than 64 bits. A narrower one is factored and kept as prime
-    /// exponents, so its power builds nothing and it has `None`. `self ^ k` has at least
-    /// `k * (L - 1) + 1` bits for each part of `L` bits, since the part is at least
-    /// `2^(L - 1)` in magnitude (DESIGN.md sec:checking_in_zed).
+    /// The bit lengths of the numerator and the denominator held built, each where it is wider
+    /// than 64 bits, `None` otherwise: the checker's measure of what an operation built
+    /// (DESIGN.md sec:checking_in_zed). The kept primes and the wide atoms ([`Rat::wide`]) are
+    /// held as exponents and count for nothing.
     pub fn built_widths(&self) -> [Option<u64>; 2] {
         [&self.num, &self.den].map(|part| {
             let part = part.magnitude();
@@ -1331,9 +1892,11 @@ impl Rat {
         })
     }
 
-    /// `a^e`. Powers of primes multiply their exponents, and a numerator or denominator that
-    /// fits in 64 bits is factored into primes, so `10 ^ 10 ^ 9` is `2^(10^9) * 5^(10^9)`.
-    /// [`TooLarge`] when a wider part's power is built and the system refuses the memory.
+    /// `a^e`. Powers of primes and wide atoms multiply their exponents, a numerator or
+    /// denominator that fits in 64 bits is factored into primes, so `10 ^ 10 ^ 9` is
+    /// `2^(10^9) * 5^(10^9)`, and a wider one becomes wide atoms, so nothing as wide as the
+    /// power is built. [`TooLarge`] when the system refuses the memory to split a wide part
+    /// (sixteen times its bits), never for the size of the power.
     pub fn pow(&self, e: &BigUint) -> Result<Rat, TooLarge> {
         if e.is_zero() {
             return Ok(Rat::int(BigInt::one()));
@@ -1349,97 +1912,64 @@ impl Rat {
                 None => self.bin().pow(e),
             };
         }
-        let parts = [self.num.magnitude(), self.den.magnitude()];
-        // Complexity tradeoff: the memory asked for is eight times the width of the built
-        // powers together, a measured bound, not a proved one, on `num::fast::pow`,
-        // by squaring (each square by `num::fast::mul`, the base and the running result held at
-        // once), the numerator's power held while the denominator's is built: the peak heap of
-        // a power was at most 6.43 times the width over bases of 2^10 to 2^22 bits and
-        // exponents 2 to 31 (2026-11-07, BIGINT-fast-mul; 6.09 with num-bigint's power), and
-        // 3.55 times it for a rational with both parts wide (measured with num-bigint's). So a
-        // power needing less is refused when the free memory lies between the two, and none
-        // aborts. Tested by
-        // `a_power_of_a_wide_base_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
-        // complete solution would ask each allocation of the power for its own memory.
-        let widths = self.built_widths();
-        let wide: u64 = widths.into_iter().flatten().sum();
-        // The refusal of the wide parts' powers: their size in bits, and the memory asked,
-        // eight times the width times `e`; asked of `room` here, and returned below when `e` is
-        // too wide to raise a part to. The size is the least the powers have, `e * (L - 1) + 1`
-        // bits for each part of `L` bits ([`Rat::built_widths`]), as a message reads it as what
-        // the step needs (`least_bits`, row CONST-least-refusal-size); the width times `e`, an
-        // upper bound, took 65 bits a factor for `(2^64 + 13) ^ (2^64)` and named 130 EiB where
-        // the number has `64 * 2^64 + 19` bits, 128 EiB (plan row MSG-too-large-figure).
-        let refusal = || {
-            let size = (widths.into_iter().flatten())
-                .map(|l| BigUint::from(l - 1) * e + 1u32)
-                .sum();
-            TooLarge {
-                ask: (BigUint::from(wide) * e) << 3u32,
-                size,
-            }
-        };
-        if wide > 0 {
-            let TooLarge { size, ask } = refusal();
-            room(size, ask)?;
+        if e.is_one() {
+            return Ok(self.clone());
         }
+        // Complexity tradeoff: nothing is built. A numerator or denominator within 64 bits is
+        // factored into primes (`zed_numtheory::factor`); a wider one is split by [`push_part`]
+        // into the primes below 2^8 and its least root `r^m` (Bernstein 1998,
+        // doi:10.1090/S0025-5718-98-00952-1, p. 1253: "There is a perfect-power classification
+        // algorithm that uses time at most (log2 n)1+o(1) for n → ∞"), kept as the atom
+        // `(r, m e)` (DESIGN.md sec:domains "Kept powers": "`(2^64 + 13)^(2^64)` is the atom
+        // `2^64 + 13` with the exponent `2^64`, a few words"). So the cost is that of the
+        // parts and exponents as written, O(M(n) log n) in the `n` bits of a wide part, plus
+        // one product per exponent, never the power's digits. The way before built a wide
+        // part's power, at the cost of the result: `(2^64 + 13) ^ 200000` computed 13 million
+        // bits (plan row LIT-power-wide-base). Nothing is given up: every reader of the value
+        // reads the atoms (`Rat`), and those that need the digits build them under `room`.
+        // Tested by `a_power_of_a_wide_base_is_kept` and
+        // `l01_17_value_representation::kept_powers::a_wide_power_allocates_under_a_kibibyte`.
         let times = BigInt::from(e.clone());
-        let mut pows: Vec<(u64, BigInt)> = self
-            .pows
-            .iter()
+        let mut pows: Vec<(u64, BigInt)> = (self.pows.iter())
             .map(|(p, x)| (*p, fast::mul_int(x, &times)))
             .collect();
-        let mut raised = [BigInt::one(), BigInt::one()];
-        for (i, part) in parts.into_iter().enumerate() {
-            if part.is_one() {
-                continue;
-            }
-            match part.to_u64() {
-                Some(w) => {
-                    for (p, k) in factor(w) {
-                        let x = &times * k;
-                        pows.push((p, if i == 0 { x } else { -x }));
-                    }
-                }
-                // Complexity tradeoff: a numerator or denominator beyond 64 bits is raised to
-                // the power by building it, at a cost proportional to the result's size,
-                // where one within 64 bits is factored and kept as exponents; such a part only
-                // arises from a value built before, so its power is the size of that value
-                // times `e`; one that does not fit in memory is `TooLarge`, asked above. Tested
-                // by `a_power_of_a_wide_base_is_built` (COMPLEXITY.md K30).
-                // A complete solution would keep an opaque base `b^e` beside the primes, with
-                // the bases made pairwise coprime by Bernstein's coprime-base algorithm (D. J.
-                // Bernstein, "Factoring into coprimes in essentially linear time", J.
-                // Algorithms 54(1):1-30, 2005, doi:10.1016/j.jalgor.2004.04.009; Crossref and
-                // the text checked 2026-11-20). Its abstract: a coprime base for a set S is a
-                // set P of pairwise coprime integers with each element of S a product of
-                // powers of elements of P, and the paper computes the natural one "in
-                // essentially linear time" using only products, exact divisions, gcds and
-                // equality tests. Not implemented; no test.
-                None => {
-                    // An exponent of `2^64` or more is refused with the ask above. With a
-                    // 64-bit `usize`, `room` has already refused it (this part is wider than
-                    // 64 bits, so the ask is at least `65 * 2^67` bits, `65 * 2^61` words,
-                    // more than a `usize` counts); on any other target this returns the same
-                    // refusal, so the step holds by the code, not by that argument. Tested by
-                    // `a_power_of_a_wide_base_to_an_exponent_beyond_64_bits_is_refused`.
-                    let Some(e) = e.to_u64() else {
-                        return Err(refusal());
-                    };
-                    raised[i] = BigInt::from(fast::pow(part, e));
-                }
+        let mut wide: Vec<(BigUint, BigInt)> = (self.wide.iter())
+            .map(|(q, f)| (q.clone(), fast::mul_int(f, &times)))
+            .collect();
+        // `num` and `den` are coprime and coprime to every listed prime and atom (`Rat`), so
+        // each part is a valid input of `push_part`, and the two parts' primes and atoms are
+        // distinct.
+        let minus = -&times;
+        // A part wider than a word is split by `push_part`, whose valuations and least root
+        // hold copies of it: the system is asked first for [`SPLIT_ASK_BITS_A_BIT`] times its
+        // bits, so a part the system cannot split is
+        // [`TooLarge`] and not an abort. Measured by `kept_powers::splitting_a_wide_part_
+        // stays_within_its_ask` (l01_17), and tested under a lowered limit by
+        // `asks::a_power_of_a_wide_base_is_kept_or_refused_when_memory_is_short`.
+        let wide_bits = self.num.bits().max(self.den.bits());
+        if wide_bits > 64 {
+            let ask = BigUint::from(wide_bits) * SPLIT_ASK_BITS_A_BIT;
+            room(BigUint::from(wide_bits), ask)?;
+        }
+        for (part, k) in [
+            (self.num.magnitude(), &times),
+            (self.den.magnitude(), &minus),
+        ] {
+            if !part.is_one() {
+                push_part(part.clone(), k, &mut pows, &mut wide);
             }
         }
         pows.sort_unstable_by_key(|(p, _)| *p);
-        let [mut num, den] = raised;
-        if self.is_negative() && e.bit(0) {
-            num = -num;
-        }
-        // The factored primes are new: `num` and `den` held none of the listed ones.
+        wide.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let sign = match self.is_negative() && e.bit(0) {
+            true => -BigInt::one(),
+            false => BigInt::one(),
+        };
         Ok(Rat {
-            num,
-            den,
+            num: sign,
+            den: BigInt::one(),
             pows: pows.into_boxed_slice(),
+            wide: wide.into_boxed_slice(),
             ten: None,
         })
     }
@@ -1484,10 +2014,14 @@ impl Rat {
             num,
             den,
             mut pows,
+            mut wide,
             ten,
         } = self;
         for (_, e) in pows.iter_mut() {
             *e = -std::mem::take(e);
+        }
+        for (_, f) in wide.iter_mut() {
+            *f = -std::mem::take(f);
         }
         let (num, den) = match num.is_negative() {
             true => (-den, -num),
@@ -1497,6 +2031,7 @@ impl Rat {
             num,
             den,
             pows,
+            wide,
             ten: None,
         };
         // `10^-t`: the exponents of 2 and 5 are now negative, so `with_ten` moves their
@@ -1549,7 +2084,7 @@ impl Rat {
         // is, which needs modular arithmetic on the kept forms.
         let (_, m) = m.to_integer()?.into_parts();
         let mut r = rem(self.num.magnitude(), &m)?;
-        if !self.pows.is_empty() {
+        if !self.pows.is_empty() || self.has_wide() {
             // Complexity tradeoff: the memory asked for the modular-power steps is 32 times
             // `m`'s width, a measured bound, not a proved one, on a step's peak: it holds `r`,
             // `p^e mod m` (num-bigint's Montgomery power, Montgomery 1985 as cited in
@@ -1566,6 +2101,9 @@ impl Rat {
         }
         for (p, e) in self.pows.iter() {
             r = r * BigUint::from(*p).modpow(e.magnitude(), &m) % &m;
+        }
+        for (q, f) in self.wide.iter() {
+            r = r * q.modpow(f.magnitude(), &m) % &m;
         }
         euclid(r, self.is_negative(), &m)
     }
@@ -1655,6 +2193,12 @@ impl Rat {
         if self.is_zero() {
             return Ok(true);
         }
+        // With a wide atom, the quotient in normal form (`Rat::normal`, no build) is an integer
+        // exactly when `m` divides: its parts are pairwise coprime, so no negative exponent or
+        // denominator above 1 cancels against another part.
+        if self.has_wide() || m.has_wide() {
+            return Ok(self.div(m)?.is_some_and(|q| q.is_integer()));
+        }
         let a = self.aligned(&m.pows, true)?;
         let b = m.aligned(&self.pows, true)?;
         if zip_pows(&a.pows, &b.pows).any(|(_, x, y)| y > x) {
@@ -1711,11 +2255,11 @@ impl Rat {
         let mut pows = self.pows.to_vec();
         pows.extend(new.into_iter().map(|p| (p, BigInt::zero())));
         pows.sort_unstable_by_key(|(p, _)| *p);
-        Ok(Cow::Owned(Rat::extract(
-            self.num.clone(),
-            self.den.clone(),
-            pows,
-        )))
+        // The wide atoms are coprime to every prime moved, so they stay as they are.
+        Ok(Cow::Owned(Rat {
+            wide: self.wide.clone(),
+            ..Rat::extract(self.num.clone(), self.den.clone(), pows)
+        }))
     }
 
     /// `|self|` as the quotient of two products of positive powers.
@@ -1730,6 +2274,10 @@ impl Rat {
                 .iter()
                 .filter(|(_, e)| e.sign() == sign)
                 .map(|(p, e)| (*p, e.magnitude().clone()))
+                .collect(),
+            wide: (self.wide.iter())
+                .filter(|(_, f)| f.sign() == sign)
+                .map(|(q, f)| (Cow::Borrowed(q), f.magnitude().clone()))
                 .collect(),
         };
         (side(&self.num, Sign::Plus), side(&self.den, Sign::Minus))
@@ -1778,6 +2326,10 @@ impl Rat {
         }
         if self.is_integer() {
             return Ok(self.clone());
+        }
+        // `N` and `D` are built here anyway (`div_euclid`, `rem_euclid`), so the atoms are too.
+        if self.has_wide() {
+            return self.flat()?.round_whole(rule);
         }
         // `N` and `D` as integers kept with their powers: the powers of positive exponent are
         // `N`'s and those of negative exponent `D`'s, so nothing is built.
@@ -2032,66 +2584,6 @@ pub fn inverse_mod_uint(a: &BigUint, m: &BigUint) -> Option<BigUint> {
     fast::inverse_mod(a, m)
 }
 
-/// The greatest common divisor of `a` and `b`, for integers held outside a [`Rat`].
-///
-/// One gcd (DRY-number-theory-wide item 3, dryN2, 2026-11-19): `gcd_uint_recursive`, the same
-/// half gcd with no handoff to Stein's gcd at `GCD_LEAF` once what is left is narrow, was
-/// removed. Measured in release (`gcd` against it, best of 5, load 52 to 88, random pairs and
-/// pairs with a common factor): 0.97 to 1.21 times `gcd`'s time from 4 to 310 words, where the
-/// two run the same steps (within the noise at that load), and 1.04 to 1.53 times from 512 to
-/// 16384 words, where `gcd` hands the last 310 words to Stein's gcd; so no width favored it.
-/// Its one client, `Int::gcd_recursive` in zedc-int, now calls `Int::gcd`. Tests:
-/// `completeness::fast` (the gcd cases) and `crossover::gcd` against num-bigint.
-pub fn gcd_uint(a: &BigUint, b: &BigUint) -> BigUint {
-    let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
-        return a | b;
-    };
-    let z = za.min(zb);
-    // The powers of 2 come out first, by shifts, so that `2^m` against `2^n 3` costs O(m + n)
-    // and not a division of `m` bits by `n`. When an odd part fits in 64 bits, the other
-    // operand's remainder modulo it is streamed over its words with no shift or allocation (since
-    // `gcd(2^za, d) == 1` for odd `d`) and finished in registers. Otherwise, equal odd parts
-    // return at once, and the wider odd part is reduced modulo the narrower by `fast::rem` (with
-    // no quotient built, O(M(n))) before the half gcd (`fast::gcd`) runs at the narrower width.
-    fn odd_u64(x: &BigUint, zx: u64) -> Option<u64> {
-        if x.bits() - zx > 64 {
-            return None;
-        }
-        let w = (zx / 64) as usize;
-        let sh = (zx % 64) as u32;
-        let mut it = x.iter_u64_digits().skip(w);
-        let lo = it.next().unwrap_or(0);
-        let hi = it.next().unwrap_or(0);
-        Some(if sh == 0 {
-            lo
-        } else {
-            (lo >> sh) | (hi << (64 - sh))
-        })
-    }
-    if let Some(da) = odd_u64(a, za) {
-        return BigUint::from(gcd_big_u64(b, da)) << z;
-    }
-    if let Some(db) = odd_u64(b, zb) {
-        return BigUint::from(gcd_big_u64(a, db)) << z;
-    }
-    fn odd(x: &BigUint, z: u64) -> Cow<'_, BigUint> {
-        match z {
-            0 => Cow::Borrowed(x),
-            _ => Cow::Owned(x >> z),
-        }
-    }
-    let (a, b) = (odd(a, za), odd(b, zb));
-    if *a == *b {
-        return a.into_owned() << z;
-    }
-    let g = match a.bits().cmp(&b.bits()) {
-        Ordering::Greater => fast::gcd(&b, &fast::rem(&a, &b)),
-        Ordering::Less => fast::gcd(&a, &fast::rem(&b, &a)),
-        Ordering::Equal => fast::gcd(&a, &b),
-    };
-    g << z
-}
-
 /// `(g, s, t)` with `s a + t b = g = gcd(a, b) >= 0`.
 // Complexity tradeoff: extended Euclid writes a quadratic total of remainders.
 // Binary half-GCD accumulates one coefficient column in O(M(n) log n),
@@ -2309,6 +2801,19 @@ fn valuation_upto(n: BigInt, p: u64, cap: u64) -> (u64, BigInt) {
 /// `valuations_from_the_top_agree_with_the_tests_on_the_way_up`.
 const WHOLE_TEST_BITS: u64 = 64 * 64;
 
+/// What [`Rat::pow`] asks the system for, in bits for each bit of a part wider than a word,
+/// before it splits the part (`push_part`): four bytes a bit. Measured, not proved (Colab,
+/// 2026-11-24, `zed_alloc_count` peaks of the split alone): 3.11 bytes a bit at 4096 bits
+/// (12,749 bytes for `2^4096 - 1`; `WHOLE_TEST_BITS` is 4096, so the valuations still test
+/// against the whole part there), and at most 2.0 bytes a bit at 2^16 and 2^20 bits; at 128
+/// bits the split stays within the ask and 1 KiB for the lists of exponents beside it. Two
+/// bytes a bit was short at 4096 bits. A fixed part of 8 KiB instead (b22-kept3, tried
+/// 2026-11-23) also covered it, but the ask is allocated and freed to test it (`room`), so
+/// `(2^64 + 13)^(2^64)` then peaked at 8,360 bytes, past the 1 KiB of DESIGN step L1.17b. Tested
+/// by `l01_17_value_representation::kept_powers::splitting_a_wide_part_stays_within_its_ask`
+/// and `a_wide_power_allocates_under_a_kibibyte`.
+pub const SPLIT_ASK_BITS_A_BIT: u64 = 32;
+
 /// For [`valuation_upto`]: `powers` holds `P_0 .. P_k` with `P_i = p^(2^i)`, each `P_i` for
 /// `i < k` dividing `n` and `P_k` of at most the bits of `n`. The powers are squared on to the
 /// last `P_T` of at most the bits of `n`; then the remainders `r_T = n mod P_T` and
@@ -2417,6 +2922,97 @@ fn push_root(atoms: &mut Vec<(BigUint, BigInt)>, r: &BigUint, m: &BigInt) {
             .extend((factor(w).into_iter()).map(|(p, a)| (BigUint::from(p), BigInt::from(a) * m))),
         _ => atoms.push((r.clone(), m.clone())),
     }
+}
+
+/// `x^e` for a positive `x` coprime to every prime in `pows` and every atom in `wide`, added to
+/// them in the form of [`Rat`]: the primes of [`TEXT_PRIMES`] taken out of `x` by
+/// [`valuation`] into `pows`; then the rest `y`, when it fits a word, factored
+/// (`zed_numtheory::factor`) into `pows`; else `y = r^m` by [`fn@least_root`], `r` no perfect
+/// power, and `r` factored into `pows` when it fits a word, else the atom `(r, m e)`.
+///
+/// Proof that the invariants hold: `x` shares no prime with `pows` or `wide`, so neither do
+/// its primes or `r`; the primes found are distinct; `r` is wider than 64 bits, no perfect
+/// power, and has no prime below 2^8, since `y` has none and `r` divides `y`.
+///
+/// Complexity tradeoff: the small primes cost one remainder by a word per group
+/// ([`text_primes_dividing`]) and a [`valuation`] for each that divides; [`fn@least_root`]
+/// costs O(M(n) log n) (proved there); `factor` of a word is Pollard's rho, whose cost on a word
+/// with two prime factors near 2^32 is not proved (measured about 0.85 ms, 2026-11-23, see
+/// [`Rat::text_atoms`]); [`Rat::pow`] factored every word part so before wide atoms were kept.
+fn push_part(
+    x: BigUint,
+    e: &BigInt,
+    pows: &mut Vec<(u64, BigInt)>,
+    wide: &mut Vec<(BigUint, BigInt)>,
+) {
+    let mut y = x;
+    for t in text_primes_dividing(&y) {
+        let (v, rest) = valuation(BigInt::from(y), t);
+        y = rest.into_parts().1;
+        pows.push((t, e * v));
+    }
+    let word = |w: u64, m: &BigInt, pows: &mut Vec<(u64, BigInt)>| {
+        pows.extend((factor(w).into_iter()).map(|(p, a)| (p, m * a)));
+    };
+    if let Some(w) = y.to_u64() {
+        if w > 1 {
+            word(w, e, pows);
+        }
+        return;
+    }
+    let (r, m) = least_root(y);
+    let me = e * BigInt::from(m);
+    match r.to_u64() {
+        Some(w) => word(w, &me, pows),
+        None => wide.push((r, me)),
+    }
+}
+
+/// The atoms of `big` that `small` lacks, when every atom of `small` is an atom of `big`;
+/// else `None`. Both lists are sorted by atom ([`Rat`]), so one merge, O(atoms) comparisons.
+fn atoms_within<'a>(
+    small: &[(BigUint, BigInt)],
+    big: &'a [(BigUint, BigInt)],
+) -> Option<Vec<&'a BigUint>> {
+    let mut lacked = Vec::new();
+    let mut i = 0;
+    for (q, _) in big {
+        match small.get(i).map(|(r, _)| r.cmp(q)) {
+            Some(Ordering::Less) => return None,
+            Some(Ordering::Equal) => i += 1,
+            Some(Ordering::Greater) | None => lacked.push(q),
+        }
+    }
+    (i == small.len()).then_some(lacked)
+}
+
+/// The sorted union of two sorted lists of atoms, an atom in both at `e + s f` for its
+/// exponents `e` in `a` and `f` in `b`, one in `b` alone at `s f`. One merge, O(atoms).
+fn merge_atoms(a: &[(BigUint, BigInt)], b: &[(BigUint, BigInt)], s: i32) -> Vec<(BigUint, BigInt)> {
+    let mut out = Vec::with_capacity(a.len().max(b.len()));
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() || j < b.len() {
+        let order = match (a.get(i), b.get(j)) {
+            (Some((q, _)), Some((r, _))) => q.cmp(r),
+            (Some(_), None) => Ordering::Less,
+            _ => Ordering::Greater,
+        };
+        match order {
+            Ordering::Less => {
+                out.push(a[i].clone());
+                i += 1;
+            }
+            Ordering::Greater => {
+                out.push((b[j].0.clone(), &b[j].1 * s));
+                j += 1;
+            }
+            Ordering::Equal => {
+                out.push((a[i].0.clone(), &a[i].1 + &b[j].1 * s));
+                (i, j) = (i + 1, j + 1);
+            }
+        }
+    }
+    out
 }
 
 /// The atoms of an integer ([`Rat::text_atoms`]) as `c*b^e*…`, without the sign: the atoms of
@@ -2742,7 +3338,7 @@ impl Rat {
                 return Ok(sign);
             }
             return match Rat::ten_pair(self, other) {
-                Tens::Binary(a, b) => a.order(&b, check),
+                Tens::Binary(p) => p.0.order(&p.1, check),
                 Tens::Apart(o) => Ok(match self.is_negative() {
                     true => o.reverse(),
                     false => o,
@@ -2778,6 +3374,18 @@ impl Rat {
             let d = times(other.num.magnitude(), self.den.magnitude(), check)?;
             return Ok(n.cmp(&d));
         }
+        // With a wide atom: `|self| / |other|` in normal form ([`Rat::normal`]), its two sides
+        // ordered by [`bound::cmp`]. The quotient's parts are pairwise coprime, so its two sides
+        // are equal only when both are 1, and two single powers meet Laurent's bound
+        // ([`bound::laurent_bits`]). Complexity tradeoff: the quotient costs a coprime base of
+        // the coefficients and atoms, O(M(n) log^2 n) in their bits (`num::coprime`), where
+        // aligning listed primes costs a valuation; both are below the bounds' rounds.
+        if self.has_wide() || other.has_wide() {
+            // Unreachable: `other` is not zero here.
+            let q = self.div(other)?.expect("the divisor is not zero");
+            let (n, d) = q.split();
+            return bound::cmp(&n, &d);
+        }
         // With both coprime to every listed prime, the two are equal exactly when their
         // coefficients and exponents are, and otherwise one side holds a prime the other lacks.
         let a = self.aligned(&other.pows, check)?;
@@ -2797,10 +3405,12 @@ impl Rat {
                 let up = Product {
                     pows: pows(Sign::Plus),
                     coef: n,
+                    wide: Vec::new(),
                 };
                 let down = Product {
                     pows: pows(Sign::Minus),
                     coef: d,
+                    wide: Vec::new(),
                 };
                 // Complexity tradeoff: each round of bounds and the build ask for their memory
                 // with or without a `Watch`, one allocation of the size asked, O(1) beside the
@@ -2814,7 +3424,7 @@ impl Rat {
     /// building nothing, but not the order by value.
     fn form_cmp(&self, other: &Rat) -> Ordering {
         let (a, b) = (self.bin(), other.bin());
-        (&a.num, &a.den, &a.pows).cmp(&(&b.num, &b.den, &b.pows))
+        (&a.num, &a.den, &a.pows, &a.wide).cmp(&(&b.num, &b.den, &b.pows, &b.wide))
     }
 
     /// At least `|log2 |x||` for the value `x` of its coefficients and powers (its `Ten` left
@@ -2849,8 +3459,8 @@ impl Rat {
         let (ra, rb) = (a.rest(), b.rest());
         if let Some(k) = d.to_i64() {
             return match k >= 0 {
-                true => Tens::Binary(ra.times_ten(&BigInt::from(k)), rb),
-                false => Tens::Binary(ra, rb.times_ten(&-BigInt::from(k))),
+                true => Tens::Binary(Box::new((ra.times_ten(&BigInt::from(k)), rb))),
+                false => Tens::Binary(Box::new((ra, rb.times_ten(&-BigInt::from(k))))),
             };
         }
         match ra.log2_span() + rb.log2_span() < BigInt::from(i64::MAX) {
@@ -2865,8 +3475,10 @@ impl Rat {
 
 /// How [`Rat::ten_pair`] compares two numbers, at least one holding a [`Ten`].
 enum Tens {
-    /// The two with their common power of ten divided out, in binary.
-    Binary(Rat, Rat),
+    /// The two with their common power of ten divided out, in binary. Boxed since the wide
+    /// atoms of KEPT-power-form made a `Rat` about 100 bytes (clippy's `large_enum_variant`):
+    /// one allocation of the pair, beside the two built rests it holds.
+    Binary(Box<(Rat, Rat)>),
     /// Their magnitudes differ, in this order, by more than any form of their rests spans.
     Apart(Ordering),
     /// Neither applies: compare the binary forms.
@@ -2885,7 +3497,7 @@ impl PartialEq for Rat {
                 return false;
             }
             return match Rat::ten_pair(self, other) {
-                Tens::Binary(a, b) => a == b,
+                Tens::Binary(p) => p.0 == p.1,
                 Tens::Apart(_) => false,
                 Tens::Convert => self.bin() == other.bin(),
             };
@@ -2897,6 +3509,17 @@ impl PartialEq for Rat {
             return false;
         }
         let check = WATCHED.get();
+        // With a wide atom, equal exactly when the quotient in normal form is 1: its parts are
+        // pairwise coprime, so the value 1 has no part (`Rat::normal` drops zero exponents).
+        if self.has_wide() || other.has_wide() {
+            return match self.div(other) {
+                Ok(q) => q.is_some_and(|q| q.is_plain() && q.num.is_one() && q.den.is_one()),
+                Err(e) => {
+                    record(Test::Equality, e);
+                    self.form_cmp(other) == Ordering::Equal
+                }
+            };
+        }
         match (
             self.aligned(&other.pows, check),
             other.aligned(&self.pows, check),
@@ -2945,6 +3568,10 @@ impl fmt::Debug for Rat {
         s.field("num", &self.num)
             .field("den", &self.den)
             .field("pows", &self.pows);
+        // As `ten`: written only when present, so the texts of values with none are unchanged.
+        if self.has_wide() {
+            s.field("wide", &self.wide);
+        }
         if let Some(ten) = &self.ten {
             s.field("ten", ten);
         }
@@ -3002,10 +3629,14 @@ impl Rat {
                 let pows = (self.pows.iter())
                     .filter(|(_, e)| e.sign() == sign)
                     .map(|(p, e)| (*p, BigInt::from(e.magnitude().clone())));
+                let wide = (self.wide.iter())
+                    .filter(|(_, f)| f.sign() == sign)
+                    .map(|(q, f)| (q.clone(), BigInt::from(f.magnitude().clone())));
                 Rat {
                     num: num.clone(),
                     den: BigInt::one(),
                     pows: pows.collect(),
+                    wide: wide.collect(),
                     ten: None,
                 }
                 .integer_text()
@@ -3096,6 +3727,49 @@ mod tests {
     /// `b^k` for a small base, kept as exponents.
     pub(super) fn power(b: u64, k: u64) -> Rat {
         Rat::int(BigInt::from(b)).pow(&BigUint::from(k)).unwrap()
+    }
+
+    /// [`Rat::merged`], the product and quotient with no coprime base, gives the form that
+    /// [`Rat::normal`] gives, field by field, where it applies, and declines where an atom
+    /// shares a factor with the other operand's plain part beyond its one allowed strip: equal
+    /// atoms, an atom one side lacks against coprime and stripped coefficients of either sign
+    /// and side, a coefficient `q^2` (declined), a listed prime beside a lacked atom
+    /// (declined), and atoms that are not nested (declined).
+    #[test]
+    fn products_without_a_coprime_base_match_the_normal_form() {
+        let q = (BigInt::one() << 64u32) + 13;
+        let r = (BigInt::one() << 70u32) + 3;
+        let wide = |x: &BigInt, e: u64| Rat::int(x.clone()).pow(&BigUint::from(e)).unwrap();
+        let int = |x: BigInt| Rat::int(x);
+        let frac = |n: BigInt, d: BigInt| Rat::build(n, d, Vec::new());
+        let qe = wide(&q, 1 << 40);
+        let qr = qe.mul(&wide(&r, 9)).unwrap();
+        let cases: Vec<(Rat, Rat, bool)> = vec![
+            (qe.clone(), qe.clone(), true),
+            (qr.clone(), qe.clone(), true),
+            (qe.clone(), int(q.clone()), true),
+            (int(-q.clone() * 7), qe.clone(), true),
+            (qe.clone(), frac(BigInt::from(3), q.clone() * 11), true),
+            (qe.clone(), int(BigInt::from(35)), true),
+            (qe.clone(), int(q.clone() * &q), false),
+            (qe.clone(), power(3, 5), false),
+            (qe.clone(), wide(&r, 9), false),
+        ];
+        for (i, (a, b, applies)) in cases.iter().enumerate() {
+            for minus in [false, true] {
+                let fast = a.merged(b, minus).unwrap();
+                assert_eq!(fast.is_some(), *applies, "case {i}, minus {minus}");
+                let Some(fast) = fast else { continue };
+                let mut terms = a.terms(1);
+                terms.extend(b.terms(if minus { -1 } else { 1 }));
+                let slow = Rat::normal(a.is_negative() != b.is_negative(), terms).unwrap();
+                assert_eq!(
+                    format!("{fast:?}"),
+                    format!("{slow:?}"),
+                    "case {i}, minus {minus}"
+                );
+            }
+        }
     }
 
     /// [`sqrt_rem_uint`] against num-bigint's `sqrt`: random values of every width from 1 to
@@ -3198,12 +3872,16 @@ mod tests {
 
     #[test]
     fn the_built_widths_are_the_parts_wider_than_64_bits() {
-        // CONST-too-large: the checker's bound on `x ^ k` reads the bit lengths of the parts
-        // `pow` builds; a part within 64 bits is kept as exponents and has none.
+        // CONST-too-large: the checker reads the bit lengths of the parts an operation built;
+        // a part within 64 bits is kept as exponents and has none, and so does a wide atom.
         let widths = |r: &Rat| r.built_widths();
         let b: BigInt = (BigInt::one() << 64u32) + 13;
         assert_eq!(widths(&Rat::int(b.clone())), [Some(65), None]);
-        assert_eq!(widths(&Rat::int(-b)), [Some(65), None]);
+        assert_eq!(widths(&Rat::int(-b.clone())), [Some(65), None]);
+        let kept = Rat::int(b).pow(&(BigUint::one() << 64u32)).unwrap();
+        assert_eq!(widths(&kept), [None, None]);
+        let recip = Rat::int(BigInt::one()).div(&kept).unwrap().unwrap();
+        assert_eq!(widths(&recip), [None, None]);
         assert_eq!(widths(&Rat::int(BigInt::from(u64::MAX))), [None, None]);
         assert_eq!(widths(&power(3, 40)), [None, None]);
         assert_eq!(widths(&power(2, 100)), [None, None]);

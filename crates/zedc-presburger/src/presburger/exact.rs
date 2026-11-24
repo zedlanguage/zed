@@ -73,8 +73,9 @@ use zedc_lattice::lattice::{Congruence, Lattice};
 use super::absorbing;
 use super::formula::{Ends, Id};
 pub use super::meter::{
-    DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK,
-    GUARDED_OFF, PART_CACHE_OFF, QUESTION_WORK, SHARED_OFF, SOLVER_UNIT, TWO_DISTRIBUTED_OFF,
+    CLASS_ROOM_OFF, DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS,
+    EXACT_WORK, FAST_WORK, GUARDED_OFF, PART_CACHE_OFF, QUESTION_WORK, SHARED_OFF, SOLVER_UNIT,
+    SPARE_OFF, TWO_DISTRIBUTED_OFF,
 };
 use super::meter::{PIECE, Solver, Work};
 use super::{Atom, Classed, Con, Each, EachClassed, Factor, Formula, Lin, Model, Refusal, Rel};
@@ -1240,6 +1241,59 @@ struct PartCache {
 }
 
 /// [`cover`] by cells and questions, once [`direct`] has not answered.
+// Proof that the loop ends with no work limit, on two classes of input (row
+// LIMITS-exact-join-remove; b22-presburger11, 2026-11-24, checked by reading this function and
+// [`cell`], [`implicant`] and [`joined`] at 842f393fe). Each turn of the loop does one of: (a)
+// reads a point `m` whose value of `s` is in `gap` and takes its cell `c` out of `gap`, `c`
+// holding that value ([`cell`] joins `own`); (b) asks a tail's residue question, which pushes a
+// point in a residue no value found holds, or takes the tail's piece out of `gap`; (c) asks a
+// stride's question for one residue class, which pushes a point in a class no value found
+// holds, or adds the class to `absent` (at most `step` of them a stride); (d) asks the first
+// piece of `gap`, or its first value when the piece is a small class (`spare`, 0add5ed68),
+// which pushes a point in what was asked or takes it out of `gap`, at least one value. A point
+// pushed by (d) has its value of `s` in `gap`, by the question. A point pushed by (b) or (c)
+// has its value outside `found` (its residue is held by no value found) and outside the pieces
+// taken out with no point, but it may lie in a piece kept by (b) (`kept_at`), which is out of
+// `gap` and not in `found`. For (b) that is harmless: the tail was popped and is not asked
+// again. For (c) it is a gap in the proof (step G below): the stride is pushed back, `have` is
+// the same, and the same question is asked again with the same answer, so the loop would turn
+// until the work limit. Not known to be reachable (it needs a stride whose span meets a piece
+// kept from a tail with no end); recorded in row LIMITS-exact-join-remove. The fix, if it is
+// reachable, is to read `have` from `found` joined with the values of the kept pieces that have
+// points (those in the tail's residues): a point in a class outside that `have` is then outside
+// every kept piece, so in `gap`, and `outside` stays sound, since it drops only pieces all of
+// whose values are in classes found with no point. The two classes below assume no such
+// point (G).
+// Class 1, `h` finite (every input whose solver's set is bounded, so every formula whose atoms
+// are bounded, as the step tests' boxes are). Every (a) takes at least one value out of `gap`
+// and `gap` only shrinks; `gap` starts as `h`, finitely many values, so there are finitely many
+// (a); there is one (a) for each point pushed, so finitely many points, and so finitely many
+// cells, strides and tails (each made by a cell), finitely many (b) and (c), and each (d)
+// either pushes a point or takes at least one of the finitely many values of `gap` out of it.
+// In class 2 below, a (d) of one value lowers `spare`, which rises only by the ranges of the
+// finitely many cells, so those (d) are finitely many too.
+// Class 2, every cell exact: `cell` returns the projection onto `s` of the rows of the
+// implicant of `f` at `m` (the branch `plain` under `Method::Pugh`, the exact elimination
+// `work.eliminate` or `eliminated_whole` returning rows, or the line along `s` holding all of
+// `within`), with `h` bounded or not. The implicant's rows are a function of `m` drawn from the
+// finite set of choices of the formula's constraints, each kept as it is, negated, or one side
+// of an equation ([`implicant`]). A point `m'` read later has its value of `s` in `gap`, so
+// outside `c(m)`, so outside the projection of `rows(m)`: `m'` does not satisfy `rows(m)`, while
+// it satisfies `rows(m')`, so `rows(m') != rows(m)`. So no two points read give the same rows,
+// there are finitely many (a), and the count above ends the same way. Under `Method::Liaproj`
+// the cell is one disjunct of the model-based projection of the rows; it ends because that
+// projection has a finite image for linear integer arithmetic (Komuravelli, Gurfinkel, Chaki,
+// "SMT-based model checking for recursive programs", CAV 2014, doi:10.1007/978-3-319-08867-9_2,
+// arXiv:1405.4028; Bjørner and Janota, LPAR 2015), not checked further here.
+// Outside both classes, `h` unbounded and a cell not exact (`s` a product or a factor of one,
+// whose cell is its own value; a product in the implicant's rows; an elimination that stops at
+// a stride atom, whose cell is `runs` or `fixed`), the proof fails: `x == y * z` with `x`
+// unbounded has a new point at every value of `x` and a cell of one value each. There the loop
+// ends only by the work limit (`EXACT_LIMIT`), the one input class that still needs it; the
+// rest of the row (removing the limit, a refusal named by this class, and the fast paths'
+// allowances in `tried`, which are themselves counts) is open, with its cross-review question,
+// in the row. Tests: the finite class by every cover of the step tests (all over boxes);
+// `tests::the_work_limit_is_met_alike_on_both_sides` for the limit's one stopping charge.
 #[expect(
     clippy::too_many_arguments,
     reason = "the cache is kept by the part, apart from the points of `f` it holds"
@@ -1513,8 +1567,13 @@ fn cells_cover(
         // asked one value at a time, its first (an end of a range in the one form of `Classed`
         // is a member), with no class; else with its class. Both give the same answer (a
         // point in the piece's class, or none, for the value or for the class), so only the
-        // cost changes. Why: the class question adds `#t` with coefficient `m`, and the
-        // solver's cost grows with it; such a class can be made by `Classed::new`, which gives
+        // cost changes. Why: the class question adds `#t` with coefficient `m` and one more
+        // atom, and in seed 30's cover it cost 400 times its two value questions. (That its
+        // cost grows with `m` was not found: rebuilt alone from seed 30's part, `c` in
+        // `[70 - m, 70]` with `c == m·#t + 70` cost 25,100 units at every m from 12 to 768, and
+        // five other parts were flat in m from 9 to 513, b22-eqsrest5's probe, 2026-11-24; the
+        // 1,066,625 units below came within the cover, the question there not rebuilt
+        // exactly.) Such a class can be made by `Classed::new`, which gives
         // any set its class: the two values left of seed 30's `c`, -26 and 70, were the class
         // `70 mod 96`, asked in one question that cost 1,066,625 units and was refused at the
         // limit, where 06fbc3477 asked each value alone at 2,500 units
@@ -1525,14 +1584,17 @@ fn cells_cover(
         // [`PIECE`] above), and falls by one for each such question. So over the cover these
         // questions number at most the ranges of `h` and of the cells read, each of which was
         // charged: O(w / PIECE) for the cover's work w, whatever `m` is. A piece with more
-        // values than `spare` is asked with its class, one question. The values left one by one
-        // between ranges the cover read (the case above) are never more than `spare` allows:
-        // each range taken from a plain set splits at most one range of it in two, so the gap's
-        // ranges, and so the values a class made of single values holds, number at most the
-        // ranges of `h` and of the cells taken, less the values asked one at a time since.
+        // values than `spare` is asked with its class, one question. That a piece of single
+        // values left between the ranges read always fits in `spare` does not hold (it was
+        // claimed here at b76c672c7): a class cut from a range leaves the other classes of
+        // its modulus, each of as many values as the range holds periods, past `spare` for a
+        // long range (`[0, 4m]` less `0 mod m`). Such a piece is then asked with its class, one
+        // question, as before this fix; where the cut class is a stride's, its residue question
+        // drops those classes first, with no question a piece
+        // (`exact::tests::classed_bounds::a_gap_cut_by_a_class_is_dropped_by_its_stride_not_asked_by_piece`).
         //
         // Complexity tradeoff: naive version (b7ab00a78), every piece with its class, one
-        // question a piece, of cost growing with `m`; the other naive version, every value
+        // question a piece, refused at seed 30 (above); the other naive version, every value
         // alone (06fbc3477), O(v) questions for v values, which a long stride makes many; a
         // first cut of this fix compared the values with `m`, up to `m` questions for an `m`
         // the input gives, pseudo-polynomial. Used: one question a value within `spare`, at
@@ -1540,6 +1602,7 @@ fn cells_cover(
         let (piece, class) = match &class {
             Congruence::Class { modulus, .. }
                 if *modulus > Num::ONE
+                    && !SPARE_OFF.get()
                     && Classed::new(
                         IntervalSet::range(piece.0.clone(), piece.1.clone()),
                         class.clone(),
@@ -3166,6 +3229,22 @@ fn shared_cells(
         // symbol reads anyway: O(size) a symbol, O(k·size) over the k symbols, the bound of the
         // note above the loop, with no term in the classes' moduli or lengths. `count` reads the
         // ranges of each set once, O(p) for p ranges, before any value is listed.
+        // The room is no threshold under the no-thresholds rule (decided 2026-11-24, b22-eqsrest5,
+        // with the author away): (1) the answer never depends on it: a class listed joins
+        // `found`, values of `s` with a point; a class dropped stays in the gap, where the
+        // question below and then `s`'s own cover ([`cells_cover`], exact, holding the class as
+        // one set) decide each of its values; both are exact, so only the cost moves. (2) It
+        // refuses nothing. (3) Each side is O(size) here: listed, at most `size` values at
+        // [`PIECE`] each, the order of the `size` units read for `s` anyway; dropped, no work
+        // here, the class one set in the cover, O(p) for its p ranges, within the cover's own
+        // limit. (4) It is no constant chosen: `size` is what this step already pays a symbol,
+        // so the rule is "list while listing costs no more than the reading", a comparison of
+        // two costs as [`classes::cut`] makes. Tests: `classed_bounds::a_shared_cell_lists_its_
+        // classes_while_their_values_fit_in_size` (the corner, n + 1 values at size n + 1 and
+        // n), `a_shared_cell_listed_or_dropped_gives_one_answer` (the same answer either side),
+        // and the benchmarks `a_shared_cells_listed_class_grows_with_the_part` (listed, O(size))
+        // and `a_shared_cells_class_past_size_costs_the_same_at_8n` (dropped, constant; its
+        // control [`CLASS_ROOM_OFF`], every class listed, grows with the class).
         let (c, _, _) = cell(f, &points[read - 1], s, &HashSet::new(), &h.hull(), work)?;
         let mut room = size;
         let c = (c.sets().iter())
@@ -3174,9 +3253,9 @@ fn shared_cells(
                     return true;
                 }
                 let n = set.count();
-                let fits = n <= room;
+                let fits = n <= room || CLASS_ROOM_OFF.get();
                 if fits {
-                    room -= n;
+                    room = room.saturating_sub(n);
                 }
                 fits
             })

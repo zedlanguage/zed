@@ -52,11 +52,35 @@ pub const HOLES_LOWERED: usize = 17;
 /// The clauses those writings made, one a run (the clause emissions of design-b22-load5.md
 /// section 2, G9).
 pub const HOLES_CLAUSES: usize = 18;
+/// Call nodes read as themselves (the route of META3 H7), with no clause written: as the
+/// atoms of their term (`Formula::atoms`), or as the holes of the one atom of their term
+/// (`Faces::leaf`), each read counted.
+pub const HOLES_ROUTED: usize = 19;
+/// Merges of a set of holes with itself, skipped (`Holes::merged`: one tree through one map,
+/// the idempotent merge of design-b22-load5.md section 2, Cost).
+pub const HOLES_SAME: usize = 20;
+/// Holes written out as clauses, one a hole (`Holes::clauses`): where the solver is asked
+/// with them, the fallback of the hole route.
+pub const HOLES_WRITTEN: usize = 21;
+/// Runs of the smaller side cut into the larger by `Holes::merged`, one a run: the explicit
+/// merges whose count the benches of LOAD-call-disj-noncollapsing bound by 4n.
+pub const HOLES_MERGED_RUNS: usize = 22;
 /// The number of counts.
-pub const N: usize = 19;
+pub const N: usize = 23;
 
 thread_local! {
     static COUNTS: [Cell<u64>; N] = const { [const { Cell::new(0) }; N] };
+    /// Test control, the mutant of the call-node bench (META3 H7, design-b22-load5.md
+    /// section 2: "an expand-in-atom-walk mutant ... must fail the visit and expansion
+    /// counters"): the route off, so that every call node is read as its clauses
+    /// (`BoundHoles::lowered`), as before the route. Read by `Formula::atoms`, `Faces::leaf`
+    /// and `residues::read`.
+    pub static HOLE_ROUTE_OFF: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the route is on ([`HOLE_ROUTE_OFF`]).
+pub(crate) fn route_on() -> bool {
+    !HOLE_ROUTE_OFF.with(Cell::get)
 }
 
 /// Adds `n` to the count `i`.

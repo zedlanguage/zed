@@ -2082,6 +2082,38 @@ fn values_a_generic_body_passes_on_from_its_arguments_miss_outside_the_domain() 
     }
 }
 
+/// Row PLACE-value-inside-arg: the generic function `pass`, passed as `g` and called by the
+/// body of `run` with `rest`'s part of its other argument, passes that part on to a partial
+/// slot; the part lies inside the argument written at `run`'s call, so that argument is
+/// rebuilt at the part, and the call misses outside the function's domain (2.5) and calls it
+/// inside (3). Red before: refused, soundly but needlessly, as "from no argument of the call"
+/// (`need_arg_via` gave no place for a value inside an argument).
+fn a_part_of_an_argument_misses_outside_the_domain(rest: &str) {
+    let head = |k: &str| {
+        format!(
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else #notFound -> 6;\npass(x) = apply(f: x);\n"
+        )
+    };
+    runs_to(&format!("{}{rest}", head("2.5")), "a", "6");
+    runs_to(&format!("{}{rest}", head("3")), "a", "4");
+}
+
+/// [`a_part_of_an_argument_misses_outside_the_domain`] at a component of a tuple.
+#[test]
+fn a_component_of_an_argument_passed_on_to_a_partial_slot_misses_outside_the_domain() {
+    a_part_of_an_argument_misses_outside_the_domain(
+        "run(g, p) = g(x: p[1]);\na = run(g: pass, p: (1, small));\n",
+    );
+}
+
+/// [`a_part_of_an_argument_misses_outside_the_domain`] at an entry of a list.
+#[test]
+fn an_entry_of_an_argument_passed_on_to_a_partial_slot_misses_outside_the_domain() {
+    a_part_of_an_argument_misses_outside_the_domain(
+        "run(g, m) = g(x: m[0]);\na = run(g: pass, m: [small]) else #notFound -> 0;\n",
+    );
+}
+
 /// Row FAIL-partial-slot-generic-lambda-map: the generic function `pass`, called from a lambda
 /// that `map` or `where` calls on each entry of a family of functions of one type, passes the
 /// entry on to a partial slot; the entry lies at the receiver's entries, so the receiver is

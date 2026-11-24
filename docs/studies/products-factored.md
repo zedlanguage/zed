@@ -228,6 +228,21 @@ form is written: a rule on the written size, with no constant.
 *Exactness.* Each s is defined by an integer equation over integer atoms; every point of the
 expanded system extends uniquely, and the new system projects onto the old one. [proved]
 
+*Built* (PRES-products-shared-output, b22-factored3, 2026-11-24): `factored::written` writes
+each a in the smaller form, the s variables numbered from `first_free_aux` (above every
+auxiliary variable of the premises, goal and definitions), and `linear_reading` leaves them
+out of a point it reports. With one partner the shared form is larger by 2|b|, so it is
+written only for a row with several partners. Tests: the verdicts of both forms agree through
+`satisfiable` on closed_rL and moment_curve, with the control "s equations dropped" proving
+fewer goals (`the_shared_form_gives_the_verdicts_of_the_direct_form`); the written sizes of
+closed_rL at r = L = 6 and 17 are 504 and 10404 against the direct 1332 and 83810, growth
+20.64 against 62.92 at 8.03 times the input (`the_written_size_of_closed_rl_scales`; both are
+output, exception 2). Both tests take rows no two of which are parallel: `written` keeps one
+copy of equal constraints, so parallel rows write less than the formulas (333 and 378 at
+r = L = 6 with coefficients `1 + ((i + l) % 3)`). On the verdict test `satisfiable` refuses
+some goals (12 to 21 of 48 over eight seeds; r = L = 3 refused outright), which count as no
+verdict; the test asks 96 goals and allows at most half refused.
+
 *Size.* E_R is at most the uncollected affine term count of the expanded rows,
 Σ(|a||b| + aff + 1) ≤ W_full, and W_full ≤ 4·W_R when |a|, |b| ≥ 1 (a constant-only factor is
 not a factor) [proved]. (x+1)(y+1) has E_R = 4 = W_full > 3·W_R. The control: one closed pair
@@ -323,8 +338,18 @@ a cost, not a refusal, with its bound, reason and a scaling test at that bound, 
    W_R atoms of pairs that go to R. Test `out2`: work/(k + |L| + W_R) goes 1.026 → 0.306
    (ratio 0.30) on moment_curve and 2.608 → 1.245 (0.48) on o2_distinct, limit 1.31.
 3. **The exact single-holder peel: O(W_listed).** It lists the free atoms of what P2/P3/P4
-   leave. Reason: no method is known that finds the single-holder fixpoint over products
-   without the atoms (phase 1b's triangle inference is withdrawn). Tests on the superlinear peel
+   leave. Reason: W_listed = W_R + W_drop, and W_drop cannot be brought under the input's
+   order: unless the orthogonal vectors hypothesis fails, no algorithm finds the single-holder
+   fixpoint in O(N^{2−ε} + W_R) [proved, b22-factored3 2026-11-24, PERF-factored-peel-wlisted:
+   the reduction and its proof are in the module doc of `factored.rs`, "The exact peel and its
+   lower bound"; tests `the_peel_decides_orthogonal_vectors` and
+   `the_peel_on_orthogonal_vectors_follows_its_listed_incidences`]. On wlgrow the peel drops no
+   pair, so its 47.20 is the growth of the output W_R (`the_peel_on_wlgrow_is_bounded_by_its_output`;
+   in instructions, the whole solver at l = 10 and 17, k + W_R 7.02 times, grows 6.00 times,
+   bench `bench_factored_peel_on_wlgrow`). The reduction needs a gadget of two pairs that
+   leaves the frames no sign: without it frame+ flips each (A_i, B_i) and u = 1 drops every
+   pair whatever the vectors.
+   Phase 1b's triangle inference stays withdrawn. Tests on the superlinear peel
    (R3-6): `nocount` (count rules off): peel 63.15, peel/W_listed 2.638 → 2.627, ratio 1.00 ≤
    1.31; `p4open`: peel 50.52; `wlgrow`: peel 47.20.
    3b. **P4 of `kept`: O(k + W4 log k), W4 = Σ_L min(|a|,|b|)** (K:152-155). Gemini's EXP 5B is

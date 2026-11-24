@@ -286,4 +286,32 @@ fn a_call_reading_a_name_bound_in_an_arm_narrows_at_each_value() {
     rejected(&[&arms(6)]);
 }
 
+/// `d` names `r_i = if n > i { n } else { 0 }` and the test `r_0 + … + r_(d-1) == 1`, whose
+/// arm reads `popCount(n - 1 - past)`. The sum is 0 for `n <= 0` and `n · min(n, d)` for
+/// `n >= 1`, so it is 1 at `n = 1` alone, where the arm's operand is `-past`: not negative
+/// exactly when `past` is 0.
+fn summed_names(d: usize, past: i64) -> String {
+    let mut s = String::new();
+    for i in 0..d {
+        s += &format!("r{i} = if n > {i} {{ n }} else {{ 0 }}; ");
+    }
+    let sum: Vec<String> = (0..d).map(|i| format!("r{i}")).collect();
+    format!(
+        "ok(positional n: int) = {{ {s}if {} == 1 {{ popCount(n - {}) }} else {{ 0 }} }};\n",
+        sum.join(" + "),
+        1 + past
+    )
+}
+
+/// The test of a sum of names, each bound to an `if` and summarized on its own, is read
+/// through each summary (CHECK-sum-of-summarized-names): `n = 1` alone reaches the arm, so
+/// `n - 1` is accepted and `n - 2` rejected, at one name and at many.
+#[test]
+fn a_test_of_a_sum_of_summarized_names_is_narrowed() {
+    for d in [1, 2, 5, 17] {
+        accepted(&[&summed_names(d, 0)]);
+        rejected(&[&summed_names(d, 1)]);
+    }
+}
+
 mod bench;

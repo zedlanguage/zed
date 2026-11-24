@@ -1149,3 +1149,126 @@ fn an_atom_a_numeric_use_makes_passes_the_call_by() {
         "7\n",
     );
 }
+
+/// The function `ap2` that each program of the next test passes a lambda to.
+const AP2: &str = "ap2(f: (String, String) -> String) = f(\"a\", \"b\");\n";
+
+/// `n` calls of `ap2`, joined by `++` and pushed once, each passing a lambda whose parameters
+/// are written as its own `T` (benchmark
+/// `bench::bubble::lambdas_of_their_own_type_variable_scale`, row PROOF-push-vars-a2-complete).
+pub(super) fn lambdas_of_own_type_variables(n: usize) -> String {
+    let calls: Vec<&str> = (0..n)
+        .map(|_| "ap2(f: (positional s: T, positional u: T) -> s ++ u)")
+        .collect();
+    format!(
+        "{AP2}h(out: Lines) {{\n  out <- {};\n}}\n",
+        calls.join(" ++ ")
+    )
+}
+
+/// Row PROOF-push-vars-a2-complete: a lambda passed where a function type is expected, whose
+/// parameters are written as a type variable of its own, `(positional s: T, positional u: T)`,
+/// takes for `T` the join of the types the arrow passes there (DESIGN sec:type_resolution, rule
+/// 4), and a push of such a parameter in its body is checked as a push of that type. Before,
+/// `T` was read as `_`: every such lambda was refused ("the lambda's parameter `s` is _, and
+/// `(String, String) -> String` passes String"), and the push reached the arm (a2) of
+/// `Ck::push_vars`, which no program was known to reach (found by the row's sweep, 2026-11-24).
+#[test]
+fn a_lambda_s_own_type_variable_takes_what_the_arrow_passes() {
+    let main = |body: &str| format!("{AP2}main(m: MainArgs) {{ m.stdout <- ap2(f: {body}); }}\n");
+    prints(
+        "fit_own_t_unused",
+        &main("(positional s: T, positional u: T) -> \"c\""),
+        "c\n",
+    );
+    prints(
+        "fit_own_t_concat",
+        &main("(positional s: T, positional u: T) -> s ++ u"),
+        "ab\n",
+    );
+    // Each program pushes once to each port: `y` goes to `m.stderr`, which `prints` does not
+    // read.
+    let push = |body: &str| {
+        format!(
+            "{AP2}h(out: Lines, err: Lines) {{ y = ap2(f: {body}); err <- y; }}\n\
+             main(m: MainArgs) {{ h(out: m.stdout, err: m.stderr); }}\n"
+        )
+    };
+    prints(
+        "fit_own_t_push",
+        &push("(positional s: T, positional u: T) -> { out <- s; u }"),
+        "a\n",
+    );
+    // `T` bound by `u` reads `[T]` as `[String]`.
+    let ap5 = "ap5(f: ([String], String) -> String) = f([\"a\"], \"b\");\n\
+               h(out: Lines, err: Lines) { y = ap5(f: (positional s: [T], positional u: T) -> \
+               { out <- s; u }); err <- y; }\n\
+               main(m: MainArgs) { h(out: m.stdout, err: m.stderr); }\n";
+    prints("fit_own_t_list_push", ap5, "a\n");
+    // Corner: an arrow passing two types binds `T` to their join, which the body must take.
+    let mixed = "ap6(f: (int, String) -> String) = f(1, \"b\");\n\
+                 main(m: MainArgs) { m.stdout <- ap6(f: (positional s: T, positional u: T) -> \"${s}${u}\"); }\n";
+    prints("fit_own_t_mixed", mixed, "1b\n");
+    let upper = "ap6(f: (int, String) -> String) = f(1, \"b\");\n\
+                 main(m: MainArgs) { m.stdout <- ap6(f: (positional s: T, positional u: T) -> u.upper); }\n";
+    assert_eq!(
+        type_errors(upper),
+        [
+            "`upper` does not take (int): no arrow of `upper` takes these types. \
+             Try `String(u).upper` instead. [u.upper]"
+        ],
+        "{upper}"
+    );
+    // Corner: a variable written only inside another type gets no binding, and stays refused;
+    // the push of `s`, whose type `[T]` holds a variable of no class, is the form
+    // `Ck::push_vars` does not follow (PushVars::Unfollowed).
+    let inside = "ap3(f: ([String], [String]) -> String) = f([\"a\"], [\"b\"]);\n\
+                  h(out: Lines, err: Lines) { y = ap3(f: (positional s: [T], positional u: [T]) -> \
+                  { out <- s; \"c\" }); err <- y; }\n\
+                  main(m: MainArgs) { h(out: m.stdout, err: m.stderr); }\n";
+    let refused = |p: &str| {
+        format!(
+            "the lambda's parameter `{p}` is [_], and `([String], [String]) -> String` passes \
+             [String]: the lambda is called as a function of type `([String], [String]) -> \
+             String` is, so each parameter must take every value passed to it. \
+             [positional {p}: [T]]"
+        )
+    };
+    assert_eq!(
+        type_errors(inside),
+        [
+            refused("s"),
+            refused("u"),
+            "a push of a value whose type the checker cannot follow here is part of the Zed \
+             language but is not supported by this version of zedc. Write the program without \
+             it. [s]"
+                .to_owned()
+        ],
+        "{inside}"
+    );
+    // Control: a variable of the function around keeps its meaning there, any one type the
+    // caller of `h` picks, so a lambda of `T` does not take every String and is refused.
+    let around = format!(
+        "{AP2}h(positional w: T, out: Lines) {{ y = ap2(f: (positional s: T, positional u: T) -> u); \
+         out <- y; }}\nmain(m: MainArgs) {{ h(\"z\", out: m.stdout); }}\n"
+    );
+    let takes = |p: &str| {
+        format!(
+            "the lambda's parameter `{p}` is T, and `(String, String) -> String` passes String: \
+             the lambda is called as a function of type `(String, String) -> String` is, so \
+             each parameter must take every value passed to it. [positional {p}: T]"
+        )
+    };
+    assert_eq!(
+        type_errors(&around),
+        [
+            takes("s"),
+            takes("u"),
+            "the lambda returns T, and `(String, String) -> String` returns String: the lambda \
+             is passed where a function of type `(String, String) -> String` is expected, so \
+             its result must be String. [u]"
+                .to_owned()
+        ],
+        "{around}"
+    );
+}

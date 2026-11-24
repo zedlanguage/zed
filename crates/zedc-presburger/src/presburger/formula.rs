@@ -381,6 +381,11 @@ impl<T> Shared<T> {
     pub fn same(a: &Shared<T>, b: &Shared<T>) -> bool {
         a.0.id == b.0.id
     }
+
+    /// The id of the parts, a memo key that names them for good (no other parts have it).
+    pub(super) fn number(this: &Shared<T>) -> u64 {
+        this.0.id
+    }
 }
 
 impl<T> Clone for Shared<T> {
