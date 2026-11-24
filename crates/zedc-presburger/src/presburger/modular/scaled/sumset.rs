@@ -162,7 +162,7 @@ thread_local! {
     pub(super) static COPIED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// Counts `n` words written to build tuples ([`COPIED`], tests only).
+/// Counts `n` words written to build tuples (`COPIED`, tests only).
 fn copied(n: u64) {
     #[cfg(test)]
     COPIED.with(|c| c.set(c.get().saturating_add(n)));
@@ -1032,7 +1032,7 @@ pub(super) fn solve_by_sums(
     holds.then_some(Some(model))
 }
 
-/// Counts an exact answer of [`solve_by_sums`] ([`ANSWERED`], tests only): a return of "no
+/// Counts an exact answer of [`solve_by_sums`] (`ANSWERED`, tests only): a return of "no
 /// point" from the tuples, or of a point checked with [`Formula::holds`]; not a return on a
 /// spent meter, nor a decline.
 fn answered() {
