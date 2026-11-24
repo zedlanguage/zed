@@ -1291,6 +1291,11 @@ split="
 # landing6_battery_top), and the other 153 took 6.0 s together. Each of the 30 is now a piece
 # (FAIL-four-pieces-over-20s-alone-on-main). b22-tests7 found the same 30 on l43 (12 cores,
 # 2026-11-22, FAIL-zedc-check-lib-timeout): whole, the piece took 22.8 s with 12 threads.
+# zedc_presburger's other piece took 8.6 s on v5e5 at load 7.5 on main 8a460acb8 and ran past
+# its 20 s limit with the nine tests of the factored products solver added (b22-factored2,
+# 2026-11-24): its brute-force families, the cone rule and the BMM reduction each test thousands
+# of small systems through `satisfiable`, and the wlgrow tests build inputs of 10,000 terms. Each
+# is a piece; no other test's name holds one of their names.
 alone="
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_1
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_2
@@ -1386,6 +1391,15 @@ alone="
   zedc_presburger::presburger::exact::tests::every_writing_at_seed_10746534589920032955
   zedc_presburger::presburger::exact::tests::every_writing_at_seed_17656181055615743818
   zedc_presburger::presburger::exact::tests::every_writing_at_seed_11354000743705775971
+  zedc_presburger::presburger::factored::tests::the_pairs_left_keep_the_verdict_on_random_tiny_instances
+  zedc_presburger::presburger::factored::tests::the_pairs_left_keep_the_verdict_when_two_rows_conflict_on_a_variable
+  zedc_presburger::presburger::factored::tests::the_pairs_left_keep_the_verdict_when_conflicting_rows_share_variables
+  zedc_presburger::presburger::factored::tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products
+  zedc_presburger::presburger::factored::tests::the_residual_of_the_bmm_reduction_is_the_zeros_of_a_f
+  zedc_presburger::presburger::factored::tests::the_worklist_of_wlgrow_g_scales
+  zedc_presburger::presburger::factored::tests::the_pass1_and_worklist_of_wlgrow_scale
+  zedc_presburger::presburger::factored::tests::no_pair_of_the_star_is_listed_and_the_work_scales
+  zedc_presburger::presburger::factored::tests::the_cone_rule_is_exact_on_wide_coefficients
 "
 # Tests of short-zed_kernel (the zed-kernel unit tests of the short-addresses build) each run as a
 # piece of their own, `--exact`, and skipped by the binary's other piece, as for alone above.
