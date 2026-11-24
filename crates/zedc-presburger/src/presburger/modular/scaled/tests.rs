@@ -351,6 +351,10 @@ fn seed_9563318029921447897_case_272_is_decided() {
     let (divs, f) = seed_9563318029921447897_case_272();
     let period: i64 = divs.iter().map(|d| d.m).product();
     assert!(has_point(&f, &divs, -20 - period..=20 + period), "{f}");
+    // The period sweep (`sweep.rs`) decides `f` itself; `y >= 0` on a symbol of no row keeps it
+    // out, so `f` still reaches the Omega test and its lossless stage.
+    let f = Formula::and(vec![f, Formula::Con(Con::ge(&sym("y"), &Lin::constant(0)))]);
+    assert_eq!(sweep::solve(&f, false), None);
     crate::presburger::CHECK_LOSSLESS.with(|c| c.set(true));
     crate::presburger::LOSSLESS_STEPS.with(|c| c.set(0));
     check(&f, true, "seed 9563318029921447897 case 272");
@@ -507,9 +511,12 @@ fn other_shapes_are_still_declined() {
         ]
         .concat(),
     );
+    // A quotient read by a bound was declined here until FAIL-omega-pairs-4972743790605253739;
+    // the period sweep (`sweep.rs`) now decides it: `3 x div 30 >= 5` with `3 x mod 30 <= 9`
+    // holds at `x = 50`.
+    check_answered(&quotient_bound, true, "a quotient read by a bound");
     for (what, f) in [
         ("two variables", two_vars),
-        ("a quotient read by a bound", quotient_bound),
         (
             "a sum whose remainder may reach the modulus",
             sum_bound_too_high,
@@ -1019,4 +1026,161 @@ fn chain_of_quotients(depth: usize) -> (Vec<Div>, Formula) {
     }
     let f = formula(&divs, Formula::and(lits), vec![]);
     (divs, f)
+}
+
+/// The rows of FAIL-omega-pairs-4972743790605253739: `x - s == m q + r` for `(m, s)` in
+/// `(5, 0), (4, 2), (5, 5), (4, 7)`.
+fn four_pairs() -> Vec<Div> {
+    [(5, 0), (4, 2), (5, 5), (4, 7)]
+        .into_iter()
+        .map(|(m, s)| Div {
+            t: 0,
+            a: 1,
+            k: -s,
+            m,
+            fixed: None,
+        })
+        .collect()
+}
+
+#[test]
+fn four_pairs_with_a_sum_of_their_quotients_are_decided() {
+    // `r3 + q2 + r1 + q0 >= 9`: the quotients grow with `x`, so a large `x` is a point, and the
+    // general path refused it (`Growth`) before the sweep.
+    let divs = four_pairs();
+    let sum = r(3).plus(&q(2)).plus(&r(1)).plus(&q(0));
+    let f = formula(
+        &divs,
+        Formula::Con(Con::ge(&sum, &Lin::constant(9))),
+        vec![],
+    );
+    check_answered(&f, true, "the four pairs");
+    // With `x <= 12`, `q0 <= 2` and `q2 <= 1`; `r1 = (x - 2) mod 4` and `r3 = (x - 7) mod 4`
+    // differ by 1 modulo 4, so they are never both 3 and their sum is at most 5: the sum is at
+    // most 8 (enumerated below as well).
+    let bounded = formula(
+        &divs,
+        Formula::Con(Con::ge(&sum, &Lin::constant(9))),
+        vec![Formula::Con(Con::ge(&Lin::constant(12), &x()))],
+    );
+    let want = has_point(&bounded, &divs, -200..=12);
+    assert!(!want, "the bounded rows have a point");
+    check_answered(&bounded, false, "the four pairs with x <= 12");
+    // Unbounded and empty: `(x + 4) div 4 - x div 4` is 1 at every `x`.
+    let same = vec![
+        Div {
+            t: 0,
+            a: 1,
+            k: 0,
+            m: 4,
+            fixed: None,
+        },
+        Div {
+            t: 0,
+            a: 1,
+            k: 4,
+            m: 4,
+            fixed: None,
+        },
+    ];
+    let apart = formula(
+        &same,
+        Formula::Con(Con::ge(&q(1), &q(0).plus(&Lin::constant(2)))),
+        vec![],
+    );
+    check_answered(&apart, false, "two quotients one apart");
+}
+
+/// A random Boolean combination of constraints on sums of `x` and the quotients and
+/// remainders of `divs`, with coefficients in `[-3, 3]`.
+fn random_part_literals(rng: &mut Rng, divs: &[Div], depth: u32) -> Formula {
+    if depth == 0 || rng.below(3) == 0 {
+        let mut parts: Vec<Lin> = vec![x()];
+        for (i, d) in divs.iter().enumerate() {
+            parts.push(q(i));
+            if d.fixed.is_none() {
+                parts.push(r(i));
+            }
+        }
+        let mut sum = Lin::constant(0);
+        for _ in 0..1 + rng.below(3) {
+            let p = rng.pick(&parts);
+            sum = sum.plus(&p.times(rng.int(-3, 3)));
+        }
+        let c = Lin::constant(rng.int(-20, 20));
+        return Formula::Con(if rng.below(5) == 0 {
+            Con::eq(&sum, &c)
+        } else {
+            Con::ge(&sum, &c)
+        });
+    }
+    let kids = (0..2 + rng.below(2))
+        .map(|_| random_part_literals(rng, divs, depth - 1))
+        .collect();
+    match rng.below(3) {
+        0 => Formula::and(kids),
+        1 => Formula::or(kids),
+        _ => Formula::negate(Formula::and(kids)),
+    }
+}
+
+/// Random formulas of [`random_part_literals`] with `x` unbounded, on up to four rows: where the
+/// module and [`decide`](crate::presburger::decide) both answer, they agree (enumeration cannot
+/// check an unbounded `x`). The counts are printed: on seed 16937151135935670534 at 2cf833851,
+/// `decide` refused 7 of 3000 and the module declined 2394 before the period sweep (`sweep.rs`),
+/// and 0 and 100 with it.
+#[test]
+fn unbounded_quotient_formulas_agree_with_decide() {
+    let (mut rng, seed) = Rng::fresh("unbounded_quotient_formulas_agree_with_decide");
+    let mut refused = 0;
+    let mut declined = 0;
+    let n = 3000;
+    for case in 0..n {
+        let mut divs = random_divs(&mut rng);
+        while case % 2 == 0 && divs.len() < 4 {
+            divs.extend(random_divs(&mut rng));
+        }
+        divs.truncate(4);
+        let lits = random_part_literals(&mut rng, &divs, 3);
+        let f = formula(&divs, lits, vec![]);
+        let by_module = solve_modular_or_scaled(&f, true);
+        if let Some(Some(model)) = &by_module {
+            assert!(f.holds(model), "seed {seed} case {case}: not a point\n{f}");
+        }
+        let by_decide = crate::presburger::decide(&f);
+        declined += usize::from(by_module.is_none());
+        refused += usize::from(by_decide.is_err());
+        if let (Some(m), Ok(want)) = (by_module, by_decide) {
+            assert_eq!(m.is_some(), want, "seed {seed} case {case}\n{f}");
+        }
+    }
+    eprintln!("seed {seed}: decide refused {refused}, the module declined {declined}, of {n}");
+}
+
+#[test]
+fn quotients_beside_the_variable_match_enumeration() {
+    // `x` is bounded to a window, so enumerating the window decides each formula.
+    let (mut rng, seed) = Rng::fresh("quotients_beside_the_variable_match_enumeration");
+    crate::presburger::CHECK_LOSSLESS.with(|c| c.set(true));
+    let mut answered = [0usize; 2];
+    let mut by_solve = [0usize; 2];
+    for case in 0..300 {
+        let divs = random_divs(&mut rng);
+        let lits = random_part_literals(&mut rng, &divs, 2);
+        let lo = rng.int(-60, 60);
+        let hi = lo + rng.int(0, 80);
+        let extra = vec![
+            Formula::Con(Con::ge(&x(), &Lin::constant(lo))),
+            Formula::Con(Con::ge(&Lin::constant(hi), &x())),
+        ];
+        let f = formula(&divs, lits, extra);
+        let want = has_point(&f, &divs, lo..=hi);
+        let by_module = check(&f, want, &format!("seed {seed} case {case} {divs:?}"));
+        answered[usize::from(want)] += 1;
+        by_solve[usize::from(want)] += usize::from(by_module);
+    }
+    // Both answers are met, and the module answers each side often, so neither is checked
+    // vacuously and a module that declined everything would not pass on `decide` alone.
+    assert!(answered[0] > 30 && answered[1] > 30, "{answered:?}");
+    assert!(by_solve[0] > 30 && by_solve[1] > 30, "{by_solve:?}");
 }

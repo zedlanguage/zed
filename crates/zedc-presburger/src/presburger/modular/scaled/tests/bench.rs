@@ -32,6 +32,60 @@ fn sums_of_quotients_scale() {
     });
 }
 
+/// [`four_pairs`] and `n` constraints `(i + 1) x + q0 - q2 + r1 >= -10`, each on its own
+/// combination, with `r1 == r3 || r1 == r3 + 2`: `r1 = (x - 2) mod 4` and `r3 = (x - 7) mod 4`
+/// differ by 1 modulo 4, so there is no point, and the period sweep (`sweep.rs`) folds every
+/// constraint at each of the 20 residues of `lcm(5, 4)`. The disjunction keeps `r1 == r3` off
+/// the top level, where it would read as a definition row of modulus 1 ([`read_shape`]).
+fn bench_sweep(n: usize) -> Formula {
+    let divs = four_pairs();
+    let mut lits = Vec::with_capacity(n + 1);
+    for i in 0..n {
+        let sum = x()
+            .times(i as i64 + 1)
+            .plus(&q(0))
+            .plus(&q(2).times(-1))
+            .plus(&r(1));
+        lits.push(Formula::Con(Con::ge(&sum, &Lin::constant(-10))));
+    }
+    lits.push(Formula::or(vec![
+        Formula::Con(Con::eq(&r(1), &r(3))),
+        Formula::Con(Con::eq(&r(1), &r(3).plus(&Lin::constant(2)))),
+    ]));
+    formula(&divs, Formula::and(lits), vec![])
+}
+
+/// The period sweep on [`bench_sweep`] at `n` and `8n` constraints: O(L n) for the fixed period
+/// `L = 20`, so linear in `n`. Negative control: the same runs with the run at `8n` done eight
+/// times, as a sweep that read every constraint once per constraint would cost, are over the
+/// limit, so the check can fail on this input.
+#[test]
+fn the_period_sweep_scales_in_the_constraints() {
+    let inputs = scaling::inputs(N_SWEEP, bench_sweep);
+    let run = |n: usize| {
+        assert_eq!(solve_modular_or_scaled(&inputs[&n], false), Some(None));
+    };
+    scaling::check("the period sweep over n constraints", N_SWEEP, run);
+    let mut meter = scaling::Meter::new();
+    let small = meter.work(|| run(N_SWEEP)).units;
+    let large = meter
+        .work(|| {
+            for _ in 0..8 {
+                run(8 * N_SWEEP);
+            }
+        })
+        .units;
+    let ratio = large as f64 / small as f64;
+    assert!(
+        ratio >= scaling::limit(1),
+        "the negative control passed: {small} and {large} instructions, {ratio:.2} times"
+    );
+}
+
+/// The size of [`the_period_sweep_scales_in_the_constraints`]: at `8n` the sweep's count of
+/// units (about `2 * 20 * 8n`) stays under `SWEEP_SWITCHOVER` (400,000).
+const N_SWEEP: usize = 1_000;
+
 /// The size of [`sums_of_quotients_scale`].
 const N_SUM: usize = 2_000;
 

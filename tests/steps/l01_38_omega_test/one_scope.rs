@@ -5997,3 +5997,48 @@ fn the_unit_of_seed_7431387621846350106_is_answered_as_its_bodies_read() {
          c5(x: int) = g3(x: x + (0 - 1)) || v0(x: x + (0 - 3)) < (0 - 2) || c4(x: x + 2) && x < 38;",
     );
 }
+
+/// FAIL-omega-pairs-4972743790605253739: the `fails` question of `c4` was refused for Growth
+/// when each call writes its callee's projection, and decided when each call reads its callee's
+/// body again; the formula of the refusal is the next test's, cut down.
+#[test]
+fn the_unit_of_seed_4972743790605253739_is_answered_as_its_bodies_read() {
+    answers_are_those_reading_bodies(
+        "g0(x: int) = x mod 5 == 4 && x < 40;\n\
+         g1(x: int) = g0(x: x + 0) && x mod 5 == 3;\n\
+         g2(x: int) = g1(x: x + 1) && x > (0 - 7);\n\
+         g3(x: int) = g2(x: x + 0) && x div 3 > 1;\n\
+         v0(x: int) = x mod 4;\n\
+         v1(x: int) = v0(x: x + (0 - 2)) + x div 5;\n\
+         v2(x: int) = v1(x: x + (0 - 3)) + x mod 4;\n\
+         v3(x: int) = v2(x: x + (0 - 2)) + x div 5;\n\
+         w(x: int, y: int) = x mod 2 == y mod 2 && x < y + 4;\n\
+         c0(x: int) = x > 6;\n\
+         c1(x: int) = g1(x: x + (0 - 4)) || v2(x: x + 2) < 3 || w(x: x + 2, y: x) || c0(x: x + 1) && x < 18;\n\
+         c2(x: int) = g1(x: x + 0) && v1(x: x + 1) < 2 && c1(x: x + 0) && x < 37;\n\
+         c3(x: int) = g2(x: x + (0 - 3)) || v2(x: x + (0 - 3)) < 4 || c2(x: x + (0 - 3)) && x < (0 - 2);\n\
+         c4(x: int) = g2(x: x + 1) || v3(x: x + (0 - 4)) < 9 || c3(x: x + (0 - 2)) && x < 64;\n\
+         c5(x: int) = g3(x: x + (0 - 3)) && c4(x: x + (0 - 3)) && x < 84;\n",
+    );
+}
+
+/// Four Euclidean pairs of one symbol `c` (moduli 5, 4, 5, 4) and a row over two of their
+/// remainders and two of their quotients: any large `c` is a point. Every elimination of the
+/// general path adds terms and the quotients have no bound, so it was refused for Growth; the
+/// period sweep of `modular/scaled/sweep.rs` decides it.
+#[test]
+fn four_pairs_of_one_symbol_and_a_sum_of_their_quotients_have_a_point() {
+    use zed_tests::step_helpers::l01_38_presburger::small_cost::{eq, ge, k, q, sym};
+    use zedc::store::presburger::{Formula, decide};
+    let c = sym("c");
+    let mut rows = Vec::new();
+    // c == m * q(d) + q(d + 1) + s, 0 <= q(d + 1) < m.
+    for (d, m, s) in [(0, 5, 0), (2, 4, 2), (4, 5, 5), (6, 4, 7)] {
+        rows.push(eq(&c, &q(d).times(m).plus(&q(d + 1)).plus(&k(s))));
+        rows.push(ge(&q(d + 1), &k(0)));
+        rows.push(ge(&k(m - 1), &q(d + 1)));
+    }
+    // r of the pair by 4 at 7, q of the pair by 5 at 5, r of the pair by 4 at 2, q by 5 at 0.
+    rows.push(ge(&q(7).plus(&q(4)).plus(&q(3)).plus(&q(0)), &k(9)));
+    assert_eq!(decide(&Formula::and(rows)), Ok(true));
+}
