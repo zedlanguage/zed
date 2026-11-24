@@ -3300,6 +3300,20 @@ pub mod crossover {
         a.0.support_mul(&b.0, &plan, f64::INFINITY, &mut 0.0)
     }
 
+    /// For `a * b` by the support product: the units its choice estimates
+    /// (`Poly::support_units`), the units its rounds spend with no bound on them (the sampling
+    /// included, as `Poly::support_mul` counts them), and the terms of the product, against
+    /// which the estimate of the support's size can be read. `None` where it cannot run or its
+    /// rounds do not finish. For POLY-support-cost-ranking: whether the estimate misses the
+    /// rounds' units or the cost of a unit.
+    pub fn support_units(a: &Sum, b: &Sum) -> Option<(f64, f64, usize)> {
+        let plan = a.0.plan(&b.0).expect("packed keys");
+        let estimated = a.0.support_units(&b.0, &plan)?;
+        let mut spent = 0.0;
+        let product = a.0.support_mul(&b.0, &plan, f64::INFINITY, &mut spent)?;
+        Some((estimated, spent, product.len()))
+    }
+
     /// `a * b` by the method `Poly::mul` takes when the support product gives way: the dense
     /// or the sparse product.
     pub fn fallback(a: &Sum, b: &Sum) -> Vec<(u128, BigInt)> {

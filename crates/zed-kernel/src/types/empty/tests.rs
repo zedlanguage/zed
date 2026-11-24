@@ -301,6 +301,40 @@ fn residues_meet_refuses_erdos_cover_with_1_mod_6() {
     assert!(shares(&[(3, 1)], &more) == Lengths::Refused);
 }
 
+/// A class of `all` that fixes `2^63` of the length cannot be split on 2 again: `2^64` is past
+/// `u64`, so `split_on` refuses (its `checked_mul`; TEST-kernel-unreached-paths-16, the line
+/// kernel26 found unreached) and the split goes on to 3, which decides it: the lengths of `all`
+/// are even, every even length is 0, 2 or 4 modulo 6, and each class modulo 3 is held whole by
+/// one negated class, so there is none.
+#[test]
+fn residues_meet_refuses_a_split_past_u64() {
+    let all = [(1 << 63, 0)];
+    let none = [(6, 0), (6, 2), (6, 4), (6, 0)];
+    assert!(shares(&all, &none) == Lengths::Refused);
+    assert!(residues_meet(&all, &none) == Lengths::None);
+}
+
+/// The two halves of the lengths, 0 and 1 modulo 2, share all of them and do not meet: no pair
+/// is taken out of the sum, and the length chosen is still a length of 1 to the lcm 2, as
+/// `greedy_length` gives the lcm for 0 (TEST-kernel-unreached-paths-16).
+#[test]
+fn greedy_length_with_no_meeting_pair() {
+    let n = greedy_length(&[], &[(2, 0), (2, 1)]);
+    assert!(n >= BigUint::from(1u32) && n <= BigUint::from(2u32), "{n}");
+}
+
+/// A type's bounds asked twice of one `Heights` are read the second time from those it keeps
+/// (TEST-kernel-unreached-paths-16: the free `height_bounds` keeps its own, so its tests never
+/// asked one `Heights` twice).
+#[test]
+fn heights_keep_the_bounds_of_a_type_asked_twice() {
+    let t = Type::tuple(vec![Type::int()]);
+    let mut h = Heights::default();
+    let first = h.height_bounds(&t);
+    assert_eq!(h.height_bounds(&t), first);
+    assert_eq!(height_bounds(&t), first);
+}
+
 /// Odd lengths not 1 modulo 6 are 3 or 5 modulo 6: a choice on 2 that weighs (6, 1) without
 /// the residues left on 3 takes 0 modulo 2 and gives 6 (XR-wlen round 1).
 #[test]

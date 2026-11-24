@@ -1420,6 +1420,49 @@ fn poly_support_gaps(args: &[String]) -> ExitCode {
     status(verdict.holds())
 }
 
+/// `poly-support-units [words]`: on the squares of `poly-support` (`k` from 256 to 512 in
+/// sixteenths of a doubling, and the `k` POLY-support-cost-ranking measured: 304, 332, 350, 354
+/// and 362), the support product's work against its units: the units its choice estimates
+/// before the rounds, the units its rounds spend, and the terms of the product. Where the work
+/// follows the units spent but not the units estimated, the estimate misses the rounds (the
+/// support's size or the number of rounds); where it follows neither, a unit's cost varies.
+/// Not a fit, so not in `all`.
+fn poly_support_units(args: &[String]) -> ExitCode {
+    let words: usize = args.first().map_or(16, |s| s.parse().expect("words"));
+    let mut meter = Meter::new();
+    let mut ks = ladder(256, 512, 16);
+    ks.extend([304, 332, 350, 354, 362]);
+    ks.sort_unstable();
+    ks.dedup();
+    println!("poly-support-units {words}, {}", conditions());
+    println!(
+        "\n| k | terms | product terms | units estimated | units spent | spent / estimated | {} | {} / unit spent |",
+        meter.unit(),
+        meter.unit()
+    );
+    println!("|---|---|---|---|---|---|---|---|");
+    for k in ks {
+        let mut rng = Rng::new(k as u64);
+        let kk = k as u128;
+        let r = 2 * kk + 1;
+        let at = (0..=kk).map(|i| i + (kk - i) * r).chain(std::iter::once(1));
+        let a = sum_at(&mut rng, at, words);
+        let (estimated, spent, terms) =
+            px::support_units(&a, &a).expect("the support product runs");
+        let work = meter.work(|| {
+            std::hint::black_box(px::support(&a, &a));
+        });
+        println!(
+            "| {k} | {} | {terms} | {estimated:.0} | {spent:.0} | {:.3} | {} | {:.2} |",
+            k + 2,
+            spent / estimated,
+            work.units,
+            work.units as f64 / spent
+        );
+    }
+    ExitCode::SUCCESS
+}
+
 /// The first `n` primes at or above `from`, by `zed_numtheory::next_prime`.
 fn primes_from(from: u64, n: usize) -> Vec<u64> {
     let mut out = Vec::with_capacity(n);
@@ -1752,12 +1795,15 @@ fn main() -> ExitCode {
     if name == "factor-bits" {
         return factor_bits(rest);
     }
+    if name == "poly-support-units" {
+        return poly_support_units(rest);
+    }
     match BENCHES.iter().find(|(n, _, _)| *n == name) {
         Some((_, run, _)) => run(rest),
         None => {
             let names: Vec<&str> = BENCHES.iter().map(|(n, _, _)| *n).collect();
             eprintln!(
-                "usage: crossover (all | print-never-slower [digits...] | factor-bits | {}) [--exact]",
+                "usage: crossover (all | print-never-slower [digits...] | factor-bits | poly-support-units [words] | {}) [--exact]",
                 names.join(" | ")
             );
             ExitCode::FAILURE

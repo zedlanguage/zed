@@ -1644,3 +1644,20 @@ not list lines newly unreached. Line numbers below are at 35de293df.
 Not closed: the other 94. `value_height`'s `Value::Tuple(_) | Value::Path(_) => None` (4610)
 needs every construction of `Rep::Value` traced; the other high-confidence lines (7145, 7205,
 7785, 8269) were not worked on in this round.
+
+Twenty-fourth round (b22-kernel14, 2026-11-24), row TEST-kernel-unreached-paths-16. Base
+origin/main 60c898067. Line numbers are at 35de293df, as in the list, with the function named.
+
+| Line | Closed by | Site | Control |
+|---|---|---|---|
+| `empty.rs` 1385, `verdict` | proof, extended | kernel13's proof said `members` holds a type *equal* to `self`; the stronger fact is that it holds `self`, the same node: `Type::rec` is made only in `Env::node`, which keeps one live node per place and replaces an entry only when its node is dead, and `group_members` reads the map's node of `At::Member(j)`. So the key is pointer-equal, and `ByType::get` finds it whatever the order mode | none |
+| `empty.rs` 4610, `Value::Tuple(_) \| Value::Path(_) => None` in `value_height` | proof | every `Rep::Value` a search shows traced: the sweep's lists (`sweep::build_list`, atoms), list stops, the integers of the tuple witness, booleans, scalars of a literal set, and `foreign` copies of those; none is a tuple or a path. The arm is kept as the answer that is safe for any value | none |
+| `empty.rs` 2724, `return Lengths::Refused` in `split_on` | test | `residues_meet_refuses_a_split_past_u64` (a class of period 2^63 split on 2) | none |
+| `empty.rs` 2942, the `}` of no meeting pair in `greedy_length` | test | `greedy_length_with_no_meeting_pair` (0 and 1 modulo 2) | none |
+| `empty.rs` 5130, `return b` in `Heights::height_bounds` | test | `heights_keep_the_bounds_of_a_type_asked_twice` | none |
+
+Found, not closed: `empty.rs` 8269, `return true` of a false part in `piece`, is not dead.
+kernel26 argued both callers; the caller `each` at the `!wide` branch of `split_classes` (`self.each(each, r, out)`)
+passes `out` when it is the `false` leaf, which happens when some tuple type is in more than one
+class and the rest of the component is inhabited. A test that builds such a box is still to be written.
+89 lines left.

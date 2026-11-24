@@ -1385,10 +1385,31 @@ impl Type {
             // answers only for one, and such a node is made only by `Env::member` for an index
             // that is not plain (a plain member's cell is set when the instance is made, before
             // any read; `Env::ground` has no members), so `j` is among the indices
-            // `group_members` lists, and `members` holds a type equal to `self`.
+            // `group_members` lists. Its entry `j` is `self` itself, the same node, not only an
+            // equal one (checked by b22-kernel14, 2026-11-24, every construction traced):
+            // (a) `Type::rec` (types.rs) is private and called only by `Env::member` and
+            //     `component` (rec/unfold.rs), each inside `Env::node`, and only `Env::member`
+            //     makes an `At::Member` key; `Env::node` returns either the node its map holds
+            //     alive for the place or the one just made, after putting it in the map, so
+            //     every member node that escapes is the map's node of its place.
+            // (b) The map's entry for a place is replaced only when its node is dead
+            //     (`Env::node`), and `Env::forget` drops only dead entries; `self` is alive
+            //     (the caller holds it), so the map's node of `At::Member(j)` is `self`.
+            // (c) `group_members` calls `self.env.member(j)` on `self`'s own `Env` (`Arc`), which
+            //     returns the cell's node, which `Env::member` proves is the map's node, or the
+            //     map's node itself: `self` by (b).
+            // So the key `group_verdicts` inserts for that entry is pointer-equal to `self`:
+            // `Type::cmp` answers `Equal` by `Arc::ptr_eq`, and both have one `name_digest`, so
+            // `ByType::get` reads the slot the insertion wrote. Inside a slot of tied keys
+            // (`Slot::Many`, a `BTreeMap`) the order is consistent: keys of one slot share a
+            // name digest, so `digests_cmp` compares the name-free digests then `order` whether
+            // `names_first` is set or not, and `hash::blind`, which changes the order, runs only
+            // around `Ids`'s linear searches, which read no `VERDICTS`.
             // `group_verdicts` inserts a verdict for each of `members` (its loop over `order`),
-            // and after that only overwrites entries; `VERDICTS` is cleared only by
-            // `forget_emptiness`, which no search calls. So the verdict is kept here.
+            // and after that only overwrites entries (`insert` and `get_mut`; it removes none);
+            // `VERDICTS` is cleared only by `forget_emptiness`, called only by a checker unit's
+            // start (zedc-check walk.rs) and tests, never by a search. So the verdict is kept
+            // here, and the `expect` cannot fire.
             return kept().expect("group_verdicts keeps a verdict for every member");
         }
         // A type outside a group gets a search of its own, which reads each member of a group by
@@ -4625,6 +4646,18 @@ impl Search {
             todo.pop();
             let h = match &self.shown[w] {
                 Rep::Value(x) => match x {
+                    // Not reached (TEST-kernel-unreached-paths-16), kept as the answer that is
+                    // safe for any value: `None` only skips the O(1) height test of
+                    // `member_known`. Proof (b22-kernel14, 2026-11-24, every `Rep::Value` made
+                    // traced): a search shows a `Rep::Value` only at `Searching::swept` (the
+                    // sweep's list, `sweep::build_list`: a bare atom or `Value::atom_with` of a
+                    // link name, never a tuple; `sweep::checked` passes on that value), the
+                    // list stops (`Value::atom`), the tuple witness of `Value::Int`s (its
+                    // `Rep::Tuple` holds the `Rep::Value` of one integer), `Value::Bool`, and
+                    // the first scalar of a carrier's literal set (`Lits` of ints, strings,
+                    // rationals, floats or `f32`s, made by the `fresh` functions or read from
+                    // that set of scalars); `foreign` copies another search's rep, made at the
+                    // same sites. None of these is a `Value::Tuple` or a `Value::Path`.
                     Value::Tuple(_) | Value::Path(_) => None,
                     Value::Atom(a) if !a.is_bare() => None,
                     _ => Some(0),
