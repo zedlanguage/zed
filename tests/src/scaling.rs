@@ -1483,6 +1483,62 @@ impl Meter {
     }
 }
 
+/// Runs `body`, a benchmark's body that holds direct readings of [`Meter::work`] to a limit
+/// itself (not through `compare_by`), where those readings count instructions: here, unless
+/// this benchmark runs with other tests where the hardware has no counter of instructions and
+/// DynamoRIO's `zed_icount` is named (`counts_in_new_processes`; there [`Meter::new`] reads
+/// processor time). Then the whole test runs once in a new process of this test binary, started
+/// with `--exact` and so under DynamoRIO (`zed_meter_settings::start_under_dynamorio`), and
+/// passes or fails as it did there; its output is printed here. Where that process finds no test
+/// of this thread's name (a thread the test named itself), `body` runs here.
+///
+/// Why (FAIL-direct-meter-pairs-time-in-groups): l01_23's
+/// `r9_a_list_in_an_atom_payload_is_decided_as_the_list_alone` holds each payload's reading to
+/// twice the list's alone. Run alone it counted instructions and passed; in its group at 8
+/// threads it read processor time and failed at 3.13 (b22-kernel14, hm1, 2026-11-24). Measured
+/// again by b22-kernel15 (l41, 2026-11-24, the test's 40 ratios printed): run alone by
+/// instructions its ratios were 0.999 to 1.749; by processor time they ran from 0.394 to 1.729
+/// alone without `--exact`, from 0.705 to 1.722 in the 36 r9 tests at 8 threads, and from
+/// 0.834 to 1.994 in the whole `refusals::bench::` group, where `atom:r5remout` at 16 read
+/// 1.014 by instructions and 0.394 to 1.053 by time. So the limit of 2 holds by instructions and is
+/// crossed by the spread of processor time, as at 3.13.
+///
+/// Complexity tradeoff: one more process start under DynamoRIO per test (7.3 times slower than
+/// a native run, see the module's documentation), against [`compare_costs`] per pair of readings,
+/// whose new process replays the test up to each check, so a test of `c` checks costs
+/// `O(c^2)` runs; the r9 tests hold 40 and 50 pairs.
+pub fn counted_alone(body: impl FnOnce()) {
+    let thread = std::thread::current();
+    let Some(test) = thread.name().filter(|_| Meter::new().elsewhere) else {
+        return body();
+    };
+    let exe = std::env::current_exe().expect("this test binary");
+    let mut command = fresh_command(&exe);
+    command.args([test, "--exact", "--test-threads=1", "--nocapture"]);
+    // The process runs the test alone, not one run of a check.
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with(FRESH_VAR) {
+            command.env_remove(key);
+        }
+    }
+    let out = command
+        .output()
+        .unwrap_or_else(|e| panic!("{test}: starting {} alone: {e}", exe.display()));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if out.status.success() && stdout.lines().any(|line| line == "running 0 tests") {
+        return body();
+    }
+    print!("{stdout}");
+    eprint!("{stderr}");
+    assert!(
+        out.status.success() && stdout.lines().any(|line| line == "running 1 test"),
+        "{test}: run alone in a new process of this test binary under DynamoRIO, so that its \
+         readings count instructions, it failed ({}); its output is above",
+        out.status
+    );
+}
+
 /// For each test, the checks it has entered in this process, in order: the message of each
 /// that panicked, `None` for one that passed or has not ended.
 static OUTCOMES: std::sync::Mutex<std::collections::BTreeMap<String, Vec<Option<String>>>> =

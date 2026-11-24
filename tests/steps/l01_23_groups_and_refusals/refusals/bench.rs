@@ -782,51 +782,13 @@ case_benches! {
 /// at 12 to 530 times the work of the list alone.
 #[test]
 fn r8_a_list_in_a_field_is_decided_as_the_list_alone() {
-    big(|| {
-        let n = 64;
-        let tag = format!("_r8field{n}");
-        for case in ["chain", "r5remin", "r6twoun"] {
-            for wrap in ["tup:", "rec:"] {
-                Type::forget_emptiness();
-                let bare = rfx_case(case, n, &tag);
-                let mut v = None;
-                let b = scaling::Meter::new().work(|| v = Some(bare.verdict()));
-                Type::forget_emptiness();
-                let t = rfx_case(&format!("{wrap}{case}"), n, &tag);
-                let mut w = None;
-                let f = scaling::Meter::new().work(|| w = Some(t.verdict()));
-                assert_eq!(
-                    w, v,
-                    "{wrap}{case} at {n}: the field's verdict is the list's"
-                );
-                assert!(
-                    f.units <= 2 * b.units,
-                    "{wrap}{case} at {n}: {} units in a field, {} alone",
-                    f.units,
-                    b.units
-                );
-            }
-        }
-    });
-}
-
-/// A list of the front sweep's class in a tuple or record field gets the verdict of the list
-/// alone at near the list's work (R9, X41). The front sweep ran on the query type alone, so the
-/// search built the field's value itself: `rec:clstaggerholesout` cost 547 times the list alone
-/// at 256, `tup:u4cofrontshared` 360 times, `tup:boundaryinside` 129 times. Sizes n and 8n, so a
-/// cost that grows faster in a field than alone fails at the larger one.
-#[test]
-fn r9_a_front_sweep_list_in_a_field_is_decided_as_the_list_alone() {
-    big(|| {
-        for n in [16, 128] {
-            let tag = format!("_r9field{n}");
-            for case in [
-                "clstaggerholesout",
-                "u4holesout",
-                "u4cofrontshared",
-                "boundaryinside",
-                "clcofrontsame",
-            ] {
+    // Each field's reading is held to the list's here, not by `scaling::compare_by`, so it
+    // counts instructions only in a process of its own (FAIL-direct-meter-pairs-time-in-groups).
+    scaling::counted_alone(|| {
+        big(|| {
+            let n = 64;
+            let tag = format!("_r8field{n}");
+            for case in ["chain", "r5remin", "r6twoun"] {
                 for wrap in ["tup:", "rec:"] {
                     Type::forget_emptiness();
                     let bare = rfx_case(case, n, &tag);
@@ -848,7 +810,53 @@ fn r9_a_front_sweep_list_in_a_field_is_decided_as_the_list_alone() {
                     );
                 }
             }
-        }
+        })
+    });
+}
+
+/// A list of the front sweep's class in a tuple or record field gets the verdict of the list
+/// alone at near the list's work (R9, X41). The front sweep ran on the query type alone, so the
+/// search built the field's value itself: `rec:clstaggerholesout` cost 547 times the list alone
+/// at 256, `tup:u4cofrontshared` 360 times, `tup:boundaryinside` 129 times. Sizes n and 8n, so a
+/// cost that grows faster in a field than alone fails at the larger one.
+#[test]
+fn r9_a_front_sweep_list_in_a_field_is_decided_as_the_list_alone() {
+    // Held here, not by `scaling::compare_by`: see
+    // `r8_a_list_in_a_field_is_decided_as_the_list_alone`.
+    scaling::counted_alone(|| {
+        big(|| {
+            for n in [16, 128] {
+                let tag = format!("_r9field{n}");
+                for case in [
+                    "clstaggerholesout",
+                    "u4holesout",
+                    "u4cofrontshared",
+                    "boundaryinside",
+                    "clcofrontsame",
+                ] {
+                    for wrap in ["tup:", "rec:"] {
+                        Type::forget_emptiness();
+                        let bare = rfx_case(case, n, &tag);
+                        let mut v = None;
+                        let b = scaling::Meter::new().work(|| v = Some(bare.verdict()));
+                        Type::forget_emptiness();
+                        let t = rfx_case(&format!("{wrap}{case}"), n, &tag);
+                        let mut w = None;
+                        let f = scaling::Meter::new().work(|| w = Some(t.verdict()));
+                        assert_eq!(
+                            w, v,
+                            "{wrap}{case} at {n}: the field's verdict is the list's"
+                        );
+                        assert!(
+                            f.units <= 2 * b.units,
+                            "{wrap}{case} at {n}: {} units in a field, {} alone",
+                            f.units,
+                            b.units
+                        );
+                    }
+                }
+            }
+        })
     });
 }
 
@@ -858,38 +866,42 @@ fn r9_a_front_sweep_list_in_a_field_is_decided_as_the_list_alone() {
 /// `#wrap((l,))` with `l` of `r5remout` at 32 was Refused(Fork) at 34 times the list's work.
 #[test]
 fn r9_a_list_in_an_atom_payload_is_decided_as_the_list_alone() {
-    big(|| {
-        for n in [16, 128] {
-            let tag = format!("_r9atom{n}");
-            for case in [
-                "r5remout",
-                "chain",
-                "r6twoun",
-                "clstagger",
-                "clstaggerholesout",
-            ] {
-                for wrap in ["atom:", "tup:atom:", "rec:atom:", "atom:tup:"] {
-                    Type::forget_emptiness();
-                    let bare = rfx_case(case, n, &tag);
-                    let mut v = None;
-                    let b = scaling::Meter::new().work(|| v = Some(bare.verdict()));
-                    Type::forget_emptiness();
-                    let t = rfx_case(&format!("{wrap}{case}"), n, &tag);
-                    let mut w = None;
-                    let f = scaling::Meter::new().work(|| w = Some(t.verdict()));
-                    assert_eq!(
-                        w, v,
-                        "{wrap}{case} at {n}: the payload's verdict is the list's"
-                    );
-                    assert!(
-                        f.units <= 2 * b.units,
-                        "{wrap}{case} at {n}: {} units in a payload, {} alone",
-                        f.units,
-                        b.units
-                    );
+    // Held here, not by `scaling::compare_by`: see
+    // `r8_a_list_in_a_field_is_decided_as_the_list_alone`.
+    scaling::counted_alone(|| {
+        big(|| {
+            for n in [16, 128] {
+                let tag = format!("_r9atom{n}");
+                for case in [
+                    "r5remout",
+                    "chain",
+                    "r6twoun",
+                    "clstagger",
+                    "clstaggerholesout",
+                ] {
+                    for wrap in ["atom:", "tup:atom:", "rec:atom:", "atom:tup:"] {
+                        Type::forget_emptiness();
+                        let bare = rfx_case(case, n, &tag);
+                        let mut v = None;
+                        let b = scaling::Meter::new().work(|| v = Some(bare.verdict()));
+                        Type::forget_emptiness();
+                        let t = rfx_case(&format!("{wrap}{case}"), n, &tag);
+                        let mut w = None;
+                        let f = scaling::Meter::new().work(|| w = Some(t.verdict()));
+                        assert_eq!(
+                            w, v,
+                            "{wrap}{case} at {n}: the payload's verdict is the list's"
+                        );
+                        assert!(
+                            f.units <= 2 * b.units,
+                            "{wrap}{case} at {n}: {} units in a payload, {} alone",
+                            f.units,
+                            b.units
+                        );
+                    }
                 }
             }
-        }
+        })
     });
 }
 
@@ -904,30 +916,33 @@ case_benches! {
 fn r8_varywidth_scales_within_input_size() {
     // Watch item `r5varywidth`: input has Theta(w^2) nodes (`w` boolean columns x `w` clauses),
     // so `w` to `4w` increases input size `N = w^2` by `16x` (`O(N log N)` bound <=
-    // `16 * 3 = 48x`).
-    big(|| {
-        Type::forget_emptiness();
-        let small = r5_varying_width(16);
-        let large = r5_varying_width(64);
-        let mut m = scaling::Meter::new();
-        let mut v1 = None;
-        let mut v2 = None;
-        let w1 = m.work(|| {
+    // `16 * 3 = 48x`). Held here, not by `scaling::compare_by`: see
+    // `r8_a_list_in_a_field_is_decided_as_the_list_alone`.
+    scaling::counted_alone(|| {
+        big(|| {
             Type::forget_emptiness();
-            v1 = Some(small.verdict());
-        });
-        let w2 = m.work(|| {
-            Type::forget_emptiness();
-            v2 = Some(large.verdict());
-        });
-        assert_eq!(v1, Some(Verdict::Inhabited));
-        assert_eq!(v2, Some(Verdict::Inhabited));
-        assert!(
-            w2.units <= w1.units.saturating_mul(48),
-            "r5varywidth w=16 ({}) to w=64 ({}) exceeded O(w^2 log w) bound",
-            w1.units,
-            w2.units
-        );
+            let small = r5_varying_width(16);
+            let large = r5_varying_width(64);
+            let mut m = scaling::Meter::new();
+            let mut v1 = None;
+            let mut v2 = None;
+            let w1 = m.work(|| {
+                Type::forget_emptiness();
+                v1 = Some(small.verdict());
+            });
+            let w2 = m.work(|| {
+                Type::forget_emptiness();
+                v2 = Some(large.verdict());
+            });
+            assert_eq!(v1, Some(Verdict::Inhabited));
+            assert_eq!(v2, Some(Verdict::Inhabited));
+            assert!(
+                w2.units <= w1.units.saturating_mul(48),
+                "r5varywidth w=16 ({}) to w=64 ({}) exceeded O(w^2 log w) bound",
+                w1.units,
+                w2.units
+            );
+        })
     });
 }
 
