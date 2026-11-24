@@ -1531,14 +1531,14 @@ fn karatsuba_mul(a: &BigUint, b: &BigUint) -> BigUint {
         k.scratch.resize(karatsuba_scratch(x.len()), 0);
         karatsuba_words(&mut k.out, x, y, &mut k.scratch);
         k.halves.resize(2 * k.out.len(), 0);
-        for (pair, &d) in k.halves.chunks_exact_mut(2).zip(&k.out) {
-            pair[0] = d as u32;
-            pair[1] = (d >> 32) as u32;
+        for (pair, &d) in k.halves.as_chunks_mut::<2>().0.iter_mut().zip(&k.out) {
+            *pair = [d as u32, (d >> 32) as u32];
         }
         let product = BigUint::from_slice(&k.halves);
         for v in [&mut k.a, &mut k.b, &mut k.out] {
             if v.capacity() > KEPT_WORDS {
-                *v = Vec::new();
+                // Frees the buffer (`clear` would keep the wide allocation for the thread).
+                drop(std::mem::take(v));
             }
         }
         if k.halves.capacity() > 2 * KEPT_WORDS {
