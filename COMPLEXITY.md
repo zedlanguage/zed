@@ -1609,7 +1609,7 @@ the benches):
 |---|---|---|---|
 | star: k rows `x + u_i`, k rows `y + w_j`, only `x*y` mentioned (`no_pair_of_the_star_is_listed_and_the_work_scales`) | k 1,000 to 8,000 | work 8.00 | none listed; control, every pair listed: 64.00 |
 | bench `bench_factored_star` (`kept_pairs`) | k 2,000 to 16,000 | 8.28 | instructions |
-| bench `bench_entails_on_the_star` (`entails` on the star) | k 1,000 to 8,000 | 8.77 | instructions; origin/main: see the red run below |
+| bench `bench_entails_on_the_star` (`entails` on the star) | k 1,000 to 8,000 | 8.77 | instructions; origin/main 35de293df: 430.99 at k 100 to 800 (5.1e8 to 2.2e11 instructions), and k = 1,000 ran past 60 s |
 | wlgrow (`the_pass1_and_worklist_of_wlgrow_scale`) | size 7.00 | pass 1 9.18, worklist 7.31 | the peel 47.20: exception 3, the test's control |
 | wlgrow_g (`the_worklist_of_wlgrow_g_scales`) | size 6.97 | pass 1 9.09, worklist 34.00 | fails 10.5: exception 4; the peel 43.12 |
 
