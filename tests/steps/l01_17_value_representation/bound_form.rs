@@ -7,12 +7,15 @@
 //! scaling tests are in `bench/bound_form.rs`.
 
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 
 use num_bigint::{BigInt, BigUint};
 use num_traits::One;
 use zed_kernel::Rat;
 use zed_tests::seed::Rng;
-use zedc_lattice::bound_form::{Form, Mono, Reading, bits, digits, dominated, order, read, work};
+use zedc_lattice::bound_form::{
+    Form, Mono, Reading, bits, digits, dominated, maxima, order, read, work,
+};
 
 fn ex(t: &str) -> Form {
     read(t, Reading::Exact).unwrap_or_else(|e| panic!("`{t}`: {e}"))
@@ -391,14 +394,15 @@ fn random_polynomials_have_equal_forms_exactly_when_they_agree_at_random_points(
 }
 
 /// The cost reading's maxima against the definition, every pair compared, on random monomials
-/// in two symbols (the sweep) and in three (the check against the maxima kept), with distinct
-/// exponents so that no two dominate each other.
+/// in one to three symbols (the sweep of `maxima`) and in four and five (the check against the
+/// maxima kept), with distinct exponents so that no two dominate each other. Exponents below 6
+/// make ties in single coordinates common, which the ranks of the sweep must keep equal.
 #[test]
 fn the_maxima_of_random_monomials_are_those_no_other_dominates() {
     let (mut r, seed) = Rng::fresh("the_maxima_of_random_monomials");
-    for round in 0..400 {
-        let syms = ["n", "m", "k"];
-        let count = 1 + round % 3;
+    for round in 0..1000 {
+        let syms = ["n", "m", "k", "h", "w"];
+        let count = 1 + round % 5;
         let mut f = Form::zero();
         let mut seen = std::collections::BTreeSet::new();
         for _ in 0..1 + r.below(30) {
@@ -425,6 +429,91 @@ fn the_maxima_of_random_monomials_are_those_no_other_dominates() {
             .map(|(m, _)| m.clone())
             .collect();
         assert_eq!(got, want, "seed {seed} round {round}: {f}");
+    }
+}
+
+/// The monomials of `text`, a sum, by `maxima` directly (no coefficients).
+fn maxima_of(texts: &[String]) -> BTreeSet<Mono> {
+    let ms = texts.iter().map(|t| mono(&cost(t))).collect();
+    maxima(ms).into_iter().collect()
+}
+
+/// Corners of the sweep in `d <= 3` coordinates: no monomial; only the constant (no
+/// coordinate); one; a chain, where one dominates all; an antichain on the plane
+/// `i + j + k = 6`, where all are maxima; the same monomial twice, kept once; ties in two of
+/// three coordinates, where the third decides; an opaque atom as a coordinate beside symbols.
+#[test]
+fn the_maxima_sweep_corners() {
+    let s = |v: &[&str]| v.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+    assert!(maxima(Vec::new()).is_empty());
+    assert_eq!(maxima_of(&s(&["1"])).len(), 1);
+    assert_eq!(maxima_of(&s(&["n*m*k"])).len(), 1);
+    let chain = maxima_of(&s(&["n", "n*m", "n*m*k", "n^2*m*k", "m", "1"]));
+    assert_eq!(chain, maxima_of(&s(&["n^2*m*k"])));
+    let plane: Vec<String> = (0..=6)
+        .flat_map(|i| (0..=6 - i).map(move |j| format!("n^{i}*m^{j}*k^{}", 6 - i - j)))
+        .collect();
+    assert_eq!(maxima_of(&plane).len(), plane.len());
+    assert_eq!(maxima_of(&s(&["n*m", "n*m"])).len(), 1);
+    let ties = maxima_of(&s(&["n*m*k^2", "n*m*k", "n*m^2*k", "n^2*m*k"]));
+    assert_eq!(ties, maxima_of(&s(&["n*m*k^2", "n*m^2*k", "n^2*m*k"])));
+    let opaque = maxima_of(&s(&["n*f(n, m)", "n^2", "f(n, m)", "m*f(n, m)"]));
+    assert_eq!(opaque, maxima_of(&s(&["n*f(n, m)", "n^2", "m*f(n, m)"])));
+}
+
+/// QUESTIONS.md A226's reduction from orthogonal vectors, checked against all pairs: for
+/// vectors `a_1..a_n`, `b_1..b_n` in {0,1}^D, the monomials `a_i' = prod x_k^(a_ik) * p^i *
+/// q^(n-i)` and `b_j' = prod x_k^(1-b_jk) * p^n * q^n * z`, one symbol per coordinate; some
+/// `a_i'` is not a maximum exactly when some `a_i . b_j = 0`. Random instances at D from 1
+/// to 6 and n from 1 to 8, each asserted, and two fixed instances that reach both answers:
+/// `a = (1,0), (0,1)` against `b = (1,1)` (no pair orthogonal) and against `b = (0,1)`
+/// (`(1,0) . (0,1) = 0`).
+#[test]
+fn orthogonal_vectors_reduce_to_the_maxima_of_monomials() {
+    let (mut r, seed) = Rng::fresh("orthogonal_vectors_reduce_to_the_maxima");
+    let fixed = [
+        (vec![vec![1, 0], vec![0, 1]], vec![vec![1, 1], vec![1, 1]]),
+        (vec![vec![1, 0], vec![0, 1]], vec![vec![1, 1], vec![0, 1]]),
+    ];
+    for round in 0..602 {
+        let (a, b) = match fixed.get(round) {
+            Some(ab) => ab.clone(),
+            None => {
+                let d = 1 + round % 6;
+                let n = 1 + r.below(8);
+                let mut draw = || (0..d).map(|_| r.below(2)).collect::<Vec<usize>>();
+                let a: Vec<Vec<usize>> = (0..n).map(|_| draw()).collect();
+                (a, (0..n).map(|_| draw()).collect())
+            }
+        };
+        let n = a.len();
+        let text = |v: &[usize], rest: String| {
+            (v.iter().enumerate())
+                .map(|(k, e)| format!("x{k}^{e}*"))
+                .collect::<String>()
+                + &rest
+        };
+        let a_m: Vec<String> = (a.iter().enumerate())
+            .map(|(i, v)| text(v, format!("p^{}*q^{}", i + 1, n - i - 1)))
+            .collect();
+        let b_m: Vec<String> = (b.iter())
+            .map(|v| {
+                let flip: Vec<usize> = v.iter().map(|e| 1 - e).collect();
+                text(&flip, format!("p^{n}*q^{n}*z"))
+            })
+            .collect();
+        let all: Vec<String> = a_m.iter().chain(&b_m).cloned().collect();
+        let kept = maxima_of(&all);
+        let some_a_dropped = a_m.iter().any(|t| !kept.contains(&mono(&cost(t))));
+        let orthogonal =
+            (a.iter()).any(|x| (b.iter()).any(|y| x.iter().zip(y).all(|(p, q)| p * q == 0)));
+        assert_eq!(
+            some_a_dropped, orthogonal,
+            "seed {seed} round {round}: {a:?} {b:?}"
+        );
+        if round < fixed.len() {
+            assert_eq!(orthogonal, round == 1, "the fixed instance {round}");
+        }
     }
 }
 
