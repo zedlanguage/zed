@@ -41,15 +41,13 @@ pub struct Classed {
 }
 
 impl Classed {
-    /// The set `set`, in the form of [`Classed`]: O(1) for a set of at most one piece or with
-    /// a piece of two members or more, its tree kept; else O(p log p) for p ranges.
+    /// The set `set`, in the form of [`Classed`]: O(p log p) for p ranges.
     pub fn plain(set: IntervalSet) -> Classed {
         Classed::new(set, Congruence::top())
     }
 
     /// The values of `ranges` in `class`, in the one form of [`Classed`]. `class` other than
-    /// every integer must come with finite ranges (or none). O(p log p) for p ranges; O(1)
-    /// for every integer's class in the cases of [`Classed::plain`].
+    /// every integer must come with finite ranges (or none). O(p log p) for p ranges.
     pub fn new(ranges: IntervalSet, class: Congruence) -> Classed {
         let empty = || Classed {
             ranges: IntervalSet::empty(),
@@ -59,24 +57,6 @@ impl Classed {
             Congruence::Bottom => return empty(),
             Congruence::Class { modulus, residue } => (modulus, residue),
         };
-        // Every integer's class over a set of at most one piece, or with a piece of two members
-        // or more (an infinite one among them): the set is in the one form already and is kept
-        // shared, `O(1)`. Proof, by the steps below at `m = 1`: no end moves; the gcd `g` is 0
-        // for one point, and 1 for one finite piece of two members or more (`g = gcd(0, m)`)
-        // and wherever a piece holds two members (`g` divides `m = 1`); an infinite end gives
-        // the ranges alone; each case returns the pieces of `ranges` unchanged, which
-        // `from_pieces` keeps, as they are sorted, disjoint and not adjacent (the invariant of
-        // `IntervalSet`). Only a set of two points or more, none touching, needs the gcd.
-        // Complexity tradeoff: naive version, every call lists the pieces and builds the set
-        // again, O(p log p) for p pieces, which the preimage paid for each input's domain at
-        // each test it read (`Boxes::with` in zedc-preimage preimage.rs; row
-        // FAIL-l01_39-arm-and-block-bench-ratios, form 6 of the if-shortcut nest at 15.3 times
-        // the instructions at 8 times the depth); used: one flag kept at each node of the
-        // tree ([`IntervalSet::has_long_piece`]), O(1). Test:
-        // `classed::tests::a_plain_set_keeps_its_tree_and_its_form`.
-        if m == Num::ONE && (ranges.len() <= 1 || ranges.has_long_piece()) {
-            return Classed::plain_unchecked(ranges);
-        }
         if m.is_zero() {
             // One value, `r`.
             return if ranges.contains_end(&End::Fin(r.clone())) {
@@ -565,8 +545,7 @@ impl Classed {
 
 impl PartialEq<IntervalSet> for Classed {
     /// Whether the two sets hold the same values: both in the one form of [`Classed::new`]
-    /// and compared, O(p log p) for p ranges (the form `O(1)` for a set of every integer's
-    /// class with a piece of two members, [`Classed::new`]), with no value listed.
+    /// and compared, O(p log p) for p ranges, with no value listed.
     fn eq(&self, other: &IntervalSet) -> bool {
         Classed::new(self.ranges.clone(), self.class.clone()) == Classed::plain(other.clone())
     }
@@ -605,88 +584,5 @@ impl fmt::Debug for Classed {
                 .field("class", &format_args!("{}", self.class))
                 .finish(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::interval::End::{NegInf, PosInf};
-    use crate::seed::Rng;
-
-    /// The gcd of the differences of the members of `s` within `-w..=w`, 0 for one member or
-    /// none: the modulus of the least class holding them, found by listing them.
-    fn listed_gcd(s: &IntervalSet, w: i64) -> i64 {
-        let members: Vec<i64> = (-w..=w).filter(|&v| s.contains(v)).collect();
-        let gcd = |a: i64, b: i64| {
-            let (mut a, mut b) = (a.abs(), b.abs());
-            while b != 0 {
-                (a, b) = (b, a % b);
-            }
-            a
-        };
-        members.iter().fold(0, |g, v| gcd(g, v - members[0]))
-    }
-
-    /// `Classed::plain` keeps the tree of a set of at most one piece or with a piece of two
-    /// members or more, unbuilt (row FAIL-l01_39-arm-and-block-bench-ratios), and gives the
-    /// same set in the one form either way: the same members, and the least class, its
-    /// modulus the gcd of the members' differences, found by listing them. Corner cases: the
-    /// empty set, one point, one long piece, points only (where the class is computed),
-    /// points with one long piece, and infinite ends. `has_long_piece` is checked against
-    /// the pieces listed.
-    #[test]
-    fn a_plain_set_keeps_its_tree_and_its_form() {
-        let (mut rng, seed) = Rng::fresh("a_plain_set_keeps_its_tree_and_its_form");
-        let w = 40;
-        let (mut kept, mut built) = (0, 0);
-        for i in 0..3000 {
-            let n = rng.below(6);
-            let mut raw = Vec::new();
-            for _ in 0..n {
-                let lo = rng.int(-w / 2, w / 2);
-                // Points most of the time, on a stride now and then, so that sets of points
-                // with a class larger than one are common.
-                let lo = if rng.coin() {
-                    lo - lo.rem_euclid(3)
-                } else {
-                    lo
-                };
-                let hi = if rng.below(5) == 0 {
-                    lo + rng.int(1, 3)
-                } else {
-                    lo
-                };
-                raw.push((End::of(lo), End::of(hi)));
-            }
-            if rng.below(12) == 0 {
-                raw.push((NegInf, End::of(-w / 2 - 2)));
-            }
-            if rng.below(12) == 0 {
-                raw.push((End::of(w / 2 + 2), PosInf));
-            }
-            let s = IntervalSet::from_pieces(raw);
-            let ctx = format!("{s:?}, case {i}, ZED_TEST_SEED={seed}");
-            let long = s.pieces().any(|(lo, hi)| lo != hi);
-            assert_eq!(s.has_long_piece(), long, "{ctx}");
-            let c = Classed::plain(s.clone());
-            if s.len() <= 1 || long {
-                assert!(c.ranges.same_tree(&s), "{ctx}");
-                assert_eq!(c.class, Congruence::top(), "{ctx}");
-                kept += 1;
-            } else {
-                built += 1;
-            }
-            for v in -w..=w {
-                assert_eq!(c.contains(v), s.contains(v), "{v} in {ctx}");
-            }
-            let infinite = matches!(s.bounds(), Some((NegInf, _) | (_, PosInf)));
-            let g = if infinite { 1 } else { listed_gcd(&s, w) };
-            match c.strided() {
-                Some((m, _)) => assert_eq!(*m, Num::from(g), "{ctx}"),
-                None => assert!(g <= 1, "{g} {ctx}"),
-            }
-        }
-        assert!(kept > 500 && built > 500, "{kept} {built}");
     }
 }

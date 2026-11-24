@@ -177,10 +177,6 @@ struct Node {
     height: u8,
     /// The count of pieces in the subtree.
     count: usize,
-    /// Whether some piece of the subtree holds two integers or more (an infinite end holds
-    /// infinitely many): kept at each node in `O(1)` from the piece and the children, so that
-    /// [`IntervalSet::has_long_piece`] answers in `O(1)`.
-    long: bool,
     /// The lower end of the subtree's first piece.
     first: End,
     /// The upper end of the subtree's last piece.
@@ -236,7 +232,6 @@ fn height(t: &Link) -> u8 {
 /// integer missing on each side.
 fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
     let (mut hash, mut pow, mut count, mut h) = (0, 1, 1, 0);
-    let long = piece.0 != piece.1 || [&left, &right].into_iter().flatten().any(|c| c.long);
     let first = match &left {
         Some(l) => {
             (hash, pow, count, h) = (l.hash, l.pow, count + l.count, l.height);
@@ -263,7 +258,6 @@ fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
         right,
         height: h + 1,
         count,
-        long,
         first,
         last,
         gap: OnceLock::new(),
@@ -966,11 +960,6 @@ impl IntervalSet {
         self.root.is_none()
     }
 
-    /// Whether some piece holds two integers or more, an infinite piece among them: `O(1)`.
-    pub fn has_long_piece(&self) -> bool {
-        self.root.as_ref().is_some_and(|n| n.long)
-    }
-
     /// The first piece: `O(log p)`.
     pub fn first(&self) -> Option<&(End, End)> {
         let mut n = self.root.as_deref()?;
@@ -1076,7 +1065,7 @@ impl IntervalSet {
     /// Whether `self` and `other` share their tree, which makes them equal: `O(1)`. The tests
     /// use it to check that an operation returned an operand's tree shared.
     #[cfg(test)]
-    pub(crate) fn same_tree(&self, other: &Self) -> bool {
+    fn same_tree(&self, other: &Self) -> bool {
         match (&self.root, &other.root) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (None, None) => true,
