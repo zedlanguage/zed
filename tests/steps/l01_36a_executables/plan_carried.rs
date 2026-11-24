@@ -134,6 +134,17 @@ fn damaged(g: &Region, p: &Plan) -> Vec<(&'static str, Plan)> {
             true
         })
     });
+    // A drop node `k` makes moved to the next node of its region, which may drop any edge
+    // made before it: the bytes keep their length and every index stays in range.
+    kind("a drop moved to the next node", &|d| {
+        first(&|n| !n.drops.is_empty())
+            .filter(|&(r, k)| k + 1 < p.regions[r].nodes.len())
+            .is_some_and(|(r, k)| {
+                let moved = d.regions[r].nodes[k].drops.pop().unwrap();
+                d.regions[r].nodes[k + 1].drops.push(moved);
+                true
+            })
+    });
     kind("a last use removed", &|d| {
         first(&|n| !n.last.is_empty()).is_some_and(|(r, k)| {
             d.regions[r].nodes[k].last.pop();
@@ -219,7 +230,7 @@ fn each_kind_of_damage_is_refused_and_makes_no_panic() {
         }
     }
     // (refused when read, read and refused by the re-check), by kind.
-    assert_eq!(met.len(), 10, "{met:?}");
+    assert_eq!(met.len(), 11, "{met:?}");
     for name in [
         "a drop of a later node's output",
         "a last use of the node's own output",
@@ -280,4 +291,134 @@ fn a_plan_cut_short_is_refused() {
     longer.push(0);
     let e = Plan::from_bytes(&longer, start.graph()).unwrap_err();
     assert!(e.contains("bytes follow the plan"), "{e}");
+}
+
+/// Where the stored plan lies in an executable's program data, as `exe::data` of zed-native
+/// writes it: its start and its length. The data is the 32 bytes of the program's address,
+/// four texts (the ports, the limits, the file's name and its source), each its length in 8
+/// bytes and then its bytes, the sites (a count, then 16 bytes each), and the plan's length
+/// and bytes, which the graph follows.
+fn plan_in(data: &[u8]) -> (usize, usize) {
+    let n = |at: usize| {
+        usize::try_from(u64::from_le_bytes(data[at..at + 8].try_into().unwrap())).unwrap()
+    };
+    let mut at = 32;
+    for _ in 0..4 {
+        at += 8 + n(at);
+    }
+    at += 8 + 16 * n(at);
+    (at + 8, n(at))
+}
+
+/// `zedc check-exe` (plan row EXE-plan-carried-recheck) on a built executable: the file as
+/// `zedc build` wrote it passes, with status 0 and nothing printed; with its stored plan
+/// replaced by each damaged plan of the same length that the start reads without fault
+/// ([`damaged`]: a mode flipped, a drop moved to the next node, a callee moved), the command
+/// refuses it with status 1 naming the plan, and the executable still starts and runs the
+/// plan as written (its start does not re-check it, by decision: `exe::check` of zed-native).
+/// A file that is not an executable `zedc build` wrote, and a command line of other than one
+/// file, are refused too. Negative control: the same splice of the undamaged plan passes.
+#[test]
+fn the_check_of_an_executable_refuses_each_damage_its_start_reads() {
+    use object::{Object as _, ObjectSection as _};
+    use std::process::Command;
+    use zed_native::{PROGRAM_SECTION, check_command};
+    let d = super::dir("check_exe");
+    let src = d.join("order.zed");
+    std::fs::write(
+        &src,
+        "main(m: MainArgs) {\n  \
+         a = m.args[0] else #outOfBounds -> \"\";\n  \
+         b = m.args[1] else #outOfBounds -> \"\";\n  \
+         x = if a > b { \"after\" } else { \"not after\" };\n  \
+         m.stdout <- \"${x}|${a}${b}\";\n}\n",
+    )
+    .unwrap();
+    let exe = d.join("order");
+    super::built(&src, &exe);
+    let check = |words: &[&std::path::Path]| {
+        let words: Vec<String> = words.iter().map(|w| w.to_str().unwrap().into()).collect();
+        let mut stderr = Vec::new();
+        let status = check_command(&words, &mut stderr);
+        (status, String::from_utf8(stderr).unwrap())
+    };
+    assert_eq!(check(&[&exe]), (0, String::new()));
+    // The plan in the file, and the graph the start reads it against.
+    let bytes = std::fs::read(&exe).unwrap();
+    let (at, len) = {
+        let file = object::File::parse(&*bytes).unwrap();
+        let s = file.section_by_name(PROGRAM_SECTION).unwrap();
+        let (at, len) = s.file_range().unwrap();
+        (usize::try_from(at).unwrap(), usize::try_from(len).unwrap())
+    };
+    let data = &bytes[at..at + len];
+    let (plan_at, plan_len) = plan_in(data);
+    let (graph, _) = zedc::zir::binary::decode_form(&data[plan_at + plan_len..]).unwrap();
+    let start = zed_native::legalize(graph);
+    let stored = Plan::from_bytes(&data[plan_at..plan_at + plan_len], start.graph()).unwrap();
+    assert_eq!(stored, plan(start.graph(), stored.fuse));
+    // `bytes` with the plan `p`'s bytes in place of the stored plan's, written as the
+    // runnable file `name` (by `install`, in a process of its own, as `command.rs` writes a
+    // runnable file, so no child another test thread forks inherits it open for writing).
+    let spliced = |name: &str, p: &[u8]| {
+        let mut file = bytes.clone();
+        file[at + plan_at..at + plan_at + plan_len].copy_from_slice(p);
+        let (staged, path) = (d.join(format!("{name}.bytes")), d.join(name));
+        std::fs::write(&staged, file).unwrap();
+        let installed = Command::new("install")
+            .args(["-m", "755"])
+            .arg(&staged)
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(
+            installed.success(),
+            "install {}: {installed}",
+            path.display()
+        );
+        path
+    };
+    // As `agreement.rs` runs this program: the words after `--` are `m.args`.
+    let words = ["--".into(), "b".into(), "a".into()];
+    let same = spliced("same", &stored.to_bytes());
+    assert_eq!(check(&[&same]), (0, String::new()));
+    let ran = super::executable(&same, &words, b"");
+    assert_eq!((ran.status, ran.stdout.as_str()), (0, "after|ba\n"));
+    let mut met = Vec::new();
+    for (k, (name, p)) in damaged(start.graph(), &stored).into_iter().enumerate() {
+        let b = p.to_bytes();
+        if b.len() != plan_len || Plan::from_bytes(&b, start.graph()).is_err() {
+            continue;
+        }
+        met.push(name);
+        let path = spliced(&format!("damaged{k}"), &b);
+        let (status, why) = check(&[&path]);
+        assert_eq!(status, 1, "{name}: {why}");
+        assert!(
+            why.contains("memory plan is not the plan its program gives"),
+            "{name}: {why}"
+        );
+        // The start reads the plan and runs it as written: it does not refuse the file. What
+        // the run then does with a wrong plan is not checked: it may free an edge in use.
+        let ran = super::executable(&path, &words, b"");
+        assert!(!ran.stderr.contains("is damaged"), "{name}: {}", ran.stderr);
+    }
+    for name in ["a mode flipped", "a drop moved to the next node"] {
+        assert!(met.contains(&name), "{name} not made: {met:?}");
+    }
+    // A file `zedc build` did not write, and a command line of other than one file.
+    let (status, why) = check(&[&src]);
+    assert_eq!(status, 1, "{why}");
+    assert!(
+        why.contains("is not an executable `zedc build` wrote"),
+        "{why}"
+    );
+    let (status, why) = check(&[&d.join("missing")]);
+    assert_eq!(status, 1, "{why}");
+    assert!(
+        why.contains("is not an executable `zedc build` wrote"),
+        "{why}"
+    );
+    assert_eq!(check(&[]).0, 2);
+    assert_eq!(check(&[&exe, &exe]).0, 2);
 }

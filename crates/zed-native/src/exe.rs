@@ -16,6 +16,8 @@
 use std::ffi::{CStr, OsString, c_char, c_int};
 use std::io::Write as _;
 use std::os::unix::ffi::OsStringExt as _;
+#[cfg(target_os = "linux")]
+use std::path::Path;
 use std::sync::Arc;
 
 use cranelift_codegen::ir::types::I32;
@@ -248,6 +250,89 @@ fn string(data: &[u8]) -> Option<(&str, &[u8])> {
     Some((std::str::from_utf8(text).ok()?, rest))
 }
 
+/// The section of an executable `zedc build` writes that holds the program as data ([`data`]),
+/// and nothing else: the data is the only thing the build puts in it, and a linker joins
+/// sections of one name from its inputs, of which only the build's object file has one. A
+/// section of its own name, so that [`check`] finds the data by that name, also in a stripped
+/// executable, which has lost its symbol table and so the symbol `zed_program`, as
+/// [`crate::link::build_id`] finds the build of the runtime.
+pub const PROGRAM_SECTION: &str = ".zed_program";
+
+/// The message of an executable whose stored memory plan is read without fault but is not the
+/// plan its graph gives.
+#[cfg(target_os = "linux")]
+const NOT_ITS_PLAN: &str = "this executable's memory plan is not the plan its program gives, \
+                            so the file was changed after `zedc build` wrote it, and run as it \
+                            is it may free memory the program still uses, or never free it. \
+                            Repair: build it again with `zedc build`";
+
+/// `zedc check-exe <file>` (plan row EXE-plan-carried-recheck): whether the executable `exe`
+/// holds a program its start can read ([`Program::decode`]) and a memory plan that is the plan
+/// of its graph ([`Plan::recheck`]). The start of an executable does not run this check, by
+/// decision: it reads the plan and does not work it out again (DESIGN.md sec:kernel, "Facts
+/// carried, and the stripped form": no runtime works a fact out again), and the re-check costs
+/// a planning of the graph, which is what reading the plan saves (benchmark
+/// `l01_36a_executables::bench::the_start_reads_the_plan_in_less_work_than_planning`). Why no
+/// check cheaper than planning can run at the start instead, in order of growth: planning is
+/// O(occurrences + edges) ([`zedc::zir::memory::plan`]), and an exact check of a stored plan
+/// must confirm, for each edge, its drop or last use, which is a claim that no later node of
+/// the region uses the edge. A check that leaves some use of an edge unread accepts the same
+/// plan for the graph with that use moved after the claimed last use, where the plan frees
+/// the edge too early; so an exact check reads every use of every edge, Ω(occurrences +
+/// edges), the order of planning itself. A cheaper check could differ from planning only by a
+/// constant factor, and this one, a planning and a comparison, is exact.
+// Complexity tradeoff: O(b) to read the file's `b` bytes and the section, plus the cost of
+// `Program::decode` (O(size of the data)) and of `Plan::recheck` (a planning, O(occurrences +
+// edges), and a comparison linear in the plan). Test: `l01_36a_executables::plan_carried::
+// the_check_of_an_executable_refuses_each_damage_its_start_reads`.
+#[cfg(target_os = "linux")]
+pub fn check(exe: &Path) -> Result<(), String> {
+    let not_one = |why: &str| {
+        format!(
+            "this file is not an executable `zedc build` wrote: {why}. Repair: name the file \
+             `zedc build <file> -o <out>` wrote as <out>"
+        )
+    };
+    match crate::link::section_of(exe, PROGRAM_SECTION) {
+        Ok(Some(data)) => check_data(&data),
+        Ok(None) => Err(not_one(&format!(
+            "it has no section {PROGRAM_SECTION}, which holds the program"
+        ))),
+        Err(why) => Err(not_one(&why)),
+    }
+}
+
+/// The check of [`check`] on the program's data `data`.
+#[cfg(target_os = "linux")]
+fn check_data(data: &[u8]) -> Result<(), String> {
+    let p = Program::decode(data)?;
+    (p.plan.recheck(p.graph.graph())).map_err(|why| format!("{NOT_ITS_PLAN} ({why})"))
+}
+
+/// `zedc check-exe` with the words `args` after `check-exe`: runs [`check`] on the one file
+/// they name and gives the exit status, 0 when the check passes (and nothing is printed), 1
+/// when it refuses the file, with the reason written to `stderr`, and 2 when `args` is not one
+/// word.
+#[cfg(target_os = "linux")]
+pub fn check_command(args: &[String], stderr: &mut dyn std::io::Write) -> u8 {
+    let [file] = args else {
+        let _ = writeln!(
+            stderr,
+            "`zedc check-exe` takes one word after it, the executable to check, and was given \
+             {} words. Write `zedc check-exe <file>`, once for each file.",
+            args.len()
+        );
+        return 2;
+    };
+    match check(Path::new(file)) {
+        Ok(()) => 0,
+        Err(why) => {
+            let _ = writeln!(stderr, "{file}: {why}");
+            1
+        }
+    }
+}
+
 /// Defines, in `m`, the data `data` and a C `main(argc, argv)` that returns
 /// `zed_main(argc, argv, data, its length, root)`.
 pub(crate) fn define_main<M: Module>(m: &mut M, root: FuncId, data: &[u8]) -> Result<(), String> {
@@ -257,6 +342,7 @@ pub(crate) fn define_main<M: Module>(m: &mut M, root: FuncId, data: &[u8]) -> Re
         .map_err(err)?;
     let mut d = DataDescription::new();
     d.define(data.into());
+    d.set_custom_section(PROGRAM_SECTION);
     m.define_data(at, &d).map_err(err)?;
     let ptr = m.target_config().pointer_type();
     let mut start = m.make_signature();

@@ -11,6 +11,10 @@ mod bug;
 mod codegen;
 #[cfg(unix)]
 mod exe;
+// `zedc check-exe` (plan row EXE-plan-carried-recheck). The module stays private: its entry
+// point `zed_main` takes C's raw `argv`, which a public path would offer to safe code.
+#[cfg(target_os = "linux")]
+pub use exe::{PROGRAM_SECTION, check_command};
 #[cfg(test)]
 mod fnv;
 mod hooks;

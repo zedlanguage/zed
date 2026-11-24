@@ -266,15 +266,9 @@ fn a_runtime_library_of_another_build_is_a_usage_error() {
     assert_eq!(working(&d, "other"), Vec::<String>::new());
 }
 
-/// `zedc` with its symbol table removed, as `strip` removes it, still builds: the build it
-/// holds is read from its section `.zed_native.build`, which stays (NATIVE-build-id). The
-/// copy is stripped here with the `object` crate, so the test needs no `strip` program.
-#[test]
-fn a_stripped_zedc_builds() {
-    use object::Object as _;
-    let d = dir();
-    let bytes = std::fs::read(env!("CARGO_BIN_EXE_zedc")).unwrap();
-    let mut elf = object::build::elf::Builder::read(&*bytes).unwrap();
+/// The executable `bytes` with its symbol table taken out, as `strip` leaves it.
+fn strip(bytes: &[u8]) -> Vec<u8> {
+    let mut elf = object::build::elf::Builder::read(bytes).unwrap();
     for s in &mut elf.sections {
         if [&b".symtab"[..], b".strtab"].contains(&&*s.name) {
             s.delete = true;
@@ -285,6 +279,21 @@ fn a_stripped_zedc_builds() {
     }
     let mut stripped = Vec::new();
     elf.write(&mut stripped).unwrap();
+    stripped
+}
+
+/// `zedc` with its symbol table removed, as `strip` removes it, still builds: the build it
+/// holds is read from its section `.zed_native.build`, which stays (NATIVE-build-id). The
+/// copy is stripped here with the `object` crate, so the test needs no `strip` program. The
+/// executable it builds, stripped as well, passes `zedc check-exe` (plan row
+/// EXE-plan-carried-recheck), which finds the program by its section `.zed_program`, not by
+/// the symbol `zed_program` that stripping takes out, and runs as it did.
+#[test]
+fn a_stripped_zedc_builds() {
+    use object::Object as _;
+    let d = dir();
+    let bytes = std::fs::read(env!("CARGO_BIN_EXE_zedc")).unwrap();
+    let stripped = strip(&bytes);
     // No symbol is left, so `link::build`'s, which named the build before, is gone too.
     assert_eq!(
         object::File::parse(&*stripped).unwrap().symbols().count(),
@@ -323,6 +332,19 @@ fn a_stripped_zedc_builds() {
         .unwrap();
     assert_eq!(failed(&out), (Some(0), String::new()));
     let ran = Command::new(&exe).output().unwrap();
+    assert_eq!(
+        (ran.status.code(), String::from_utf8(ran.stdout).unwrap()),
+        (Some(0), "stripped\n".to_string())
+    );
+    let exe_stripped = d.join("stripped-exe");
+    install(&exe_stripped, &strip(&std::fs::read(&exe).unwrap()));
+    let checked = Command::new(env!("CARGO_BIN_EXE_zedc"))
+        .arg("check-exe")
+        .arg(&exe_stripped)
+        .output()
+        .unwrap();
+    assert_eq!(failed(&checked), (Some(0), String::new()));
+    let ran = Command::new(&exe_stripped).output().unwrap();
     assert_eq!(
         (ran.status.code(), String::from_utf8(ran.stdout).unwrap()),
         (Some(0), "stripped\n".to_string())

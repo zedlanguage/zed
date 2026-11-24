@@ -1810,7 +1810,11 @@ fn a_fresh_child_ends_when_its_parent_is_killed() {
     let fields = || {
         let stat = std::fs::read_to_string(format!("/proc/{child}/stat")).ok()?;
         let rest = stat.rsplit(')').next()?;
-        Some(rest.split_whitespace().map(str::to_owned).collect::<Vec<_>>())
+        Some(
+            rest.split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+        )
     };
     // Read while the parent lives, so the child is alive (it sleeps for 60 s) and the start time
     // is its own: a pid and its start time name one process, where the pid alone could name a
@@ -1831,8 +1835,10 @@ fn a_fresh_child_ends_when_its_parent_is_killed() {
     let killed = || {
         let status = std::fs::read_to_string(format!("/proc/{child}/status")).unwrap_or_default();
         status.lines().any(|l| {
-            let mask = (l.strip_prefix("SigPnd:").or_else(|| l.strip_prefix("ShdPnd:")))
-                .and_then(|m| u64::from_str_radix(m.trim(), 16).ok());
+            let mask = (l
+                .strip_prefix("SigPnd:")
+                .or_else(|| l.strip_prefix("ShdPnd:")))
+            .and_then(|m| u64::from_str_radix(m.trim(), 16).ok());
             mask.is_some_and(|m| m & (1 << 8) != 0)
         })
     };

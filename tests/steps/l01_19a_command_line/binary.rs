@@ -68,8 +68,8 @@ fn zedc_names_a_word_that_is_no_command() {
     let out = zedc(&["frmat".into(), "a.zed".into()]);
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let why = "`frmat` is not a command of zedc. The commands are `fmt`, `run`, `replay`, `build` \
-               and `test`, and `--report` may come before any of them.";
+    let why = "`frmat` is not a command of zedc. The commands are `fmt`, `run`, `replay`, `build`, \
+               `check-exe` and `test`, and `--report` may come before any of them.";
     assert!(stderr.starts_with(&format!("{why}{COMMANDS}")), "{stderr}");
     assert!(out.stdout.is_empty());
 }
@@ -104,8 +104,8 @@ fn zedc_names_a_file_word_that_is_not_utf8() {
     let out = zedc(&["fmt".into(), OsString::from_vec(vec![b'a', 255])]);
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let why = "zedc reads the words after `fmt`, `build` and `test` as UTF-8 text, and a word of \
-               this command line is not UTF-8. Name each file by a path written in UTF-8, or \
-               rename the file.";
+    let why = "zedc reads the words after `fmt`, `build`, `check-exe` and `test` as UTF-8 \
+               text, and a word of this command line is not UTF-8. Name each file by a path \
+               written in UTF-8, or rename the file.";
     assert!(stderr.starts_with(&format!("{why}{COMMANDS}")), "{stderr}");
 }

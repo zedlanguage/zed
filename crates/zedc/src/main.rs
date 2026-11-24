@@ -27,6 +27,9 @@ const USAGE: &str = "The commands of zedc are:
       --program, run new.zed on them too and report where the outputs differ
   zedc build <file> -o <out> [--suppress <address> …] [--addresses] [--option <name> …]
       compile the program to an executable
+  zedc check-exe <file>
+      check that the memory plan an executable built by zedc holds is the plan of
+      its program
   zedc test [--mutate] [--suppress <address> …] [--addresses] [--option <name> …]
           [--target <target>] <file> …
       run the tests of each file
@@ -101,7 +104,8 @@ fn command(os: Vec<OsString>) -> u8 {
         .ok()
     else {
         eprintln!(
-            "zedc reads the words after `fmt`, `build` and `test` as UTF-8 text, and a word of \
+            "zedc reads the words after `fmt`, `build`, `check-exe` and `test` as UTF-8 text, \
+             and a word of \
              this command line is not UTF-8. Name each file by a path written in UTF-8, or rename \
              the file.\n\n{USAGE}"
         );
@@ -136,6 +140,10 @@ fn command(os: Vec<OsString>) -> u8 {
             let tools = zed_native::link::Toolchain::from_env();
             return zed_native::link::command(rest, &tools, &mut std::io::stderr());
         }
+        #[cfg(target_os = "linux")]
+        [cmd, rest @ ..] if cmd == "check-exe" => {
+            return zed_native::check_command(rest, &mut std::io::stderr());
+        }
         [cmd, files @ ..] if cmd == "test" => {
             let (mut stdout, mut stderr) = (std::io::stdout(), std::io::stderr());
             return zedc::testing::command(files, &mut stdout, &mut stderr);
@@ -158,8 +166,8 @@ fn not_understood(args: &[String]) -> String {
             args.len() - 1
         ),
         word => format!(
-            "`{word}` is not a command of zedc. The commands are `fmt`, `run`, `replay`, `build` \
-             and `test`, and `--report` may come before any of them."
+            "`{word}` is not a command of zedc. The commands are `fmt`, `run`, `replay`, `build`, \
+             `check-exe` and `test`, and `--report` may come before any of them."
         ),
     }
 }
