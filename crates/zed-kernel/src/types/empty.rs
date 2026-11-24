@@ -11845,11 +11845,41 @@ impl<'m> Searching<'m> {
             // unfolding are compared as different types. A meet of one morphism type is that type
             // as written: its meet with the top one would give the unfolding of a recursive value
             // type, which is neither the type being built nor one its group decided.
+            // A morphism type in no value of the part (`refused`, as in `R2 \ R0`) is dropped,
+            // and the rows are read from what is left, `kept`; they are used only when every
+            // value of `kept` is apart from every type dropped, which one emptiness check
+            // proves (the `no_key` check after the rows). Proof that a closure of a row is then
+            // a value of the part:
+            // the closure is in `kept`, as each row's closure is when nothing is refused (the
+            // three cases below); it is in no type dropped, since `kept & (d1 | ... | dk)` is
+            // empty; and the part is `kept` with each `di` read as `false` (`restrict`), so it
+            // holds the closure. `no_key` proves the emptiness for good in this search (its
+            // proof), so a closure kept is never in a type dropped. Before (REP-refusals-rest
+            // point (1), b22-ref3, 2026-11-23) a part with a type refused built no closure, and
+            // the layered groups of `group_oracle` whose value is a closure returning a pair of
+            // itself and a difference of definitions, `R3 = (int) -> (R3, (R2 \ R0))`, were
+            // refused `NoWitness`. Test:
+            // `group_oracle::a_closure_apart_from_the_types_refused_is_a_value_of_a_difference`.
+            // Complexity tradeoff: one check of the whole of `kept` against the union of the
+            // types dropped, of size the part's, rather than one per row and type dropped, which
+            // would cost their product; given up: a row apart from the types dropped while
+            // another row is not leaves the closure unbuilt, as before.
             let (taken, refused) = p.morphisms.forced();
-            let whole = refused.is_empty() && taken.len() == p.morphisms.distinct_atoms().len();
+            let dropped: BTreeSet<Morphism> = refused.iter().cloned().collect();
+            let kept = match dropped.is_empty() {
+                true => p.morphisms.clone(),
+                false => p
+                    .morphisms
+                    .restrict(&|a| dropped.contains(a).then_some(false)),
+            };
+            let (taken, refused) = match dropped.is_empty() {
+                true => (taken, refused),
+                false => kept.forced(),
+            };
+            let whole = refused.is_empty() && taken.len() == kept.distinct_atoms().len();
             // The keys of the types taken that every row of a meet with a union shares.
             let mut shared: Vec<Type> = Vec::new();
-            let meets: Vec<(Morphism, Vec<Type>)> = match (whole, p.morphisms.union_rows()) {
+            let mut meets: Vec<(Morphism, Vec<Type>)> = match (whole, kept.union_rows()) {
                 (true, _) => vec![(
                     match taken.split_first() {
                         Some((a, rest)) => rest.iter().fold(a.clone(), |r, b| {
@@ -11895,7 +11925,7 @@ impl<'m> Searching<'m> {
                 // their number.
                 (false, None) if refused.is_empty() && !taken.is_empty() => {
                     let set: BTreeSet<&Morphism> = taken.iter().collect();
-                    let rest = p.morphisms.restrict(&|a| set.contains(a).then_some(true));
+                    let rest = kept.restrict(&|a| set.contains(a).then_some(true));
                     let (a, more) = taken.split_first().expect("a type is taken");
                     let met = more.iter().fold(a.clone(), |r, b| self.meet(&r, b));
                     shared = taken.iter().map(|a| a.guarantee.clone()).collect();
@@ -11905,6 +11935,15 @@ impl<'m> Searching<'m> {
                 }
                 (false, None) => Vec::new(),
             };
+            if !dropped.is_empty() && !meets.is_empty() {
+                let kept = Type::with(|q| q.morphisms = kept.clone());
+                let dropped = Type::union_all(dropped.iter().map(|a| {
+                    Type::morphism(a.guarantee.clone(), a.permission.clone(), a.value.clone())
+                }));
+                if !self.no_key(&Type::meet_all([kept, dropped])).await {
+                    meets.clear();
+                }
+            }
             // Whether the shared keys are known empty, and whether they are proved empty, asked
             // once for all rows. A key proved empty later in the search is then missed by the
             // rows after the first ask, which leaves the closure unbuilt, never a wrong value.

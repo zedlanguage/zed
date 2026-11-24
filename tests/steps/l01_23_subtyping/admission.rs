@@ -192,6 +192,32 @@ fn a_value_type_inhabited_wherever_the_guarantee_is_accepted() {
     )]));
 }
 
+/// A value type that is a morphism type inhabited whatever its guarantee is (`rec::holds`,
+/// steps 3 and 4, plan row GROUP-admit-precision): `U -> (U -> _)` holds the constant morphism
+/// into `_` at any `U`, `U -> (U -> U)` the identity, and `U -> (empty .. _ -> U)` the morphism
+/// with no key. Each is accepted and its member inhabited. A morphism value type whose own value
+/// type is empty is still refused: `U = U -> (U -> empty)` holds a value exactly when `U` is
+/// empty, so it flips.
+#[test]
+fn a_value_type_morphism_inhabited_whatever_its_guarantee_is_accepted() {
+    let bodies = [
+        m(r(0), r(0), m(r(0), r(0), top())),
+        m(r(0), r(0), m(r(0), r(0), r(0))),
+        m(r(0), r(0), m(empty(), top(), r(0))),
+        m(
+            r(0),
+            r(0),
+            pair(int(), m(pair(r(0), int()), pair(r(0), int()), int())),
+        ),
+    ];
+    for body in bodies {
+        assert!(accepted(vec![body.clone()]), "{body:?}");
+        assert_eq!(verdict_of(body), Verdict::Inhabited);
+    }
+    assert!(!accepted(vec![m(r(0), r(0), m(r(0), r(0), empty()))]));
+    assert!(!accepted(vec![m(r(0), r(0), m(r(0), top(), r(0)))]));
+}
+
 /// A permission that mentions the group below a closed guarantee: `R = (int .. R -> int)`
 /// promises every integer key and permits only keys in `R`, which holds morphisms alone, so
 /// no morphism has those bounds and `R` is empty. The group's system read such a morphism by

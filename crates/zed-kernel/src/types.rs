@@ -7944,7 +7944,8 @@ pub mod rec {
     //!   may be empty or mentions the group, since `type T = (T) -> (#a & #b)` is inhabited exactly
     //!   when it is empty, unless the value type is inhabited wherever the guarantee is
     //!   (`holds`: `type U = (U) -> U` holds the identity on `U`, and `type U = (U) -> (int, U)`
-    //!   a morphism pairing its argument with an integer, plan row GROUP-admit-precision); nor in
+    //!   a morphism pairing its argument with an integer, and `type U = (U) -> ((U) -> _)` a
+    //!   morphism whose values are constant morphisms, plan row GROUP-admit-precision); nor in
     //!   the guarantee of a morphism type whose guarantee and permission differ, or that stands
     //!   under `&`, `\`, a complement or differing domain bounds, directly or through a
     //!   definition named there (cross-review X14: `W = (W) -> int` is accepted,
@@ -8706,6 +8707,23 @@ pub mod rec {
     ///    or atom each of whose parts holds (`inh` of a tuple is the meet of its parts'); or a
     ///    morphism type `a -> c` with guarantee and permission written alike, `a` naming no
     ///    definition and `c` holding, since a constant morphism into `c` is a value of it.
+    /// 3. A morphism type whose guarantee is written as the empty type holds a value at every
+    ///    argument and every value of the members, whatever its permission and value type: a
+    ///    morphism type is `(guarantee ⊆ dom ⊆ permission) -> value`
+    ///    ([`crate::types::Arrow`]), and the morphism with no key has `dom = ∅`, which lies
+    ///    between `∅` and any permission and has no key whose value must lie in the value
+    ///    type. So `v` holds.
+    /// 4. A morphism type `a -> c` with guarantee and permission written alike holds when `c`
+    ///    does, whether or not `a` names a definition: at fixed arguments and members `a` is
+    ///    one set `A`; if `A` is empty the morphism with no key is a value, and otherwise, with
+    ///    `w` a value of `c`, the constant morphism on `dom = A` with value `w` everywhere is.
+    ///    So `inh(c) ⇒ inh(a -> c)`, and `inh(l) ⇒ inh(c)` gives `inh(l) ⇒ inh(v)`. Here `c`
+    ///    holds when its class is forced or it names no definition and `closed` says it is
+    ///    inhabited; it is not walked further, which keeps the cost below. The guarantee `a`
+    ///    itself is read by the admission check on its own, as every such guarantee is.
+    ///    Cases steps 3 and 4 accept and step 2 did not: `type U = (U) -> ((U) -> _)` and
+    ///    `type U = (U) -> (empty .. _ -> U)`, test
+    ///    `l01_23_subtyping::admission::a_value_type_morphism_inhabited_whatever_its_guarantee_is_accepted`.
     ///
     /// Sufficient, not necessary: `inh(l) ⇒ inh(v)` for formulas with meets of recursive types
     /// is as hard as the monotonicity it stands for (coNP-complete, COMPLEXITY.md K27).
@@ -8782,6 +8800,16 @@ pub mod rec {
                         todo.push((c, me));
                         (Op::All, true)
                     }
+                    // Step 3 of the proof: the empty morphism.
+                    Shape::Morphism(a, ..) if matches!(&a.e, Shape::Type(t) if t.lists_nothing()) => {
+                        (Op::Leaf, true)
+                    }
+                    // Step 4 of the proof: `c` is read here and not walked, so this walk does
+                    // not enter a morphism type whose guarantee names a definition.
+                    Shape::Morphism(a, b, c) if same(a, b) => (
+                        Op::Leaf,
+                        need.contains(&c.class) || (!c.recursive && closed(c)),
+                    ),
                     _ => (Op::Leaf, false),
                 }
             };

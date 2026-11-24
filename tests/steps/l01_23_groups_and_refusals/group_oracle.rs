@@ -1390,67 +1390,20 @@ fn sweep_listed(
 // to 300, listed by TEST-bench-move-l0123 (2026-11-14): 11 more, all layered, all `I` (seeds 0
 // to 200 had been swept with these counted, 4 and 3, not listed). On 2026-11-07 (plan item
 // EMPTY-key-search) the sweep of seeds 300 to 1500 refused 54 members shown inhabited: layered
-// 34, cells 9, X14 7, mixed 4.
+// 34, cells 9, X14 7, mixed 4. Since 2026-11-23 (b22-ref3) every list is empty: seeds 0 to 1500
+// of each family give no refusal.
 
 /// The X14 family: every member decided.
 const LISTED_CLAUDE: &[Listed] = &[];
 /// Partial morphisms: every member decided.
 const LISTED_MIXED: &[Listed] = &[];
-/// Layered groups: each refused member is, or reads, a function type whose value type is a pair
-/// of itself and a difference of two definitions, such as `R3 = (int) -> (R3, (R2 \ R0))` of
-/// seed 799 with `R0 = (int) -> int` and `R2 = ((int) -> R2) | ((R1) -> R0)`; the pool's value
-/// is a closure that returns a pair holding itself. All are refused `NoWitness` (STATUS.md Open
-/// points, GROUP-oracle: the refusals in groups holding `\` or `&`).
-const LISTED_LAYER: &[Listed] = &[
-    (16, 3, 'I', Refusal::NoWitness),
-    (37, 3, 'I', Refusal::NoWitness),
-    (45, 4, 'I', Refusal::NoWitness),
-    (73, 4, 'I', Refusal::NoWitness),
-    (125, 2, 'I', Refusal::NoWitness),
-    (125, 4, 'I', Refusal::NoWitness),
-    (171, 3, 'I', Refusal::NoWitness),
-    (230, 3, 'I', Refusal::NoWitness),
-    (232, 3, 'I', Refusal::NoWitness),
-    (236, 2, 'I', Refusal::NoWitness),
-    (293, 3, 'I', Refusal::NoWitness),
-    (332, 4, 'I', Refusal::NoWitness),
-    (440, 3, 'I', Refusal::NoWitness),
-    (508, 5, 'I', Refusal::NoWitness),
-    (626, 3, 'I', Refusal::NoWitness),
-    (642, 3, 'I', Refusal::NoWitness),
-    (642, 4, 'U', Refusal::NoWitness),
-    (692, 5, 'I', Refusal::NoWitness),
-    (764, 3, 'I', Refusal::NoWitness),
-    (764, 4, 'U', Refusal::NoWitness),
-    (799, 3, 'I', Refusal::NoWitness),
-    (815, 4, 'I', Refusal::NoWitness),
-    (831, 4, 'I', Refusal::NoWitness),
-    (857, 3, 'I', Refusal::NoWitness),
-    (955, 3, 'I', Refusal::NoWitness),
-    (975, 2, 'I', Refusal::NoWitness),
-    (975, 3, 'U', Refusal::NoWitness),
-    (987, 3, 'I', Refusal::NoWitness),
-    (987, 4, 'I', Refusal::NoWitness),
-    (996, 3, 'I', Refusal::NoWitness),
-    (1043, 4, 'I', Refusal::NoWitness),
-    (1048, 2, 'I', Refusal::NoWitness),
-    (1051, 4, 'I', Refusal::NoWitness),
-    (1068, 4, 'I', Refusal::NoWitness),
-    (1068, 5, 'I', Refusal::NoWitness),
-    (1147, 4, 'I', Refusal::NoWitness),
-    (1229, 4, 'I', Refusal::NoWitness),
-    (1241, 4, 'I', Refusal::NoWitness),
-    (1326, 2, 'I', Refusal::NoWitness),
-    (1354, 4, 'I', Refusal::NoWitness),
-    (1421, 2, 'I', Refusal::NoWitness),
-    (1421, 4, 'I', Refusal::NoWitness),
-    (1446, 3, 'I', Refusal::NoWitness),
-    (1454, 4, 'I', Refusal::NoWitness),
-    (1466, 2, 'I', Refusal::NoWitness),
-    (1483, 4, 'I', Refusal::NoWitness),
-    (1485, 4, 'U', Refusal::NoWitness),
-    (1498, 5, 'I', Refusal::NoWitness),
-];
+/// Layered groups: every member decided. The 48 members listed before (seeds 0 to 1500, 44 `I`
+/// and 4 `U`, all `NoWitness`) were each, or read, a function type whose value type is a pair of
+/// itself and a difference of two definitions, such as `R3 = (int) -> (R3, (R2 \ R0))` of seed
+/// 799; `find_rep` now builds a closure for a part with a morphism type refused once it proves
+/// the rest apart from it (GROUP-layered-nowitness, REP-refusals-rest point (1), b22-ref3,
+/// 2026-11-23: 0 refused of 6,725 members of seeds 0 to 1500, measured on v5e4).
+const LISTED_LAYER: &[Listed] = &[];
 /// Meets and differences: seed 1140 (`R0`, `R2` shown inhabited by the pool) is now decided
 /// `Inhabited` by `C_group` / `Π_sym` (XR-group-order-5).
 const LISTED_CELLS: &[Listed] = &[];
@@ -1638,6 +1591,31 @@ fn a_morphism_on_a_cycle() {
         exact(E::Int, E::Union(vec![r(1), r(0)])),
     ];
     assert_eq!(both(&sys, "cyc_e"), [i, i]);
+}
+
+/// Member 3 of layered seed 799, `R3 = (int) -> (R3, (R2 \ R0))` with `R0 = (int) -> int` and
+/// `R2 = ((int) -> R2) | ((R1) -> R0)`: the pool's closure that returns a pair holding itself
+/// is a member, and the kernel refused it before GROUP-layered-nowitness (`find_rep` built no
+/// closure for a part with a morphism type refused).
+#[test]
+fn layered_seed_799_member_3_is_inhabited() {
+    let sys = gen_layer(&mut Rng::new(799));
+    assert_eq!(both(&sys, "layer799")[3], Some((Verdict::Inhabited, 'I')));
+}
+
+/// The smallest case of seed 799: `X = (int) -> X` is inhabited by a closure that returns
+/// itself, which is not in `(int) -> int`, so `X \ ((int) -> int)` is inhabited, and so is
+/// `Y = (int) -> (Y, X \ ((int) -> int))`.
+#[test]
+fn a_difference_of_a_recursive_morphism_type_has_a_closure() {
+    let i = Some((Verdict::Inhabited, 'I'));
+    let sys = [
+        exact(E::Int, E::Int),
+        exact(E::Int, r(1)),
+        exact(E::Int, tup(vec![r(2), diff(r(1), r(0))])),
+        diff(r(1), r(0)),
+    ];
+    assert_eq!(both(&sys, "xdiff"), [i, i, i, i]);
 }
 
 /// A member split across box cells: the product `(#a | #b | L, #a | #b | L)` less the two
@@ -1855,6 +1833,32 @@ fn a_closure_returns_a_member_built_or_decided_inhabited() {
             "{tag}: {tally:?}"
         );
     }
+}
+
+/// Layered seed 45 (REP-refusals-rest point (1)): `R4` holds a closure returning a pair of
+/// itself and a value of `R2 \ R3`, with `R2 = (int) -> R1` and
+/// `R3 = ((R1) -> empty) | ((R0) -> empty)`. The morphism types of `R3` are refused by every
+/// value of the difference; the search drops them and builds a closure of `R2` once it proves
+/// `R2` apart from them (`find_rep`, its morphism branch). `R4` was refused `NoWitness`
+/// before; every member is now decided and none is missed. Seed 799 is
+/// `layered_seed_799_member_3_is_inhabited`.
+#[test]
+fn a_closure_apart_from_the_types_refused_is_a_value_of_a_difference() {
+    let to_empty = |k: E| exact(k, E::Empty);
+    let seed45 = vec![
+        to_empty(E::Int),
+        exact(r(0), r(0)),
+        exact(E::Int, r(1)),
+        E::Union(vec![to_empty(r(1)), to_empty(r(0))]),
+        E::Union(vec![
+            to_empty(r(1)),
+            exact(E::Int, tup(vec![r(4), diff(r(2), r(3))])),
+        ]),
+    ];
+    assert_eq!(seed45, gen_layer(&mut Rng::new(45)));
+    let mut tally = Tally::default();
+    compare(&seed45, "l45", &mut tally);
+    assert_eq!((tally.missed, tally.refused), (0, 0), "{tally:?}");
 }
 
 /// A layered group (seed 1335) whose member `R4 = (R3) -> empty` is a closure never called: its

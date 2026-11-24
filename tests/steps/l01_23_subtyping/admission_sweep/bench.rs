@@ -28,7 +28,8 @@ fn the_evaluator_scales() {
 
 /// The exact sweeps `random_groups_admitted_are_monotone` replaced (TEST-bench-move-l0123):
 /// every seed of 0..25,000 and of 25,000..50,000, each held to the false rejections its seeds
-/// gave, 14,093 and 14,158 (GROUP-admit-precision, 2026-11-23), so that one false rejection
+/// gave, 14,081 and 14,142 (GROUP-admit-precision, `rec::holds` steps 3 and 4, b22-ref3,
+/// 2026-11-23; were 14,093 and 14,158), so that one false rejection
 /// more fails, where the draw of
 /// `DRAWN` seeds is held to no count (TEST-l0123-leftovers, PROOF-test-count-thresholds).
 /// They are the cases of that test in full, so they run here (author P178: many cases make a
