@@ -1594,6 +1594,43 @@ on BAD-GOR 59.8 times the work; BAD-GOR and a fan before UTVPI-union 60.6 times 
 run once and not committed, since a control needs the old code; they were not rerun for this
 row. `bench/live3.rs` records no control counts at its tests.
 
+### PRES-products-factored-solver R3-5, the worklist of step 5 (design, not built), measured 2026-11-24
+
+The solver that decides products without expanding them (row PRES-products-factored-solver,
+design `docs/studies/products-factored.md`, phase 1d after three cross-review rounds) is not in
+the crate yet. Its step 5, the joint fixpoint over the open listed pairs, keeps the best method
+found: delta rechecks memoized per pair of exact set ids (a hash-consed trie), which test only
+the incidences new since a pair's last test. Its cost is O(k log k + W_listed'), where
+W_listed' counts the incidences of the open listed pairs, which is not O(k log k) in general.
+Measured in the single-file prototype (counted steps, not instructions; sizes n = 10 to 28, k
+the input terms):
+
+| Family | k, n to 8n | Worklist ratio | Note |
+|---|---|---|---|
+| wlgrow (Def sets grow late) | 1,441 to 10,081 (7.00) | 8.14 | total 28.32: the peel, exception 3 |
+| wlgrow_g (wlgrow, an unsigned variable in every Y row) | 1,451 to 10,109 (6.97) | 34.00 | fails 10.5; W_listed' 14,400 to 705,600 |
+| Gemini's 3B at an 8x step in k | | 8.10 | |
+| Codex's chain | | 9.70 | |
+
+On wlgrow_g the worklist stays within its stated order (worklist / W_listed' 1.72 to 1.19), so
+the excess is W_listed' itself. Why no method within O(n log n) is known: the pairs that die are
+the answers of the path query Q(A,C) = R(A,B), S(B,C) kept under insertions into the Def sets,
+and this query is not free-connex. Kara, Nikolic, Olteanu and Zhang, LMCS 2023 (DOI
+10.46298/lmcs-19(3:11)2023): no constant delay after linear preprocessing under the BDG07
+conjecture, and under OMv no dynamic method with O(N^{1/2−γ}) amortized update time and delay.
+Berkholz, Keppeler and Schweikardt, PODS 2017 (DOI 10.1145/3034786.3034789): the query is not
+q-hierarchical. Insertions only: Abo Khamis, Kara, Olteanu and Suciu 2024 (DOI 10.1145/3695837)
+maintain a query in total time O(N^{fhw}) (the triangle in O(N^{3/2}), `insert_only.tex`
+lines 49-51; non-full queries through free-connex decompositions, `conclusion.tex` line 8).
+With the listed pairs L as an atom, the work of step 5 is the 4-cycle L(s,t), Def(s,w),
+Free(w,z), Def(t,z), whose fractional hypertree width is 2, so their method gives O(N^2) total,
+no better than W_listed'. A literature search of 2026-11-24 (allpapers: paperclip keyword
+search, which timed out on three of four queries, and Gemini grounded search) for an insert-only
+method within O(n log n) found none. Not written: a reduction
+from this query, or from OMv, to the worklist (design O8). The design lists these inputs as its
+exception 4; the prototype's test `wlgrowg` asserts 10.5 and fails (34.00), and stays failing
+until O8 is closed one way or the other.
+
 ## Kept
 
 Audit 2026-11-22 (AUDIT-kept-rows, b22-research3-h2): every row below was checked against no
