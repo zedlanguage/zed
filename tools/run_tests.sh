@@ -1887,26 +1887,9 @@ if [ "$runtimes" != "$(cat "$logbase/runtimes" 2>/dev/null)" ]; then
       echo "$name $rest"
     fi
   done <"$out/pieces" >"$out/linking"
-  # The first linking piece runs alone, so that it makes the prelinked runtime
-  # (crates/zed-native/src/link.rs, `prelinked`) and the others find it made. The others then run
-  # side by side, each test binary with `side_threads` test threads, so that all their tests
-  # together run about one per core. Each test runs `zedc build` under `timeout 60`, and a test
-  # binary runs as many tests at once as there are cores: on v5e6 (24 cores) the 11 side pieces
-  # with no bound reached load 379, and 15 tests of 5 pieces failed with exit 124
-  # (FAIL-warm-binaries-rc101-cause, 2026-11-25); running the first piece alone did not change
-  # that. With the bound, in one run every piece passed at load 39 to 49 (most of it from outside
-  # the warm step), the longest in 12 s; in an earlier run with the same bound, load 20 to 36,
-  # 6 tests of 4 pieces still failed with exit 124, a cause not yet found.
-  side=$(($(wc -l <"$out/linking") - 1))
-  side_threads=$((cores / (side < jobs ? (side > 0 ? side : 1) : jobs)))
-  [ "$side_threads" -ge 1 ] || side_threads=1
-  if [ ! -s "$out/linking" ] || {
-    head -n 1 "$out/linking" | xargs --process-slot-var=slot -L 1 bash -c 'warm "$@"' _
-    first=$?
-    tail -n +2 "$out/linking" |
-      RUST_TEST_THREADS=$side_threads xargs -P "$jobs" --process-slot-var=slot -L 1 bash -c 'warm "$@"' _ &&
-      [ "$first" = 0 ]
-  }; then
+  # The first linking piece runs alone, the others side by side with a bound on their test
+  # threads (`warm_all`, tools/lib.sh, FAIL-warm-binaries-rc101-cause).
+  if [ ! -s "$out/linking" ] || warm_all "$out/linking" "$jobs" "$cores"; then
     printf '%s\n' "$runtimes" >"$out/runtimes"
     publish "$out/runtimes" runtimes
   fi
