@@ -2317,6 +2317,93 @@ impl Printer<'_> {
     }
 }
 
+impl Type {
+    /// Its members as the order of a union reads them, added to `out` and sorted by
+    /// [`order::cmp`]: the members its text prints ([`Printer::items`]), a recursive type
+    /// written by name as that name, `_` and `_ \ c` as `_`. Two types compare as
+    /// components of a tuple, or of an atom's payload, by these lists ([`order::seq_cmp`],
+    /// MSG-union-order-tuples). A recursive part with no name of its own is read through its
+    /// unfolding, kept in `held`. A tuple is [`Member::Tuple`], one for each length the text
+    /// writes, whatever its components: two tuples nested in components are not ordered by
+    /// theirs.
+    // Complexity tradeoff: O(m log m) for the m members of its outer level, each read once,
+    // and no text made; `Printer::items` would make the text of each member too, O(n) in the
+    // whole type. This lists the members `items` lists, a second walk of the same parts,
+    // because `items` makes each member's text as it goes.
+    pub fn members<'a>(
+        &'a self,
+        held: &'a zed_collections::held::Held<Type>,
+        out: &mut Vec<Member<'a>>,
+    ) {
+        if let Some((name, _)) = self.rec_name() {
+            out.push(Member::Named(name));
+            return;
+        }
+        let p = self.p_held(held);
+        if p.atoms.cofinite() && p.tuples.rest && p.structs {
+            out.push(Member::Top);
+            return;
+        }
+        let start = out.len();
+        match p.bools {
+            1 => out.push(Member::False),
+            2 => out.push(Member::True),
+            3 => out.push(Member::Bool),
+            _ => {}
+        }
+        for (l, whole) in [
+            (&p.ints, Member::NumberType(NumberType::Int)),
+            (&p.rats, Member::NumberType(NumberType::Rat)),
+            (&p.f32s, Member::NumberType(NumberType::F32)),
+            (&p.floats, Member::NumberType(NumberType::F64)),
+            (&p.strings, Member::Named("String")),
+        ] {
+            match l.cofinite {
+                true => out.push(whole),
+                false => out.extend(l.values.iter().map(|v| match v {
+                    Value::Str(s) => Member::Str(s),
+                    v => Member::Number(v),
+                })),
+            }
+        }
+        match p.atoms.cofinite() {
+            true => out.push(Member::AnyAtom),
+            false => {
+                for (name, part) in p.atoms.names().iter() {
+                    if part.bare {
+                        out.push(Member::Atom {
+                            name,
+                            payload: false,
+                        });
+                    }
+                    if part.payload != Type::empty() {
+                        out.push(Member::Atom {
+                            name,
+                            payload: true,
+                        });
+                    }
+                }
+            }
+        }
+        // As `Printer::tuples` writes them: `(..)`, less what is not in it, as one; else one
+        // for each length whose part is not empty.
+        let tuples = match p.tuples.rest {
+            true => 1,
+            false => (p.tuples.lens.values())
+                .filter(|part| part.is_leaf() != Some(false))
+                .count(),
+        };
+        out.extend(std::iter::repeat_n(Member::Tuple, tuples));
+        if p.structs {
+            out.push(Member::Struct);
+        }
+        if p.morphisms.is_leaf() != Some(false) {
+            out.push(Member::Function);
+        }
+        order::sort_by_member(&mut out[start..], |m| *m);
+    }
+}
+
 /// The literals of `l` as items of a union, each with its member: `whole`, the base type
 /// `name`, or what is left of it, or each literal by its value. Whether each is spelled so
 /// wherever a message is written ([`super::Spelled::everywhere`]).
