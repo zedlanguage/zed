@@ -1972,6 +1972,23 @@ impl Relation {
         }
     }
 
+    /// The conjunction as far as it is built, with no pending conjunct folded in: the built one
+    /// when a reader has built it, else the one without the pending conjuncts, in O(1). Each of
+    /// its conjuncts is one of the relation's, so what it implies the relation implies.
+    // Complexity tradeoff (ST-band-quintic D1, job j6): naive version, the read through
+    // `Deref`, which builds the conjunction, O(k log n) for the `k` pending conjuncts; a read
+    // at each test of a chain admitted one test at a time folded them all at each test, so
+    // O(k^2 log n) in all (s4 open chain 74.5 times the instructions at 8n, 63 times the bytes;
+    // `linked` chain against the order 4.4 s at 512 and past 300 s at 4096). Used: this read,
+    // which leaves out the pending conjuncts: a query that needs only some conjuncts of the
+    // relation, such as a sufficient test, may miss those, never answer wrongly.
+    fn read_built(&self) -> &Conjuncts {
+        match self.pending {
+            None => &self.base,
+            Some(_) => self.built.get().unwrap_or(&self.base),
+        }
+    }
+
     fn build(&self) -> Conjuncts {
         let mut fs = Vec::new();
         let mut at = self.pending.as_deref();
@@ -12546,7 +12563,10 @@ impl Scope {
             return None;
         };
         let m = -&e.weight;
-        let blocks = self.relation.blocks();
+        // The blocks as far as the relation is built ([`Relation::read_built`]): a path of
+        // its conjuncts is a path of the relation's, and one through a pending conjunct is
+        // missed, which sends the test on to the solver as before.
+        let blocks = self.relation.read_built().blocks();
         let path = blocks.blocks_between(&x, &y)?;
         // The sum of the lower bounds of `a - next` of the blocks on the path, `x` to `y`.
         let mut lo = Int::ZERO;
@@ -12588,11 +12608,14 @@ impl Scope {
 
     /// Records `g`, a difference the relation implies by the tree path through `path`
     /// ([`Scope::decided_by_path`]), out of the relation: kept in it, `g` would close a cycle
-    /// of the blocks' graph and merge the path's blocks into one ([`Blocks`]), which each later
-    /// projection of the block then reads whole. In O(d log n) for a path of `d` names.
+    /// of the blocks' graph and merge the path's blocks into one ([`conjuncts::Blocks`]),
+    /// which each later projection of the block then reads whole. In O(d log n) for a path of
+    /// `d` names.
     fn imply(&mut self, g: Formula, path: Vec<Arc<str>>) {
         let g = Arc::new(g);
-        if self.relation.set().contains(&g) || self.implied.contains_key(&g) {
+        // A conjunct pending in the relation ([`Relation::read_built`]) is kept out as well;
+        // the relation then holds it twice over, which changes no point.
+        if self.relation.read_built().set().contains(&g) || self.implied.contains_key(&g) {
             return;
         }
         for n in &path {

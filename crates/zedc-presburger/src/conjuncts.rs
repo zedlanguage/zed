@@ -2621,10 +2621,10 @@ impl Blocks {
     // and `dy` steps above the ends, the walks meet within `2 max(dx, dy)` steps, so
     // O(d log n) for a path of `d` nodes, whatever the depth. Tradeoffs: a long path still
     // costs its length; a link-cut tree (Sleator and Tarjan, "A data structure for dynamic
-    // trees", JCSS 26(3), 1983, doi:10.1016/0022-0000(83)90006-5: "a link operation that
-    // combines two trees into one by adding an edge, and a cut operation that divides one tree
-    // into two by deleting an edge. Each operation requires O(log n) time", from the abstract,
-    // quoted from memory and to be checked) answers a path sum in O(log n) amortized, but its
+    // trees", JCSS 26(3), 1983, pp. 362-391, doi:10.1016/0022-0000(83)90006-5, title, volume
+    // and pages checked on Crossref 2026-11-24; the text could not be fetched (allpapers-fetch:
+    // no PDF), so no quote: the paper keeps a forest under link and cut with each operation in
+    // O(log n) amortized time, paraphrased from memory) answers a path sum in O(log n), but its
     // splay trees are not persistent, and every scope shares these blocks with the scopes it
     // was copied from. The facts a test asks about join near names (a rung spans two steps,
     // a chord three), so `d` is small where it is used. Row ST-band-quintic D1 (b).
