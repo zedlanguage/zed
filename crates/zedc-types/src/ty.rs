@@ -24710,6 +24710,62 @@ impl Ty {
         out
     }
 
+    /// Its members as the order of a union reads them, added to `out` and sorted by
+    /// `order::cmp`: its kernel set's (`KType::members`), each type variable by its name, one
+    /// for each tuple shape and each function, and `_` for the unknown. Two components compare
+    /// by these lists (`order::seq_cmp`, MSG-union-order-tuples); a tuple shape is
+    /// `Member::Tuple` whatever its components, so tuples nested in components keep the
+    /// order they were written in.
+    fn members<'a>(
+        &'a self,
+        held: &'a zed_collections::held::Held<KType>,
+        out: &mut Vec<order::Member<'a>>,
+    ) {
+        let start = out.len();
+        self.set.members(held, out);
+        out.extend(self.vars.iter().map(|v| order::Member::Named(v)));
+        out.extend(self.tuples.iter().map(|_| order::Member::Tuple));
+        out.extend(self.fns.iter().map(|_| order::Member::Function));
+        if self.dynamic {
+            out.push(order::Member::Top);
+        }
+        order::sort_by_member(&mut out[start..], |m| *m);
+    }
+
+    /// The places of `seqs`, each a sequence of types, in the order of a union (DESIGN.md
+    /// sec:diagnostics): "tuples, by their components compared in this same order, a shorter
+    /// tuple before a longer one that starts the same way", and two atoms of one name by
+    /// their payloads, so that one type written in two orders prints one text
+    /// (MSG-union-order-tuples). Two sequences tied in that order keep the order given.
+    // Complexity tradeoff: each type's members are listed once, O(c) lists for the c
+    // components of all the sequences, each list O(m log m) in its m members, then a stable
+    // sort, O(s log s) comparisons for s sequences, each O(k) members for the k a comparison
+    // reads. Naive, the lists made inside each comparison, O(s log s · c / s) lists. One
+    // sequence is its own order, O(1).
+    fn union_order<'a>(seqs: &[Vec<&'a Ty>]) -> Vec<usize> {
+        let mut places: Vec<usize> = (0..seqs.len()).collect();
+        if seqs.len() < 2 {
+            return places;
+        }
+        let held = zed_collections::held::Held::default();
+        let keys: Vec<Vec<Vec<order::Member<'_>>>> = seqs
+            .iter()
+            .map(|seq| {
+                seq.iter()
+                    .map(|t| {
+                        let mut ms = Vec::new();
+                        t.members(&held, &mut ms);
+                        ms
+                    })
+                    .collect()
+            })
+            .collect();
+        places.sort_by(|&i, &j| {
+            order::seq_cmp(&keys[i], &keys[j], |x, y| order::seq_cmp(x, y, order::cmp))
+        });
+        places
+    }
+
     /// Pushes the parts of its text to `parts`, in order, its kernel sets as holes that
     /// [`write_parts`] fills; with `found`, without its atom `#notFound`, as
     /// the value type of a morphism type is written ([`Sig::morphism`]). It stands at `at`, which
@@ -24843,7 +24899,10 @@ impl Ty {
         if let Some(g) = &groups {
             hole(parts, &g.tuples);
         }
-        for cs in &self.tuples {
+        // The tuple shapes by their components (MSG-union-order-tuples).
+        let rows: Vec<&Row> = self.tuples.iter().collect();
+        let seqs: Vec<Vec<&Ty>> = rows.iter().map(|r| r.iter().collect()).collect();
+        for cs in Ty::union_order(&seqs).into_iter().map(|i| rows[i]) {
             parts.push(Print::Sep);
             // A row whose kernel type is the whole of it is written as a kernel set, with the
             // others of the text ([`write_parts`]), so a part it holds in two places or more is
@@ -24870,7 +24929,25 @@ impl Ty {
             if let Some(t) = atoms.as_mut().and_then(Iterator::next) {
                 hole(parts, t);
             }
-            for s in ss {
+            // Two payloads of one atom by their components, then their fields, each field
+            // read as its name and then its type, in the order of the names
+            // (MSG-union-order-tuples).
+            let names: Vec<Ty> = ss
+                .iter()
+                .flat_map(|s| s.fields.keys())
+                .map(|f| Ty::var(f.clone()))
+                .collect();
+            let mut name = names.iter();
+            let seqs: Vec<Vec<&Ty>> = ss
+                .iter()
+                .map(|s| {
+                    let fields = s.fields.values().flat_map(|t| {
+                        [name.next().expect("one name for each field"), t]
+                    });
+                    s.items.iter().chain(fields).collect()
+                })
+                .collect();
+            for s in Ty::union_order(&seqs).into_iter().map(|i| &ss[i]) {
                 parts.push(Print::Sep);
                 s.parts(n, parts);
             }
@@ -26940,6 +27017,35 @@ mod tests {
         assert_eq!(early.to_string(), "(L(int) | T, T)");
         let rest = Ty::set(&KType::top() - &KType::atom("x")).union(&v("A"));
         assert!(rest.to_string().starts_with("(_ \\ #x)"), "{rest}");
+    }
+
+    /// Tuples print by their components, "a shorter tuple before a longer one that starts the
+    /// same way", and two payloads of one atom by theirs (DESIGN.md sec:diagnostics,
+    /// MSG-union-order-tuples): one type written in two orders prints one text. Before, the
+    /// tuple shapes printed in the order they were written.
+    #[test]
+    fn tuples_print_by_their_components_a_shorter_one_first() {
+        let atom = |n: &str| Ty::set(KType::atom(n));
+        let int = || Ty::set(KType::int());
+        let pair = |x: Ty, y: Ty| Ty::tuple(vec![x, y]);
+        let ba = pair(int(), atom("b")).union(&pair(int(), atom("a")));
+        let ab = pair(int(), atom("a")).union(&pair(int(), atom("b")));
+        assert_eq!(ba.to_string(), "(int, #a) | (int, #b)");
+        assert_eq!(ab.to_string(), ba.to_string());
+        // A shorter tuple first, written after or before the longer.
+        let one = Ty::tuple(vec![int()]);
+        let long = pair(int(), atom("a")).union(&one);
+        assert_eq!(long.to_string(), "(int,) | (int, #a)");
+        assert_eq!(one.union(&pair(int(), atom("a"))).to_string(), long.to_string());
+        // The first component decides, by the order of a union: `int` before a variable,
+        // whose row has no kernel type.
+        let var = pair(Ty::var("A".into()), atom("a")).union(&pair(int(), atom("b")));
+        assert_eq!(var.to_string(), "(int, #b) | (A, #a)");
+        // Two payloads of one atom, by their components.
+        let p = |x: Ty| Ty::atom_of("p", vec![x], BTreeMap::new());
+        let pb = p(atom("b")).union(&p(atom("a")));
+        let pa = p(atom("a")).union(&p(atom("b")));
+        assert_eq!(pb.to_string(), pa.to_string());
     }
 
     /// An atom whose payload is not known (`None`) equals only an atom whose payload is not
