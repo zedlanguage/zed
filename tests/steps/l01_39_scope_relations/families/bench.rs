@@ -267,3 +267,22 @@ fn box_cases_y_scales() {
 fn split4_scales() {
     scales("split4", 8, 1);
 }
+
+/// [`strided_at`] at n and 8n: `y` is the even values of two ranges of `2n` integers, kept as
+/// their ranges and class (LIMITS-classed-listing-per-set), so the work is of order 1 in n (the
+/// sizes change only the constants of the input): held to `scaling::limit(0)`. Negative
+/// control: the same set listed one range a value (`Classed::met`, what
+/// `presburger::listed_within_limit` gave the cell before the row) has 8 times the ranges at 8n,
+/// over that limit, so a return to listing fails this bench.
+#[test]
+fn a_strided_set_kept_as_its_class_scales() {
+    let listed = |n: usize| strided_at(n).settled(&Arc::from("y")).classed().met().len() as u64;
+    let (small, large) = (listed(1_000), listed(8_000));
+    assert!(
+        large as f64 / small as f64 >= scaling::limit(0),
+        "control: {small} and {large} ranges listed"
+    );
+    scaling::check_order("a strided set of n values kept as its class", 1_000, 0, |n| {
+        std::hint::black_box(strided_at(n));
+    });
+}

@@ -21,7 +21,9 @@ use std::sync::Arc;
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::scaling;
 use zedc::store::cell::Premises;
+use zedc::store::classed::Classed;
 use zedc::store::interval::{End, IntervalSet};
+use zedc::store::lattice::Congruence;
 use zedc::store::product::{Product, Scope};
 
 use super::ints;
@@ -756,6 +758,11 @@ fn run(f: &Family) -> Scope {
 /// A name's facts as the tests print them: its integers, and its class when that is not every
 /// integer and the integers are not one value.
 fn shown(p: &Product) -> String {
+    // A set kept as its ranges and class (row LIMITS-classed-listing-per-set) prints its
+    // members where they print no shorter, as the oracle lists them (`Classed::printed_members`).
+    if let Some(members) = p.classed().printed_members() {
+        return members.to_string();
+    }
     let ints = p.ints().to_string();
     let class = p.cell.congruence.element.to_string();
     let one = p.ints().only().is_some_and(|(lo, hi)| lo == hi);
@@ -2815,4 +2822,50 @@ fn a_chain_part_dismissed_in_a_case_by_the_rest_is_woken_again() {
         want,
         want,
     );
+}
+
+/// The scope after `(y == 2z || y == 2z + 4n + 2) && 0 <= z <= n`: `y` is the even values of
+/// `[0, 2n]` and `[4n + 2, 6n + 2]`, which the projection gives as two ranges and the class 0
+/// modulo 2.
+fn strided_at(n: usize) -> Scope {
+    let n = n as i64;
+    let twice = || prim(Prim::Mul, int(2), var("z"));
+    let test = and(
+        or(
+            eq(var("y"), twice()),
+            eq(var("y"), add(twice(), int(4 * n + 2))),
+        ),
+        and(ge(var("z"), int(0)), le(var("z"), int(n))),
+    );
+    let names: Vec<Arc<str>> = ["y", "z"].into_iter().map(Arc::from).collect();
+    ints(&names).assume(&test, true, &Premises::new())
+}
+
+/// A strided set the projection gives is kept as its ranges and its class at every size, never
+/// listed value by value (LIMITS-classed-listing-per-set): `y`'s interval has two ranges and its
+/// congruence is 0 modulo 2, at `n` and `8n` alike; the work, which does not grow with the
+/// number of values, is held in `bench::a_strided_set_kept_as_its_class_scales`. Before the
+/// row, a set of fewer than about 134,800 values was listed, `2n + 2` ranges here, a limit on a
+/// count of values (red before, at b7ab00a78: 2,002 ranges at n = 1,000).
+#[test]
+fn a_strided_set_is_kept_as_its_class_at_n_and_8n() {
+    for n in [1_000, 8_000] {
+        let s = strided_at(n);
+        let y = s.settled(&Arc::from("y"));
+        assert_eq!(y.ints().len(), 2, "y's ranges at n = {n}: {}", y.ints());
+        let n = n as i64;
+        let want = classed_set(&[(0, 2 * n), (4 * n + 2, 6 * n + 2)], 2, 0);
+        assert_eq!(y.classed(), want, "y's set at n = {n}");
+        for (v, member) in [(0, true), (1, false), (2 * n, true), (2 * n + 2, false)] {
+            assert_eq!(y.contains(&Value::Int(v)), member, "y = {v} at n = {n}");
+        }
+    }
+}
+
+/// The set of `ranges` met with the class `residue` modulo `modulus`.
+fn classed_set(ranges: &[(i64, i64)], modulus: i64, residue: i64) -> Classed {
+    let ranges = (ranges.iter())
+        .map(|&(lo, hi)| IntervalSet::of(lo, hi))
+        .fold(IntervalSet::empty(), |a, b| a.join(&b));
+    Classed::new(ranges, Congruence::new(modulus, residue))
 }

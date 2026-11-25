@@ -9034,7 +9034,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let mut nonzero = op == BinaryOp::Mod
                     || divides
                         && ((!y.ty.contains(&Value::Int(0)) && !y.ty.contains(&rat_zero))
-                            || (int_divisor && !self.ints_here(b).0.contains(0))
+                            // The class too, when the hull holds 0: an odd divisor in
+                            // `[-10, 10]` is never 0 (`Ck::classed_here`; the class is no
+                            // longer listed into the ranges, LIMITS-classed-listing-per-set).
+                            || (int_divisor
+                                && (!self.ints_here(b).0.contains(0)
+                                    || !self.classed_here(b).0.contains(0)))
                             || (carried_only(Carrier::Rat)
                                 && (!self.may_be_here(b, &rat_zero) || rat_literals_no_zero(b))));
                 // An int divisor whose range holds 0 under the tests: whether a state reaches

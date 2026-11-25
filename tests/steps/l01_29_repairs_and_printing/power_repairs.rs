@@ -162,8 +162,9 @@ fn a_name_a_test_narrows_is_shown_with_its_narrowed_type() {
 /// headline that shows a negative exponent. Red before green: the checker printed the
 /// interval alone, so the even values of `[0, 20]` printed one range a value,
 /// `int[0..=0, 2..=2, ...]`, and the even values of `[0, 2,000,000]`, past the limit at which a
-/// class is listed (`presburger::listed_within_limit`), printed as `int[0..=2000000]`, which
-/// holds the odd values too.
+/// class was listed then (`presburger::listed_within_limit`, removed by
+/// LIMITS-classed-listing-per-set), printed as `int[0..=2000000]`, which holds the odd values
+/// too.
 #[test]
 fn a_name_a_test_narrows_to_a_class_is_shown_with_its_class() {
     for (hi, want) in [
