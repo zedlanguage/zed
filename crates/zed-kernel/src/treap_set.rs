@@ -1064,12 +1064,12 @@ impl<T: Elem> PartialEq for TreapSet<T> {
 impl<T: Elem> Eq for TreapSet<T> {}
 
 /// A table of live sets by their sum of seeded weights (`seeded`), so that equal sets made
-/// apart become one tree (plan row TYPE-hashcons): [`HashConsTable::share`] gives a set the root of an equal set the
-/// table holds, or puts its own root in. Two sets made apart, as `{0, 1, ..., n}` built up in two
-/// orders, then compare by [`TreapSet::ptr_eq`], `O(1)`, where `==` walked every node, `O(n)`,
-/// at each comparison. The table holds weak handles, so it keeps no set alive; dead handles
-/// are taken out when the table has doubled since its last sweep, `O(1)` amortized per set
-/// put in.
+/// apart become one tree (plan row TYPE-hashcons): [`HashConsTable::share`] gives a set the
+/// root of an equal set the table holds, or puts its own root in. Two sets made apart, as
+/// `{0, 1, ..., n}` built up in two orders, then compare by [`TreapSet::ptr_eq`], `O(1)`, where
+/// `==` walked every node, `O(n)`, at each comparison. The table holds weak handles, so it
+/// keeps no set alive; dead handles are taken out when the table has doubled since its last
+/// sweep, `O(1)` amortized per set put in.
 ///
 /// Complexity tradeoff: the naive way, comparing equal sets made apart in full each time,
 /// costs `O(n)` per comparison, `O(n k)` for `k` comparisons. Used: one `==` per set put in
