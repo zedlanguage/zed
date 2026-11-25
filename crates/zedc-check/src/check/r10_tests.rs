@@ -1172,6 +1172,96 @@ fn r10_equal_forwards_hash_alike_with_or_without_the_digest_summary() {
     assert_eq!(hash(fwd), hash(&without_summary));
 }
 
+/// Row FAIL-map-chain-hash-in-checker, Codex's crossed-tuple test (xr-chain, 2026-11-16): the
+/// model's tuple encoding gave `((A, B), (C, D))` and `((A, C), (B, D))` one hash for every
+/// seed, because slot i of a tuple took the coefficient u^i of one constant and nested
+/// products commute. The checker's encoding (`r10_hash`) is a Rabin-Karp value over the
+/// prefix-free preorder token stream, so the two streams differ and so do the digests, at the
+/// default base and at four others. Negative control: building the first signature again
+/// gives an equal stream and digest.
+#[test]
+fn r10_crossed_tuples_hash_apart() {
+    use zedc_types::ty::{
+        SParam, Ty,
+        r10_hash::{R_BASE, encode_sig_stream},
+    };
+    let signature = |pairs: [[&str; 2]; 2]| {
+        let v = |n: &str| Ty::var(n.into());
+        let params = ["a", "b", "c", "d"]
+            .into_iter()
+            .map(|name| SParam {
+                name: name.into(),
+                positional: true,
+                default: None,
+                range: None,
+            })
+            .collect();
+        let result = Ty::tuple(
+            pairs
+                .iter()
+                .map(|p| Ty::tuple(vec![v(p[0]), v(p[1])]))
+                .collect(),
+        );
+        let mut sig = Sig::one(params, vec![v("A"), v("B"), v("C"), v("D")], result);
+        sig.own
+            .extend(["A".into(), "B".into(), "C".into(), "D".into()]);
+        sig
+    };
+    let straight = signature([["A", "B"], ["C", "D"]]);
+    let crossed = signature([["A", "C"], ["B", "D"]]);
+    let again = signature([["A", "B"], ["C", "D"]]);
+    assert_ne!(straight, crossed);
+    assert_ne!(straight.digest(), crossed.digest());
+    assert_eq!(straight.digest(), again.digest());
+    for r in [2, 3, 17, 123_456_789, R_BASE] {
+        let (ds, _, ss) = encode_sig_stream(&straight, r, true);
+        let (dc, _, sc) = encode_sig_stream(&crossed, r, true);
+        let (da, _, sa) = encode_sig_stream(&again, r, true);
+        assert_ne!(ss, sc, "base {r}");
+        assert_ne!(ds, dc, "base {r}");
+        assert_eq!((ss, ds), (sa, da), "base {r}");
+    }
+}
+
+/// Row FAIL-map-chain-hash-in-checker: "unequal signatures rarely share a hash". 4096
+/// signatures that differ only in the shape of a nested tuple of two variables (the binary
+/// digits of i, one tuple level per digit) have 4096 different streams and 4096 different
+/// digests. With a fixed base this is a measurement, not a bound: two different streams of
+/// length below n agree at a base drawn at random with probability at most (n - 1)/P (the
+/// `r10_hash` module note), below 2^-54 a pair here.
+#[test]
+fn r10_many_unequal_signatures_have_distinct_digests() {
+    use zedc_types::ty::{
+        SParam, Ty,
+        r10_hash::{R_BASE, encode_sig_stream},
+    };
+    let n = 4096u32;
+    let mut streams = std::collections::HashSet::new();
+    let mut digests = std::collections::HashSet::new();
+    for i in 0..n {
+        let v = |n: &str| Ty::var(n.into());
+        let bits = 32 - i.leading_zeros();
+        let result = (0..bits).fold(v("A"), |t, b| {
+            let digit = if (i >> b) & 1 == 1 { v("B") } else { v("A") };
+            Ty::tuple(vec![digit, t])
+        });
+        let params = vec![SParam {
+            name: "a".into(),
+            positional: true,
+            default: None,
+            range: None,
+        }];
+        let mut sig = Sig::one(params, vec![v("A")], result);
+        sig.own.extend(["A".into(), "B".into()]);
+        let (d, _, s) = encode_sig_stream(&sig, R_BASE, true);
+        assert_eq!(d, sig.digest());
+        streams.insert(s);
+        digests.insert(d);
+    }
+    assert_eq!(streams.len(), n as usize);
+    assert_eq!(digests.len(), n as usize);
+}
+
 /// Landing review B5 (Sol's `bounds-hash.rs`, adopted): two signatures that differ only in
 /// which of two variables has which bound encode to different streams and digests.
 #[test]
