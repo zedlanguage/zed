@@ -1273,22 +1273,25 @@ struct PartCache {
 // values has a residue in `have`, each of those residues asked over the span and found with
 // no point (`absent`), whatever `have` holds.
 // Class 1, `h` finite (every input whose solver's set is bounded, so every formula whose atoms
-// are bounded, as the step tests' boxes are); proved with G closed. Every (a) takes at least one value out of
-// `gap` and `gap` only shrinks; `gap` starts as `h`, finitely many values, so there are
-// finitely many (a), so finitely many cells, and so finitely many strides and tails (each made
-// by a cell at an (a)). A tail is asked at most once (popped) and a stride at most `step + 1`
-// times between two (a): each question either adds a class to `absent` or pushes a point whose
-// value is in `gap` (proof of G above), read by the next turn's (a); a stride with every class
-// asked is dropped. Each (d) either pushes a point in `gap`, read by the next (a), or takes at
-// least one value out of `gap`. So between two (a) there are finitely many turns, and the
-// loop ends. Every step inside a turn is bounded by its structure, and each question by the
-// solver's own end (Presburger arithmetic is decidable; the omega test ends, Pugh 1992,
-// doi:10.1145/135226.135233). The count of (a) is bounded only by the number of values of `h`,
-// which is exponential in the bits of the input where its moduli or bounds are large, and it
-// is reached where cells are single values: with the loop run with no limit on class 1
-// (b22-presburger12, not landed), `ref_memo::mod_chains_with_moduli_near_2_40_and_2_62_are_
-// answered` went from 0.86 s to over 200 s and four other preimage tests from 0.6-8 s to
-// 25-200 s, where the limit had refused in milliseconds. So class 1 keeps the work limit
+// are bounded, as the step tests' boxes are); proved with G closed. Every (a) takes at least
+// one value out of `gap` and `gap` only shrinks; `gap` starts as `h`, finitely many values,
+// so there are finitely many (a), so finitely many cells, and so finitely many strides and
+// tails (each made by a cell at an (a)). A tail is asked at most once (popped) and a stride
+// at most `step + 1` times between two (a): each question either adds a class to `absent` or
+// pushes a point whose value is in `gap` (proof of G above), read by the next turn's (a); a
+// stride with every class asked is dropped. Each (d) either pushes a point in `gap`, read by
+// the next (a), or takes at least one value out of `gap`. So between two (a) there are
+// finitely many turns, and the loop ends. Every step inside a turn is bounded by its
+// structure, and each question by the solver's own end (Presburger arithmetic is decidable;
+// the omega test ends, Pugh 1992, doi:10.1145/135226.135233). The count of (a) is bounded
+// only by the number of values of `h`, which is exponential in the bits of the input where
+// its moduli or bounds are large, and it is reached where cells are single values: with the
+// loop run with no limit on class 1 (b22-presburger12, not landed),
+// `ref_memo::mod_chains_with_moduli_near_2_40_and_2_62_are_answered` went from 0.86 s to
+// over 200 s and four other preimage tests from 0.6-8 s to 25-200 s, where the limit had
+// refused in milliseconds. Measured (b22-presburger13, 2026-11-25), mod_chains' time goes to
+// one cell's `projection::pugh`, Pugh's splinters (over 1.3 billion units, 25 levels deep),
+// not to many cells. So class 1 keeps the work limit
 // until a bound polynomial in the input's size is proved (row LIMITS-exact-join-remove).
 // Class 2, every cell exact: `cell` returns the projection onto `s` of the rows of the
 // implicant of `f` at `m` (the branch `plain` under `Method::Pugh`, the exact elimination
