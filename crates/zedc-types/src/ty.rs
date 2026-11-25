@@ -24752,16 +24752,18 @@ impl Ty {
             false => None,
         };
         // A set that prints as one text whatever stands beside it, a recursive type's name
-        // or `_ \ c`. A recursive type is a named type, so it stands among the type variables
-        // by name ([`Ty::write_vars`]; DESIGN.md sec:diagnostics: "named types (the string
-        // types, structs and aliases) and type variables, by name in code-point order"); `_ \
-        // c` is a difference, which stands first, as `(T \ #a) | 0` does (MSG-union-order-rest).
+        // or `_ \ c`. A recursive type written by its name is a named type, so it stands among
+        // the type variables by that name ([`Ty::write_vars`]; DESIGN.md sec:diagnostics:
+        // "named types (the string types, structs, aliases and recursive types) and type
+        // variables, by name", SPEC-union-order-recursive); a recursive part with no name of
+        // its own is written unfolded and stays first. `_ \ c` is a difference, which stands
+        // first, as `(T \ #a) | 0` does (MSG-union-order-rest).
         let whole = match (&groups, set.is_empty()) {
             (None, false) => Some(set.clone()),
             _ => None,
         };
         let (whole, named) = match whole {
-            Some(t) if t.is_recursive() && others => (None, Some(t)),
+            Some(t) if t.rec_name().is_some() && others => (None, Some(t)),
             whole => (whole, None),
         };
         let holes = groups.as_ref().map_or(0, |g| {
@@ -24829,12 +24831,12 @@ impl Ty {
             hole(parts, &g.low);
             (!g.string.is_empty()).then(|| (g.string.clone(), place, apart, "String".into()))
         });
-        // The name it is ordered by is its text alone (`L(int | #x)`), made once here: linear
-        // in its graph, as the text written in its hole is. `groups` is `None` beside it, so
-        // there is no `String` hole to place too.
+        // It is ordered by its name, `L` of `L(int | #x)`, not by its text: `(` is below `'`,
+        // so by text `L(int)` would come after a variable `L'`, which its name `L` comes
+        // before. `groups` is `None` beside it, so there is no `String` hole to place too.
         let string = string.or_else(|| {
             let t = named?;
-            let name = t.surface_by_name(place).root;
+            let name = t.rec_name().map(|(n, _)| n.to_string())?;
             Some((t, place, false, name))
         });
         parts.push(Print::Vars(self, string));
@@ -26925,6 +26927,10 @@ mod tests {
         let v = |n: &str| Ty::var(n.into());
         let named = Ty::set(list("L")).union(&v("A")).union(&v("Z"));
         assert_eq!(named.to_string(), "A | L(int) | Z");
+        // By its name `L`, which comes before `L'`; by its text it would not, `(` being
+        // below `'` (SPEC-union-order-recursive).
+        let primed = Ty::set(list("L")).union(&v("L'"));
+        assert_eq!(primed.to_string(), "L(int) | L'");
         // Beside two marks, named between them.
         let rec = Ty::set(list("Ta"));
         let marked = Ty::tuple(vec![rec.union(&v("$1")).union(&v("$2")), v("$1"), v("$2")]);
