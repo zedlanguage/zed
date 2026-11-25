@@ -1296,6 +1296,13 @@ split="
 # 2026-11-24): its brute-force families, the cone rule and the BMM reduction each test thousands
 # of small systems through `satisfiable`, and the wlgrow tests build inputs of 10,000 terms. Each
 # is a piece; no other test's name holds one of their names.
+# zedc_presburger's other piece still stopped at its limit alone on hm5 (rc=124 at 20 s, load
+# 2.7, FAIL-zedc-presburger-lib-piece-20s-hm5). The whole lib without benchmarks on hm2 (8
+# cores, b22-small15, 2026-11-24, --report-time): the tests of the other piece took 190.6 s
+# together, 16.4 s of it in the test of the step mutants of the plane hull, which ran all 1500
+# sequences after the first failure had caught each mutant and now stops there (0.14 s, same
+# verdict). The ten below took 4.1 to 7.0 s each, 51 s together; each is a piece, which leaves
+# the other piece about 123 s, 15.4 s on 8 cores. No other test's name holds one of their names.
 alone="
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_1
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_2
@@ -1400,6 +1407,16 @@ alone="
   zedc_presburger::presburger::factored::tests::the_pass1_and_worklist_of_wlgrow_scale
   zedc_presburger::presburger::factored::tests::no_pair_of_the_star_is_listed_and_the_work_scales
   zedc_presburger::presburger::factored::tests::the_cone_rule_is_exact_on_wide_coefficients
+  zedc_presburger::presburger::extend::plane::tests::random_rows_give_the_integer_hull
+  zedc_presburger::presburger::modular::scaled::tests::the_runs_agree_with_the_residue_sweep
+  zedc_presburger::presburger::exact::tests::the_cover_gives_one_answer_in_every_order_of_the_parts
+  zedc_presburger::presburger::exact::tests::quick_search_on_rows_of_one_atom_finds_a_point_wherever_one_exists
+  zedc_presburger::presburger::exact::tests::the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part_1
+  zedc_presburger::presburger::exact::tests::columns::random_classes_answer_as_with_their_columns_apart
+  zedc_presburger::presburger::exact::tests::decomposable_formulas_project_to_the_values_of_their_points
+  zedc_presburger::presburger::exact::tests::the_answers_do_not_depend_on_the_order_of_the_symbols_part_3
+  zedc_presburger::presburger::exact::tests::the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part_0
+  zedc_presburger::presburger::exact::tests::leaf_choices_over_a_polygon_of_many_true_edges_cost_log_of_them
 "
 # Tests of short-zed_kernel (the zed-kernel unit tests of the short-addresses build) each run as a
 # piece of their own, `--exact`, and skipped by the binary's other piece, as for alone above.
