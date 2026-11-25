@@ -579,7 +579,7 @@ check "a change to tools/run_tests.sh runs all parts of tools/test_merge_check.s
 merge check: a file tools/test_merge_check.sh tests changed: all its parts run
 merge check: a file tools/test_run_tests.sh tests changed: all its parts run
 merge check: tools/test_merge_check.sh select, select2, record and chunks passed
-merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace and nobus passed
+merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace, nobus and warm passed
 merge check: passed
 0" "$(change_on_base tools/run_tests.sh '# changed'
     "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
@@ -620,9 +620,18 @@ check "a failing build before the parts of tools/test_run_tests.sh refuses the b
     echo "${PIPESTATUS[0]}")"
 check "a change to tools/test_run_tests.sh alone runs its parts, not tools/test_merge_check.sh" \
   "merge check: a file tools/test_run_tests.sh tests changed: all its parts run
-merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace and nobus passed
+merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace, nobus and warm passed
 merge check: passed
 0" "$(change_on_base tools/test_run_tests.sh '# changed'
+    "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
+    echo "${PIPESTATUS[0]}")"
+# tools/lib.sh holds `warm`, which `tools/test_run_tests.sh warm` tests (FAIL-warm-step-drops-output).
+check "a change to tools/lib.sh runs the parts of tools/test_run_tests.sh" \
+  "merge check: a file of the test runner changed (tools/run_tests.sh, tools/lib.sh, tools/farm_run.sh or tools/merge_check.sh): every local group
+merge check: a file tools/test_run_tests.sh tests changed: all its parts run
+merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace, nobus and warm passed
+merge check: passed
+0" "$(change_on_base tools/lib.sh '# changed'
     "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
     echo "${PIPESTATUS[0]}")"
 # Step 0c (FARM-share-load-timeouts): a change to tools/farm_run.sh runs tools/test_farm_run.sh,
@@ -643,7 +652,7 @@ check "a failing tools/test_farm_run.sh refuses the branch with exit 1" \
 # Step 0's parts are timed, so they start only once step 0b's build (which has no limit) has ended.
 check "the build for tools/test_run_tests.sh ends before the timed parts of tools/test_merge_check.sh start" \
   "merge check: tools/test_merge_check.sh select, select2, record and chunks passed
-merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace and nobus passed
+merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace, nobus and warm passed
 merge check: passed
 0" "$(change_on_base tools/test_lib.sh '# changed'
     STUB_BUILD_MARK=$ws/target/built-$$-$SECONDS "$check_script" --base base 2>&1 |

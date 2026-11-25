@@ -44,7 +44,7 @@ mkdir -p "${logs%/*}" || { echo "merge check: cannot create ${logs%/*}" >&2; exi
 # parts start when it has passed. The build runs in the foreground, before step 0 starts its
 # timed parts too: run beside them, a workspace build (at load 50 on 2026-11-20) pushed
 # tools/test_merge_check.sh select, 15 to 21 s alone, past its 25 s limit.
-rtparts=(list select table except benches fresh short copy concurrent trace nobus)
+rtparts=(list select table except benches fresh short copy concurrent trace nobus warm)
 rtpids=()
 if [ -n "$rtself" ]; then
   rlog=$logs-rt
@@ -63,13 +63,32 @@ if [ -n "$rtself" ]; then
   # waits while another has it mounted, so beside list short spent list's time (30 to 57 s) out
   # of its own 60 s (killed at 60 s at load 52 on 2026-11-20; 6 to 11 s alone). select and table
   # reuse list's table and mount no clone, as does except after table, so short runs beside them.
+  # fresh, copy, trace and nobus each start cargo several times, and cargo lets one process at a
+  # time hold its package cache: started at once beside list's chain, they waited on each other
+  # and on it ("Blocking waiting for file lock on package cache"), and fresh, copy and trace were
+  # killed at 60 s in b22-small15's two checks and b22-tests9's three on 2026-11-24 (hm3 and hm4,
+  # load under 2; on 2026-11-23 all passed beside it). One after another on hm3, with nothing
+  # beside them, they took 85 (with a rebuild), 23, 45 and 41 s, with no wait on the lock in the
+  # last three; in one chain of their own beside list's, fresh, copy and trace were still killed.
+  # So they run after list's chain, one after another, each under its own limit as before; the
+  # chain goes on past a failed part, so each part's verdict is read. In this order trace and
+  # nobus passed but fresh and copy were still killed (hm4, nothing else of the check running).
+  # The cause was not the build: each run_tests.sh of a part ran the doc check of changed
+  # packages, four `cargo doc` builds of 2 to 8 s on a branch that changes doc lines in
+  # zedc-preimage and zedc-presburger, rebuilt on every run and holding cargo's lock, 90 to 98 %
+  # of each part's time (origin/main, with no changed doc line, builds none and passed). The parts
+  # now leave it out (ZED_DOC_CHECK_SKIP in tools/test_run_tests.sh); this check runs it once, in
+  # its own step (FAIL-rt-parts-cargo-lock, b22-tests10, 2026-11-24).
   (
-    (rt_part list && {
-      rt_part short &
-      rt_part select && rt_part table && rt_part except && rt_part benches
-      wait
-    }) &
-    for p in fresh copy concurrent trace nobus; do rt_part "$p" & done
+    (
+      rt_part list && {
+        rt_part short &
+        rt_part select && rt_part table && rt_part except && rt_part benches
+        wait
+      }
+      for p in fresh copy trace nobus; do rt_part "$p"; done
+    ) &
+    for p in concurrent warm; do rt_part "$p" & done
     wait
   ) &
   rtpids+=($!)
@@ -88,7 +107,7 @@ rt_wait() {
     fi
   done
   [ -z "$bad" ] || exit 1
-  echo "merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace and nobus passed"
+  echo "merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace, nobus and warm passed"
 }
 
 # Step 0: the toy cases of merge_check.sh, each part under the limit of a piece of run_tests.sh.

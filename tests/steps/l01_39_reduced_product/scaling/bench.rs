@@ -20,11 +20,11 @@ fn narrowing_by_a_conjunction_of_disjunctions_scales() {
 #[test]
 fn a_chain_of_lets_and_a_nest_of_ifs_scale() {
     let x0 = ints(&["x0".into()]);
-    scaling::check("a chain of `let`s", 400, |k| {
+    scaling::check("a chain of `let`s", 1000, |k| {
         super::super::arms(&lets(k), &x0);
     });
     // Each level's test implies the one before, so the relation keeps one constraint.
-    scaling::check("`if`s nested on one name", 512, |k| {
+    scaling::check("`if`s nested on one name", 1000, |k| {
         super::super::arms(&ifs(k), &x0);
     });
 }
@@ -32,9 +32,8 @@ fn a_chain_of_lets_and_a_nest_of_ifs_scale() {
 #[test]
 fn a_join_keeps_the_equalities_of_its_sides_and_scales() {
     // The two sides, built before the timing; the join of the two, reduced, is timed.
-    let built = scaling::inputs(32, zero_and_one_sides);
-    scaling::check("the join of two sides that fix k names, reduced", 32, |k| {
-        let (l, r) = &built[&k];
+    let what = "the join of two sides that fix k names, reduced";
+    scaling::check_inputs(what, 1000, zero_and_one_sides, |(l, r)| {
         l.join(r).reduce();
     });
 }
@@ -528,18 +527,17 @@ fn tests_in_a_scope_no_state_reaches_read_nothing() {
 /// one input, which reads that input as an input (item PA-letpre-linear).
 #[test]
 fn tests_of_summaries_over_one_input_read_that_input() {
-    let built = scaling::inputs(40, summaries_over_one_input);
-    scaling::check("k tests, each of a summary over one input", 40, |k| {
-        let (s, t) = &built[&k];
+    let what = "k tests, each of a summary over one input";
+    scaling::check_inputs(what, 777, summaries_over_one_input, |(s, t)| {
         let a = super::super::arms(t, s);
-        assert!(a.iter().all(|a| a.reachable()), "{k} tests");
+        assert!(a.iter().all(|a| a.reachable()), "{} arms", a.len());
     });
     // The time of a test is mostly its binding's and its arms', so the inputs are counted too.
     let given = |k: usize| {
-        let (s, t) = &built[&k];
+        let (s, t) = summaries_over_one_input(k);
         scaling::on_a_thread(1 << 26, || {
             let before = zedc::store::preimage::counts::inputs();
-            super::super::arms(t, s);
+            super::super::arms(&t, &s);
             zedc::store::preimage::counts::inputs() - before
         })
     };
@@ -579,11 +577,9 @@ fn a_test_beside_a_wide_part_costs_its_own_part() {
     // copies, and a wider part took too long to build then (its projection cost the square of its
     // names; since PERF-wide-sum-project it costs O(k log k), COMPLEXITY.md F154), so at the sizes
     // this test was given it bounds the order and does not tell the two apart.
-    let n = 256;
-    let inputs = scaling::inputs(n, parts_beside_a_wide_part);
     let p = Premises::new();
-    scaling::check("k tests beside a part of k names", n, |k| {
-        let (s, tests) = &inputs[&k];
+    let what = "k tests beside a part of k names";
+    scaling::check_inputs(what, 1000, parts_beside_a_wide_part, |(s, tests)| {
         tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
     });
 }

@@ -177,16 +177,21 @@ fn most_at_the_limit(what: &str, cases: &[(String, Formula)], questions: bool) {
 #[test]
 fn the_cover_is_of_order_n_in_its_answer_and_in_its_questions() {
     use zed_tests::scaling;
-    let evens = scaling::inputs(250, |n| multiples(&[2], n as i64, 0));
-    scaling::check_order("exact cover: evens in 0..=n", 250, 1, |n| {
-        let r = std::hint::black_box(project_each_exact(&evens[&n], &[a("x")]));
+    let evens = |n: usize| multiples(&[2], n as i64, 0);
+    scaling::check_inputs("exact cover: evens in 0..=n", 1000, evens, |f| {
+        let r = std::hint::black_box(project_each_exact(f, &[a("x")]));
         assert!(matches!(&r, Ok((e, _)) if e[0].is_ok()), "{r:?}");
     });
-    let padded = scaling::inputs(25, |n| multiples(&[2], 20, n));
-    scaling::check_order("exact cover: evens with n padding conjuncts", 25, 1, |n| {
-        let r = std::hint::black_box(project_each_exact(&padded[&n], &[a("x")]));
-        assert!(matches!(&r, Ok((e, _)) if e[0].is_ok()), "{r:?}");
-    });
+    let padded = |n: usize| multiples(&[2], 20, n);
+    scaling::check_inputs(
+        "exact cover: evens with n padding conjuncts",
+        777,
+        padded,
+        |f| {
+            let r = std::hint::black_box(project_each_exact(f, &[a("x")]));
+            assert!(matches!(&r, Ok((e, _)) if e[0].is_ok()), "{r:?}");
+        },
+    );
 }
 
 /// The answer for a set with holes without end (PRES-cover-tail-writing, `exact::ended`): the
@@ -221,9 +226,14 @@ fn the_answer_for_holes_without_end_is_of_order_n_in_its_exceptions() {
     };
     let small = project_each_exact(&make(4), &[a("x")]);
     assert_eq!(small, Ok((vec![Ok(want(4))], vec![Refusal::Repeats])));
-    let inputs = scaling::inputs(400, make);
-    scaling::check_order("exact cover: evens and n odd exceptions", 400, 1, |n| {
-        let r = std::hint::black_box(project_each_exact(&inputs[&n], &[a("x")]));
-        assert_eq!(r, Ok((vec![Ok(want(n as i64))], vec![Refusal::Repeats])));
-    });
+    let made = |n: usize| (make(n), want(n as i64));
+    scaling::check_inputs(
+        "exact cover: evens and n odd exceptions",
+        1000,
+        made,
+        |(f, w)| {
+            let r = std::hint::black_box(project_each_exact(f, &[a("x")]));
+            assert_eq!(r, Ok((vec![Ok(w.clone())], vec![Refusal::Repeats])));
+        },
+    );
 }

@@ -1356,6 +1356,27 @@ pub fn compare_costs(
     )
 }
 
+/// [`compare_costs`] without the bytes allocated, for a bound stated on work alone, where
+/// `second` allocates more than `first` for a known cause that is not the work the bound
+/// limits; the call site names that cause in a comment.
+pub fn compare_costs_work_only(
+    what: &str,
+    why: &str,
+    limit: f64,
+    first: impl Fn() + Sync,
+    second: impl Fn() + Sync,
+) {
+    compare_by(
+        &mut Meter::new(),
+        Measures::WorkOnly,
+        None,
+        what,
+        Bound::Given(limit, why),
+        first,
+        second,
+    )
+}
+
 /// What a comparison holds the ratio of its two runs to.
 #[derive(Clone, Copy)]
 pub(crate) enum Bound<'a> {

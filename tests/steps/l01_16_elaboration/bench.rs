@@ -142,10 +142,15 @@ fn a_call_passing_the_atoms_of_many_arguments_by_scales() {
 #[test]
 fn ordering_a_function_with_many_rows_scales() {
     // Each use in a row was tested against every row of the function.
-    let units = inputs(250, |n| checked(&rows(n)));
-    scaling::check("elaborating a function with n rows", 250, |n| {
-        has_a_test_per_row(&units[&n], n);
-    });
+    let what = "elaborating a function with n rows";
+    scaling::check_inputs(
+        what,
+        1000,
+        |n| (checked(&rows(n)), n),
+        |(unit, n)| {
+            has_a_test_per_row(unit, *n);
+        },
+    );
 }
 
 #[test]

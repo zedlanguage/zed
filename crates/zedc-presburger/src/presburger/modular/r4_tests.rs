@@ -407,28 +407,30 @@ pub(super) const CRT_SHARE: f64 = 1.5;
 /// against its two parts, as `pncx_fibonacci_crt_scale` measures its question against one gcd:
 /// a replay of the bases or clauses on top of the CRT (Stage C's repeated scans) shows here
 /// as a share past the bound.
-pub(super) fn against_its_crt(what: &str, system: &Coloring, run: impl FnOnce()) {
+///
+/// The two are compared by `scaling::compare_costs_work_only`, which counts instructions
+/// wherever a benchmark can: on the hardware counter, or under DynamoRIO in a new process of
+/// the test when it runs with other tests on a machine with no counter (`Meter.elsewhere`,
+/// BENCH-time-only-checks-by-instructions). Until 2026-11-24 this read one `Meter::work` of
+/// each part, which off `--exact` on a Colab VM is processor time: 1.72 and 1.93 times under
+/// load against 1.30 alone (FAIL-r4-crt-share-processor-time). Where only processor time can
+/// be read, it takes the first of up to `scaling::TRIES` measurements under the bound. The
+/// bytes are not held to the bound, which is on work: the question allocates for its own steps
+/// beside the two parts, 1.64 times their bytes on hm4 (2026-11-24) against 1.30 times their
+/// instructions, and a replay of the bases or clauses would show in the instructions.
+pub(super) fn against_its_crt(what: &str, system: &Coloring, run: impl Fn() + Sync) {
     let (info, allowed, clauses) = system;
-    let mut meter = scaling::Meter::new();
-    let whole = meter.work(run).units;
-    let mut choices = None;
-    let coloring = meter
-        .work(|| choices = graph_coloring_choices(info, allowed, clauses))
-        .units;
-    let choices = choices.expect("a coloring");
-    let crt = meter
-        .work(|| {
-            std::hint::black_box(combine_crt_tree(choices));
-        })
-        .units;
-    let share = whole as f64 / (coloring + crt) as f64;
-    eprintln!(
-        "{what}: the question {whole} units, its coloring {coloring}, its CRT {crt}, {share:.2} times"
-    );
-    assert!(
-        share <= CRT_SHARE,
-        "{what}: the question takes {share:.2} times the work of its coloring and its CRT, at \
-         most {CRT_SHARE}"
+    let parts = || {
+        let choices = graph_coloring_choices(info, allowed, clauses).expect("a coloring");
+        std::hint::black_box(combine_crt_tree(choices));
+    };
+    scaling::compare_costs_work_only(
+        &format!("{what}: the whole question against its coloring and its CRT"),
+        "a replay of the bases or clauses on top of the coloring and its CRT shows as a share \
+         past 1.5 (PNCX-coloring-crt-scale)",
+        CRT_SHARE,
+        parts,
+        run,
     );
 }
 

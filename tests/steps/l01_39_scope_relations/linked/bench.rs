@@ -11,15 +11,16 @@ fn tests_assumed_one_by_one_on_one_linked_component_take_time_near_their_number(
     // Each test projects the block it joins and the blocks a moved bound reaches, not the
     // whole component. The scopes and tests are built before the timing.
     for which in ["chain", "bounded chain", "star", "or chain"] {
-        let built: BTreeMap<usize, (Scope, Vec<Term>)> = [200, 1600]
-            .into_iter()
-            .map(|k| (k, shape(which, k)))
-            .collect();
-        scaling::check_order(&format!("a {which} assumed one by one"), 200, 1, |k| {
-            let (s, ts) = &built[&k];
-            let p = Premises::new();
-            ts.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
-        });
+        let what = format!("a {which} assumed one by one");
+        scaling::check_inputs(
+            &what,
+            1000,
+            |k| shape(which, k),
+            |(s, ts)| {
+                let p = Premises::new();
+                ts.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
+            },
+        );
     }
 }
 
@@ -66,24 +67,25 @@ fn if_statements_joined_one_after_another_on_a_linked_chain_take_time_near_their
     // block; removing it first would cut the chain in two and build its blocks again, which
     // made the joins quadratic (COMPLEXITY.md S20).
     let p = Premises::new();
-    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [280, 2240]
-        .into_iter()
-        .map(|k| {
-            let (s, chain) = shape("chain", k);
-            let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
-            let n = named(k + 1, "x");
-            let tests = (0..k).map(|i| ge(&n[i], &n[i + 1], 2)).collect();
-            (k, (s, tests))
-        })
-        .collect();
-    scaling::check_order("if statements joined on a chain", 280, 1, |k| {
-        let (s, tests) = &built[&k];
-        tests.iter().fold(s.clone(), |s, t| {
-            let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
-            j.reduce();
-            j
-        });
-    });
+    let make = |k: usize| {
+        let (s, chain) = shape("chain", k);
+        let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+        let n = named(k + 1, "x");
+        let tests: Vec<Term> = (0..k).map(|i| ge(&n[i], &n[i + 1], 2)).collect();
+        (s, tests)
+    };
+    scaling::check_inputs(
+        "if statements joined on a chain",
+        1000,
+        make,
+        |(s, tests)| {
+            tests.iter().fold(s.clone(), |s, t| {
+                let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
+                j.reduce();
+                j
+            });
+        },
+    );
 }
 
 #[test]
@@ -117,18 +119,15 @@ fn if_statements_on_skip_links_of_a_chain_take_time_near_their_number() {
     // split into cases, about k^4 in all; and removing the test's conjunct from the cycle it
     // closed with x_{i+1} built the blocks of the whole chain again, k^2 (COMPLEXITY.md S20).
     let p = Premises::new();
-    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [400, 3200]
-        .into_iter()
-        .map(|k| {
-            let (s, chain) = shape("chain", k);
-            let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
-            let n = named(k + 1, "x");
-            let tests = (0..k - 1).map(|i| ge(&n[i], &n[i + 2], 3)).collect();
-            (k, (s, tests))
-        })
-        .collect();
-    scaling::check_order("if statements on skip links of a chain", 400, 1, |k| {
-        let (s, tests) = &built[&k];
+    let make = |k: usize| {
+        let (s, chain) = shape("chain", k);
+        let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+        let n = named(k + 1, "x");
+        let tests: Vec<Term> = (0..k - 1).map(|i| ge(&n[i], &n[i + 2], 3)).collect();
+        (s, tests)
+    };
+    let what = "if statements on skip links of a chain";
+    scaling::check_inputs(what, 1000, make, |(s, tests)| {
         tests.iter().fold(s.clone(), |s, t| {
             let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
             j.reduce();
@@ -166,26 +165,24 @@ fn a_ladder_grown_by_k_if_statements_is_linear() {
     // before (16/89/608/4,869 M at k = 5/10/20/40).
     let p = Premises::new();
     for reverse in [false, true] {
-        let built: BTreeMap<usize, (Scope, Vec<Term>)> = [280, 2240]
-            .into_iter()
-            .map(|k| {
-                let (s, chain) = shape("chain", k);
-                let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
-                let n = named(k + 1, "x");
-                let mut tests: Vec<Term> = (0..k - 1).map(|i| ge(&n[i], &n[i + 2], 2)).collect();
-                if reverse {
-                    tests.reverse();
-                }
-                (k, (s, tests))
-            })
-            .collect();
+        let make = |k: usize| {
+            let (s, chain) = shape("chain", k);
+            let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+            let n = named(k + 1, "x");
+            let mut tests: Vec<Term> = (0..k - 1).map(|i| ge(&n[i], &n[i + 2], 2)).collect();
+            if reverse {
+                tests.reverse();
+            }
+            (s, tests)
+        };
         let name = if reverse {
             "a ladder grown by k if statements, the last rung first"
         } else {
             "a ladder grown by k if statements"
         };
-        scaling::check_order(name, 280, 1, |k| {
-            let (s, tests) = &built[&k];
+        // n 512 (SCALE-small-n-rest, b22-tests9): at 1000 a phase passed 20 s (job j4 on
+        // hm4, 2026-11-24, rc 124).
+        scaling::check_inputs(name, 512, make, |(s, tests)| {
             tests.iter().fold(s.clone(), |s, t| {
                 let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
                 j.reduce();
@@ -206,30 +203,26 @@ fn if_statements_that_leave_a_ladder_block_by_block_between_rungs_are_linear() {
     // names below it, which the ladder bounds from x0 alone (COMPLEXITY.md row S25).
     // `if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear` bounds each name.
     let p = Premises::new();
-    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [200, 1600]
-        .into_iter()
-        .map(|k| {
-            let n = named(k + 1, "x");
-            let w = named(k, "w");
-            let s = ints(&[n.clone(), w.clone()].concat())
-                .assume(&prim(Prim::Ge, var("x0"), int(0)), true, &p)
-                .assume(&prim(Prim::Le, var("x0"), int(1_000_000_000)), true, &p);
-            let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
-            let mut tests: Vec<Term> = Vec::new();
-            for i in 0..k - 1 {
-                tests.push(prim(
-                    Prim::Ge,
-                    prim(Prim::Add, var(&n[i]), var(&w[i])),
-                    int(0),
-                ));
-                tests.push(ge(&n[i], &n[i + 2], 2));
-            }
-            (k, (s, tests))
-        })
-        .collect();
+    let make = |k: usize| {
+        let n = named(k + 1, "x");
+        let w = named(k, "w");
+        let s = ints(&[n.clone(), w.clone()].concat())
+            .assume(&prim(Prim::Ge, var("x0"), int(0)), true, &p)
+            .assume(&prim(Prim::Le, var("x0"), int(1_000_000_000)), true, &p);
+        let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
+        let mut tests: Vec<Term> = Vec::new();
+        for i in 0..k - 1 {
+            tests.push(prim(
+                Prim::Ge,
+                prim(Prim::Add, var(&n[i]), var(&w[i])),
+                int(0),
+            ));
+            tests.push(ge(&n[i], &n[i + 2], 2));
+        }
+        (s, tests)
+    };
     let name = "a ladder grown by k if statements, each after an if on a sum";
-    scaling::check_order(name, 200, 1, |k| {
-        let (s, tests) = &built[&k];
+    scaling::check_inputs(name, 777, make, |(s, tests)| {
         tests.iter().fold(s.clone(), |s, t| {
             let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
             j.reduce();
@@ -251,27 +244,23 @@ fn if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear() {
     // blocks one by one at each test, 62.2 times the bytes (COMPLEXITY.md row S25). 9.2 times the
     // work and 8.6 times the bytes from k = 400 to 3200 (2026-11-14).
     let p = Premises::new();
-    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [400, 3200]
-        .into_iter()
-        .map(|k| {
-            let n = named(k + 1, "x");
-            let base = |i: usize| (10 * (k - i)) as i64;
-            let s = (0..=k).fold(ints(&n), |s, i| {
-                s.assume(&prim(Prim::Ge, var(&n[i]), int(base(i))), true, &p)
-                    .assume(&prim(Prim::Le, var(&n[i]), int(base(i) + 9)), true, &p)
-            });
-            let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
-            let mut tests: Vec<Term> = Vec::new();
-            for i in 0..k - 1 {
-                tests.push(prim(Prim::Ne, var(&n[i]), int(base(i) + 5)));
-                tests.push(ge(&n[i], &n[i + 2], 2));
-            }
-            (k, (s, tests))
-        })
-        .collect();
+    let make = |k: usize| {
+        let n = named(k + 1, "x");
+        let base = |i: usize| (10 * (k - i)) as i64;
+        let s = (0..=k).fold(ints(&n), |s, i| {
+            s.assume(&prim(Prim::Ge, var(&n[i]), int(base(i))), true, &p)
+                .assume(&prim(Prim::Le, var(&n[i]), int(base(i) + 9)), true, &p)
+        });
+        let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
+        let mut tests: Vec<Term> = Vec::new();
+        for i in 0..k - 1 {
+            tests.push(prim(Prim::Ne, var(&n[i]), int(base(i) + 5)));
+            tests.push(ge(&n[i], &n[i + 2], 2));
+        }
+        (s, tests)
+    };
     let name = "a ladder grown by k if statements, each after an if that puts a hole in a name";
-    scaling::check_order(name, 400, 1, |k| {
-        let (s, tests) = &built[&k];
+    scaling::check_inputs(name, 1000, make, |(s, tests)| {
         tests.iter().fold(s.clone(), |s, t| {
             let mut j = s
                 .assume_case(t, true, &p)
@@ -316,7 +305,9 @@ fn holes_put_in_a_ladder_built_first_are_linear() {
         } else {
             "holes put in a ladder built first"
         };
-        scaling::check_inputs(name, 320, ladder, |(k, (s, tests))| {
+        // n 512 (SCALE-small-n-rest, b22-tests9): at 777 a phase passed 20 s (job j4 on hm4,
+        // 2026-11-24, rc 124).
+        scaling::check_inputs(name, 512, ladder, |(k, (s, tests))| {
             let k = *k;
             let s = tests.iter().fold(s.clone(), |s, t| {
                 let mut j = s
@@ -347,24 +338,21 @@ fn a_chain_linked_from_a_source_made_later_is_linear() {
     // times the bytes from k = 50 to 400; on the code before, 17.7 times the work. 9.0 times the
     // work and 8.4 times the bytes from k = 240 to 1920 (2026-11-14).
     let p = Premises::new();
-    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [240, 1920]
-        .into_iter()
-        .map(|k| {
-            let n = named(k + 1, "x");
-            let mut s = ints(&[n.clone(), vec!["u".into(), "v".into()]].concat());
-            s.relation.pin(&"u".into(), true);
-            s.relation.pin(&"v".into(), true);
-            let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
-            let s = s
-                .assume(&ge("u", "v", 0), true, &p)
-                .assume(&ge("v", "x0", 0), true, &p);
-            assert!(!s.bottom);
-            let tests = (0..k).map(|i| ge(&n[i], &n[i + 1], 2)).collect();
-            (k, (s, tests))
-        })
-        .collect();
-    scaling::check_order("a chain linked from a source made later", 240, 1, |k| {
-        let (s, tests) = &built[&k];
+    let make = |k: usize| {
+        let n = named(k + 1, "x");
+        let mut s = ints(&[n.clone(), vec!["u".into(), "v".into()]].concat());
+        s.relation.pin(&"u".into(), true);
+        s.relation.pin(&"v".into(), true);
+        let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
+        let s = s
+            .assume(&ge("u", "v", 0), true, &p)
+            .assume(&ge("v", "x0", 0), true, &p);
+        assert!(!s.bottom);
+        let tests: Vec<Term> = (0..k).map(|i| ge(&n[i], &n[i + 1], 2)).collect();
+        (s, tests)
+    };
+    let what = "a chain linked from a source made later";
+    scaling::check_inputs(what, 777, make, |(s, tests)| {
         tests.iter().fold(s.clone(), |s, t| {
             let mut j = s.assume(t, true, &p).join(&s.assume(t, false, &p));
             j.reduce();
@@ -538,23 +526,20 @@ fn a_chain_put_in_against_the_order_reads_only_what_it_moves() {
 #[test]
 fn holes_that_leave_one_case_on_a_chain_take_time_near_their_number() {
     let p = Premises::new();
-    let built: BTreeMap<usize, (Scope, Vec<Term>)> = [280, 2240]
-        .into_iter()
-        .map(|k| {
-            let (s, chain) = shape("bounded chain", k);
-            let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
-            let n = named(k + 1, "x");
-            let tests = (0..k)
-                .map(|i| {
-                    let off = prim(Prim::Ne, var(&n[i]), int(2_000_000_000));
-                    prim(Prim::And, off, ge(&n[i], &n[i + 1], 2))
-                })
-                .collect();
-            (k, (s, tests))
-        })
-        .collect();
-    scaling::check_order("holes that leave one case on a chain", 280, 1, |k| {
-        let (s, tests) = &built[&k];
+    let make = |k: usize| {
+        let (s, chain) = shape("bounded chain", k);
+        let s = chain.iter().fold(s, |s, t| s.assume(t, true, &p));
+        let n = named(k + 1, "x");
+        let tests: Vec<Term> = (0..k)
+            .map(|i| {
+                let off = prim(Prim::Ne, var(&n[i]), int(2_000_000_000));
+                prim(Prim::And, off, ge(&n[i], &n[i + 1], 2))
+            })
+            .collect();
+        (s, tests)
+    };
+    let what = "holes that leave one case on a chain";
+    scaling::check_inputs(what, 1000, make, |(s, tests)| {
         tests.iter().fold(s.clone(), |s, t| s.assume(t, false, &p));
     });
 }
