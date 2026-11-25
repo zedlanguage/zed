@@ -842,6 +842,94 @@ enum DeriveWork {
     Show(Note),
 }
 
+/// The lines a derivation's steps lie on ([`Ck::derived_lines`]), kept from one derivation to
+/// the next so that the rejections along a chain of names find the lines of the chain once.
+/// A set is kept only for a step whose notes and next steps no later write changes except one
+/// that clears the sets: a write of the origin of a binder in [`Self::ids`] ([`Ck::origin`],
+/// [`Ck::narrow`], [`Ck::widen`]), or a write of the type of a span in `sets` or in
+/// [`Self::absent`] that changes the walk's step there ([`Ck::seen_written`]), or a kept step
+/// found later to be an operation on literals alone ([`Ck::opened`]). A step whose notes
+/// depend on anything else is not kept: an operation whose type is `Never`, which an error
+/// may refuse or a refusal undone may restore ([`Ck::refused_before`]), an operation on
+/// literals alone, which may still take a carrier ([`Ck::lit_open`]), and a tuple written out,
+/// whose type is its parts' as last found ([`Ck::tuple_seen`]).
+#[derive(Default)]
+struct DerivedLines {
+    /// The lines of each kept step and of every step it leads to, by the span it derives.
+    sets: HashMap<Span, Lines>,
+    /// The binders whose origins a step read.
+    ids: HashSet<usize>,
+    /// The spans a step found with no type yet.
+    absent: HashSet<Span>,
+}
+
+/// One step of [`Ck::derive_work`]'s walk without its words ([`Ck::step_lines`]): the lines of
+/// the notes it shows, the spans it derives next, and whether its set may be kept
+/// ([`DerivedLines`]).
+struct StepLines {
+    lines: Vec<usize>,
+    next: Vec<Span>,
+    kept: bool,
+}
+
+/// A set of lines of a derivation ([`Ck::derivation_lines`]), each line as an `i64` key, the
+/// key type of the kernel's treaps.
+///
+/// Complexity tradeoff (DERIV-too-large-chain-quadratic, bench
+/// `l01_29_repairs_and_printing::bench::scaling::deriving_through_values_read_twice_scales`):
+/// naive version, `imbl::OrdSet`, a B-tree whose union inserts each key of the smaller set into
+/// the larger: where the steps form a DAG, as `a_i = a_(i-1) + a_(i-1)`, a step's next steps
+/// hold nearly the same `i` lines, and their union cost O(i log n), Theta(n^2 log n) along the
+/// chain (ratio 46.07 at 2100 and 16800 bindings). Used: the kernel's persistent treap, whose
+/// shape is fixed by its keys and whose union stops at subtrees the two sets share and gives
+/// back an operand where the result has its size (`zed_kernel::treap_set`, Blelloch and
+/// Reid-Miller, doi:10.1145/277651.277660): two sets made from one set `S` by an insert each
+/// differ only on the inserts' paths, O(log n) nodes, so their union costs O(log n); sets that
+/// share nothing cost O(m log(n/m + 1)) for sizes m <= n. Cost: an `Arc` per key in place of
+/// a B-tree's 16 keys a node.
+type Lines = zed_kernel::treap_set::TreapSet<i64>;
+
+/// The key of line `l` in [`Lines`]; a line number is far below `2^63`.
+fn line_key(l: usize) -> i64 {
+    l as i64
+}
+
+/// The most lines a derivation shows, the line reported among them (DESIGN.md
+/// sec:diagnostics, QUESTIONS A111: "With two to five lines in all, every line is shown").
+const SHOWN_LINES: usize = 5;
+
+/// The parts of `e` whose derivations continue its own in [`Ck::derive_work`], in order: the
+/// operands, the branches, the arguments, the items, the indexed value, and a block's one
+/// returned value.
+fn derive_parts(e: &Expr) -> Vec<&Expr> {
+    match &e.kind {
+        ExprKind::Unary(_, a) => vec![a],
+        ExprKind::Binary(_, a, b) => vec![a, b],
+        ExprKind::Else { of, default, .. } => vec![of, default],
+        ExprKind::If {
+            cond,
+            then,
+            otherwise,
+        } => vec![cond, then, otherwise],
+        ExprKind::Call {
+            positional, named, ..
+        } => positional
+            .iter()
+            .chain(named.iter().map(|(_, a)| a))
+            .collect(),
+        ExprKind::Tuple(items) => items.iter().collect(),
+        ExprKind::Index(of, _) => vec![of],
+        ExprKind::Block(stmts) => stmts
+            .iter()
+            .filter_map(|s| match &s.kind {
+                StmtKind::Return(es) if es.len() == 1 => Some(&es[0]),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Which arguments an application needs the values of. Evaluation is neither strict nor lazy
 /// (DESIGN.md sec:non_goals), so an argument with no value, of type `Never`, leaves the call
 /// with no value only where the call needs that argument's value; elsewhere the call has the
@@ -3066,6 +3154,13 @@ struct Ck<'t, 'a> {
     /// [`Ck::place_of`] has followed ends, so each binder is followed once
     /// (PERF-keyed-part-path-d-squared).
     places: std::cell::RefCell<HashMap<usize, ChainEnd>>,
+    /// The lines of the notes of each step of a derivation and of every step it leads to, by
+    /// the span the step derives, for the cut of [`Ck::derive_work`] (DESIGN.md
+    /// sec:diagnostics, QUESTIONS A111; row DERIV-too-large-chain-quadratic).
+    derived_lines: std::cell::RefCell<DerivedLines>,
+    /// Where the lines of the unit's text start, found at the first derivation that needs
+    /// them; `None` where the tables hold no text.
+    text_lines: std::cell::OnceCell<Option<zedc_base::source::Lines>>,
     /// Each bit word curried with `...`, by the span of the call: the word, its primitive and
     /// the operands the call gave, at their parameters, the width left out. The function the
     /// call gives carries a need with that span ([`NeedKind::InDomain`]'s `bits`), and each of
@@ -3636,6 +3731,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             path_seen: HashSet::new(),
             taken_from: HashMap::new(),
             places: std::cell::RefCell::new(HashMap::new()),
+            derived_lines: Default::default(),
+            text_lines: std::cell::OnceCell::new(),
             bit_curries: HashMap::new(),
             leaving: Vec::new(),
             open: Vec::new(),
@@ -4658,6 +4755,80 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The reasons of literals that narrow an operation on literals alone, given after the
         // other steps, where a body gives its classes' reasons (MSG-f32-body-top-agree).
         let mut late: Vec<Note> = Vec::new();
+        // A derivation whose notes lie on more than five lines shows the line reported, that of
+        // its first expression, and the four others nearest before it, then one note with the
+        // count of the lines left out (DESIGN.md sec:diagnostics, QUESTIONS A111; spec
+        // 113ed93). Where fewer than four lie before it, the nearest after it fill the five. A
+        // derivation that comes back to a step it is inside, a cycle, shows every step. The
+        // walk of [`Ck::derive_held`] is not cut.
+        // Complexity tradeoff (DERIV-too-large-chain-quadratic): with every step shown, the
+        // `n` rejections along a chain of `n` names showed about `n^2 / 2` notes. The cut shows
+        // O(1) lines per rejection, and the walk enters a step only where the lines of the
+        // steps it leads to ([`Ck::derivation_lines`], kept from one derivation to the next)
+        // hold a line shown, so a chain costs O(log n) per rejection for its new step's set and
+        // the count of the lines left out.
+        let first = start.iter().find_map(|w| match w {
+            Work::Derive(s) => Some(*s),
+            Work::Show(_) => None,
+        });
+        let mut sets = HashMap::new();
+        let all = match (to_function, first) {
+            (false, Some(_)) => self.derivation_lines(&start, &roots, &mut sets),
+            _ => None,
+        };
+        let cut = match (&all, first) {
+            (Some(all), Some(r)) if all.len() > SHOWN_LINES => {
+                let r = line_key(self.line_of(r));
+                // The nearest lines before `r`, then after it: each one cut and one walk to an
+                // end of the treap, O(log n), and at most `SHOWN_LINES` of them.
+                let mut keep: Vec<i64> = vec![r];
+                let mut below = all.at_most(&(r - 1));
+                while keep.len() < SHOWN_LINES
+                    && let Some(&l) = below.last()
+                {
+                    keep.push(l);
+                    below = below.at_most(&(l - 1));
+                }
+                let mut above = all.at_least(&(r + 1));
+                while keep.len() < SHOWN_LINES
+                    && let Some(&l) = above.first()
+                {
+                    keep.push(l);
+                    above = above.at_least(&(l + 1));
+                }
+                // `all` is a treap ([`Lines`]): each lookup is O(log n), and `keep` holds at
+                // most `SHOWN_LINES` lines, so this count is O(log n).
+                let left_out = all.len() - keep.iter().filter(|&l| all.contains(l)).count();
+                Some((keep.into_iter().collect::<HashSet<i64>>(), left_out))
+            }
+            _ => None,
+        };
+        // Whether a step's lines hold a line shown: a step whose lines hold none is not entered.
+        // A step below one that [`Ck::derivation_lines`] took from the memo has its set in the
+        // memo, not in `sets`.
+        // Complexity tradeoff (DERIV-too-large-chain-quadratic): naive version, `sets` alone:
+        // every step below a step taken from the memo was entered, so each rejection along a
+        // chain of `n` names walked and wrote the notes of the whole chain, O(n) each and
+        // Theta(n^2) in all (job 16's profile: 93.7% of the cycles of
+        // `bench::too_large::reading_a_chain_of_names_and_divisions_scales` under
+        // `derive_work`, most in writing the notes' types; ratio 54.6 at 200 and 1600 names).
+        // Used: the memo too, O(1) expected per step, so a rejection enters O(1) steps. The
+        // memo is only read here: every write that clears it takes `&mut self`.
+        let memo = self.derived_lines.borrow();
+        let enters = |span: Span| match (&cut, sets.get(&span).or_else(|| memo.sets.get(&span))) {
+            (Some((keep, _)), Some(lines)) => keep.iter().any(|l| lines.contains(l)),
+            _ => true,
+        };
+        let on_shown = |span: Span| match &cut {
+            Some((keep, _)) => keep.contains(&line_key(self.line_of(span))),
+            None => true,
+        };
+        // The lines of the notes the walk meets, which must be the lines found above where no
+        // line is cut: a check, in a build with debug assertions, that [`Ck::step_lines`]
+        // takes the steps this walk takes.
+        let mut met: BTreeSet<usize> = BTreeSet::new();
+        let checking = cfg!(debug_assertions) && cut.is_none() && all.is_some();
+        let mut last = None;
         let mut stack: Vec<Work> = start.into_iter().rev().collect();
         let note = |span: Span, text: String| {
             Work::Show(Note {
@@ -4675,14 +4846,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         while let Some(w) = stack.pop() {
             let span = match w {
                 Work::Show(n) => {
-                    if shown.insert(n.clone()) {
+                    if checking {
+                        met.insert(self.line_of(n.span));
+                    }
+                    if on_shown(n.span) && shown.insert(n.clone()) {
+                        last = Some(n.span);
                         out.push(n);
                     }
                     continue;
                 }
                 Work::Derive(span) => span,
             };
-            if !visited.insert(span) {
+            if !visited.insert(span) || !enters(span) {
                 continue;
             }
             let Some((kept, src)) = self.seen.get(&span) else {
@@ -4788,32 +4963,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     *id
                 }
                 Src::Other(e) => {
-                    let parts: Vec<&Expr> = match &e.kind {
-                        ExprKind::Unary(_, a) => vec![a],
-                        ExprKind::Binary(_, a, b) => vec![a, b],
-                        ExprKind::Else { of, default, .. } => vec![of, default],
-                        ExprKind::If {
-                            cond,
-                            then,
-                            otherwise,
-                        } => vec![cond, then, otherwise],
-                        ExprKind::Call {
-                            positional, named, ..
-                        } => positional
-                            .iter()
-                            .chain(named.iter().map(|(_, a)| a))
-                            .collect(),
-                        ExprKind::Tuple(items) => items.iter().collect(),
-                        ExprKind::Index(of, _) => vec![of],
-                        ExprKind::Block(stmts) => stmts
-                            .iter()
-                            .filter_map(|s| match &s.kind {
-                                StmtKind::Return(es) if es.len() == 1 => Some(&es[0]),
-                                _ => None,
-                            })
-                            .collect(),
-                        _ => Vec::new(),
-                    };
+                    let parts = derive_parts(e);
                     let what = match &e.kind {
                         ExprKind::Unary(op, _) => format!("this `{op}`"),
                         ExprKind::Binary(op, _, _) => format!("this `{op}`"),
@@ -4961,9 +5111,235 @@ impl<'t, 'a> Ck<'t, 'a> {
             stack.extend(next.into_iter().rev());
         }
         for n in late {
-            if shown.insert(n.clone()) {
+            if checking {
+                met.insert(self.line_of(n.span));
+            }
+            if on_shown(n.span) && shown.insert(n.clone()) {
+                last = Some(n.span);
                 out.push(n);
             }
+        }
+        if checking && let Some(all) = &all {
+            debug_assert_eq!(
+                all.iter().copied().collect::<BTreeSet<i64>>(),
+                met.into_iter().map(line_key).collect::<BTreeSet<i64>>(),
+                "the lines of a derivation found by `Ck::step_lines` differ from the walk's"
+            );
+        }
+        if let (Some((_, left_out @ 1..)), Some(span)) = (cut, last.or(first)) {
+            out.push(Note {
+                span,
+                text: format!("... (additional lines not shown: {left_out})").into(),
+            });
+        }
+    }
+
+    /// The line of the unit's text that `span` starts on; 0 where the tables hold no text.
+    fn line_of(&self, span: Span) -> usize {
+        let lines = (self.text_lines).get_or_init(|| {
+            self.t
+                .text
+                .map(|t| zedc_base::source::Lines::new(t.as_bytes()))
+        });
+        lines.as_ref().map_or(0, |l| l.line_start(span.start).1)
+    }
+
+    /// The lines of the notes [`Ck::derive_work`] shows for the work `start`, whose roots are
+    /// `roots`, where it shows every note, with the lines of each step it would take, other
+    /// than a root, in `sets` by the span the step derives; `None` where the walk comes back
+    /// to a step it is inside, a cycle, which is shown in full. The lines of each step are its
+    /// own notes' with those of the steps it leads to, found once per step and kept from one
+    /// derivation to the next where no later write can change them ([`DerivedLines`]).
+    ///
+    /// Complexity tradeoff (DERIV-too-large-chain-quadratic): walking every step of each
+    /// derivation to count its lines costs O(n) per rejection along a chain of `n` names,
+    /// Theta(n^2) in all. Kept as persistent sets ([`Lines`], treaps that share their
+    /// subtrees), a step's lines cost the union of the sets of the steps it leads to and an
+    /// insert, O(log n), of each of its own lines. A step that leads to one step copies its
+    /// set, O(1): a chain of `n` names adds O(1) lines per name, O(n log n) time and words for
+    /// the whole chain, and O(1) new steps per rejection. Steps that lead to several sets
+    /// that share nothing, as `y_i = y_(i-1) + z_i` with `z_i` a chain of its own, cost
+    /// O(m log(n/m + 1)) for the smaller size `m`, which sums to O(n log n) over a tree of
+    /// steps (the union bound of `zed_kernel::treap_set`, summed as in small-into-large
+    /// merging: a line in the smaller set lands in a union at least twice its size). Where
+    /// next steps are shared, a DAG such as `a_i = a_(i-1) + a_(i-1)`, their sets are made from
+    /// one set by a few inserts each and differ only on those inserts' paths, so the union
+    /// stops at the subtrees they share: O(log n) per step. Sets with the same lines that were
+    /// built apart share no nodes, and their union costs O(n), no more than the walk that met
+    /// every step of such a derivation cost before. A step that is not kept is found again
+    /// by each derivation that takes it, as the walk did before.
+    fn derivation_lines(
+        &self,
+        start: &[DeriveWork],
+        roots: &HashSet<Span>,
+        sets: &mut HashMap<Span, Lines>,
+    ) -> Option<Lines> {
+        let mut d = self.derived_lines.borrow_mut();
+        let mut all = Lines::new();
+        // The steps the walk is inside, a root's included, to find a cycle; whether each step
+        // found may be kept.
+        let mut inside: HashSet<Span> = HashSet::new();
+        let mut keep: HashMap<Span, bool> = HashMap::new();
+        for w in start {
+            let root = match w {
+                DeriveWork::Show(n) => {
+                    all.insert(line_key(self.line_of(n.span)));
+                    continue;
+                }
+                DeriveWork::Derive(s) => *s,
+            };
+            // Each step is a frame, entered once to find its own lines and next steps, and
+            // left once those steps' lines are found.
+            let mut stack: Vec<(Span, Option<StepLines>)> = vec![(root, None)];
+            while let Some((s, step)) = stack.pop() {
+                let Some(step) = step else {
+                    if sets.contains_key(&s) {
+                        continue;
+                    }
+                    if let Some(lines) = d.sets.get(&s)
+                        && !roots.contains(&s)
+                    {
+                        sets.insert(s, lines.clone());
+                        keep.insert(s, true);
+                        continue;
+                    }
+                    if !inside.insert(s) {
+                        return None;
+                    }
+                    let step = self.step_lines(s, roots.contains(&s), &mut d);
+                    let next: Vec<Span> = step.next.clone();
+                    stack.push((s, Some(step)));
+                    stack.extend(next.into_iter().rev().map(|c| (c, None)));
+                    continue;
+                };
+                inside.remove(&s);
+                // The union of the next steps' sets, which stops at the subtrees they share
+                // ([`Lines`]), with the step's own lines.
+                let mut lines = Lines::new();
+                for c in &step.next {
+                    if let Some(x) = sets.get(c) {
+                        lines = lines.union(x);
+                    }
+                }
+                for l in step.lines {
+                    lines.insert(line_key(l));
+                }
+                let kept = step.kept
+                    && !roots.contains(&s)
+                    && step
+                        .next
+                        .iter()
+                        .all(|c| keep.get(c).copied().unwrap_or(false));
+                if kept {
+                    d.sets.insert(s, lines.clone());
+                }
+                keep.insert(s, kept);
+                sets.insert(s, lines);
+            }
+            all = all.union(&sets[&root]);
+        }
+        Some(all)
+    }
+
+    /// The step [`Ck::derive_work`] takes at `span`, a root where `root`, without its words:
+    /// the lines of the notes it shows, the spans it derives next, and whether no later write
+    /// but one that clears [`DerivedLines`] changes them. Each case is the walk's own, in its
+    /// order; a build with debug assertions checks that the two agree (see `derive_work`).
+    /// The binders it reads the origins of, and a span with no type yet, are put in `d`.
+    fn step_lines(&self, span: Span, root: bool, d: &mut DerivedLines) -> StepLines {
+        let mut step = StepLines {
+            lines: Vec::new(),
+            next: Vec::new(),
+            kept: true,
+        };
+        let Some((kept, src)) = self.seen.get(&span) else {
+            d.absent.insert(span);
+            return step;
+        };
+        let id = match (kept, src) {
+            (Some(_), Src::Name(id) | Src::Call(id, _)) => *id,
+            (None, Src::Other(e)) if self.tuple_seen(e, &mut HashMap::new()).is_none() => {
+                step.kept = false;
+                return step;
+            }
+            (None, Src::Name(_) | Src::Call(..)) => return step,
+            (_, Src::Other(e)) => {
+                step.kept = kept.as_ref().is_some_and(|t| !t.is_empty());
+                let open = self.lit_open.contains(&span) || self.lit_settled.contains(&span);
+                if open {
+                    step.kept = false;
+                    if let Some((m, lits)) = open_decimal_carriers(e, self.t.text) {
+                        let any = lits.iter().fold(0, |p, l| p | lit_mask(l, true));
+                        let narrowing = lits.iter().filter(|l| lit_mask(l, true) == m && m != any);
+                        step.lines.extend(narrowing.map(|l| self.line_of(l.span)));
+                    }
+                }
+                step.lines.push(self.line_of(span));
+                if !root && self.refused_before(span, kept) {
+                    return step;
+                }
+                for p in derive_parts(e) {
+                    match literal(p, self.t.text) {
+                        Some(_) => step.lines.push(self.line_of(p.span)),
+                        None => step.next.push(p.span),
+                    }
+                }
+                return step;
+            }
+        };
+        step.lines.push(self.line_of(span));
+        d.ids.insert(id);
+        let mut o = self.whence.get(&id).map(|o| &**o);
+        if o.is_none() {
+            step.lines.push(self.line_of(self.t.res.binders[id].span));
+        }
+        while let Some(origin) = o {
+            step.lines.push(self.line_of(origin.span));
+            let mut why_none = Vec::new();
+            self.emptied_of(id, &origin.why, &mut why_none);
+            step.lines
+                .extend(why_none.iter().map(|n| self.line_of(n.span)));
+            step.next.extend(origin.from);
+            o = origin.then.as_deref();
+        }
+        step
+    }
+
+    /// Clears the lines kept for derivations ([`DerivedLines`]) where a write of the origin of
+    /// binder `id` may change a step they hold.
+    fn origin_written(&self, id: usize) {
+        let mut d = self.derived_lines.borrow_mut();
+        if d.ids.contains(&id) {
+            *d = DerivedLines::default();
+        }
+    }
+
+    /// Clears the lines kept for derivations ([`DerivedLines`]) where writing `new` as the type
+    /// of `span` in place of `old` changes the step the walk takes there: its source, whether
+    /// it has a type, or whether that type is `Never`. The type itself changes only the words.
+    fn seen_written(&self, span: Span, old: Option<&Seen<'a>>, new: &Seen<'a>) {
+        let step = |s: &Seen<'a>| {
+            let src = match s.1 {
+                Src::Name(id) => (0, id),
+                Src::Call(id, _) => (1, id),
+                Src::Other(e) => (2, e as *const Expr as usize),
+            };
+            (src, s.0.as_ref().map(Ty::is_empty))
+        };
+        let mut d = self.derived_lines.borrow_mut();
+        let read = d.sets.contains_key(&span) || d.absent.contains(&span);
+        if read && old.map(step) != Some(step(new)) {
+            *d = DerivedLines::default();
+        }
+    }
+
+    /// Clears the lines kept for derivations ([`DerivedLines`]) where the expression at `span`,
+    /// now an operation on literals alone ([`Ck::lit_open`]), was kept as a step that is not:
+    /// its step shows the literals that narrow its carriers.
+    fn opened(&self, span: Span) {
+        let mut d = self.derived_lines.borrow_mut();
+        if d.sets.contains_key(&span) {
+            *d = DerivedLines::default();
         }
     }
 
@@ -5058,6 +5434,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Records where binder `id` gets its type.
     fn origin(&mut self, id: usize, span: Span, why: Why<'a>, from: Option<Span>) {
+        self.origin_written(id);
         self.whence.insert(
             id,
             Rc::new(Origin {
@@ -9641,6 +10018,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     from: None,
                     then: old.clone(),
                 };
+                self.origin_written(*b);
                 self.whence.insert(*b, Rc::new(o));
                 (*b, self.env.insert(*b, t.clone()), old)
             })
@@ -9655,6 +10033,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(t) => self.env.insert(b, t),
                 None => self.env.remove(&b),
             };
+            self.origin_written(b);
             match o {
                 Some(o) => self.whence.insert(b, o),
                 None => self.whence.remove(&b),

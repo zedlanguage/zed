@@ -44,18 +44,29 @@ pub(super) fn doubled(n: usize) -> String {
     src + &format!("  m.stdout <- \"x\" ++ a{};\n}}\n", n - 1)
 }
 
-pub(super) fn derived_through_values_read_twice(src: &str) {
+/// The chain of [`doubled`] runs from `a0` on line 2 to the line reported, line `n + 2`:
+/// `n + 1` lines. Up to five lines every binding is shown once; past five, the line reported
+/// and the four before it, the bindings of `a_(n-4)` to `a_(n-1)`, then the count of the other
+/// `n - 4` (DESIGN sec:diagnostics, "An error that spans several lines"; spec 113ed93).
+pub(super) fn derived_through_values_read_twice(src: &str, n: usize) {
     let out = rejected(src);
-    assert!(
-        out.contains("`a0` is defined as this expression, 1"),
-        "{out}"
-    );
+    for i in [0, n.saturating_sub(4), n - 1] {
+        let t = if i == 0 {
+            "`a0` is defined as this expression, 1".to_string()
+        } else {
+            format!("`a{i}` is defined as this expression, int")
+        };
+        let want = usize::from(i + 4 >= n);
+        assert_eq!(out.matches(&t).count(), want, "{t}: {out}");
+    }
+    let cut = format!("... (additional lines not shown: {})", n.saturating_sub(4));
+    assert_eq!(out.matches(&cut).count(), usize::from(n > 4), "{out}");
 }
 
 #[test]
 fn deriving_through_values_read_twice() {
-    for n in [1, 2, 6] {
-        derived_through_values_read_twice(&doubled(n));
+    for n in [1, 2, 4, 5, 6] {
+        derived_through_values_read_twice(&doubled(n), n);
     }
 }
 
@@ -159,16 +170,38 @@ pub(super) fn zero_chain(n: usize) -> String {
 
 /// Each step of the derivation follows the chain to its literal; a walk from each step to the
 /// end, with no memo shared by the steps, is O(n²) (COMPLEXITY.md F165).
+///
+/// The chain of [`zero_chain`] runs from `z0` on line 2 to the line reported, line `n + 2`:
+/// `n + 1` lines. Past five, the message shows the line reported and the four before it, which
+/// read `-0r` five times and define four names, then counts the other `n - 4` lines
+/// (DESIGN sec:diagnostics, "An error that spans several lines"; spec 113ed93).
 pub(super) fn a_chain_of_names_to_a_negated_zero(src: &str, n: usize) {
     let out = rejected(src);
-    assert_eq!(out.matches(" is -0r here").count(), n);
-    assert_eq!(out.matches("defined as this expression, -0r").count(), n);
+    assert_eq!(out.matches(" is -0r here").count(), n.min(5), "{out}");
+    assert_eq!(
+        out.matches("defined as this expression, -0r").count(),
+        n.min(4),
+        "{out}"
+    );
     assert!(!out.contains(" 0r here"));
+    shows_the_lines_left_out(&out, n);
+}
+
+/// The note `... (additional lines not shown: n - 4)` of a chain of `n + 1` lines, once when
+/// `n > 4`, and no such note otherwise.
+fn shows_the_lines_left_out(out: &str, n: usize) {
+    let cut = format!("... (additional lines not shown: {})", n.saturating_sub(4));
+    assert_eq!(out.matches(&cut).count(), usize::from(n > 4), "{out}");
+    assert_eq!(
+        out.matches("additional lines not shown").count(),
+        usize::from(n > 4),
+        "{out}"
+    );
 }
 
 #[test]
-fn a_chain_of_names_to_a_negated_zero_prints_every_step() {
-    for n in [1, 2, 9] {
+fn a_chain_of_names_to_a_negated_zero_prints_the_steps_of_the_last_five_lines() {
+    for n in [1, 2, 4, 5, 9] {
         a_chain_of_names_to_a_negated_zero(&zero_chain(n), n);
     }
 }
@@ -184,18 +217,19 @@ pub(super) fn zero_chain_tried(n: usize) -> String {
     src + &format!("g(x: f64) = x + z{};\n", n - 1)
 }
 
-/// The message of [`zero_chain_tried`]: every step of the chain prints `-0r`, and the repair is
-/// offered as checked.
+/// The message of [`zero_chain_tried`]: every step on the five lines shown prints `-0r` (as in
+/// [`a_chain_of_names_to_a_negated_zero`]), and the repair is offered as checked.
 pub(super) fn a_repair_tried_over_a_chain_of_names(src: &str, n: usize) {
     let out = rejected(src);
-    assert_eq!(out.matches(" is -0r here").count(), n, "{out}");
+    assert_eq!(out.matches(" is -0r here").count(), n.min(5), "{out}");
+    shows_the_lines_left_out(&out, n);
     let repair = format!("repair: write `f64(z{})`; the checker accepts that", n - 1);
     assert!(out.contains(&repair), "{out}");
 }
 
 #[test]
-fn a_repair_tried_over_a_chain_of_names_prints_every_step() {
-    for n in [1, 2, 9] {
+fn a_repair_tried_over_a_chain_of_names_prints_the_steps_of_the_last_five_lines() {
+    for n in [1, 2, 4, 5, 9] {
         a_repair_tried_over_a_chain_of_names(&zero_chain_tried(n), n);
     }
 }

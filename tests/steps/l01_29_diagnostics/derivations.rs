@@ -201,7 +201,10 @@ main(m: MainArgs) {
 }
 
 #[test]
-fn a_long_chain_is_shown_whole_back_to_its_first_binding() {
+fn a_long_chain_shows_the_line_reported_and_the_four_lines_before_it() {
+    // The chain runs from `a0` on line 2 to the line reported, line 27: 26 lines. The message
+    // shows line 27 and lines 23 to 26, where `a20` to `a24` are read, and counts the other 21
+    // (DESIGN sec:diagnostics, "An error that spans several lines"; spec 113ed93).
     let mut src = String::from("main(m: MainArgs) {\n  a0 = 1;\n");
     for i in 1..25 {
         src += &format!("  a{i} = a{} + 1;\n", i - 1);
@@ -210,13 +213,17 @@ fn a_long_chain_is_shown_whole_back_to_its_first_binding() {
     let out = rejected(&src);
     let s = steps(&out);
     assert!(!out.contains("goes back further"), "{out}");
-    for i in 1..25 {
+    for i in 0..25 {
         let t = format!("`a{i}` is int here");
-        assert_eq!(s.iter().filter(|x| **x == t).count(), 1, "{t}: {out}");
+        let want = usize::from(i >= 20);
+        assert_eq!(s.iter().filter(|x| **x == t).count(), want, "{t}: {out}");
     }
-    assert!(s.contains(&"`a0` is 1 here"), "{out}");
-    assert!(
-        s.contains(&"`a0` is defined as this expression, 1"),
+    assert!(!s.contains(&"`a0` is 1 here"), "{out}");
+    assert_eq!(
+        s.iter()
+            .filter(|x| **x == "... (additional lines not shown: 21)")
+            .count(),
+        1,
         "{out}"
     );
 }
@@ -232,14 +239,25 @@ fn a_value_read_twice_is_derived_once() {
     src += "  m.stdout <- \"x\" ++ a39;\n}\n";
     let out = rejected(&src);
     let s = steps(&out);
+    // The chain runs from line 2 to the line reported, line 42: 41 lines. Lines 38 to 41 hold
+    // the bindings of `a36` to `a39`, each derived once; the other 36 lines are counted
+    // (spec 113ed93).
     assert!(
-        s.contains(&"`a0` is defined as this expression, 1"),
+        !s.contains(&"`a0` is defined as this expression, 1"),
         "{out}"
     );
     for i in 1..40 {
         let t = format!("`a{i}` is defined as this expression, int");
-        assert_eq!(s.iter().filter(|x| **x == t).count(), 1, "{t}: {out}");
+        let want = usize::from(i >= 36);
+        assert_eq!(s.iter().filter(|x| **x == t).count(), want, "{t}: {out}");
     }
+    assert_eq!(
+        s.iter()
+            .filter(|x| **x == "... (additional lines not shown: 36)")
+            .count(),
+        1,
+        "{out}"
+    );
 }
 
 #[test]

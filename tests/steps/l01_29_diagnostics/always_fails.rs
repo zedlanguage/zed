@@ -327,6 +327,60 @@ fn a_chain_of_three_names_to_a_negated_zero_rat_prints_as_written() {
     );
 }
 
+/// A derivation along a chain of names on five lines shows every line (DESIGN.md
+/// sec:diagnostics, QUESTIONS A111: "With two to five lines in all, every line is shown").
+#[test]
+fn a_derivation_on_five_lines_shows_every_line() {
+    let out = shown("w = -0r;\ny = w;\nv = y;\nz = v;\nf(x: rat) = x / z;\n");
+    for line in 1..=5 {
+        assert!(out.contains(&format!(" {line} | ")), "line {line}:\n{out}");
+    }
+    assert!(
+        out.contains("1:5: `w` is defined as this expression, -0r"),
+        "{out}"
+    );
+    assert!(!out.contains("additional lines not shown"), "{out}");
+}
+
+/// On six lines, the derivation shows the line reported and the four nearest before it, then
+/// one note with the count of the lines left out, in A111's format (DESIGN.md sec:diagnostics,
+/// spec 113ed93): the definition of `w` on line 1 is left out, its use on line 2 is shown.
+/// A negative control: before the cut, every line was shown (red on main).
+#[test]
+fn a_derivation_on_six_lines_leaves_out_the_line_farthest_before() {
+    let out = shown("w = -0r;\ny = w;\nv = y;\nu = v;\nz = u;\nf(x: rat) = x / z;\n");
+    for line in 2..=6 {
+        assert!(out.contains(&format!(" {line} | ")), "line {line}:\n{out}");
+    }
+    assert!(!out.contains(" 1 | "), "{out}");
+    assert!(!out.contains(" 1:5: "), "{out}");
+    assert!(out.contains("2:5: `w` is -0r here"), "{out}");
+    assert_eq!(
+        out.matches("... (additional lines not shown: 1)").count(),
+        1,
+        "{out}"
+    );
+}
+
+/// A cycle longer than five names is shown with every name. The derivation of a value cannot
+/// come back to a step it is inside, since a name is used only below its definition; a cycle
+/// is a definition in terms of itself, which elaboration rejects naming each name (step
+/// L1.16), and the five-line cut leaves it whole.
+#[test]
+fn a_cycle_of_six_names_shows_every_name() {
+    let src = "a1 = a6 + 1;\na2 = a1 + 1;\na3 = a2 + 1;\na4 = a3 + 1;\na5 = a4 + 1;\n\
+               a6 = a5 + 1;\n";
+    let out = rejected(src);
+    for name in ["a1", "a2", "a3", "a4", "a5", "a6"] {
+        assert!(out.contains(&format!("`{name}`")), "{name}:\n{out}");
+    }
+    assert!(
+        out.contains("are defined in terms of each other's values"),
+        "{out}"
+    );
+    assert!(!out.contains("additional lines not shown"), "{out}");
+}
+
 /// A chain to `0r` prints `0r`, with no `-`, though `-0r` is written earlier in the text.
 #[test]
 fn a_chain_of_names_to_zero_rat_prints_its_own_literal() {

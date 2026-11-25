@@ -21,7 +21,7 @@ fn deriving_through_values_read_twice_scales() {
     scaling::check(
         "the derivation of a chain read twice at each of n bindings",
         n,
-        |k| derived_through_values_read_twice(&srcs[&k]),
+        |k| derived_through_values_read_twice(&srcs[&k], k),
     );
 }
 

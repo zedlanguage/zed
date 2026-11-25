@@ -1306,7 +1306,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 // A tuple written out keeps no type of its own (`Seen`).
                 let kept = (!matches!(e.kind, ExprKind::Tuple(_))).then(|| t.clone());
-                self.seen.insert(e.span, (kept, src));
+                let new = (kept, src);
+                self.seen_written(e.span, self.seen.get(&e.span), &new);
+                self.seen.insert(e.span, new);
                 m.ty(t);
             }
             Frame::Const(t) => {
@@ -1344,6 +1346,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 {
                     self.lit_ops.insert(span);
                     if x.expr.is_some_and(|e| self.lit_open.contains(&e.span)) {
+                        self.opened(span);
                         self.lit_open.insert(span);
                     }
                 }
@@ -7350,6 +7353,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 self.lit_ops.insert(span);
                 if opened {
+                    self.opened(span);
                     self.lit_open.insert(span);
                     for e in [x.expr, y.expr].into_iter().flatten() {
                         self.lit_open_within(e);
@@ -7413,6 +7417,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if literal(e, None).is_some() || !self.lit_open.insert(e.span) {
                 continue;
             }
+            self.opened(e.span);
             match &e.kind {
                 ExprKind::Binary(_, a, b) => todo.extend([&**a, &**b]),
                 ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
