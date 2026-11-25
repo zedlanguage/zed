@@ -75,6 +75,7 @@ fn spreadsheet_all_depend_buffer(n: usize) -> f64 {
 ///    (`Sheet::spread`): O(1) instructions and bytes a cell besides its digits.
 /// 3. Each line printed gathers its entries in name order from the ordered map of defined
 ///    cells, O(n), and joins them, O(the line's bytes).
+///
 /// So the instructions and the bytes are O(out(n)), but for the one output `String`: the meter
 /// counts each regrowth as a new block of the full new size, so its bytes are about twice its
 /// last capacity, `2^⌈log2 out(n)⌉`, a step function of the output. The cost is the sum of these
@@ -83,10 +84,10 @@ fn spreadsheet_all_depend_buffer(n: usize) -> f64 {
 /// 2^26; the output at 1600 lies just past 2^25), so the bench holds both measures to the
 /// capacity's ratio, the step included. Before it the bench was held to power 2 (84): 65.3 times
 /// the instructions, 84.9 times the bytes on cdf07ac4f, deferred by TESTS-scaling-limit-10_5 and
-/// back with row M0-scaling-10_5. The output's count is checked against the program's output at
-/// 200 here. Measured 65.3 times the instructions and 84.9 times the bytes (b24-scale1); with
-/// the whole output copied at each line printed (negative control, not committed), 138.2 times
-/// the instructions, which this test fails.
+/// back with row M0-scaling-10_5; the same on main df1591984 (b24-scale1). With the whole output
+/// copied at each line printed (negative control, not committed), 138.2 times the instructions,
+/// which this test fails. The output's count is checked against the program's output at 200
+/// here.
 #[test]
 fn spreadsheet_edits_of_a_cell_that_every_cell_depends_on() {
     let input = &SPREADSHEET_ALL_DEPEND;

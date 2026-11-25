@@ -302,6 +302,7 @@ fn the_search_for_the_stop_binds_each_definition_a_bounded_number_of_times() {
 /// 4. after `b0`, the prefix `c1` (`n + 1`), the prefix `c1, b1` (`n + 2`), which binds again
 ///    the functions and stops, and so ends the walk (`End::Again`), and the run of `c1`'s
 ///    value (`n + 1`).
+///
 /// At 512 that is 7,454 lets, 14.56 a function, and at 4,096 54,178, 13.23 a function: the
 /// `9n` and the prefixes' `4n − 1` are 13 lets a function, and the prelude adds `O(log n)` in
 /// all.
