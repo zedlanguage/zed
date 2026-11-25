@@ -1887,17 +1887,24 @@ if [ "$runtimes" != "$(cat "$logbase/runtimes" 2>/dev/null)" ]; then
       echo "$name $rest"
     fi
   done <"$out/pieces" >"$out/linking"
-  # The first linking piece runs alone, the others after it side by side. After a runtime change
-  # the first build makes the prelinked runtime (crates/zed-native/src/link.rs, `prelinked`)
-  # while every other build waits on its lock, a wait inside each waiting test's `timeout 60` of
-  # `zedc build`. Run side by side, about 20 pieces at load 47 to 96 on v5e6 failed there with
-  # exit 124 after 60.2 to 62.5 s (FAIL-warm-binaries-rc101-cause); the share of the lock in
-  # those 60 s was not measured. Run alone, the first piece makes the object while only its own
-  # tests wait, and the other pieces find it made.
+  # The first linking piece runs alone, so that it makes the prelinked runtime
+  # (crates/zed-native/src/link.rs, `prelinked`) and the others find it made. The others then run
+  # side by side, each test binary with `side_threads` test threads, so that all their tests
+  # together run about one per core. Each test runs `zedc build` under `timeout 60`, and a test
+  # binary runs as many tests at once as there are cores: on v5e6 (24 cores) the 11 side pieces
+  # with no bound reached load 379, and 15 tests of 5 pieces failed with exit 124
+  # (FAIL-warm-binaries-rc101-cause, 2026-11-25); running the first piece alone did not change
+  # that. With the bound, in one run every piece passed at load 39 to 49 (most of it from outside
+  # the warm step), the longest in 12 s; in an earlier run with the same bound, load 20 to 36,
+  # 6 tests of 4 pieces still failed with exit 124, a cause not yet found.
+  side=$(($(wc -l <"$out/linking") - 1))
+  side_threads=$((cores / (side < jobs ? (side > 0 ? side : 1) : jobs)))
+  [ "$side_threads" -ge 1 ] || side_threads=1
   if [ ! -s "$out/linking" ] || {
     head -n 1 "$out/linking" | xargs --process-slot-var=slot -L 1 bash -c 'warm "$@"' _
     first=$?
-    tail -n +2 "$out/linking" | xargs -P "$jobs" --process-slot-var=slot -L 1 bash -c 'warm "$@"' _ &&
+    tail -n +2 "$out/linking" |
+      RUST_TEST_THREADS=$side_threads xargs -P "$jobs" --process-slot-var=slot -L 1 bash -c 'warm "$@"' _ &&
       [ "$first" = 0 ]
   }; then
     printf '%s\n' "$runtimes" >"$out/runtimes"
