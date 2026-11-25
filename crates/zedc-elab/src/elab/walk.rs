@@ -222,7 +222,8 @@ enum Frame<'a> {
     Stream(Vec<bool>, Option<Quantifier>),
     /// `split`, `lines` or `concat`, its prim, once its operands are elaborated: the term of
     /// the receiver of `x.w(…)`, which comes first (plan row FP-ops-strings); and
-    /// `round(x, ties: …)`, its one operand (plan row CAST-round-whole).
+    /// `round(x, ties: …)`, its one operand (plan row CAST-round-whole); and `int(s, base: b)`,
+    /// its two (plan row PARSE-int-base).
     Strings(Option<Term>, Prim),
     /// `x.zip(y)` once `y` is elaborated: `x`'s term (step L5.2).
     Zip(Term),
@@ -1616,6 +1617,20 @@ impl<'a> Elab<'a> {
             };
             m.k(Frame::Strings(None, p));
             m.seq(vec![x], false);
+            return;
+        }
+        // `int(s, base: b)` is the primitive `CastIntBase` of `s` and `b` (plan row
+        // PARSE-int-base); the checker showed `b` in `2..=36`.
+        if let ExprKind::Name(n) = &callee.kind
+            && n == "int"
+            && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_)))
+            && let [s] = call.positional
+            && let [(name, b)] = call.named
+            && name == "base"
+            && !call.curry
+        {
+            m.k(Frame::Strings(None, Prim::CastIntBase));
+            m.seq(vec![s, b], false);
             return;
         }
         // `split(s, sep)`, `lines(s)` and `concat(pieces, sep: s)` where the name is the

@@ -9740,6 +9740,84 @@ impl<'t, 'a> Ck<'t, 'a> {
             m.each(Args::of(c.positional, c.named).exprs());
             return;
         }
+        // `int(s, base: b)` (plan row PARSE-int-base): the cast of a text in base `b`, a call of
+        // the signature of its own ([`int_base_sig`]), whose parameter names `s` and `base`
+        // place the arguments and whose declared range shows `b` in `2..=36`. Written with
+        // the value before the dot, `s.int(base: 16)`, or with other names, the call is
+        // reported as any word's named argument is.
+        if c.w == "int"
+            && !c.curry
+            && of.is_none()
+            && let [_] = c.positional
+            && let [(name, _)] = c.named
+            && name == "base"
+        {
+            // The rule "Operation that always fails" (DESIGN.md sec:failure), as `int("x")` has
+            // it ([`Self::word_atoms`]): a text and a base both written as literals, the base in
+            // `2..=36`, are read by the kernel, and a call that gives an atom is rejected. A
+            // base outside the range is left to the need of `base`. Complexity tradeoff: one
+            // run of the reader, O(M(n) log n) for n digits (`zed_kernel::num::read_radix`),
+            // what the program pays when it runs, under the fold's bound on memory
+            // ([`kernel_folded`]); any other operand is not read.
+            if let (ExprKind::Str(parts), ExprKind::Int { radix, digits }) =
+                (&c.positional[0].kind, &c.named[0].1.kind)
+                && let Some(text) = (parts.iter())
+                    .map(|p| match p {
+                        StrPart::Text(t) => Some(t.as_str()),
+                        StrPart::Hole(_) => None,
+                    })
+                    .collect::<Option<String>>()
+                && let Ok(Some(b @ Value::Int(2..=36))) = Value::int_text(digits, *radix)
+                && let Some(a @ Value::Atom(_)) =
+                    kernel_folded(Prim::CastIntBase, vec![Value::str(&text), b])
+            {
+                let at = c.positional[0].span;
+                let written = self.code(Some(at)).unwrap_or("this text").to_string();
+                let base = self
+                    .code(Some(c.named[0].1.span))
+                    .unwrap_or("b")
+                    .to_string();
+                let mut notes = vec![Note {
+                    span: at,
+                    text: format!("`int` cannot read this text in base {base}").into(),
+                }];
+                notes.extend(self.derive(&[at]));
+                let menu = [
+                    format!(
+                        "repair: read a text known only when the program runs, such as a \
+                         parameter `s: String`: `int(s, base: {base})` gives the number where `s` \
+                         is one and `{a}` where it is not"
+                    ),
+                    format!(
+                        "repair: write `{a}` in place of this call, where the failure is meant"
+                    ),
+                    "repair: write `#bug(\"…\")` in place of this call, where it is never meant \
+                     to be reached"
+                        .to_string(),
+                ];
+                notes.extend(menu.into_iter().map(|text| Note {
+                    span: c.span,
+                    text: text.into(),
+                }));
+                self.rejects_with(
+                    Row::AlwaysFails,
+                    c.span,
+                    format!(
+                        "`int` here always fails: its operand `{written}` in base {base} gives \
+                         `{a}`, so this call never gives a value"
+                    ),
+                    notes,
+                );
+                m.k(Frame::Fail(None));
+                m.each(Args::of(c.positional, c.named).exprs());
+                return;
+            }
+            // No site: elaboration builds the primitive `CastIntBase` from the call's own
+            // arguments, so no signature is recorded for it.
+            let f = Ty::func(int_base_sig());
+            let args = Args::of(c.positional, c.named);
+            return self.call_value(m, &f, c.w.into(), None, args, false, None, None, c.span);
+        }
         if c.named.is_empty() && !c.curry && n == k {
             return match k {
                 1 => self.word(m, c.w, c.positional, receiver, c.span),

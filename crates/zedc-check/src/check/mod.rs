@@ -16265,6 +16265,45 @@ fn word_sig(w: &str) -> Arc<Sig> {
     })
 }
 
+/// The signature of `int(s, base: b)` (plan row PARSE-int-base; DESIGN.md sec:corner_cases,
+/// "Casts are domain proofs"): the positional `s` and the named `base`, declared
+/// `int[2..=36]`, so each call shows its base there as a call of a declared function shows an
+/// argument in its parameter's range (DESIGN.md L1.39), and the one arrow of the kernel's
+/// table, `(String, int) -> int | #invalid`. The names are those DESIGN.md writes, and the
+/// elaborator reads them from the call, not from this signature.
+fn int_base_sig() -> Arc<Sig> {
+    let base = WrittenRange::new(Some(Value::Int(2)), Some(Value::Int(36)));
+    let nowhere = Span { start: 0, end: 0 };
+    Arc::new(Sig {
+        params: vec![
+            SParam {
+                name: "s".into(),
+                positional: true,
+                default: None,
+                range: None,
+            },
+            SParam {
+                name: "base".into(),
+                positional: false,
+                default: None,
+                range: Some(ParamRange::Int(base.clone())),
+            },
+        ],
+        arrows: prim_arrows(Prim::CastIntBase),
+        bounds: BTreeMap::new(),
+        data: false,
+        dense: Dense::No,
+        keys: None,
+        word: None,
+        needs: vec![Need::declared_range(1, "base".into(), base, nowhere)].into(),
+        own: BTreeSet::new(),
+        held: BTreeSet::new(),
+        named: 0,
+        hull: None,
+        facts: Default::default(),
+    })
+}
+
 /// The type of the bytes `utf8` gives and `fromUtf8` reads (step L1.39c): a family of ints keyed
 /// by ints. The checker has no int-range types before step L10, so neither the keys
 /// from 0 nor the bytes in `0 ..< 256` are stated here; the kernel gives `#badUtf8` for an int

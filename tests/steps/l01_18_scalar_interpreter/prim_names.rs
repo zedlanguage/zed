@@ -16,10 +16,10 @@ use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 /// plan row RANGE-open-walk), or as `++` on two lists, which elaboration tells from `++` on two
 /// strings by the operands' types (plan row PERF-list-concat-shared), or as a function value
 /// or a call through one that the function called places (DESIGN.md sec:values_morphisms,
-/// "The function called places the arguments"), or as `round(x, ties: #away)`, a call of the
-/// word `round` with a named argument. A refusal names them by the form DESIGN.md writes, or
-/// else as the kernel's printer writes them.
-const UNNAMED: [Prim; 25] = [
+/// "The function called places the arguments"), or as `round(x, ties: #away)` and
+/// `int(s, base: b)`, calls of the words `round` and `int` with a named argument. A refusal
+/// names them by the form DESIGN.md writes, or else as the kernel's printer writes them.
+const UNNAMED: [Prim; 26] = [
     Prim::Entries,
     Prim::Tuple,
     Prim::TupleGet,
@@ -45,6 +45,7 @@ const UNNAMED: [Prim; 25] = [
     Prim::Place,
     Prim::CallNamed,
     Prim::RoundTiesAway,
+    Prim::CastIntBase,
 ];
 
 /// `f` applied to `n` functions where data is needed: the one refusal every primitive has.

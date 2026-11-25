@@ -14,6 +14,7 @@ mod f32;
 mod failures;
 mod float_mod;
 mod floats;
+mod int_base;
 mod literals;
 mod prim_names;
 mod rat_text;

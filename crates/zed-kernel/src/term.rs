@@ -267,6 +267,12 @@ pub enum Prim {
     Trunc,
     /// `awayFromZero(x)`: rounded away from zero.
     AwayFromZero,
+    /// `int(s, base: b)`: the text `s` read as an integer in base `b`, `2 <= b <= 36`, its
+    /// digits `0` to `9` then the letters `a` to `z` in either case, an optional `-` before
+    /// them and no prefix; `#invalid` for a text that is not such an integer (DESIGN.md
+    /// sec:corner_cases, "Casts are domain proofs", QUESTIONS A110; plan row PARSE-int-base).
+    /// The checker proves `b` in `2..=36` (a declared range of the parameter `base`).
+    CastIntBase,
 }
 
 impl Prim {
@@ -289,7 +295,7 @@ impl Prim {
     /// (test `every_primitive_is_listed_once_in_code_order`). The one list of them (row
     /// DRY-ast-walkers, REPORT-dryA5 row 11): the ZIR binary form numbers primitives by it
     /// (`zedc::zir::text::PRIMS` is this list), and the kernel's arrow tests walk it.
-    pub const ALL: [Prim; 89] = {
+    pub const ALL: [Prim; 90] = {
         use Prim::*;
         [
             Add,
@@ -381,6 +387,7 @@ impl Prim {
             Trunc,
             AwayFromZero,
             FloatMod,
+            CastIntBase,
         ]
     };
 
@@ -481,6 +488,7 @@ impl Prim {
             Trunc => 86,
             AwayFromZero => 87,
             FloatMod => 88,
+            CastIntBase => 89,
         }
     }
 
@@ -693,6 +701,9 @@ impl Prim {
             // The float formats alone, as for `sqrt`; no atom, since the checker proves the
             // modulus finite and greater than `0.0` (DESIGN.md sec:domains, "`floatMod`").
             FloatMod => list![a(&[F64, F64], F64, &[]), a(&[F32, F32], F32, &[])],
+            // The checker proves the base in `2..=36`; a text that is no integer of that base
+            // is `#invalid`.
+            CastIntBase => list![a(&[S, I], I, INVALID)],
             Len => list![a(&[S], I, &[])],
             CodePoint => list![a(&[S], I, NOT_SCALAR)],
             Scalar => list![a(&[I], S, NOT_SCALAR)],

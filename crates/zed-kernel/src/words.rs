@@ -683,6 +683,25 @@ fn refused(op: &'static str, e: TooLarge) -> KernelError {
     KernelError::NumberTooLarge { op, need: e }
 }
 
+/// `int(s, base: b)` (plan row PARSE-int-base; DESIGN.md sec:corner_cases, "Casts are domain
+/// proofs", QUESTIONS A110): an optional `-` and the digits of base `b`, `0` to `9` then `a` to
+/// `z` in either case, with no `+` and no prefix such as `0x`; `#invalid` for any other text. A
+/// base outside `2..=36`, which the checker proves a checked program never passes, is
+/// `#invalid` as well. Cost: O(n log^2 n) for `n` digits ([`crate::num::read_radix`]).
+pub(crate) fn int_base(s: &Text, b: i64) -> Result<Value, KernelError> {
+    let Some(radix) = u32::try_from(b).ok().filter(|r| (2..=36).contains(r)) else {
+        return Ok(Value::atom("invalid"));
+    };
+    let s = s.try_flat().map_err(|e| unread("int", s.len(), e))?;
+    let (sign, digits) = signed(&s);
+    Ok(
+        match crate::num::read_radix(digits, radix).map_err(|e| refused("int", e))? {
+            Some(n) => Value::int(BigInt::from_biguint(sign, n)),
+            None => Value::atom("invalid"),
+        },
+    )
+}
+
 /// An optional `-` and decimal digits.
 fn read_int(s: &str) -> Result<Option<BigInt>, TooLarge> {
     let (sign, digits) = signed(s);

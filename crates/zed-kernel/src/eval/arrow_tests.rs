@@ -11,8 +11,8 @@ use crate::num::Rat;
 use crate::term::{Prim, ScalarArrow, ScalarType};
 use crate::value::{KernelError, Value};
 
-/// Every primitive, by [`Prim::code`]; the test checks the codes are `0 ..< 89`, each once.
-const ALL: [Prim; 89] = Prim::ALL;
+/// Every primitive, by [`Prim::code`]; the test checks the codes are `0 ..< 90`, each once.
+const ALL: [Prim; 90] = Prim::ALL;
 
 const TYPES: [ScalarType; 6] = [
     ScalarType::Bool,
@@ -103,7 +103,7 @@ fn disagreements(arrows_of: impl Fn(Prim) -> Option<&'static [ScalarArrow]>) -> 
 
 /// [`Prim::ALL`] lists each primitive once, at the position of its code, which the ZIR binary
 /// form relies on to number primitives by their codes. Not caught here: a new primitive given
-/// the next code, 89, and left out of the list; the lists of `l01_15_kernel_terms::complete`
+/// the next code, 90, and left out of the list; the lists of `l01_15_kernel_terms::complete`
 /// and `m0_07_canonicalization::prim_codes`, written apart, do not catch it either.
 #[test]
 fn every_primitive_is_listed_once_in_code_order() {

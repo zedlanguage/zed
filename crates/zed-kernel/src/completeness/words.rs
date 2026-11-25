@@ -96,6 +96,100 @@ fn int_of_a_string() {
     ]);
 }
 
+/// `int(s, base: b)` (plan row PARSE-int-base; DESIGN.md sec:corner_cases): an optional `-` and
+/// the digits of base `b`, `0` to `9` then `a` to `z` in either case, with no `+` and no
+/// prefix; anything else `#invalid`. Edge digits of each base (its least and greatest digit and
+/// the first digit past it), the four examples DESIGN.md gives, the bases outside `2..=36` the
+/// checker never passes, and a number wider than a word.
+#[test]
+fn int_of_a_string_in_a_base() {
+    let read = |t: &str, b: i64| {
+        let Value::Str(text) = s(t) else {
+            unreachable!("`s` makes a string")
+        };
+        crate::words::int_base(&text, b).expect("no memory refused")
+    };
+    let cases: &[(&str, i64, Value)] = &[
+        ("755", 8, int(493)),
+        ("ff", 16, int(255)),
+        ("1011", 2, int(11)),
+        ("1F", 16, int(31)),
+        ("1f", 16, int(31)),
+        ("-ff", 16, int(-255)),
+        ("-0", 2, int(0)),
+        ("007", 8, int(7)),
+        ("0", 2, int(0)),
+        ("1", 2, int(1)),
+        ("2", 2, atom("invalid")),
+        ("7", 8, int(7)),
+        ("8", 8, atom("invalid")),
+        ("9", 10, int(9)),
+        ("a", 10, atom("invalid")),
+        ("z", 36, int(35)),
+        ("Z", 36, int(35)),
+        ("10", 36, int(36)),
+        ("g", 16, atom("invalid")),
+        ("7fffffffffffffff", 16, int(i64::MAX)),
+        ("-8000000000000000", 16, int(i64::MIN)),
+        ("8000000000000000", 16, big(BigInt::from(1u64 << 63))),
+        ("", 16, atom("invalid")),
+        ("-", 16, atom("invalid")),
+        ("+5", 16, atom("invalid")),
+        ("0x1F", 16, atom("invalid")),
+        ("0b101", 2, atom("invalid")),
+        ("1_0", 16, atom("invalid")),
+        (" 5", 16, atom("invalid")),
+        ("--1", 16, atom("invalid")),
+        ("４２", 16, atom("invalid")),
+        ("10", 1, atom("invalid")),
+        ("10", 37, atom("invalid")),
+        ("10", -16, atom("invalid")),
+    ];
+    for (t, b, want) in cases {
+        let got = read(t, *b);
+        assert!(
+            same(&got, want),
+            "int({t:?}, base: {b}) = {got}, expected {want}"
+        );
+    }
+}
+
+/// The reading by halves gives the value num-bigint's whole reading gives, at every radix of 2
+/// to 36 and at leaves of 1, 3 and 2048 digits, on texts of 1 to 300 digits whose digits run
+/// through the whole radix; and at radix 10 the decimal reader's value. Negative control: a
+/// text with one digit changed reads as another number.
+#[test]
+fn the_leaf_does_not_change_a_radix_value() {
+    use crate::num::crossover::{read_digits, read_radix};
+    use num_bigint::BigUint;
+    for radix in 2..=36u32 {
+        for n in [1usize, 2, 3, 7, 64, 300] {
+            let digits: Vec<u8> = (0..n)
+                .map(|i| ((i * 7 + 3) % radix as usize) as u8)
+                .collect();
+            let whole = BigUint::from_radix_be(&digits, radix).expect("digits below the radix");
+            for leaf in [1usize, 3, 2048] {
+                assert_eq!(
+                    read_radix(&digits, radix, leaf),
+                    whole,
+                    "radix {radix}, {n} digits, leaf {leaf}"
+                );
+            }
+            if radix == 10 {
+                let text: String = digits.iter().map(|d| char::from(b'0' + d)).collect();
+                assert_eq!(read_digits(&text, 3), whole);
+            }
+            let mut other = digits.clone();
+            other[0] = (other[0] + 1) % radix as u8;
+            assert_ne!(
+                read_radix(&other, radix, 3),
+                whole,
+                "radix {radix}, {n} digits"
+            );
+        }
+    }
+}
+
 /// `rat(s)`: what `String` writes for a `rat` (`3r`, `-1r/3r`), the same without the `r`s, or a
 /// decimal with digits on both sides of the point; a zero denominator and any other text
 /// `#invalid` (DESIGN.md L1.18).

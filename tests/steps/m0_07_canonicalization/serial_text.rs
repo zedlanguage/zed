@@ -264,6 +264,7 @@ pub(super) mod m07 {
             Trunc => "`trunc`",
             AwayFromZero => "`awayFromZero`",
             FloatMod => "`floatMod`",
+            CastIntBase => "`int(s, base: b)`",
         }
     }
 

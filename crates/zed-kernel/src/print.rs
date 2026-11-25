@@ -179,6 +179,7 @@ fn name(p: Prim) -> &'static str {
         Sqrt => "sqrt",
         Fma => "fma",
         FloatMod => "floatMod",
+        CastIntBase => "intBase",
         Abs => "abs",
         Len => "len",
         Lower => "lower",
@@ -270,6 +271,8 @@ impl Prim {
             Prim::Last => ".last",
             Prim::Atom => "#_(..)",
             Prim::RoundTiesAway => "round(x, ties: #away)",
+            // The call DESIGN.md sec:corner_cases writes; `intBase` is no word of a program.
+            Prim::CastIntBase => "int(s, base: b)",
             p => name(p),
         }
     }

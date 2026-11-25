@@ -5227,15 +5227,50 @@ pub(super) fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
     if text.len() <= leaf {
         return super::digit_text::read_whole(text);
     }
-    let mut parts: Vec<BigUint> = (0..text.len().div_ceil(leaf))
+    let parts: Vec<BigUint> = (0..text.len().div_ceil(leaf))
         .map(|i| {
             let end = text.len() - i * leaf;
             super::digit_text::read_whole(&text[end.saturating_sub(leaf)..end])
         })
         .collect();
-    // `parts[i]` is below `power`, `10^(leaf 2^j)` at level `j`, and is the `i`-th group of
+    join_levels(parts, BigUint::from(10u32).pow(leaf as u32))
+}
+
+/// The value of a nonempty list of digit values `digits`, each below `radix`, most significant
+/// first, `2 <= radix <= 36`, read in leaves of at most `leaf` digits joined by halves as
+/// [`read_digits_by`] joins them (plan row PARSE-int-base, the cast `int(s, base: b)`).
+//
+// Complexity tradeoff: O(n h + M(n) log n) for `n` digits and leaves of `h` digits, as for
+// decimal digits above: a leaf is read by num-bigint's `from_radix_be`, O(h^2) for a radix
+// that is not a power of 2 (linear for one that is), and the levels are joined by
+// `join_levels`, one widest product a level. Nothing is given up against a single
+// `from_radix_be` of the whole text, which is O(n^2). The leaf is `LEAF_DIGITS`, measured for
+// decimal digits only; a leaf of a larger radix holds more bits, so the O(h^2) leaves cost
+// more there, and the measured crossover may differ (not measured). The scaling benches of
+// `int(s, base: b)` measured 11.04 (base 36, 2^20 digits) and 11.01 (base 7, 2^21) times the
+// instructions at 8n, over the limit of 10.5 that n log^2 n meets only from about 1.6 million
+// words; they are deferred to plan row RADIX-nlog2-10_5 with the other radix readings, in
+// wt/scratch/deferred-tests/RADIX-nlog2-10_5.rs.
+pub(super) fn read_radix_by(digits: &[u8], radix: u32, leaf: usize) -> BigUint {
+    assert!(!digits.is_empty(), "a nonempty list of digits");
+    let leaf_of = |d: &[u8]| BigUint::from_radix_be(d, radix).expect("digits below the radix");
+    if digits.len() <= leaf {
+        return leaf_of(digits);
+    }
+    let parts: Vec<BigUint> = (0..digits.len().div_ceil(leaf))
+        .map(|i| {
+            let end = digits.len() - i * leaf;
+            leaf_of(&digits[end.saturating_sub(leaf)..end])
+        })
+        .collect();
+    join_levels(parts, BigUint::from(radix).pow(leaf as u32))
+}
+
+/// `sum parts[i] * power^i`, `parts` nonempty with every part below `power`, `radix^leaf`: the
+/// groups of `leaf` digits from the low end, joined in pairs level by level.
+fn join_levels(mut parts: Vec<BigUint>, mut power: BigUint) -> BigUint {
+    // `parts[i]` is below `power`, `radix^(leaf 2^j)` at level `j`, and is the `i`-th group of
     // `leaf 2^j` digits from the low end; the top one may have fewer.
-    let mut power = BigUint::from(10u32).pow(leaf as u32);
     while parts.len() > 1 {
         // Each high part is below the power, so it has at most the power's words.
         let other = power.iter_u64_digits().len();
@@ -5254,7 +5289,8 @@ pub(super) fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
             false => BigUint::zero(),
         };
     }
-    // Unreachable: `read_digits_by` asserts a nonempty text, so `parts` starts nonempty and
+    // Unreachable: both callers pass more than one leaf (a text of one leaf is read whole
+    // before), so `parts` starts nonempty and
     // each round leaves `ceil(len / 2) >= 1` parts.
     parts.pop().expect("a nonempty text has a part")
 }
@@ -5536,6 +5572,12 @@ pub mod crossover {
     /// reads it but with texts of at most `leaf` digits read whole; `leaf` at least 1.
     pub fn read_digits(digits: &str, leaf: usize) -> BigUint {
         super::read_digits_by(digits, leaf)
+    }
+
+    /// Digit values below `radix`, most significant first, as [`crate::num::read_radix`]
+    /// reads them but with leaves of at most `leaf` digits; `leaf` at least 1.
+    pub fn read_radix(digits: &[u8], radix: u32, leaf: usize) -> BigUint {
+        super::read_radix_by(digits, radix, leaf)
     }
 
     /// `super::bezout` with the lift of `lift` bits.

@@ -2700,6 +2700,35 @@ pub fn read_decimal(digits: &str) -> Result<Option<BigUint>, TooLarge> {
     Ok(Some(read_digits(digits)))
 }
 
+/// The value of a text of digits of base `radix`, `2 <= radix <= 36`: `0` to `9` and then the
+/// letters `a` to `z` in either case, as [`char::to_digit`] reads them; `Ok(None)` when it is
+/// empty or holds anything else (a sign, a prefix, an underscore), and [`TooLarge`] when the
+/// system refuses the memory for reading it, asked before anything is built. Radix 10 is
+/// [`read_decimal`]. Plan row PARSE-int-base, the cast `int(s, base: b)`.
+pub fn read_radix(text: &str, radix: u32) -> Result<Option<BigUint>, TooLarge> {
+    assert!((2..=36).contains(&radix), "a radix of 2 to 36");
+    if radix == 10 {
+        return read_decimal(text);
+    }
+    if text.is_empty() || !text.bytes().all(|b| char::from(b).is_digit(radix)) {
+        return Ok(None);
+    }
+    // Complexity tradeoff: the memory asked for is the digit values, 8 bits a digit, and the
+    // reading by halves, which holds parts and products of the number's width: `read_decimal`
+    // asks 48 bits a decimal digit, 48 / log2 10 = 14.4 bits for each bit of the number, and
+    // this asks 16 for each of the `ceil(log2 radix)` bits a digit can hold, at most 96 + 8
+    // bits a digit at radix 36. An estimate scaled from the decimal measurement, not measured
+    // itself.
+    let len = BigUint::from(text.len());
+    let bits = u64::from(radix.next_power_of_two().trailing_zeros());
+    room(&len * bits, &len * (8 + 16 * bits))?;
+    let digits: Vec<u8> = text
+        .bytes()
+        .map(|b| char::from(b).to_digit(radix).expect("checked above") as u8)
+        .collect();
+    Ok(Some(fast::read_radix_by(&digits, radix, LEAF_DIGITS)))
+}
+
 /// The value of a nonempty text of ASCII decimal digits, with no check of its size.
 ///
 /// num-bigint reads a text one machine word of digits at a time into the whole number read so

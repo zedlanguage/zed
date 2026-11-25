@@ -4453,6 +4453,9 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         (Prim::FloatMod, [Float32(x), Float32(m)]) => Value::float32(
             crate::num::float_mod::float_mod_total(x.get(), m.get(), f32::NAN),
         ),
+        (Prim::CastIntBase, [Str(s), Int(b)]) => crate::words::int_base(s, *b)?,
+        // A base too wide for an `i64` is outside `2..=36`.
+        (Prim::CastIntBase, [Str(_), Value::Big(_)]) => Value::atom("invalid"),
         (Prim::Concat, [Str(a), Str(b)]) => Str(crate::text::Text::join(a, b)?),
         // NaN in, NaN out, as for every float operation (DESIGN.md sec:domains, NaN rule 5):
         // IEEE 754 `pow` gives `pow(NaN, 0) = 1` and `pow(1, NaN) = 1`, so a NaN operand is
