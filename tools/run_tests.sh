@@ -1425,8 +1425,12 @@ alone="
 # tests alone on v5e3 (24 cores, load 3.6; TEST-short-zed_kernel-split, 2026-11-22): 75.6 s
 # together, the whole piece 11.7 s with 8 threads, its time set by its slowest test, 9.8 s. The
 # six below took 9.8, 5.5, 5.4, 3.9, 3.8 and 3.5 s (32 s of the 75.6); the other 707 took
-# 2.7 s or less each and 43.6 s together, about 5.5 s spread over 8 threads. No name here is
-# part of another test's name but the first bes test's, which is the second's (both listed).
+# 2.7 s or less each and 43.6 s together, about 5.5 s spread over 8 threads. The rest of the
+# piece, then 774 tests, took 32.9 s with 8 threads on hm5 (8 cores, load 6.5 to 9.6) and 12.6 s
+# on v5e1 (24 cores, load 11 to 15), set by its slowest test, 9.2 s on v5e1. The 17 after the six
+# are those over 1.0 s there in the first of two runs: 9.2, 3.3, 3.2, 2.7, 2.5, 2.4, 2.3, 2.0, 2.0,
+# 2.0, 1.5, 1.3, 1.2, 1.2, 1.1, 1.1 and 1.0 s (FAIL-short-zed-kernel-near-limit, 2026-11-25). No name here is part of another test's name
+# but the first bes test's, which is the second's (both listed).
 short_alone="
   poly::tests::one_decide_spends_at_most_four_budgets
   types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random
@@ -1434,6 +1438,23 @@ short_alone="
   eval::binder_tests::reads_lies_between_the_tree_walk_and_the_shared_bound_on_deeply_shared_terms
   poly::roots::tests::the_search_is_bounded_on_families_that_defeat_the_cuts
   types::bdd::tests::a_chain_joined_at_once_is_the_chain_joined_literal_by_literal
+  types::bdd::set::tests::tied_sets_and_ids_compare_each_key_a_few_times
+  types::bdd::set::tests::consecutive_numbers_give_a_logarithmic_height
+  types::bdd::set::tests::rows_sharing_a_prefix_or_a_suffix_give_a_logarithmic_height
+  types::empty::tests::random_types_agree_with_membership_on_a_finite_set_of_values
+  types::bdd::set::tests::consecutive_names_give_a_logarithmic_height
+  types::bdd::set::tests::a_tied_map_of_rows_of_one_digest_compares_each_row_a_few_times
+  num::tests::valuations_from_the_top_agree_with_the_tests_on_the_way_up
+  types::bdd::set::tests::structured_digests_give_a_logarithmic_height
+  types::empty::tests::overlaps_are_the_same_in_every_order_on_random_cells
+  types::bdd::list::tests::blocks_chosen_against_a_fixed_hash_give_a_logarithmic_height
+  types::empty::tests::the_check_of_a_list_witness_is_membership_on_chains_with_exits
+  types::bdd::tests::connecting_keeps_the_value_of_the_unfolded_expression
+  types::bdd::set::tests::colliding_digests_add_at_most_their_number_to_the_height
+  types::bdd::set::tests::a_program_can_write_many_rows_of_one_digest
+  types::empty::tests::a_list_witness_jumps_a_chain_of_tails_to_the_right_tail
+  types::bdd::set::tests::chosen_literals_give_a_logarithmic_height
+  types::bdd::tests::lists_agree_with_the_diagrams_apply_built
 "
 # The pieces of step folder $1 in the test binary $2, or of its module $3 (a path in the
 # binary) when one is given. A module's piece filters by `$3::`, which libtest matches anywhere in

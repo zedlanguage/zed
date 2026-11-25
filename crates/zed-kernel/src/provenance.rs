@@ -1536,6 +1536,49 @@ mod tests {
         );
     }
 
+    /// The bytes `Tally::enter` allocates for a one-member set, the case `Held::of` makes for
+    /// each member (SCALE-near-prov-members): a tally of `m` failures is cloned, as a family's
+    /// tally is made from its base's, and `m` sets of one new failure each are entered, at
+    /// `m` = 512, 4,096 (a leaf of the trie full) and 32,768 (8 times as many). Each insert
+    /// copies a path the clone shares once and then changes it in place, and the maps of the
+    /// entries and the counted sets grow by doubling, so the bytes a member stay flat: 270, 254
+    /// and 252 (Colab hm5, 2026-11-25). With the union put back for these sets (`if false` for
+    /// the test of `WIDTH`) they were 709, 1,230 and 1,228, a new leaf of 512 bytes or more on
+    /// each union. The bound, 512 bytes a member, lies between the two. The ratio bench
+    /// `l01_20_provenance::bench::the_origins_of_a_failure_with_many_members_scale` cannot see
+    /// that variant: its cost has the same order, and it measured 12.14 times the work there
+    /// under the proved bound of 20 (PROV-negative-control-weak).
+    #[test]
+    fn a_tally_enters_one_member_sets_in_place_at_flat_bytes_a_member() {
+        for m in [512u32, 4096, 32_768] {
+            let base: Vec<u32> = (0..m).collect();
+            let s = Sets::new(&[(1, 0, base.as_slice())]);
+            let mut t = Tally::default();
+            t.enter(&s.sets[&1], &s.nodes);
+            let mut u = t.clone();
+            let ones: Vec<(u64, Sets)> = (0..m)
+                .map(|i| {
+                    let id = 2 + u64::from(i);
+                    (id, Sets::new(&[(id, 0, &[2 * m + i][..])]))
+                })
+                .collect();
+            let before = zed_alloc_count::allocated();
+            for (id, one) in &ones {
+                u.enter(&one.sets[id], &one.nodes);
+            }
+            let bytes = zed_alloc_count::allocated() - before;
+            assert!(
+                bytes < 512 * u64::from(m),
+                "{m} one-member sets entered: {bytes} bytes, {} a member, not under 512",
+                bytes / u64::from(m)
+            );
+            assert_eq!(found(&t), base, "the tally cloned from, {m}");
+            let mut all = base.clone();
+            all.extend(2 * m..3 * m);
+            assert_eq!(found(&u), all, "the clone after {m} entries");
+        }
+    }
+
     /// Whether `v` is a failure or holds one where [`Holds`] reads, read as a tree.
     fn holds_by_tree(v: &Value) -> bool {
         match v {

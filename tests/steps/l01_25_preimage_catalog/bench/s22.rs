@@ -248,6 +248,12 @@ fn chain_t3_gaps_scales() {
     scales("t3_gaps", 256);
 }
 
+/// The chain that leaves `i64`, with the negative inputs meeting `t_k < 0`.
+#[test]
+fn chain_t3_gaps_five_no_scales() {
+    scales("t3_gaps_five_no", 256);
+}
+
 #[test]
 fn chain_mod7_scales() {
     scales("mod7", 256);

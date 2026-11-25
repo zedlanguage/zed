@@ -501,3 +501,43 @@ fn ends_past_i128_take_the_transfer_before() {
         }
     }
 }
+
+/// Whether two wide ends meet (`Num::at_most_succ`, the test of each merge of two intervals) is
+/// read from their digits and allocates nothing; forming `b + 1` allocated the bytes of the end
+/// at each call where the ends do not overlap, about 512 for ends of 4,096 bits, and was the
+/// largest share of the bytes of `bench::s22::chain_t3_gaps_five_no_scales` that grew faster than
+/// `n log n` (S22-scaling-10_5). Checked on ends that overlap, meet and leave a gap, positive and
+/// negative, with a carry through every digit (`2^4096 - 1` and `2^4096`).
+#[test]
+fn wide_ends_are_found_to_meet_without_allocating() {
+    let mut cases = Vec::new();
+    for sign in [1, -1] {
+        let s = |n: Num| match sign {
+            1 => n,
+            _ => -&n,
+        };
+        for k in [0, 1, 1000] {
+            let b = s(pow2(4096, k));
+            cases.push((&b + &num(1), b.clone(), true));
+            cases.push((&b + &num(2), b.clone(), false));
+            cases.push((b.clone(), &b + &num(5), true));
+        }
+        let full = s(&pow2(4096, 0) - &num(1));
+        cases.push((&full + &num(1), full.clone(), true));
+        cases.push((&full + &num(3), full.clone(), false));
+    }
+    let calls = 100;
+    let before = zed_alloc_count::allocated();
+    for _ in 0..calls {
+        for (a, b, meet) in &cases {
+            assert_eq!(a.at_most_succ(b), *meet, "{a} and {b}");
+        }
+    }
+    let bytes = zed_alloc_count::allocated() - before;
+    assert_eq!(
+        bytes,
+        0,
+        "{} calls allocated {bytes} bytes",
+        calls * cases.len()
+    );
+}

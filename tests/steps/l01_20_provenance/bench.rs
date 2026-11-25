@@ -69,8 +69,11 @@ fn the_origins_of_a_failure_with_many_members_scale() {
     // share. Before SCALE-near-prov-members a tally entered each one-member set by a union that
     // allocated a new node on each level where the two differ: with that union put back, 84.4 MB
     // and 967.8 MB at 4096 and 32,768 against 75.8 MB and 765.6 MB (12.14 times the work, under
-    // the limit 20, so the unit test `a_tally_enters_small_sets_in_place_and_large_ones_by_union`
-    // holds the insert, not this bench).
+    // the limit 20). This bench cannot catch that variant: its cost has the order of the
+    // proof, a larger constant only, so its ratio stays under the proved bound. The kernel test
+    // `a_tally_enters_one_member_sets_in_place_at_flat_bytes_a_member` catches it by the bytes a
+    // member, 254 in place and 1,230 by the union at 4,096, against a bound of 512
+    // (PROV-negative-control-weak).
     let cost = members_log_members_times_levels;
     assert_eq!(cost(32_768) / cost(4096), 20.0);
     let terms = inputs(4096, product_of_atoms);

@@ -616,8 +616,54 @@ impl zed_collections::intervals::Discrete for Int {
 
     #[inline]
     fn at_most_succ(&self, other: &Int) -> bool {
-        // Without forming `other + 1` where the order alone answers.
-        self <= other || *self <= other + &Int::ONE
+        // Without forming `other + 1` where the order alone answers, or where both are wide.
+        self <= other
+            || match (&self.0, &other.0) {
+                (Repr::Big(a), Repr::Big(b)) => is_succ(a, b),
+                _ => *self <= other + &Int::ONE,
+            }
+    }
+}
+
+/// Whether `a == b + 1`, read from the digits of both without forming `b + 1`. The sum of two
+/// wide ends allocated as many bytes as the ends hold at each merge of two intervals that do not
+/// meet, `Θ(k²)` bytes over the `k` merges of a chain whose ends grow to `Θ(k)` bits; it was the
+/// largest share of the bytes that grew faster than `n log n` in `l01_25_preimage_catalog`
+/// `bench::s22::chain_t3_gaps_five_no_scales` (0.73 MB at 256 and 21.8 MB at 2048, under DHAT;
+/// S22-scaling-10_5). The work is that of the sum, `O(w)` for ends of `w` words.
+///
+/// Proof: for `b >= 0`, `b + 1 = |b| + 1 > 0`, so `a == b + 1` exactly when `a > 0` and
+/// `|a| == |b| + 1`. For `b < 0`, `b + 1 = -(|b| - 1) <= 0`, so `a == b + 1` exactly when
+/// `a <= 0` and `|a| == |b| - 1`, that is `|b| == |a| + 1` (`b = -1` gives `a = 0`, `|a| + 1 =
+/// 1 = |b|`).
+fn is_succ(a: &BigInt, b: &BigInt) -> bool {
+    match b.sign() {
+        Sign::Minus => a.sign() != Sign::Plus && magnitude_is_succ(b.magnitude(), a.magnitude()),
+        Sign::NoSign | Sign::Plus => {
+            a.sign() == Sign::Plus && magnitude_is_succ(a.magnitude(), b.magnitude())
+        }
+    }
+}
+
+/// Whether `x == y + 1`. Adding 1 to `y` adds it to its lowest 64-bit digit and carries through
+/// each digit that was `u64::MAX`, turning it to 0, so the digits of `y + 1` are made one at a
+/// time from those of `y` and compared with those of `x`; a carry out of the top digit is one
+/// more digit, 1. `BigUint` keeps no leading zero digits, and neither has `y + 1` (its top digit
+/// is that of `y` or more, or the carried 1), so equal values have equal digit lists. `y = 0`
+/// has no digits and `y + 1` is the one digit 1.
+fn magnitude_is_succ(x: &BigUint, y: &BigUint) -> bool {
+    let mut xs = x.iter_u64_digits();
+    let mut carry = true;
+    for d in y.iter_u64_digits() {
+        let (sum, out) = d.overflowing_add(u64::from(carry));
+        if xs.next() != Some(sum) {
+            return false;
+        }
+        carry = out;
+    }
+    match carry {
+        true => xs.next() == Some(1) && xs.next().is_none(),
+        false => xs.next().is_none(),
     }
 }
 
@@ -2725,6 +2771,7 @@ impl Num {
             // conjecture) the only two such powers that differ by 1 are 8 and 9, so these
             // never do.
             (Word::Kept(a), Word::Kept(b)) if perfect(a) && perfect(b) => false,
+            (Word::Big(a), Word::Big(b)) => is_succ(a, b),
             _ => *self <= other + &Num::ONE,
         }
     }
@@ -3190,6 +3237,54 @@ mod tests {
         pub(super) static CORE_APPROXES: Cell<u64> = const { Cell::new(0) };
         /// The largest `bits` of those calls.
         pub(super) static CORE_APPROX_BITS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// `is_succ` and the two `at_most_succ` that use it agree with `a == b + 1` and `a <= b + 1`
+    /// formed by num-bigint, on every pair of: 0, ±1, ±2, the values next to ±2^63, ±2^64 (one
+    /// 64-bit digit full, a carry into a new digit), ±2^128, ±2^192 and 2^128 + 2^64 (a carry
+    /// through one and through two full digits, and a full digit in the middle), and random
+    /// values of up to 300 bits each with its successor and predecessor (S22-scaling-10_5).
+    #[test]
+    fn successors_of_wide_values_are_found_without_the_sum() {
+        let (mut rng, _) =
+            crate::seed::Rng::fresh("successors_of_wide_values_are_found_without_the_sum");
+        let one = BigInt::from(1);
+        let mut centers = vec![BigInt::from(0), BigInt::from(2)];
+        for e in [63u32, 64, 128, 192] {
+            centers.push(&one << e);
+        }
+        centers.push((&one << 128u32) + (&one << 64u32));
+        for _ in 0..12 {
+            let bits = 1 + rng.below(300);
+            let words: Vec<u32> = (0..bits.div_ceil(32))
+                .map(|_| rng.next_u64() as u32)
+                .collect();
+            centers.push(BigInt::from(
+                BigUint::new(words) >> (32 * bits.div_ceil(32) - bits),
+            ));
+        }
+        let mut values = Vec::new();
+        for c in centers {
+            for v in [&c - 1, c.clone(), &c + 1] {
+                values.push(-&v);
+                values.push(v);
+            }
+        }
+        for a in &values {
+            for b in &values {
+                let succ = *a == b + 1;
+                assert_eq!(is_succ(a, b), succ, "{a} {b}");
+                let at_most = *a <= b + 1;
+                let (na, nb) = (Num::from(a.clone()), Num::from(b.clone()));
+                assert_eq!(na.at_most_succ(&nb), at_most, "Num {a} {b}");
+                let (ia, ib) = (Int::from(a.clone()), Int::from(b.clone()));
+                assert_eq!(
+                    zed_collections::intervals::Discrete::at_most_succ(&ia, &ib),
+                    at_most,
+                    "Int {a} {b}"
+                );
+            }
+        }
     }
 
     /// `floor_root(k)` and `ceil_root(k)` of values not kept, for `k` 2, 3 and 7, by the
