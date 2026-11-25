@@ -302,3 +302,18 @@ fn hull_sides_of_a_disjunction_grow_linearly_in_its_disjuncts() {
         },
     );
 }
+
+/// One `project_each_boxed` of [`one_wide_disjunction`] with `k` names and `k` disjuncts, at
+/// `k` and `8k` (row PERF-disjunct-base-group-each: 39.2 times the instructions at 64 as at 8,
+/// 26.5M and 1,039M on hm3, each disjunct settled with its base group of `k` rows).
+#[test]
+fn a_disjunction_over_k_linked_names_scales() {
+    scaling::check_inputs(
+        "one disjunction of k disjuncts over k linked names, project_each_boxed",
+        8,
+        |k| one_wide_disjunction(k, k),
+        |(s, f, syms)| {
+            boxed_names(s, f, syms);
+        },
+    );
+}

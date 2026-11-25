@@ -34,3 +34,16 @@ fn hulls_of_linked_copies_are_projected_in_linear_work() {
         assert!(hulls.values().all(|h| h.is_ok()));
     });
 }
+
+/// Batch projection ([`project_each`]) of [`linked_copies`] with their disjunctions, all `9n`
+/// symbols asked, at `n` and `8n` copies (row FAIL-batch-linked-copies-growth: 0.16, 0.43 and
+/// 1.55 s at 1, 2 and 4 copies after 3b67f115c, about Theta(n^2)).
+#[test]
+fn batch_projection_of_linked_copies_scales() {
+    let inputs = scaling::inputs(2, linked_copies);
+    scaling::check("batch projection of linked copies with their disjunctions", 2, |n| {
+        let (f, syms) = &inputs[&n];
+        let (each, _) = project_each(f, syms).expect("project_each answers");
+        assert_eq!(each.len(), 9 * n);
+    });
+}
