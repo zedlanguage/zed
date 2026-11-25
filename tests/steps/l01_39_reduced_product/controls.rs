@@ -1,6 +1,6 @@
 //! Each reduction on its own and the enumeration of listed sets.
 
-use zed_kernel::term::build::{app, if_, lam, lit, prim, var};
+use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::types::Type;
 use zed_kernel::{Prim, Term, Value};
 use zedc::store::affine::Bounds;
@@ -242,6 +242,42 @@ fn a_constraint_whose_form_does_not_show_it_ends_removes_nothing() {
     );
     let s = written(among(&[0, 1, 2, 3]), even);
     assert_eq!(s.get("n").ints().to_string(), "[0..=0, 2..=2]");
+}
+
+/// A call to the program's own function at a listed point (DESIGN.md sec:constraints, "How a
+/// constraint reaches the domains"; the author's answer A of 2026-11-24, plan row
+/// ENUM-no-calls): `isPrime(p)` at `p` in `{2, 4, 9, 15}` is evaluated as partial evaluation
+/// of the checker's own code with the call as input, here with a body whose form shows it
+/// ends (no recursion at L1), and keeps the one member where it gives `true`.
+#[test]
+fn a_call_to_the_programs_own_function_at_a_listed_point_is_evaluated() {
+    // `isPrime(p) = p == 2 || p > 2 && p mod 2 != 0 && p mod 3 != 0`, right below 25.
+    let not_by = |d: i64| {
+        prim(
+            Prim::Ne,
+            vec![prim(Prim::Mod, vec![var("p"), lit(d)]), lit(0)],
+        )
+    };
+    let body = prim(
+        Prim::Or,
+        vec![
+            prim(Prim::Eq, vec![var("p"), lit(2)]),
+            prim(
+                Prim::And,
+                vec![
+                    prim(Prim::Gt, vec![var("p"), lit(2)]),
+                    prim(Prim::And, vec![not_by(2), not_by(3)]),
+                ],
+            ),
+        ],
+    );
+    let t = let_(
+        "isPrime",
+        lam(&["p"], body),
+        app(var("isPrime"), vec![var("n")]),
+    );
+    let s = written(among(&[2, 4, 9, 15]), t);
+    assert_eq!(s.get("n").ints().to_string(), "[2..=2]");
 }
 
 #[test]

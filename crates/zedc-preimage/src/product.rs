@@ -20455,6 +20455,18 @@ impl Scope {
                     ),
                     None => c.clone(),
                 };
+                // A call to the program's own function here, `isPrime(p)` at a listed `p`, is
+                // partial evaluation of the checker's own code with the call as input (DESIGN.md
+                // sec:constraints, "How a constraint reaches the domains"; the author's answer
+                // A, 2026-11-24, plan row ENUM-no-calls): the one evaluator the mix runs a
+                // static term with (`zedc_stage`), with no world, so no port is read and no
+                // effect made, on a term the pending filter has shown to end by its form
+                // (`stage::ends`), the mix's own rule today. Not yet: the rules of "What
+                // partial evaluation evaluates" beyond that (proved work, O(N log N), the limits
+                // W and M per call), plan rows MIX-budget and PE-what-to-evaluate; a call they
+                // leave to run time will then give no definite value here, and is treated as
+                // the failures below are. Test
+                // `l01_39_reduced_product::controls::a_call_to_the_programs_own_function_at_a_listed_point_is_evaluated`.
                 Evaluator::new(World::new()).run(&t)
             };
             // A constraint that gives neither `true` nor `false` at a root of an obligation's
