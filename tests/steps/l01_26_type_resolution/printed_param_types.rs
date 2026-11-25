@@ -219,5 +219,8 @@ fn random_printed_parameter_types_are_what_calls_accept() {
         }
         compared += 1;
     }
-    assert_eq!(compared, 40, "only {compared} functions compared in {drawn} draws");
+    assert_eq!(
+        compared, 40,
+        "only {compared} functions compared in {drawn} draws"
+    );
 }

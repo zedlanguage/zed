@@ -30,7 +30,11 @@ fn many_divisions_on_one_line_print_the_line_once() {
             divisions,
             |src| {
                 let out = printed(src);
-                assert_eq!(out.matches(&src[..20]).count(), 1, "the line is printed once");
+                assert_eq!(
+                    out.matches(&src[..20]).count(),
+                    1,
+                    "the line is printed once"
+                );
                 std::hint::black_box(out);
             },
         );

@@ -312,7 +312,12 @@ fn tests_sharing_a_helper_get_a_directory_each() {
     let two = on_thread(Some("test_dir two"), move || test_dir(base)).expect("the second test");
     assert_eq!(one, process_tmpdir().join(base).join("test_dir one"));
     assert_eq!(two, process_tmpdir().join(base).join("test_dir two"));
-    assert!(one.is_dir() && two.is_dir(), "{} and {}", one.display(), two.display());
+    assert!(
+        one.is_dir() && two.is_dir(),
+        "{} and {}",
+        one.display(),
+        two.display()
+    );
     assert_eq!(
         on_thread(Some("test_dir one"), move || test_dir(base)),
         Ok(one),
@@ -362,16 +367,24 @@ fn two_builds_keep_the_claims_of_each() {
     // In the other build the second test is the only one naming the path, so it passes, and
     // its claim goes to that build's record alone.
     let (passed, out) = alone_as(second, Some("another-build"));
-    assert!(passed, "the second test names the path in another build:\n{out}");
+    assert!(
+        passed,
+        "the second test names the path in another build:\n{out}"
+    );
     let other = claims_record().with_file_name("another-build");
     let lines = std::fs::read_to_string(&other).unwrap();
     assert!(
-        lines.lines().all(|l| l != format!("{first}\t{SHARED_BUILDS}")),
+        lines
+            .lines()
+            .all(|l| l != format!("{first}\t{SHARED_BUILDS}")),
         "the lines of {}:\n{lines}",
         other.display()
     );
     let (passed, out) = alone(second);
-    assert!(!passed, "the second test names the path in this build too:\n{out}");
+    assert!(
+        !passed,
+        "the second test names the path in this build too:\n{out}"
+    );
     let expected = format!(
         "two tests use the scratch path {SHARED_BUILDS}: {first} and {second}; give each a \
          name of its own"
