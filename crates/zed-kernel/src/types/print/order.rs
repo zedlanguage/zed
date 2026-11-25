@@ -12,9 +12,10 @@
 //! 5. named types (`String`, structs, aliases, recursive types) and type variables, by name
 //!    ([`name_cmp`]); two recursive types of one name by their arguments, which no printer
 //!    meets yet, since the union of two recursive types is their unfolding;
-//! 6. tuples; then every struct, `{..}`;
+//! 6. tuples, by their components ([`seq_cmp`]); then every struct, `{..}`;
 //! 7. functions;
-//! 8. atoms: every atom `#_` first, then by name, the bare atom before the one with a payload;
+//! 8. atoms: every atom `#_` first, then by name, the bare atom before the one with a payload,
+//!    two payloads of one name by their components ([`seq_cmp`]);
 //! 9. `_`, every value.
 //!
 //! Character literals and types have no member here yet: no printer writes one.
@@ -232,6 +233,27 @@ pub fn cmp_values(a: &Value, b: &Value) -> Ordering {
     cmp(&of_value(a), &of_value(b)).then_with(|| a.cmp(b))
 }
 
+/// Two sequences in the order of a union (DESIGN.md sec:diagnostics): element by element by
+/// `cmp`, and a sequence that is the start of the other first. Tuples are so ordered by their
+/// components, "a shorter tuple before a longer one that starts the same way", and two atoms
+/// of one name by their payloads' components; a type is so ordered by its members, each list
+/// sorted by [`cmp`] ([`Member`]s of `crate::types::Type::members`), which is the order of
+/// two components (MSG-union-order-tuples).
+///
+/// The lexicographic order of a total preorder `cmp`, which is a total preorder: two
+/// sequences that differ first at `i` compare as their elements at `i` do, and one that is
+/// the start of the other compares by length. O(k) calls of `cmp` for the k elements of the
+/// shorter. Test `sequences_compare_element_by_element_shorter_first`.
+pub fn seq_cmp<T>(a: &[T], b: &[T], mut cmp: impl FnMut(&T, &T) -> Ordering) -> Ordering {
+    for (x, y) in a.iter().zip(b) {
+        let o = cmp(x, y);
+        if o.is_ne() {
+            return o;
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
 /// Sorts `items` by the member each has, stably, in O(m log m) for m items: the order a
 /// union prints them in.
 pub fn sort_by_member<T>(items: &mut [T], member: impl Fn(&T) -> Member<'_>) {
@@ -325,6 +347,33 @@ mod tests {
                 "T", "T1x2", "T1x10", "T05", "T5", "T5a", "T10", "T_", "Ta", "U"
             ]
         );
+    }
+
+    /// Sequences compare element by element, a shorter one first on a common start
+    /// (MSG-union-order-tuples).
+    #[test]
+    fn sequences_compare_element_by_element_shorter_first() {
+        let (one, two) = (Value::Int(1), Value::Int(2));
+        let (int, a, b) = (
+            Member::NumberType(NumberType::Int),
+            Member::Atom {
+                name: "a",
+                payload: false,
+            },
+            Member::Atom {
+                name: "b",
+                payload: false,
+            },
+        );
+        assert_eq!(seq_cmp(&[int, a], &[int, b], cmp), Ordering::Less);
+        assert_eq!(seq_cmp(&[int, b], &[int, a], cmp), Ordering::Greater);
+        assert_eq!(seq_cmp(&[int], &[int, a], cmp), Ordering::Less);
+        assert_eq!(seq_cmp(&[int, a], &[int], cmp), Ordering::Greater);
+        assert_eq!(seq_cmp(&[int, a], &[int, a], cmp), Ordering::Equal);
+        assert_eq!(seq_cmp::<Member>(&[], &[], cmp), Ordering::Equal);
+        // The first difference decides, whatever follows it.
+        let (m1, m2) = (Member::Number(&one), Member::Number(&two));
+        assert_eq!(seq_cmp(&[m1, b, b], &[m2, a], cmp), Ordering::Less);
     }
 
     /// Two literals of one value and one carrier, `-0.0` and `0.0`, are ordered by the value
