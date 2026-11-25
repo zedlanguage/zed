@@ -475,9 +475,9 @@ impl Product {
     ///
     /// Where cases of different classes were joined (`ProductDomains::classes`), the set is
     /// that union met with `ints` and the class, exact: one `Classed` of several classes lists
-    /// the sets whose class is not the union's ([`Classed::join_all`](zedc_lattice::classed::Classed::join_all)),
-    /// O(v) for their v values, which the joins themselves never do (row
-    /// LIMITS-classed-listing-per-set).
+    /// the sets whose class is not the union's
+    /// ([`Classed::join_all`](zedc_lattice::classed::Classed::join_all)), O(v) for their v
+    /// values, which the joins themselves never do (row LIMITS-classed-listing-per-set).
     pub fn classed_in(&self, ints: &IntervalSet) -> zedc_lattice::classed::Classed {
         let own = self.own_classed(ints);
         match &self.classes {
