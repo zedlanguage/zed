@@ -24941,9 +24941,10 @@ impl Ty {
             let seqs: Vec<Vec<&Ty>> = ss
                 .iter()
                 .map(|s| {
-                    let fields = s.fields.values().flat_map(|t| {
-                        [name.next().expect("one name for each field"), t]
-                    });
+                    let fields = s
+                        .fields
+                        .values()
+                        .flat_map(|t| [name.next().expect("one name for each field"), t]);
                     s.items.iter().chain(fields).collect()
                 })
                 .collect();
@@ -27036,7 +27037,10 @@ mod tests {
         let one = Ty::tuple(vec![int()]);
         let long = pair(int(), atom("a")).union(&one);
         assert_eq!(long.to_string(), "(int,) | (int, #a)");
-        assert_eq!(one.union(&pair(int(), atom("a"))).to_string(), long.to_string());
+        assert_eq!(
+            one.union(&pair(int(), atom("a"))).to_string(),
+            long.to_string()
+        );
         // The first component decides, by the order of a union: `int` before a variable,
         // whose row has no kernel type.
         let var = pair(Ty::var("A".into()), atom("a")).union(&pair(int(), atom("b")));
