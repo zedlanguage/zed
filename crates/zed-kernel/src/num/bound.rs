@@ -402,12 +402,12 @@ fn ln_up(x: &BigUint) -> f64 {
 /// are pairwise coprime, a wide atom of a `Rat` (`Product::wide`) among them, since a `Rat`'s
 /// wide atoms are coprime to each other, to its listed primes and to its coefficients, and a
 /// pair with one goes through the quotient of the two, one `Rat`; so with one `a` listed the
-/// two `a` are coprime; then `a_1^x = a_2^y`
-/// with `x, y` not both 0 is impossible, since `x, y > 0` puts a prime of `a_1` into `a_2`, and
-/// one of them 0 makes a number above 1 equal 1. The other caller, [`cmp_without_base`], passes
-/// distinct atoms that may share primes, independent by the proof there. The height of an integer `a > 1` is `ln a`,
-/// so any `ln A_i >= max(ln a_i, 1)` meets the condition, and the bound holds for every such
-/// choice; this takes `ln A_i` as the upper bound [`ln_up`] of `ln a_i`, at least 1. A larger
+/// two `a` are coprime; then `a_1^x = a_2^y` with `x, y` not both 0 is impossible, since
+/// `x, y > 0` puts a prime of `a_1` into `a_2`, and one of them 0 makes a number above 1 equal
+/// 1. The other caller, [`cmp_without_base`], passes distinct atoms that may share primes,
+/// independent by the proof there. The height of an integer `a > 1` is `ln a`, so any
+/// `ln A_i >= max(ln a_i, 1)` meets the condition, and the bound holds for every such choice;
+/// this takes `ln A_i` as the upper bound [`ln_up`] of `ln a_i`, at least 1. A larger
 /// `b0` only weakens the bound (it is increasing in `log b0`), so `ln b0` is bounded above by
 /// `ln 2 + max(ln b1 - ln ln A2, ln b2 - ln ln A1)`, since `x + y <= 2 max(x, y)`, which stays
 /// in `f64` range for exponents of any width. Then `|Λ| >= e^-C = 2^-(C / ln 2)` with `C =
