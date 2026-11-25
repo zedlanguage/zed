@@ -968,8 +968,9 @@ struct Pending {
     needs: Vec<Span>,
     ty: Ty,
     /// Whether a `Lines` push of the value this fix's type is carried up to checks it
-    /// ([`Ck::push_carried`]): set for the fixes of a cast ([`Ck::int_not_whole`]), whose
-    /// type is the one the fixed program gives.
+    /// ([`Ck::push_carried`]): set for the fixes of a cast ([`Ck::int_not_whole`]) and the
+    /// repairs of an int power on a `rat` or a float ([`Ck::power_rejects`]), whose type is
+    /// the one the fixed program gives.
     at_push: bool,
 }
 

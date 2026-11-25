@@ -237,6 +237,36 @@ fn literals_refused_together_give_one_headline_and_no_repair_tried() {
     }
 }
 
+/// The `rat` repair of an int power is offered where the program with it written in is
+/// accepted, and only there (plan row FIX-power-fix-type-width). Its trial once typed
+/// `2r^(n - 5)` as `rat | #divByZero`, as if the base `2r` could be `0r`, so the `Lines` push
+/// did not check the power's repairs; it now does, and drops `rat(n)^(n - 5)` and
+/// `0r^(n - 5)`, whose `#divByZero` the push refuses, while `2r^(n - 5)` and `rat(k)^(n - 5)`
+/// for a `k` shown never 0 are kept. Each case is checked against the program with the repair
+/// written in.
+#[test]
+fn a_rat_power_repair_is_offered_where_the_repaired_program_is_accepted() {
+    for (body, power, repair, kept) in [
+        ("  m.stdout <- String(2^(n - 5));", "2^", "2r^", true),
+        (
+            "  k = n * n + 1;\n  m.stdout <- String(k^(n - 5));",
+            "k^",
+            "rat(k)^",
+            true,
+        ),
+        ("  m.stdout <- String(n^(n - 5));", "n^", "rat(n)^", false),
+        ("  m.stdout <- String(0^(n - 5));", "0^", "0r^", false),
+        ("  m.stdout <- 2^(n - 5);", "2^", "2r^", false),
+    ] {
+        let src = reading(body);
+        let out = rejected(&src);
+        let offered = out.contains(&format!("`{repair}(n - 5)`"));
+        assert_eq!(offered, kept, "{src}\n{out}");
+        let fixed = reading(&body.replacen(power, repair, 1));
+        assert_eq!(load(fixed.as_bytes()).is_ok(), kept, "{fixed}");
+    }
+}
+
 /// A lambda has no declaration, so the repairs of passing it an argument by name are the ones
 /// that need none: pass it by position, or declare a named function.
 #[test]

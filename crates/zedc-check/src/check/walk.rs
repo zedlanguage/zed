@@ -19734,7 +19734,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                     dropped = true;
                     continue;
                 }
-                Some(Some(got)) => self.note_offered(&note, got),
+                Some(Some(got)) => {
+                    let before = self.pending_fixes.len();
+                    self.note_offered(&note, got);
+                    // Checked at a push too ([`Self::push_carried`]): the trial gives the type
+                    // the repaired power has ([`Self::power_swapped`]).
+                    if self.pending_fixes.len() > before
+                        && let Some(f) = self.pending_fixes.last_mut()
+                    {
+                        f.at_push = true;
+                    }
+                }
                 _ => {}
             }
             kept.push((r, note));
@@ -19810,10 +19820,20 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         if w.span == p.at && matches!(w.form, Construct::Binary(BinaryOp::Pow, _)) {
             let at = [p.base, p.exponent_at][i];
-            let with = Arg {
-                at,
-                ..Arg::of(Ty::carrier(c))
-            };
+            // The base written `2r` for `2`, or `rat(x)` for `x`, is `0r` only where the int
+            // base is 0: `rat` of an int is exact (DESIGN.md step L1.17). An int base shown
+            // never 0 ([`Self::ints_without_zero`]) is so tried as a `rat` without `0r`, and
+            // the `rat` power then cannot fail (`0r` to a negative power is its one
+            // failure), so the trial gives the `rat` the fixed program gives, not
+            // `rat | #divByZero` (plan row FIX-power-fix-type-width).
+            let mut ty = Ty::carrier(c);
+            if (i, c) == (0, Carrier::Rat)
+                && let Some(Some(base)) = w.args.first()
+                && self.ints_without_zero(base)
+            {
+                ty = ty.without(&Ty::lit(&Value::rat(Rat::int(0.into()))).set);
+            }
+            let with = Arg { at, ..Arg::of(ty) };
             return self.written_with(&w.form.what(), w.span, [(i, with)]);
         }
         let j = (w.args.iter()).position(|a| a.as_ref().and_then(|a| a.at) == Some(p.at))?;
@@ -20587,13 +20607,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the `Lines` port refuses (plan row MSG-cast-no-carrier-first). The fixes of a type the
     /// port takes are kept. Nothing while a fix is tried, which carries nothing.
     ///
-    /// Only the fixes marked [`Pending::at_push`], those of a cast ([`Self::int_not_whole`]),
-    /// are checked here. Other fixes carry the type a trial of the construct gives by its
-    /// signature, which can hold an atom the fixed program does not give: `2r^(n - 5)` for
-    /// `2^(n - 5)` carries `rat | #divByZero`, though the base written is not zero and
-    /// `m.stdout <- String(2r^(n - 5));` checks; a push would refuse that atom and drop a fix
-    /// that works (test
-    /// `l01_29_diagnostics::explained::each_rejection_explains_itself_and_offers_its_repairs`).
+    /// Only the fixes marked [`Pending::at_push`] are checked here: those of a cast
+    /// ([`Self::int_not_whole`]) and the `rat` and float repairs of an int power
+    /// ([`Self::power_rejects`]), whose trial gives the type the fixed program gives. So
+    /// `rat(n)^(n - 5)` for `n^(n - 5)`, whose `#divByZero` for `n = 0` the push refuses, is
+    /// dropped, and `2r^(n - 5)`, whose base the trial knows is not `0r`
+    /// ([`Self::power_swapped`]), is kept (plan row FIX-power-fix-type-width; test
+    /// `l01_29_diagnostics::explained::a_rat_power_repair_is_offered_where_the_repaired_program_is_accepted`).
+    /// Other fixes carry the type a trial of the construct gives by its signature, which can
+    /// hold an atom the fixed program does not give, and a push would drop a fix that works.
     ///
     /// Complexity tradeoff: one trial push per type carried, each O(the value's type) as
     /// [`Self::pushed`] is; the fixes of one type are checked together, as at a construct
