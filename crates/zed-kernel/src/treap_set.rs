@@ -120,13 +120,15 @@ impl Elem for Arc<str> {
 }
 
 /// A node: its key, priority and weight, and over its subtree the number of keys, the sum of
-/// the weights and the union of the classes.
+/// the weights, the sum of the seeded weights ([`seeded`]) and the union of the classes. The
+/// node's own seeded weight is not kept: it is `keyed` less its children's ([`own_keyed`]).
 struct Node<T> {
     key: T,
     prio: u64,
     weight: u64,
     len: usize,
     sum: u64,
+    keyed: u64,
     classes: u32,
     left: Tree<T>,
     right: Tree<T>,
@@ -215,6 +217,45 @@ fn sum<T>(t: &Tree<T>) -> u64 {
     t.as_ref().map_or(0, |n| n.sum)
 }
 
+fn keyed<T>(t: &Tree<T>) -> u64 {
+    t.as_ref().map_or(0, |n| n.keyed)
+}
+
+/// The seeded weight of node `n` alone: its subtree's less its children's.
+fn own_keyed<T>(n: &Node<T>) -> u64 {
+    n.keyed
+        .wrapping_sub(keyed(&n.left))
+        .wrapping_sub(keyed(&n.right))
+}
+
+/// A weight through SipHash under a key drawn once per process from the system's random bytes
+/// (std's `RandomState`), for [`HashConsTable`]. Complexity tradeoff: the table first keyed its
+/// sets by the sum of the weights, which is public and in places linear (an `i64` weighs a
+/// fixed multiple of itself, so `{i, -i}` all weigh 0, and an integer literal's weight
+/// `mix(1, i)` is a bijection anyone can invert): `n` distinct sets of one sum went to one
+/// bucket, scanned on each set put in, `O(n^2)` (`sharing_sets_of_one_sum_scales` and
+/// `literal_types_of_one_sum_scale` in `bench.rs`, FREE2-tables-hashcons-bench). The sum
+/// itself cannot be seeded: it is in the digests and order of types (`types::Parts::hashes`,
+/// `cmp`), which must be the same on every run. Used: a second sum, of the weights through a
+/// pseudorandom function whose key no input sees, the incremental hash of a set by addition
+/// ("AdHash", Bellare and Micciancio, "A new paradigm for collision-free hashing:
+/// incrementality at reduced cost", EUROCRYPT 1997, LNCS 1233, pp. 163-192,
+/// doi:10.1007/3-540-69053-0_13, Crossref checked 2026-11-25). For two sets whose symmetric
+/// difference holds a key whose weight no other key of it has, the two sums of a random
+/// function's values are equal with probability `2^-64`, so a bucket holds the sets equal to
+/// the one put in and, in expectation, `O(1)` others. Not proved here that SipHash-1-3 (std's
+/// algorithm, "subject to change" by its documentation) is such a function; it is the one std
+/// uses against the same attack on its maps. Cost: 8 bytes a node and one hash per key put in
+/// ([`TreapSet::insert`]); a node made again takes its own seeded weight from its old counts
+/// ([`own_keyed`]). Results do not depend on the key: the table only ever gives a set an equal
+/// set's tree.
+fn seeded(weight: u64) -> u64 {
+    use std::hash::BuildHasher;
+    static KEY: std::sync::OnceLock<std::hash::RandomState> = std::sync::OnceLock::new();
+    KEY.get_or_init(std::hash::RandomState::new)
+        .hash_one(weight)
+}
+
 fn classes<T>(t: &Tree<T>) -> u32 {
     t.as_ref().map_or(0, |n| n.classes)
 }
@@ -233,6 +274,9 @@ fn again<T: Elem>(n: &Node<T>, left: Tree<T>, right: Tree<T>) -> Arc<Node<T>> {
         weight: n.weight,
         len: 1 + len(&left) + len(&right),
         sum: n.weight.wrapping_add(sum(&left)).wrapping_add(sum(&right)),
+        keyed: own_keyed(n)
+            .wrapping_add(keyed(&left))
+            .wrapping_add(keyed(&right)),
         classes: n.key.class() | classes(&left) | classes(&right),
         left,
         right,
@@ -292,14 +336,16 @@ fn split_absent<T: Elem>(mut t: Tree<T>, key: &T) -> (Tree<T>, Tree<T>) {
     while let Some(mut n) = t {
         let m = Arc::make_mut(&mut n);
         let before = m.key < *key;
+        // Read while both children are in place.
+        let own = own_keyed(m);
         t = match before {
             true => m.right.take(),
             false => m.left.take(),
         };
-        walk.push((n, before));
+        walk.push((n, before, own));
     }
     let (mut l, mut r) = (None, None);
-    for (mut n, before) in walk.into_iter().rev() {
+    for (mut n, before, own) in walk.into_iter().rev() {
         // Held only here, as made unique above: `make_mut` copies nothing.
         let m = Arc::make_mut(&mut n);
         match before {
@@ -311,6 +357,9 @@ fn split_absent<T: Elem>(mut t: Tree<T>, key: &T) -> (Tree<T>, Tree<T>) {
             .weight
             .wrapping_add(sum(&m.left))
             .wrapping_add(sum(&m.right));
+        m.keyed = own
+            .wrapping_add(keyed(&m.left))
+            .wrapping_add(keyed(&m.right));
         m.classes = m.key.class() | classes(&m.left) | classes(&m.right);
         *(if before { &mut l } else { &mut r }) = Some(n);
     }
@@ -585,6 +634,7 @@ impl<T: Elem> TreapSet<T> {
             return false;
         }
         let (prio, weight, class) = (key.priority(), key.weight(), key.class());
+        let kw = seeded(weight);
         let mut cur = &mut self.root;
         // The test is apart from the step down so that no borrow of `cur` outlives the loop.
         while cur
@@ -595,6 +645,7 @@ impl<T: Elem> TreapSet<T> {
                 let n = Arc::make_mut(n);
                 n.len += 1;
                 n.sum = n.sum.wrapping_add(weight);
+                n.keyed = n.keyed.wrapping_add(kw);
                 n.classes |= class;
                 cur = if key < n.key {
                     &mut n.left
@@ -607,6 +658,7 @@ impl<T: Elem> TreapSet<T> {
         *cur = Some(Arc::new(Node {
             len: 1 + len(&left) + len(&right),
             sum: weight.wrapping_add(sum(&left)).wrapping_add(sum(&right)),
+            keyed: kw.wrapping_add(keyed(&left)).wrapping_add(keyed(&right)),
             classes: class | classes(&left) | classes(&right),
             key,
             prio,
@@ -1011,7 +1063,7 @@ impl<T: Elem> PartialEq for TreapSet<T> {
 
 impl<T: Elem> Eq for TreapSet<T> {}
 
-/// A table of live sets by their sum of weights, so that equal sets made apart become one tree
+/// A table of live sets by their sum of seeded weights ([`seeded`]), so that equal sets made apart become one tree
 /// (plan row TYPE-hashcons): [`HashConsTable::share`] gives a set the root of an equal set the
 /// table holds, or puts its own root in. Two sets made apart, as `{0, 1, ..., n}` built up in two
 /// orders, then compare by [`TreapSet::ptr_eq`], `O(1)`, where `==` walked every node, `O(n)`,
@@ -1021,9 +1073,9 @@ impl<T: Elem> Eq for TreapSet<T> {}
 ///
 /// Complexity tradeoff: the naive way, comparing equal sets made apart in full each time,
 /// costs `O(n)` per comparison, `O(n k)` for `k` comparisons. Used: one `==` per set put in
-/// against the live sets of its sum and size, `O(n)` only where an equal set is alive (the walk
-/// of a set built in `O(n)` already) or on a collision of the 64-bit sums, then `O(1)` per
-/// comparison. Cost: a hash lookup per set put in, and a weak handle per live set.
+/// against the live sets of its seeded sum, `O(n)` only where an equal set is alive (the walk
+/// of a set built in `O(n)` already) or on a collision of the seeded sums, probability `2^-64`
+/// a pair whatever the input ([`seeded`]), then `O(1)` per comparison. Cost: a hash lookup per set put in, and a weak handle per live set.
 pub struct HashConsTable<T> {
     table: crate::digest::DigestMap<u64, Vec<std::sync::Weak<Node<T>>>>,
     held: usize,
@@ -1046,7 +1098,7 @@ impl<T: Elem> HashConsTable<T> {
         let Some(root) = &set.root else {
             return;
         };
-        let bucket = self.table.entry(root.sum).or_default();
+        let bucket = self.table.entry(root.keyed).or_default();
         bucket.retain(|w| w.strong_count() > 0);
         for w in bucket.iter() {
             let Some(other) = w.upgrade() else { continue };

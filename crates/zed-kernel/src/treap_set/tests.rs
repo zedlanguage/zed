@@ -28,6 +28,10 @@ fn checked(s: &TreapSet<i64>) -> Vec<i64> {
             .wrapping_add(sum(&n.left))
             .wrapping_add(sum(&n.right));
         assert_eq!(n.sum, s, "sum at {}", n.key);
+        let k = seeded(n.weight)
+            .wrapping_add(keyed(&n.left))
+            .wrapping_add(keyed(&n.right));
+        assert_eq!(n.keyed, k, "seeded sum at {}", n.key);
         assert_eq!(n.weight, n.key.weight(), "weight at {}", n.key);
         assert_eq!(n.prio, n.key.priority(), "priority at {}", n.key);
         assert_eq!(n.classes, 1, "classes at {}", n.key);
@@ -372,4 +376,27 @@ fn equal_sets_made_apart_become_one_tree() {
     let mut later = set(&mut (0..1000));
     table.share(&mut later);
     assert_eq!(Arc::strong_count(later.root.as_ref().unwrap()), 1);
+}
+
+/// FREE2-tables-hashcons-bench: the sets `{i, -i}` all weigh 0 (an `i64` weighs a fixed multiple
+/// of itself), yet the table keeps each in a bucket of its own, as it keys a set by its seeded
+/// sum ([`seeded`]); an equal set made apart still gets the first one's tree. Two of the 400
+/// seeded sums are equal with probability below `400^2 / 2^65`. Negative control: the sums of
+/// weights, which the table keyed by before, are one number.
+#[test]
+fn distinct_sets_of_one_sum_keep_buckets_of_their_own() {
+    let pair = |a: i64, b: i64| -> TreapSet<i64> { [a, b].into_iter().collect() };
+    let mut sets: Vec<TreapSet<i64>> = (1..=400).map(|i| pair(i, -i)).collect();
+    let mut again: Vec<TreapSet<i64>> = (1..=400).map(|i| pair(-i, i)).collect();
+    assert!(sets.iter().all(|s| s.sum() == 0), "the control: one sum");
+    let mut table = HashConsTable::default();
+    for s in sets.iter_mut().chain(&mut again) {
+        table.share(s);
+    }
+    assert_eq!(table.table.len(), 400);
+    assert!(table.table.values().all(|b| b.len() == 1));
+    for (s, t) in sets.iter().zip(&again) {
+        assert!(s.ptr_eq(t));
+        checked(s);
+    }
 }
