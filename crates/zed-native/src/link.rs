@@ -24,6 +24,8 @@ use zedc::suppress::Suppress;
 use zedc::work::{self, Stage};
 use zedc::zir::lower::lower_sited;
 
+use crate::section::{section, section_of};
+
 /// The system libraries the runtime library needs, as `rustc --print native-static-libs`
 /// lists them for this crate on x86-64 Linux with glibc.
 const SYSTEM_LIBS: &[&str] = &[
@@ -1304,29 +1306,6 @@ pub fn build_id(exe: &Path) -> Result<Vec<u8>, String> {
             exe.display()
         )
     })
-}
-
-/// The bytes of the section `name` in the executable or object file `exe`, if it has that
-/// section.
-pub(crate) fn section_of(exe: &Path, name: &str) -> Result<Option<Vec<u8>>, String> {
-    let file = std::fs::File::open(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
-    section(&object::ReadCache::new(file), exe, name)
-}
-
-/// The bytes of the section `name` in the object file or executable `data` read from `file`,
-/// if it has that section.
-fn section<'a, R: object::ReadRef<'a>>(
-    data: R,
-    file: &Path,
-    name: &str,
-) -> Result<Option<Vec<u8>>, String> {
-    use object::{Object as _, ObjectSection as _};
-    let at = |e: &dyn std::fmt::Display| format!("{}: {e}", file.display());
-    let object = object::File::parse(data).map_err(|e| at(&e))?;
-    object
-        .section_by_name(name)
-        .map(|s| s.data().map(<[u8]>::to_vec).map_err(|e| at(&e)))
-        .transpose()
 }
 
 /// Whether the archive `library` holds the build `id`: whether a member that its symbol index

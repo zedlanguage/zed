@@ -22,6 +22,8 @@ mod legal;
 #[cfg(target_os = "linux")]
 pub mod link;
 mod outcome;
+#[cfg(target_os = "linux")]
+mod section;
 pub mod sources;
 mod tables;
 

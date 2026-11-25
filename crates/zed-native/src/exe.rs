@@ -293,7 +293,7 @@ pub fn check(exe: &Path) -> Result<(), String> {
              `zedc build <file> -o <out>` wrote as <out>"
         )
     };
-    match crate::link::section_of(exe, PROGRAM_SECTION) {
+    match crate::section::section_of(exe, PROGRAM_SECTION) {
         Ok(Some(data)) => check_data(&data),
         Ok(None) => Err(not_one(&format!(
             "it has no section {PROGRAM_SECTION}, which holds the program"
