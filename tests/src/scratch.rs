@@ -101,7 +101,7 @@ fn binary_tmpdir() -> PathBuf {
 ///   ([`process_tmpdir`]) and finds the files it left. So each claim of a path is written to a
 ///   record all processes of this build of the binary share, as a line `<test>\t<path>`,
 ///   under an exclusive lock (`flock`) on the record, and each claim is checked against every
-///   line. The record is named by the build ([`claims_record`]), so a test renamed or a path
+///   line. The record is named by the build (`claims_record`), so a test renamed or a path
 ///   moved to another test in a new build is not held to the claims of the old one, and two
 ///   builds sharing one target directory keep a record each. One record shared by all builds
 ///   and emptied by a process of another build, as before, lost the claims of a build whenever

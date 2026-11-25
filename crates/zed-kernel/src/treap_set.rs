@@ -1063,8 +1063,8 @@ impl<T: Elem> PartialEq for TreapSet<T> {
 
 impl<T: Elem> Eq for TreapSet<T> {}
 
-/// A table of live sets by their sum of seeded weights ([`seeded`]), so that equal sets made apart become one tree
-/// (plan row TYPE-hashcons): [`HashConsTable::share`] gives a set the root of an equal set the
+/// A table of live sets by their sum of seeded weights (`seeded`), so that equal sets made
+/// apart become one tree (plan row TYPE-hashcons): [`HashConsTable::share`] gives a set the root of an equal set the
 /// table holds, or puts its own root in. Two sets made apart, as `{0, 1, ..., n}` built up in two
 /// orders, then compare by [`TreapSet::ptr_eq`], `O(1)`, where `==` walked every node, `O(n)`,
 /// at each comparison. The table holds weak handles, so it keeps no set alive; dead handles
@@ -1075,7 +1075,8 @@ impl<T: Elem> Eq for TreapSet<T> {}
 /// costs `O(n)` per comparison, `O(n k)` for `k` comparisons. Used: one `==` per set put in
 /// against the live sets of its seeded sum, `O(n)` only where an equal set is alive (the walk
 /// of a set built in `O(n)` already) or on a collision of the seeded sums, probability `2^-64`
-/// a pair whatever the input ([`seeded`]), then `O(1)` per comparison. Cost: a hash lookup per set put in, and a weak handle per live set.
+/// a pair whatever the input (`seeded`), then `O(1)` per comparison. Cost: a hash lookup per
+/// set put in, and a weak handle per live set.
 pub struct HashConsTable<T> {
     table: crate::digest::DigestMap<u64, Vec<std::sync::Weak<Node<T>>>>,
     held: usize,
