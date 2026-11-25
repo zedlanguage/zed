@@ -425,6 +425,69 @@ impl<W: Word> Montgomery<W> {
     }
 }
 
+/// Residues modulo an odd 64-bit `n > 1` in Montgomery form ([`Montgomery`], P. L. Montgomery
+/// 1985, cited there), for a crate that reduces many numbers modulo one `n` known only at run
+/// time (zed-kernel `Rat::fingerprint`, modulo two primes drawn per run). A residue `x` is held
+/// as `x R mod n`, `R = 2^64`: two equal numbers have equal held residues and, `R` being a unit
+/// modulo the odd `n`, two numbers unequal modulo `n` have unequal ones, so a held residue tells
+/// numbers apart exactly as the plain one does.
+// Complexity tradeoff: `mul_mod` and `rem_big_u64` divide a 128-bit number by `n` on every
+// product and every digit (a call of the 128-bit division routine); here a product is three word
+// multiplications ([`Montgomery::mul`]) and a digit two products and an addition
+// ([`Montgomery64::of_big`]), after one division per modulus for `R^2 mod n`. The instruction
+// counts of the two, beside the fold of `2^61 - 1`, are at zed-kernel `Rat::fingerprint`.
+pub struct Montgomery64(Montgomery<u64>);
+
+impl Montgomery64 {
+    /// The form modulo `n`; `n` must be odd and above 1.
+    pub fn new(n: u64) -> Montgomery64 {
+        assert!(n & 1 == 1 && n > 1, "an odd modulus above 1");
+        Montgomery64(Montgomery::new(n))
+    }
+
+    /// The held residue of any word `x`: `REDC(x (R^2 mod n)) = x R mod n`, valid since
+    /// `x (R^2 mod n) < R n` for every `x < R`, so `x` need not be below `n`.
+    #[inline]
+    pub fn of_word(&self, x: u64) -> u64 {
+        self.0.reduce(u128::from(x) * u128::from(self.0.r2))
+    }
+
+    /// The held residue of `x`, by Horner's rule over its words from the most significant, one
+    /// reduction a word: `s`, any word congruent to the words read so far, `x'`, modulo `n`
+    /// (not reduced below `n`). The next word `d` makes `x' R + d`:
+    /// 1. `h = REDC(s (R^2 mod n))` is valid for every word `s`, since `s < R` and
+    ///    `R^2 mod n < n` give `s (R^2 mod n) < R n`, and `h = s R^2 R^-1 = s R = x' R` modulo
+    ///    `n`, with `h < n`.
+    /// 2. `h + d` is congruent to `x' R + d`. When it fits a word that is the new `s`. Else it
+    ///    is `R + t` with `t` the wrapped sum, `t < n` since `h < n` and `d < R`; `R = R mod n`
+    ///    modulo `n`, so `t + (R mod n)` (both below `n`, added modulo `n`) is the new `s`.
+    /// 3. After the last word `s = x` modulo `n`, and [`Montgomery64::of_word`] gives `x R`.
+    ///
+    /// So `w + 1` reductions for `w` words, against `2 w` for `mul(h, R^2) + of_word(d)` a word.
+    pub fn of_big(&self, x: &num_bigint::BigUint) -> u64 {
+        let s = x.iter_u64_digits().rev().fold(0, |s, d| {
+            let h = self.0.reduce(u128::from(s) * u128::from(self.0.r2));
+            match h.overflowing_add(d) {
+                (t, false) => t,
+                // `R mod n = REDC(R^2 mod n)`; met with probability below `n / R` a word.
+                (t, true) => self.0.add(t, self.0.reduce(u128::from(self.0.r2))),
+            }
+        });
+        self.of_word(s)
+    }
+
+    /// The held product of two held residues.
+    #[inline]
+    pub fn mul(&self, a: u64, b: u64) -> u64 {
+        self.0.mul(a, b)
+    }
+
+    /// The held `a^e`, for a held `a`, by squaring: O(log e) products. `0^0 = 1`.
+    pub fn pow(&self, a: u64, e: u64) -> u64 {
+        self.0.pow(a, e)
+    }
+}
+
 /// Whether `n` is prime; exact for every 64-bit `n`: Miller-Rabin with the first twelve primes
 /// as bases, or the first one, two or three below the least composite that passes them.
 // Complexity tradeoff: trial division is O(sqrt n) divisions, 2^32 for a 64-bit prime; at most
@@ -1021,6 +1084,53 @@ mod tests {
             }
             assert_eq!(back(m.one()), 1);
         }
+    }
+
+    /// [`Montgomery64`]'s held residues of words and of big integers agree with division, on the
+    /// moduli of the test above: `of_word(x)` is `x R mod n` for any word `x`, words at or above
+    /// `n` included, and `of_big(x)` is `of_word(x mod n)` for integers of 0 to 40 words, so equal
+    /// residues give equal held ones and unequal give unequal.
+    #[test]
+    fn montgomery64_residues_agree_with_division() {
+        use crate::{mul_mod, pow_mod, rem_big_u64};
+        let (mut rng, _) = crate::seed::Rng::fresh("montgomery64_residues_agree_with_division");
+        let mut next = move || rng.next_u64();
+        let mut moduli = vec![3, 5, 9, 561, 1_000_003, (1 << 61) - 1, (1 << 60) + 33];
+        moduli.extend([(1 << 63) + 1, u64::MAX, 18_446_744_073_709_551_557]);
+        moduli.extend((0..40).map(|_| next() | 1));
+        let mut tried = 0;
+        for n in moduli {
+            let m = Montgomery64::new(n);
+            // `R mod n`, the factor of the held form, by division.
+            let r = ((1u128 << 64) % u128::from(n)) as u64;
+            let mut xs = vec![0, 1, n - 1, n, n.wrapping_add(1), u64::MAX, u64::MAX - 1];
+            xs.extend((0..20).map(|_| next()));
+            for &x in &xs {
+                assert_eq!(m.of_word(x), mul_mod(x % n, r, n), "{x} mod {n}, held");
+                for &y in &xs {
+                    let held = m.of_word(mul_mod(x, y, n));
+                    assert_eq!(m.mul(m.of_word(x), m.of_word(y)), held, "{x} * {y} mod {n}");
+                }
+                for e in [0, 1, 2, n - 1, u64::MAX, next()] {
+                    let held = m.of_word(pow_mod(x, e, n));
+                    assert_eq!(m.pow(m.of_word(x), e), held, "{x}^{e} mod {n}");
+                }
+                tried += 1;
+            }
+            for words in [0, 1, 2, 3, 40] {
+                let x = num_bigint::BigUint::from_slice(
+                    &(0..2 * words).map(|_| next() as u32).collect::<Vec<_>>(),
+                );
+                assert_eq!(m.of_big(&x), m.of_word(rem_big_u64(&x, n)), "{x} mod {n}");
+                let top = (num_bigint::BigUint::from(1u8) << (64 * words)) - 1u8;
+                assert_eq!(
+                    m.of_big(&top),
+                    m.of_word(rem_big_u64(&top, n)),
+                    "2^(64 {words}) - 1"
+                );
+            }
+        }
+        assert!(tried > 0, "no residues were compared");
     }
 
     /// NUM-expect-audit: the 64-bit corner cases: squares and products of the largest primes

@@ -82,6 +82,15 @@ pub trait Elem: Ord + Clone {
     fn weight(&self) -> u64;
     /// A bit mask of the key's kind; a set's [`TreapSet::classes`] is the union of its keys'.
     fn class(&self) -> u32;
+    /// The key's seeded weight, for [`HashConsTable`]: equal for equal keys, and for two given
+    /// unequal keys unequal except with probability near `2^-64` over this process's key,
+    /// whatever the keys. The default, [`seeded`] of the weight, has that only when unequal
+    /// keys weigh differently; a kind whose unequal keys can share a weight gives its own
+    /// (`Value`'s big integers and `rat`s, whose weights are residues modulo the fixed
+    /// `2^61 - 1`).
+    fn seeded_weight(&self) -> u64 {
+        seeded(self.weight())
+    }
 }
 
 /// Integers tie only when equal: the point of `n` is `n` with its sign bit flipped, below `p`
@@ -228,8 +237,10 @@ fn own_keyed<T>(n: &Node<T>) -> u64 {
         .wrapping_sub(keyed(&n.right))
 }
 
-/// A weight through SipHash under a key drawn once per process from the system's random bytes
-/// (std's `RandomState`), for [`HashConsTable`]. Complexity tradeoff: the table first keyed its
+/// An input through SipHash under a key drawn once per process from the system's random bytes
+/// (std's `RandomState`): the seeded weights of [`HashConsTable`] ([`Elem::seeded_weight`],
+/// whose default input is the key's weight; for a `u64` input this is the function it was when
+/// it took only weights). Complexity tradeoff: the table first keyed its
 /// sets by the sum of the weights, which is public and in places linear (an `i64` weighs a
 /// fixed multiple of itself, so `{i, -i}` all weigh 0, and an integer literal's weight
 /// `mix(1, i)` is a bijection anyone can invert): `n` distinct sets of one sum went to one
@@ -240,11 +251,18 @@ fn own_keyed<T>(n: &Node<T>) -> u64 {
 /// pseudorandom function whose key no input sees, the incremental hash of a set by addition
 /// ("AdHash", Bellare and Micciancio, "A new paradigm for collision-free hashing:
 /// incrementality at reduced cost", EUROCRYPT 1997, LNCS 1233, pp. 163-192,
-/// doi:10.1007/3-540-69053-0_13, Crossref checked 2026-11-25). For two sets whose symmetric
-/// difference holds a key whose weight no other key of it has, the two sums of a random
-/// function's values are equal with probability `2^-64`, so a bucket holds the sets equal to
-/// the one put in and, in expectation, `O(1)` others. Not proved here that SipHash-1-3 (std's
-/// algorithm, "subject to change" by its documentation) is such a function; it is the one std
+/// doi:10.1007/3-540-69053-0_13, Crossref checked 2026-11-25). For two unequal sets, the
+/// symmetric difference holds a key; when no other key of it gives the same input to the
+/// random function, that key's value is independent of the others', and the two sums of the
+/// function's values are equal with probability `2^-64`. The default input is the weight, and
+/// a kind whose unequal keys can share a weight gives an input that tells them apart
+/// ([`Elem::seeded_weight`]: `Value` gives a big integer's or `rat`'s fingerprint,
+/// `crate::priority::fingerprint_primes`). So a bucket holds the sets equal to the one put in
+/// and, in expectation, `O(1)` others. Where the inputs still tie (a fingerprint collision, or
+/// keys of a kind whose weights tie and which gives no other input, as types of one digest,
+/// plan row PERF-set-tied-digest-depth), the bucket is ordered, so a share costs `O(log b)`
+/// comparisons of sets for `b` sets in the bucket, not `b` ([`HashConsTable`]). Not proved here
+/// that SipHash-1-3 (std's algorithm, "subject to change" by its documentation) is such a function; it is the one std
 /// uses against the same attack on its maps. Cost: 8 bytes a node and one hash per key put in
 /// ([`TreapSet::insert`]); a node made again takes its own seeded weight from its old counts
 /// ([`own_keyed`]). Results do not depend on the key: the table only ever gives a set an equal
@@ -252,15 +270,15 @@ fn own_keyed<T>(n: &Node<T>) -> u64 {
 /// sums. The table is only swept (`retain`) and counted, never listed in order; `Hash` and
 /// `cmp` of a set, and the digests of types, read the unseeded sum (checked by
 /// `the_trees_are_the_same_under_two_keys` in `tests.rs`, which sets `TEST_SALT`).
-fn seeded(weight: u64) -> u64 {
+pub(crate) fn seeded<K: std::hash::Hash>(input: K) -> u64 {
     use std::hash::BuildHasher;
     static KEY: std::sync::OnceLock<std::hash::RandomState> = std::sync::OnceLock::new();
     let key = KEY.get_or_init(std::hash::RandomState::new);
     #[cfg(test)]
     if let Some(salt) = TEST_SALT.get() {
-        return key.hash_one((salt, weight));
+        return key.hash_one((salt, input));
     }
-    key.hash_one(weight)
+    key.hash_one(input)
 }
 
 #[cfg(test)]
@@ -649,7 +667,7 @@ impl<T: Elem> TreapSet<T> {
             return false;
         }
         let (prio, weight, class) = (key.priority(), key.weight(), key.class());
-        let kw = seeded(weight);
+        let kw = key.seeded_weight();
         let mut cur = &mut self.root;
         // The test is apart from the step down so that no borrow of `cur` outlives the loop.
         while cur
@@ -993,15 +1011,26 @@ impl<T: Elem> TreapSet<T> {
     /// The keys in order, by one walk with a stack of its own.
     pub fn iter(&self) -> Iter<'_, T> {
         Iter {
-            stack: Vec::new(),
+            stack: smallvec::SmallVec::new(),
             at: self.root.as_deref(),
         }
     }
 }
 
 /// The keys of a [`TreapSet`] in order.
+///
+/// Complexity tradeoff: the stack holds the nodes whose left subtree is being walked, at most
+/// the height. As a `Vec` it allocated on the first key, 32 bytes or more a walk, and
+/// [`Ord`] makes two walks a comparison, so a search of a bucket of `b` sets in
+/// [`HashConsTable::share`] allocated `O(log b)` times: `2n` sets of two keys allocated
+/// 137,048,020 and 1,363,687,412 bytes at `n` = 20,000 and 160,000 (`sharing_tied_sets_scales`,
+/// b22-free2 on a Colab VM, 2026-11-25), `n log n`. Used: 16 nodes inline (136 bytes), going to
+/// the heap past that. The stack's first fill is the left spine, the path to the least key, whose
+/// expected length in a treap of `m` keys is `H_m` (Seidel and Aragon 1996, Theorem 4.7 (i) at
+/// `l = 1`, cited at [`HashConsTable`]), at most 16 for `m` up to about `5 * 10^6`. Cost: 136
+/// bytes moved with each iterator.
 pub struct Iter<'a, T> {
-    stack: Vec<&'a Node<T>>,
+    stack: smallvec::SmallVec<[&'a Node<T>; 16]>,
     at: Option<&'a Node<T>>,
 }
 
@@ -1082,18 +1111,39 @@ impl<T: Elem> Eq for TreapSet<T> {}
 /// apart become one tree (plan row TYPE-hashcons): [`HashConsTable::share`] gives a set the
 /// root of an equal set the table holds, or puts its own root in. Two sets made apart, as
 /// `{0, 1, ..., n}` built up in two orders, then compare by [`TreapSet::ptr_eq`], `O(1)`, where
-/// `==` walked every node, `O(n)`, at each comparison. The table holds weak handles, so it
-/// keeps no set alive; dead handles are taken out when the table has doubled since its last
-/// sweep, `O(1)` amortized per set put in.
+/// `==` walked every node, `O(n)`, at each comparison. A bucket holds the sets of one seeded sum
+/// in their order ([`TreapSet`]'s `Ord`), so a set is found among `b` in `O(log b)` comparisons.
+/// The table holds the sets' roots; a set no one else holds (its root's only handle is the
+/// table's) is taken out when the table has doubled since its last sweep, `O(1)` amortized per
+/// set put in.
 ///
 /// Complexity tradeoff: the naive way, comparing equal sets made apart in full each time,
-/// costs `O(n)` per comparison, `O(n k)` for `k` comparisons. Used: one `==` per set put in
-/// against the live sets of its seeded sum, `O(n)` only where an equal set is alive (the walk
-/// of a set built in `O(n)` already) or on a collision of the seeded sums, probability `2^-64`
-/// a pair whatever the input (`seeded`), then `O(1)` per comparison. Cost: a hash lookup per
-/// set put in, and a weak handle per live set.
+/// costs `O(n)` per comparison, `O(n k)` for `k` comparisons. Used: a search of the bucket of
+/// the set's seeded sum, `O(n)` per comparison only where an equal set is alive (the walk of a
+/// set built in `O(n)` already) or on a collision of the seeded sums, probability `2^-64` a pair
+/// whatever the input (`seeded`), then `O(1)` per comparison. Where many unequal sets share a
+/// seeded sum (keys whose seeded weights tie, `seeded`), a bucket of `b` sets is searched in
+/// `O(log b)` comparisons by its order; the bucket was a list of weak handles before, `b`
+/// comparisons a set put in, `O(b^2)` for `b` such sets (`sharing_tied_sets_scales` in
+/// `bench.rs`). An ordered bucket needs its sets alive to compare them, so it holds strong
+/// handles: a dead set's nodes stay until the next sweep, at most as many sets as were live at
+/// the last one. Cost: a hash lookup per set put in, and a handle per set held.
+///
+/// Prior work: a treap of distinct priorities has one shape per set (Seidel and Aragon,
+/// "Randomized search trees", Algorithmica 16(4/5), 464-497, 1996, doi:10.1007/BF01940876,
+/// sec. 2: "the treap for X is unique: the item with largest priority becomes the root, and the
+/// allotment of the remaining items to the left and right subtree is then determined by their
+/// keys"), which is what makes equality a walk of two shapes (`==`) and lets one tree stand for
+/// all equal sets. Sundar and Tarjan, "Unique binary search tree representations and
+/// equality-testing of sets and sequences", STOC '90, 18-25, doi:10.1145/100216.100219, p. 19:
+/// "Aragon and Seidel [2] give a randomized binary search tree representation of a dictionary
+/// that has the unique representability property and allows dictionary operations to be
+/// performed in O(log n) randomized time"; their Theorem 1 (p. 21) is why no deterministic
+/// shape would do: "If the n-subsets of U are represented by binary search trees of height at
+/// most d, then there is an n-subset on which an update operation requires Ω(n − 2d)
+/// rotations." Both checked 2026-11-25 against the papers' text.
 pub struct HashConsTable<T> {
-    table: crate::digest::DigestMap<u64, Vec<std::sync::Weak<Node<T>>>>,
+    table: crate::digest::DigestMap<u64, std::collections::BTreeSet<TreapSet<T>>>,
     held: usize,
     swept_at: usize,
 }
@@ -1115,26 +1165,23 @@ impl<T: Elem> HashConsTable<T> {
             return;
         };
         let bucket = self.table.entry(root.keyed).or_default();
-        bucket.retain(|w| w.strong_count() > 0);
-        for w in bucket.iter() {
-            let Some(other) = w.upgrade() else { continue };
-            if Arc::ptr_eq(&other, root) {
-                return;
-            }
-            let other = TreapSet { root: Some(other) };
-            if other == *set {
-                *set = other;
-                return;
-            }
+        if let Some(other) = bucket.get(set) {
+            *set = other.clone();
+            return;
         }
-        bucket.push(Arc::downgrade(root));
+        bucket.insert(set.clone());
         self.held += 1;
         if self.held > 2 * self.swept_at {
+            // A set is dead when the table holds its root's only handle.
             self.table.retain(|_, b| {
-                b.retain(|w| w.strong_count() > 0);
+                b.retain(|s| s.root.as_ref().is_some_and(|r| Arc::strong_count(r) > 1));
                 !b.is_empty()
             });
-            self.held = self.table.values().map(Vec::len).sum();
+            self.held = self
+                .table
+                .values()
+                .map(std::collections::BTreeSet::len)
+                .sum();
             self.swept_at = self.held;
         }
     }

@@ -63,7 +63,7 @@ pub use room::{
 };
 use room::{least_bits, least_log2};
 use zed_numtheory::m61::{self, P as MERSENNE_61};
-use zed_numtheory::{factor, is_prime, mul_mod, pow_mod_big, rem_big_u64};
+use zed_numtheory::{Montgomery64, factor, is_prime, mul_mod, pow_mod_big, rem_big_u64};
 
 /// How [`Rat::round_whole`] rounds a number to a whole one: the rules of `round` (ties to
 /// even), `round(x, ties: #away)`, `floor`, `ceil`, `trunc` and `awayFromZero` (DESIGN.md
@@ -152,6 +152,10 @@ pub struct Rat {
     pows: Box<[(u64, BigInt)]>,
     wide: Box<[(BigUint, BigInt)]>,
     ten: Option<Box<Ten>>,
+    /// [`Rat::fingerprint`], made at its first call and kept. A `Rat` is changed only while it
+    /// is being made (`from_kept_wide` sets `wide`), before anything reads this, and every
+    /// operation makes a new one with this empty, so it is always the value's.
+    fingerprint: OnceLock<[u64; 4]>,
 }
 
 /// What a term of [`Rat::normal`] is: a coefficient, a listed prime, or a wide atom.
@@ -179,6 +183,89 @@ struct Ten {
     bin: OnceLock<Rat>,
 }
 
+/// Residues modulo one prime `m` above 5, in some form of them that tells residues apart as the
+/// plain ones do, for [`Rat::residues_in`]: the plain residues modulo `2^61 - 1` ([`M61`]), or
+/// Montgomery's held ones modulo a prime drawn at run time ([`Drawn`]).
+trait Residues {
+    /// The prime `m`.
+    fn modulus(&self) -> u64;
+    /// The residue of any word.
+    fn of_word(&self, x: u64) -> u64;
+    /// The residue of a big integer.
+    fn of_big(&self, x: &BigUint) -> u64;
+    /// The product of two residues.
+    fn mul(&self, a: u64, b: u64) -> u64;
+    /// The power of a residue by a word.
+    fn pow(&self, a: u64, e: u64) -> u64;
+}
+
+/// The plain residues modulo `2^61 - 1`, by its fold ([`m61`]): [`Rat::residues`].
+struct M61;
+
+impl Residues for M61 {
+    fn modulus(&self) -> u64 {
+        MERSENNE_61
+    }
+    fn of_word(&self, x: u64) -> u64 {
+        x % MERSENNE_61
+    }
+    fn of_big(&self, x: &BigUint) -> u64 {
+        rem_big_u64(x, MERSENNE_61)
+    }
+    fn mul(&self, a: u64, b: u64) -> u64 {
+        m61::mul(a, b)
+    }
+    fn pow(&self, a: u64, e: u64) -> u64 {
+        m61::pow_word(a, e)
+    }
+}
+
+/// The plain residues modulo a prime drawn at run time, by division (`mul_mod`, `pow_mod`,
+/// `rem_big_u64`): what [`Drawn`] replaces, kept for the tests that measure the two
+/// (`ZED_FINGERPRINT_FORM=division`, read by `tests::fingerprint_form`).
+#[cfg(test)]
+struct ByDivision(u64);
+
+#[cfg(test)]
+impl Residues for ByDivision {
+    fn modulus(&self) -> u64 {
+        self.0
+    }
+    fn of_word(&self, x: u64) -> u64 {
+        x % self.0
+    }
+    fn of_big(&self, x: &BigUint) -> u64 {
+        rem_big_u64(x, self.0)
+    }
+    fn mul(&self, a: u64, b: u64) -> u64 {
+        mul_mod(a, b, self.0)
+    }
+    fn pow(&self, a: u64, e: u64) -> u64 {
+        zed_numtheory::pow_mod(a, e, self.0)
+    }
+}
+
+/// The held residues modulo a prime drawn at run time, with that prime: [`Rat::fingerprint`].
+struct Drawn(Montgomery64, u64);
+
+impl Residues for Drawn {
+    fn modulus(&self) -> u64 {
+        self.1
+    }
+    fn of_word(&self, x: u64) -> u64 {
+        self.0.of_word(x)
+    }
+    fn of_big(&self, x: &BigUint) -> u64 {
+        self.0.of_big(x)
+    }
+    fn mul(&self, a: u64, b: u64) -> u64 {
+        self.0.mul(a, b)
+    }
+    fn pow(&self, a: u64, e: u64) -> u64 {
+        self.0.pow(a, e)
+    }
+}
+
 impl Rat {
     /// `num / den`, reduced; `None` when `den` is zero.
     pub fn new(num: BigInt, den: BigInt) -> Option<Self> {
@@ -203,6 +290,7 @@ impl Rat {
             pows: Box::default(),
             wide: Box::default(),
             ten: None,
+            fingerprint: OnceLock::new(),
         }
     }
 
@@ -302,6 +390,7 @@ impl Rat {
             pows: self.pows.clone(),
             wide: Box::default(),
             ten: None,
+            fingerprint: OnceLock::new(),
         }))
     }
 
@@ -350,6 +439,7 @@ impl Rat {
             pows: r.pows.clone(),
             wide: Box::default(),
             ten: None,
+            fingerprint: OnceLock::new(),
         };
         let (mut x, mut y) = (plain(self), plain(b));
         if !lacked.is_empty() {
@@ -387,6 +477,7 @@ impl Rat {
         };
         Ok(Some(Rat {
             wide: wide.into_boxed_slice(),
+            fingerprint: OnceLock::new(),
             ..p
         }))
     }
@@ -518,6 +609,7 @@ impl Rat {
             pows: pows.into_boxed_slice(),
             wide: wide.into_boxed_slice(),
             ten: None,
+            fingerprint: OnceLock::new(),
         })
     }
 
@@ -556,6 +648,7 @@ impl Rat {
             pows: self.pows.clone(),
             wide: self.wide.clone(),
             ten: None,
+            fingerprint: OnceLock::new(),
         }
     }
 
@@ -577,6 +670,7 @@ impl Rat {
         }
         Rat {
             wide: self.wide.clone(),
+            fingerprint: OnceLock::new(),
             ..Rat::extract(self.num.clone(), self.den.clone(), pows)
         }
     }
@@ -614,6 +708,7 @@ impl Rat {
                 t,
                 bin: OnceLock::new(),
             })),
+            fingerprint: OnceLock::new(),
             ..rest
         }
     }
@@ -662,6 +757,7 @@ impl Rat {
             pows: out.into_boxed_slice(),
             wide: Box::default(),
             ten: None,
+            fingerprint: OnceLock::new(),
         }
     }
 
@@ -813,6 +909,7 @@ impl Rat {
             pows: pows.into_boxed_slice(),
             wide: Box::default(),
             ten: None,
+            fingerprint: OnceLock::new(),
         })
     }
 
@@ -1118,22 +1215,90 @@ impl Rat {
     /// same whatever powers a form lists; each `p^e` is reduced by Fermat's little theorem,
     /// so the cost is the size of the coefficients and exponents, never of the value.
     pub fn residues(&self) -> (bool, u64, u64) {
+        self.residues_in(&M61)
+    }
+
+    /// The value's fingerprint for this run: `|N|` and `D` modulo each of the two primes `P1`
+    /// and `P2` of [`crate::priority::fingerprint_primes`], drawn once per run, as
+    /// `[|N| mod P1 + s 2^63, D mod P1, |N| mod P2, D mod P2]`, `s` 1 for a negative value (each
+    /// residue is below `2^61`, so the sign bit is free), the residues in Montgomery's held form
+    /// ([`zed_numtheory::Montgomery64`], which tells residues apart as the plain ones do). Equal
+    /// values have one fingerprint, as for [`Rat::residues`]; two given unequal values differ in
+    /// it except with small probability over the draw, whatever values were chosen, which
+    /// residues modulo the fixed `2^61 - 1` cannot give (`2^64` and `2^64 + (2^61 - 1)` share
+    /// theirs). The bound, and what it leaves unproved, is at `fingerprint_primes`.
+    ///
+    /// It is computed at the first call and kept with the value, so the treap priority and the
+    /// seeded weight of a value (zed-kernel `types.rs`, `impl Elem for Value`), and every later
+    /// insert of it, read it once.
+    // Complexity tradeoff: the residues cost two 128-bit divisions per digit of a coefficient
+    // and per product with `mul_mod` and `rem_big_u64`, against two Montgomery products per
+    // digit and one per product here; the fold of `2^61 - 1` ([`Rat::residues`]) needs neither,
+    // but its prime is fixed. Measured (`num::bench::fingerprint_instructions`, b22-free2 on a
+    // Colab v5e VM, 2026-11-25): instructions for 64 integers of 2, 8 and 64 words, and ns for
+    // one, the least of 5 trials,
+    //   words   2^61 - 1 fold     division          Montgomery (one REDC a word)
+    //    2       24480  162.0      50027  319.5      48819  301.6
+    //    8       37152  254.8      75371  508.2      68397  427.5
+    //   64      155424 1021.6     311915 2057.1     251269 1717.9
+    // so Montgomery is kept: fewer instructions and less time than division at every width
+    // measured (2.4%, 9.3% and 19.4% fewer instructions). Keeping it costs 40 bytes a `Rat`
+    // (a `OnceLock<[u64; 4]>`), against computing it twice per insert and again on every later
+    // insert of the value; a `Rat` already holds two big integers and two boxed lists.
+    pub fn fingerprint(&self) -> [u64; 4] {
+        static FORMS: OnceLock<[Drawn; 2]> = OnceLock::new();
+        *self.fingerprint.get_or_init(|| {
+            #[cfg(test)]
+            match tests::fingerprint_form() {
+                tests::Form::M61 => {
+                    let (neg, n, d) = self.residues_in(&M61);
+                    return [n | u64::from(neg) << 63, d, 0, 0];
+                }
+                tests::Form::Division => {
+                    let [p1, p2] = crate::priority::fingerprint_primes();
+                    return self.fingerprint_in(&ByDivision(p1), &ByDivision(p2));
+                }
+                tests::Form::Montgomery => {}
+            }
+            let [f1, f2] = FORMS.get_or_init(|| {
+                crate::priority::fingerprint_primes().map(|p| Drawn(Montgomery64::new(p), p))
+            });
+            self.fingerprint_in(f1, f2)
+        })
+    }
+
+    /// [`Rat::fingerprint`] with the residues modulo `P1` and `P2` in the forms `f1` and `f2`.
+    fn fingerprint_in(&self, f1: &impl Residues, f2: &impl Residues) -> [u64; 4] {
+        let (neg, n1, d1) = self.residues_in(f1);
+        let (_, n2, d2) = self.residues_in(f2);
+        [n1 | u64::from(neg) << 63, d1, n2, d2]
+    }
+
+    /// [`Rat::residues`] modulo the prime `f.modulus()`, above 5, in `f`'s form of its residues.
+    fn residues_in(&self, f: &impl Residues) -> (bool, u64, u64) {
+        let m = f.modulus();
+        // `b^e` for `b` the residue of a base: by Fermat's little theorem `e` is taken modulo
+        // `m - 1` when `b` is not 0; `0^e` is 0, and 1 for `e = 0`.
+        let pow = |b: u64, e: &BigUint| match b {
+            0 => f.of_word(u64::from(e.is_zero())),
+            b => f.pow(b, rem_big_u64(e, m - 1)),
+        };
         let t = self.t();
         // With a `Ten`, 2 and 5 are read below with it.
         let ten_prime = |p: u64| t.is_some() && (p == 2 || p == 5);
         let side = |coef: &BigInt, sign: Sign| {
-            let mut r = rem_big_u64(coef.magnitude(), MERSENNE_61);
+            let mut r = f.of_big(coef.magnitude());
             for (p, e) in self
                 .pows
                 .iter()
                 .filter(|(p, e)| e.sign() == sign && !ten_prime(*p))
             {
-                r = m61::mul(r, m61::pow(*p, e.magnitude()));
+                r = f.mul(r, pow(f.of_word(*p), e.magnitude()));
             }
-            // A wide atom `q^f` lies on the side of `f`'s sign; `q mod M` is 0 when `M` divides
+            // A wide atom `q^f` lies on the side of `f`'s sign; `q mod m` is 0 when `m` divides
             // `q`, and then so is the residue, as of the digits.
-            for (q, f) in self.wide.iter().filter(|(_, f)| f.sign() == sign) {
-                r = m61::mul(r, m61::pow(rem_big_u64(q, MERSENNE_61), f.magnitude()));
+            for (q, e) in self.wide.iter().filter(|(_, e)| e.sign() == sign) {
+                r = f.mul(r, pow(f.of_big(q), e.magnitude()));
             }
             r
         };
@@ -1143,19 +1308,20 @@ impl Rat {
             // `pows` (zero when absent); `|t| >= 2^63`. For `t > 0` it is positive and `p^(t +
             // e_p)` lies in `N`. For `t < 0` and `e_p < 2^63` it is negative and `p^(|t| - e_p)`
             // lies in `D`; a wider `e_p`, which no literal makes, is read from the binary form.
-            // Each power is reduced modulo `M` by Fermat's little theorem, `p` coprime to `M`,
-            // with `|t| mod (M - 1)` read from its digits in O(n) ([`Dec::rem_u64`]).
-            let q = MERSENNE_61 - 1;
+            // Each power is reduced modulo `m` by Fermat's little theorem, `p` coprime to the
+            // prime `m > 5`, with `|t| mod (m - 1)` read from its digits in O(n)
+            // ([`Dec::rem_u64`]).
+            let q = m - 1;
             let k = t.rem_u64(q);
             for p in [2u64, 5] {
                 let e = sorted_get(&self.pows, &p).cloned().unwrap_or_default();
                 if t.is_negative() && e.to_i64().is_none() {
-                    return self.bin().residues();
+                    return self.bin().residues_in(f);
                 }
                 let e = rem_big_u64(e.magnitude(), q);
                 match t.is_negative() {
-                    false => n = m61::mul(n, m61::pow_word(p, (k + e) % q)),
-                    true => d = m61::mul(d, m61::pow_word(p, (k + q - e) % q)),
+                    false => n = f.mul(n, f.pow(f.of_word(p), (k + e) % q)),
+                    true => d = f.mul(d, f.pow(f.of_word(p), (k + q - e) % q)),
                 }
             }
         }
@@ -1424,6 +1590,7 @@ impl Rat {
                     .map(|(q, f)| (q.clone(), f / &m))
                     .collect(),
                 ten: None,
+                fingerprint: OnceLock::new(),
             };
             match root.text_room().and_then(|()| root.integer_built()) {
                 Ok(r) => push_root(&mut atoms, r.magnitude(), &m),
@@ -1567,6 +1734,7 @@ impl Rat {
             pows: Box::default(),
             wide: shared.into_boxed_slice(),
             ten: None,
+            fingerprint: OnceLock::new(),
         })
     }
 
@@ -1902,6 +2070,7 @@ impl Rat {
                     bin: OnceLock::new(),
                 })
             }),
+            fingerprint: OnceLock::new(),
         }
     }
 
@@ -2018,6 +2187,7 @@ impl Rat {
             pows: pows.into_boxed_slice(),
             wide: wide.into_boxed_slice(),
             ten: None,
+            fingerprint: OnceLock::new(),
         })
     }
 
@@ -2063,6 +2233,7 @@ impl Rat {
             mut pows,
             mut wide,
             ten,
+            fingerprint: _,
         } = self;
         for (_, e) in pows.iter_mut() {
             *e = -std::mem::take(e);
@@ -2080,6 +2251,7 @@ impl Rat {
             pows,
             wide,
             ten: None,
+            fingerprint: OnceLock::new(),
         };
         // `10^-t`: the exponents of 2 and 5 are now negative, so `with_ten` moves their
         // common part into the negated `t`, O(n).
@@ -2305,6 +2477,7 @@ impl Rat {
         // The wide atoms are coprime to every prime moved, so they stay as they are.
         Ok(Cow::Owned(Rat {
             wide: self.wide.clone(),
+            fingerprint: OnceLock::new(),
             ..Rat::extract(self.num.clone(), self.den.clone(), pows)
         }))
     }
@@ -3792,6 +3965,7 @@ impl Rat {
                     pows: pows.collect(),
                     wide: wide.collect(),
                     ten: None,
+                    fingerprint: OnceLock::new(),
                 }
                 .integer_text()
             };
@@ -3877,6 +4051,58 @@ mod units;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The form [`Rat::fingerprint`] computes its residues in, for the benches that measure the
+    /// forms in whole decisions (PERF-fingerprint-montgomery).
+    #[derive(Clone, Copy)]
+    pub(super) enum Form {
+        /// The residues modulo `2^61 - 1` only, the last two words 0: the cost of the
+        /// priorities before the drawn primes.
+        M61,
+        /// The residues modulo the drawn primes by 128-bit division (`ByDivision`).
+        Division,
+        /// The residues modulo the drawn primes in Montgomery form, as built.
+        Montgomery,
+    }
+
+    /// The form named by `ZED_FINGERPRINT_FORM` (`m61` or `division`; anything else or unset,
+    /// Montgomery), read once.
+    pub(super) fn fingerprint_form() -> Form {
+        static FORM: OnceLock<Form> = OnceLock::new();
+        *FORM.get_or_init(|| match std::env::var("ZED_FINGERPRINT_FORM").as_deref() {
+            Ok("m61") => Form::M61,
+            Ok("division") => Form::Division,
+            _ => Form::Montgomery,
+        })
+    }
+
+    /// The claim at `ignore-interior-mutability` in clippy.toml: filling a number's fingerprint
+    /// changes neither its hash as a value, nor its equality, nor its order. Each number, a plain
+    /// big integer and a kept power, is cloned while its fingerprint is empty, and is hashed and
+    /// compared with that clone and with a larger number before and after the fingerprint is
+    /// filled; the clone's stays empty.
+    #[test]
+    fn the_fingerprint_changes_no_hash_equality_or_order() {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        let hash = |r: &Rat| {
+            BuildHasherDefault::<DefaultHasher>::default()
+                .hash_one(crate::value::Value::integer(r.clone()))
+        };
+        // 7^2000 > 3^1000 > 2^200 + 7.
+        let larger = power(7, 2000);
+        for x in [Rat::int((BigInt::from(1u8) << 200u32) + 7u8), power(3, 1000)] {
+            let fresh = x.clone();
+            let seen = |x: &Rat| (hash(x), *x == fresh, x.cmp(&larger), larger.cmp(x));
+            let before = seen(&x);
+            let fingerprint = x.fingerprint();
+            assert_eq!(x.fingerprint.get(), Some(&fingerprint));
+            assert!(fresh.fingerprint.get().is_none());
+            assert_eq!(seen(&x), before);
+            assert!(before.1, "equal to its clone");
+            assert_eq!((before.2, before.3), (Ordering::Less, Ordering::Greater));
+            assert_eq!(hash(&x), hash(&fresh));
+        }
+    }
 
     /// `b^k` for a small base, kept as exponents.
     pub(super) fn power(b: u64, k: u64) -> Rat {

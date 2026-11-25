@@ -432,3 +432,68 @@ fn a_short_quotient_of_a_wide_number_scales() {
         },
     );
 }
+
+/// PERF-fingerprint-montgomery: the instructions of one fingerprint of an integer of `w` words,
+/// `w` in 2, 4, 8, 16 and 64, in the three forms [`Rat::fingerprint`] was measured in: the
+/// residues modulo `2^61 - 1` (`M61`, what the priorities of big values read before the drawn
+/// primes, one modulus), the residues modulo the two drawn primes by 128-bit division
+/// (`ByDivision`), and the same in Montgomery form (`Drawn`, what `fingerprint` uses). Each
+/// count is of 64 numbers of a size, made before the count, and of fresh calls, not the cached
+/// value. Two numbers have one fingerprint in Montgomery form exactly when they have one by
+/// division (the held residue is `x R mod p`, `R` a unit), which is asserted. The counts are
+/// printed (`bench FINGERPRINT`) and written at `Rat::fingerprint`; run again for each target
+/// platform and after a change to code generation.
+#[test]
+fn fingerprint_instructions() {
+    let mut meter = crate::scaling::Meter::new();
+    let [p1, p2] = crate::priority::fingerprint_primes();
+    let (d1, d2) = (ByDivision(p1), ByDivision(p2));
+    let (m1, m2) = (
+        Drawn(Montgomery64::new(p1), p1),
+        Drawn(Montgomery64::new(p2), p2),
+    );
+    for w in [2usize, 4, 8, 16, 64] {
+        let xs: Vec<Rat> = (0..64u64)
+            .map(|k| Rat::int(BigInt::from(bench_number(w, 0x5eed + k))))
+            .collect();
+        let (mut a, mut b, mut c) = (Vec::new(), Vec::new(), Vec::new());
+        let old = meter.work(|| a = xs.iter().map(|x| x.residues_in(&M61)).collect());
+        let div = meter.work(|| b = xs.iter().map(|x| x.fingerprint_in(&d1, &d2)).collect());
+        let mont = meter.work(|| c = xs.iter().map(|x| x.fingerprint_in(&m1, &m2)).collect());
+        for i in 0..xs.len() {
+            for j in 0..xs.len() {
+                assert_eq!(b[i] == b[j], c[i] == c[j], "w {w}, {i} and {j}");
+            }
+        }
+        assert_eq!(a.len(), xs.len());
+        // Time as well: a 128-bit division is one instruction of tens of cycles, so the counts
+        // alone favor `ByDivision`. The least of 5 trials of 100 passes over the 64 numbers, in
+        // nanoseconds a fingerprint.
+        let time = |f: &dyn Fn(&Rat) -> [u64; 4]| {
+            (0..5)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    for _ in 0..100 {
+                        for x in &xs {
+                            std::hint::black_box(f(std::hint::black_box(x)));
+                        }
+                    }
+                    start.elapsed().as_nanos() as f64 / 6400.0
+                })
+                .fold(f64::INFINITY, f64::min)
+        };
+        let ns = [
+            time(&|x| {
+                let (neg, n, d) = x.residues_in(&M61);
+                [n | u64::from(neg) << 63, d, 0, 0]
+            }),
+            time(&|x| x.fingerprint_in(&d1, &d2)),
+            time(&|x| x.fingerprint_in(&m1, &m2)),
+        ];
+        println!(
+            "bench FINGERPRINT words={w} m61={} division={} montgomery={} (instructions for 64) \
+             ns_each m61={:.1} division={:.1} montgomery={:.1}",
+            old.units, div.units, mont.units, ns[0], ns[1], ns[2]
+        );
+    }
+}

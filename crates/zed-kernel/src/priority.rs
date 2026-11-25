@@ -399,18 +399,106 @@ fn draw_from(mut next: impl FnMut() -> u64, degree: usize) -> Draw {
     }
 }
 
+/// The two primes of this run's fingerprints of numbers (zed-kernel `Rat::fingerprint`): `P1`
+/// uniform among the primes in `[2^60, 2^61)`, and `P2 = 2Q + 1` uniform among the safe primes
+/// with `Q` a prime in `[2^59, 2^60)`. They are drawn once per run, as the treap priorities are
+/// (draws 21 and 22, so `ZED_TREAP_SEED` fixes them too), by drawing a uniform number of the
+/// range until it is prime (`P1`), or until `Q` and `2Q + 1` both are (`P2`); rejection keeps
+/// the result uniform over the accepted ones. Primality is exact: [`zed_numtheory::is_prime`],
+/// Miller-Rabin with the twelve primes 2 to 37 as bases, deterministic below 2^64 (cited there,
+/// Sorenson and Webster 2017).
+///
+/// What a fingerprint is for. A Big or Rat in a treap needs a priority and a weight that are
+/// the same for equal values and, for two given unequal values, differ except with small
+/// probability over the draw, whatever the values; otherwise one input with many values that
+/// tie makes a treap a path. Residues modulo the fixed `2^61 - 1` cannot give that, since the
+/// input can be chosen after the modulus (`2^64` and `2^64 + 2^61 - 1` share theirs). A
+/// fingerprint is `(negative, |N| mod P1, D mod P1, |N| mod P2, D mod P2)` for the value `N/D`
+/// in lowest terms. `N` and `D` are fixed by the value, so equal values have one fingerprint,
+/// whatever forms they are held in. Nothing printed or compared reads a fingerprint; a collision
+/// costs only time (module comment, rule deterministic-checking).
+///
+/// The bound for values with no kept power. Let `v != w` have `N_v, D_v, N_w, D_w` below
+/// `2^b`. If their fingerprints agree, then `P1` divides `N_v - N_w` and `D_v - D_w`, and one
+/// of the two is nonzero and below `2^b` in magnitude, so it has at most `b/60` prime factors of
+/// at least `2^60`. Rosser and Schoenfeld, "Approximate formulas for some functions of prime
+/// numbers", Illinois J. Math. 6 (1962) 64-94, doi:10.1215/ijm/1255631807, Corollary 3, (3.8),
+/// p. 69: "3x/(5 log x) < π(2x) − π(x)   for 20½ ≦ x" (checked 2026-11-25 on the page image of
+/// the publisher's PDF). At `x = 2^60`, `log x = 41.59`, so `[2^60, 2^61)` holds more than
+/// `2^60 / 69.4` primes, and `Pr[P1 | N_v - N_w] < (b/60) * 69.4 * 2^-60 < 1.16 b 2^-60`. So a
+/// pair collides with probability below `1.16 b 2^-60`, and among `n` keys of at most `b` bits
+/// the expected number of colliding pairs is below `0.58 n^2 b 2^-60`: under `2^-10` for
+/// `n = 2^20` keys of 1024 bits each.
+///
+/// The bound for one kept power. A value held as `c * q^f`, with `q` a wide atom and `f` of
+/// any size, has digits far beyond any `b` above, so `P1` proves nothing for it. Then `P2`:
+/// the units modulo `P2` form a cyclic group of order `2Q`, so the order of `q mod P2` is 1, 2,
+/// `Q` or `2Q`. For two values `c q^f` and `c q^g` with `f != g` to share the `P2` residue, either
+/// `q = ±1 mod P2` (so `P2` divides `q - 1` or `q + 1`, at most `bits(q)/60 + 1` primes each), or
+/// `Q` divides `f - g` (at most `bits(f - g)/59` primes). Each of these is a fixed set of at most
+/// `B/59 + 2` primes, `B` the bits of `q` and of `f - g`, so the chance is that over the number of
+/// safe primes in the range.
+///
+/// Not proved: the number of safe primes. That there are infinitely many is open; their count
+/// for `Q` below `x` is conjectured to be about `2 C_2 x / ((log x)(log 2x))`, `C_2 = 0.6601...`
+/// the twin-prime constant (the Hardy-Littlewood conjecture; Bateman and Horn's form covers `Q`
+/// and `2Q + 1` together), which gives about `2^59 / 1310` safe primes with `Q` in
+/// `[2^59, 2^60)`, and so a chance near `(B/59 + 2) * 1310 * 2^-59` per pair. Observed (test
+/// `fingerprint_primes_draw_rates`, seeds 0 to 255; b22-free2 on a Colab VM, 2026-11-25): 1248
+/// draws of `Q` per safe prime on average, against about 1310 from the conjecture (each draw of
+/// `Q` is uniform in the range, so the rate is the density); for `P1`, 40.9 draws per prime
+/// against `ln 2^60.5 = 41.9` (at most 8004 draws of `Q` and 248 of `P1` at any one seed).
+/// If safe primes were far rarer than conjectured, the draw would take longer and the one-atom
+/// bound would weaken; no answer changes.
+///
+/// Not proved at all: several kept powers. Two values `prod q_i^(e_i)` and `prod q_i^(f_i)` share
+/// their `P2` residue when `prod q_i^(e_i - f_i) = 1 mod P2`, a relation among several atoms with
+/// huge exponents. No bound on the primes for which such a relation holds is given here: the
+/// argument above needs one generator, and with several the exponents can be chosen so that the
+/// relation holds for many primes at once only if the atoms are multiplicatively dependent
+/// modulo many primes, which is not ruled out. Row XR-kept-form-fingerprint-several-atoms, for
+/// cross-review. No input can be built to make this fail on purpose, since the primes are drawn
+/// after the input is fixed; a failure would cost only time.
+// Complexity tradeoff: a fixed prime costs nothing to draw but lets one input make every value
+// tie; drawing a prime costs about 42 tests for `P1` and about 1310 for `Q` (about 85% of
+// candidates are rejected by `is_prime`'s trial division by its twelve bases, the rest by
+// Miller-Rabin), once per run: 172 µs for both primes on average over seeds 0 to 255 (same test
+// and VM as above). The deterministic hashes (`value::digest`, the
+// type weights) keep `2^61 - 1`, which they need to be the same on every run, and whose fold
+// is cheaper than any reduction modulo a drawn prime (measured at `Rat::fingerprint`).
+pub fn fingerprint_primes() -> [u64; 2] {
+    static PRIMES: OnceLock<[u64; 2]> = OnceLock::new();
+    *PRIMES.get_or_init(|| fingerprint_primes_from(source(21), source(22)).0)
+}
+
+/// [`fingerprint_primes`] from the words `next1` and `next2`, with the number of draws each
+/// took.
+fn fingerprint_primes_from(
+    mut next1: impl FnMut() -> u64,
+    mut next2: impl FnMut() -> u64,
+) -> ([u64; 2], [u64; 2]) {
+    let mut draws = [0; 2];
+    let p1 = loop {
+        draws[0] += 1;
+        let p = (1 << 60) | (next1() >> 4);
+        if zed_numtheory::is_prime(p) {
+            break p;
+        }
+    };
+    let p2 = loop {
+        draws[1] += 1;
+        let q = (1 << 59) | (next2() >> 5);
+        if zed_numtheory::is_prime(q) && zed_numtheory::is_prime(2 * q + 1) {
+            break 2 * q + 1;
+        }
+    };
+    ([p1, p2], draws)
+}
+
 /// The 64-bit words of the draw of `tag`.
 fn source(tag: u64) -> Box<dyn FnMut() -> u64> {
     if let Some(seed) = fixed_seed() {
-        // splitmix64 from the seed and the tag: the same words on every run of one seed.
-        let mut z = seed ^ tag.wrapping_mul(0xd1b5_4a32_d192_ed03);
-        return Box::new(move || {
-            z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut x = z;
-            x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            x ^ (x >> 31)
-        });
+        return Box::new(seeded_words(seed, tag));
     }
     use std::io::Read;
     let mut f = std::fs::File::open("/dev/urandom")
@@ -421,6 +509,18 @@ fn source(tag: u64) -> Box<dyn FnMut() -> u64> {
             .expect("the treap priorities read their seed from /dev/urandom");
         u64::from_le_bytes(w)
     })
+}
+
+/// splitmix64 from the seed and the tag: the same words on every run of one seed.
+fn seeded_words(seed: u64, tag: u64) -> impl FnMut() -> u64 {
+    let mut z = seed ^ tag.wrapping_mul(0xd1b5_4a32_d192_ed03);
+    move || {
+        z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut x = z;
+        x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        x ^ (x >> 31)
+    }
 }
 
 /// `ZED_TREAP_SEED`, read once. In this crate's unit tests it is 0 when unset, so that a test of

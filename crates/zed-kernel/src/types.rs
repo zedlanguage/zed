@@ -181,13 +181,29 @@ fn scalar(v: &Value) -> u64 {
 /// 118 integers tie whatever the draw, as for `i64` (module [`crate::treap_set`]); any other
 /// value's is its `Hash` stream ([`Priorities::hash`]), so two values tie whatever the draw only
 /// when their digests are equal, which a program can choose (as for the atoms of `bdd::set`,
-/// plan row PERF-set-tied-digest-depth).
+/// plan row PERF-set-tied-digest-depth). A big integer's or a fraction's stream is its
+/// fingerprint ([`Rat::fingerprint`](crate::num::Rat::fingerprint), the residues modulo two
+/// primes drawn at run time), not its digest, which is its residue modulo `2^61 - 1` and so ties
+/// on `2^64 + k (2^61 - 1)` for every `k`; the same fingerprint gives its seeded weight
+/// ([`Elem::seeded_weight`]), so a set of such values is a treap of expected depth O(log n)
+/// whatever its program chose, under the conjecture stated at
+/// [`fingerprint_primes`](crate::priority::fingerprint_primes). Values that still tie whatever
+/// the draw (tuples and families of equal digests) remain under PERF-set-tied-digest-depth.
 impl Elem for Value {
     fn priority(&self) -> u64 {
         static PRIORITIES: Priorities = Priorities::eight_wise(17);
         match self {
             Value::Int(n) => PRIORITIES.of((*n as u64) ^ (1 << 63)),
+            Value::Big(r) => PRIORITIES.hash(&(2u8, r.fingerprint())),
+            Value::Rat(r) => PRIORITIES.hash(&(3u8, r.fingerprint())),
             v => PRIORITIES.hash(v),
+        }
+    }
+    fn seeded_weight(&self) -> u64 {
+        match self {
+            Value::Big(r) => crate::treap_set::seeded((2u8, r.fingerprint())),
+            Value::Rat(r) => crate::treap_set::seeded((3u8, r.fingerprint())),
+            v => crate::treap_set::seeded(v.weight()),
         }
     }
     fn weight(&self) -> u64 {

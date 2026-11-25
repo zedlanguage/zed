@@ -33,6 +33,10 @@ num-traits = "0.2"
 zed-graph.workspace = true
 zed-collections.workspace = true
 zed-numtheory.workspace = true
+# The stack of `treap_set::Iter`, kept inline to a depth of 16 so that walking or comparing a
+# small set allocates nothing (`sharing_tied_sets_scales`). The version and `union` are those
+# zed-rt names, which the workspace build gives smallvec through cranelift-codegen.
+smallvec = { version = "1.16.4", features = ["union"] }
 
 [dev-dependencies]
 rustix.workspace = true

@@ -87,6 +87,27 @@ fn the_escape_decision_on_lists_of_big_integers_scales() {
     }
 }
 
+/// FAIL-main-escape-input-build: building the tied family of
+/// [`the_escape_decision_on_lists_of_big_integers_scales`] ([`big_heads`]) at `m` = 1024 and 8192.
+/// Each of the O(m) literal sets the build makes passes through the thread's `HashConsTable`
+/// in `Type::new` (TYPE-hashcons, ce49a6c44), and every set of these heads had one seeded sum, so
+/// one bucket. With the bucket a list of weak handles, each set scanned it, `O(m^2)`: the
+/// build at 1024 took 332,096,696 instructions at 0d00d5daa, before ce49a6c44, and 1,712,314,013
+/// at f7b931553, and the bisect between them (one VM, DynamoRIO's `zed_icount`, b22-free2,
+/// 2026-11-25) named ce49a6c44 as the first commit over their geometric mean. The bucket is now
+/// ordered, `O(log m)` comparisons a set, `O(m log m)`; an n log n ratio meets 10.5 from n = 777
+/// (COMPLEXITY.md), so the sizes are 1024 and 8192.
+#[test]
+fn building_the_tied_big_heads_family_scales() {
+    crate::scaling::check_order_fresh(
+        "building the escape family of lists of tied big integers, by heads",
+        1024,
+        1,
+        |m, _| m,
+        |_, m| big_heads(m, true),
+    );
+}
+
 /// The family of [`the_escape_decision_on_lists_of_big_integers_scales`] at `m` cons cells:
 /// `Heads \ (Avoid_2 | ... | Avoid_m)`, heads `b_j = 2^64 + j s` with `s = 2^61 - 1` when
 /// `tied` (one residue mod `2^61 - 1`, so one hash) and `s = 1` otherwise, and `anchor = b_(m+1)`.

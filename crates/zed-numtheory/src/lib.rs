@@ -20,7 +20,7 @@ mod word;
 
 use num_bigint::BigUint;
 
-pub use factor::{factor, is_prime};
+pub use factor::{Montgomery64, factor, is_prime};
 pub use factored::{coprime_base_by_factoring, shares_a_factor_by_factoring};
 pub use pratt::{PSI_13, PrattCertificate, PrattError, PrattFactor};
 pub use wide::{factor_u128, is_prime_u128};

@@ -346,9 +346,10 @@ fn is_subset_work_within_its_bound() {
 
 /// [`HashConsTable`] (TYPE-hashcons): two equal sets made apart, the keys put in up and down,
 /// become one tree, still the set of their keys; a set with one key more stays apart; an empty
-/// set is left as it is; and the table keeps no set alive, so once both are dropped an equal
-/// set made later keeps its own tree, held by it alone. Negative control: without the table,
-/// the two equal sets are two trees.
+/// set is left as it is. The table holds its sets (its buckets are ordered, so it compares
+/// them), so once both are dropped an equal set made later gets the held tree; once that one is
+/// dropped too, the next sweep (when the table has doubled) frees the tree. Negative control:
+/// without the table, the two equal sets are two trees.
 #[test]
 fn equal_sets_made_apart_become_one_tree() {
     let set = |keys: &mut dyn Iterator<Item = i64>| {
@@ -375,7 +376,27 @@ fn equal_sets_made_apart_become_one_tree() {
     drop((up, down));
     let mut later = set(&mut (0..1000));
     table.share(&mut later);
-    assert_eq!(Arc::strong_count(later.root.as_ref().unwrap()), 1);
+    let root = later.root.as_ref().unwrap();
+    assert_eq!(
+        Arc::strong_count(root),
+        2,
+        "the held tree: the table's handle and later's"
+    );
+    let held = Arc::downgrade(root);
+    drop((later, more));
+    let mut alive: Vec<TreapSet<i64>> = (0..8).map(|k| set(&mut (2000 + k..2001 + k))).collect();
+    for s in &mut alive {
+        table.share(s);
+    }
+    assert!(
+        held.upgrade().is_none(),
+        "a sweep frees the tree no set holds"
+    );
+    assert!(
+        alive
+            .iter()
+            .all(|s| Arc::strong_count(s.root.as_ref().unwrap()) == 2)
+    );
 }
 
 /// FREE2-tables-hashcons-bench: the sets `{i, -i}` all weigh 0 (an `i64` weighs a fixed multiple
@@ -453,4 +474,29 @@ fn the_trees_are_the_same_under_two_keys() {
         "some set shared"
     );
     assert_ne!(a.3, b.3, "the control: two keys");
+}
+
+/// The draw reaches the trees: prints, for this process's `ZED_TREAP_SEED`, the fingerprint
+/// primes and the root of a set of 64 integers and of 64 big integers `2^64 + k (2^61 - 1)`.
+/// A job that runs it under two seeds and finds the lines equal learns the seed never reached
+/// the treaps, so a byte diff of a checker's output under those seeds would prove nothing (the
+/// salt check of PERF-fingerprint-montgomery runs both). Checks here only that each root is a
+/// key of its set and holds the largest priority.
+#[test]
+fn the_seed_reaches_the_trees() {
+    use crate::value::Value;
+    use num_bigint::BigInt;
+    let ints: TreapSet<i64> = (0..64).collect();
+    let base = BigInt::from(1u8) << 64u32;
+    let step = (BigInt::from(1u8) << 61u32) - 1u8;
+    let bigs: TreapSet<Value> = (1..=64u64).map(|k| Value::int(&base + &step * k)).collect();
+    let (i, b) = (ints.root.as_ref().unwrap(), bigs.root.as_ref().unwrap());
+    assert!(ints.iter().all(|k| k.priority() <= i.key.priority()));
+    assert!(bigs.iter().all(|k| k.priority() <= b.key.priority()));
+    println!(
+        "SEEDPROBE primes={:?} int_root={} big_root={:?}",
+        crate::priority::fingerprint_primes(),
+        i.key,
+        b.key
+    );
 }

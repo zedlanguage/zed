@@ -1341,6 +1341,7 @@ dependencies = [
  "num-traits",
  "perf-event2",
  "rustix",
+ "smallvec",
  "stacker",
  "zed-alloc-count",
  "zed-collections",

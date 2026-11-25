@@ -212,3 +212,41 @@ fn equal_keys_take_equal_priorities_whatever_the_draw() {
     assert_ne!(a.hash(&key), b.hash(&key));
     assert_ne!(a.hash(&key), a.hash(&other));
 }
+
+/// The fingerprint primes of seeds 0 to 255 are in their ranges, `P1` prime and `P2 = 2Q + 1`
+/// with `Q` and `P2` prime, and the draws they took are printed: the observed rates stated at
+/// `fingerprint_primes` (against about 41.9 draws per prime for `P1`, and about 1310 per safe
+/// prime for `Q` from the Hardy-Littlewood conjecture), and the time of one draw of both.
+#[test]
+fn fingerprint_primes_draw_rates() {
+    let seeds = 256u64;
+    let (mut sum, mut most) = ([0u64; 2], [0u64; 2]);
+    let start = std::time::Instant::now();
+    for seed in 0..seeds {
+        let ([p1, p2], draws) =
+            fingerprint_primes_from(seeded_words(seed, 21), seeded_words(seed, 22));
+        assert!(
+            (1 << 60..1 << 61).contains(&p1) && zed_numtheory::is_prime(p1),
+            "P1 {p1}"
+        );
+        let q = (p2 - 1) / 2;
+        assert!((1 << 59..1 << 60).contains(&q), "Q {q}");
+        assert!(
+            zed_numtheory::is_prime(q) && zed_numtheory::is_prime(p2),
+            "P2 {p2}"
+        );
+        for i in 0..2 {
+            sum[i] += draws[i];
+            most[i] = most[i].max(draws[i]);
+        }
+    }
+    let per = start.elapsed() / u32::try_from(seeds).expect("a few seeds");
+    let mean = sum.map(|s| s as f64 / seeds as f64);
+    println!(
+        "fingerprint primes over {seeds} seeds: P1 {:.1} draws per prime (most {}), Q {:.0} draws \
+         per safe prime (most {}); {per:?} per draw of both",
+        mean[0], most[0], mean[1], most[1]
+    );
+    // A draw that took one candidate each time would mean the test of primality accepts all.
+    assert!(mean[0] > 10.0 && mean[1] > 100.0, "{mean:?}");
+}

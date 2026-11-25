@@ -285,6 +285,67 @@ fn sharing_sets_of_one_sum_scales() {
     );
 }
 
+/// A key whose weight is 0 whatever it is, so every set of such keys has one seeded sum: the
+/// keys of [`sharing_tied_sets_scales`], ordered and prioritized as `i64`.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct Tied(i64);
+
+impl Elem for Tied {
+    fn priority(&self) -> u64 {
+        self.0.priority()
+    }
+    fn weight(&self) -> u64 {
+        0
+    }
+    fn class(&self) -> u32 {
+        1
+    }
+}
+
+/// PERF-set-tied-digest-depth, the table's half: [`HashConsTable::share`] of `2n` sets
+/// `{Tied(i), Tied(i + 1)}`, `n` distinct, each met twice, all of one seeded sum, so all in one
+/// bucket. A bucket that is a list (as before, of weak handles) is scanned on each set put in,
+/// `O(n^2)`; the ordered bucket finds a set in `O(log n)` comparisons of two keys each,
+/// `O(n log n)`, whose ratio at `n` and `8n` meets 10.5 from `n = 777` (COMPLEXITY.md), so the
+/// sizes are 20,000 and 160,000 (`8 ln 160000 / ln 20000 = 9.68`). The second set of each
+/// class is given the first's tree, which is checked after the run.
+///
+/// Cost model. Instructions: each of the `2n` sets costs one hash lookup and at most two
+/// searches of a bucket of at most `n` sets (`get`, then `insert` for a new set), each
+/// `O(log n)` comparisons of two sets of two keys, `O(1)` each: `O(n log n)`, ratio 9.68.
+/// Bytes: the sets are built before the run and do not grow; a new set adds one handle to the
+/// bucket's B-tree, `O(1)` amortized, and a comparison allocates nothing while the walks' stacks
+/// stay inline (`Iter`, two nodes deep here): `O(n)`, ratio 8. Measured (b22-free2, Colab v5e
+/// VM, 2026-11-25): inline stacks 6,152,276 and 49,218,676 bytes, ratio 8.0, and 499,821,628
+/// and 4,978,509,145 instructions, ratio 9.96; the same run with `Iter`'s stack a `Vec` (the
+/// negative control) 137,048,020 and 1,363,687,412 bytes, ratio 9.95, and 1,574,220,095 and
+/// 15,758,428,484 instructions, ratio 10.01: each comparison allocated two stacks.
+#[test]
+fn sharing_tied_sets_scales() {
+    crate::scaling::check_order_fresh(
+        "HashConsTable::share of 2n distinct sets {Tied(i), Tied(i + 1)}, all of one seeded sum",
+        20_000,
+        1,
+        |n, _| {
+            (0..n as i64)
+                .flat_map(|i| [[i, i + 1], [i + 1, i]])
+                .map(|keys| keys.into_iter().map(Tied).collect::<TreapSet<Tied>>())
+                .collect::<Vec<_>>()
+        },
+        |_, mut sets| {
+            let mut table = HashConsTable::default();
+            for s in &mut sets {
+                table.share(s);
+            }
+            assert_eq!(table.table.len(), 1, "one seeded sum");
+            for pair in sets.chunks(2) {
+                assert!(pair[0].ptr_eq(&pair[1]));
+            }
+            (table, sets)
+        },
+    );
+}
+
 /// The `x` whose [`crate::digest::step`]`(h, x)` is `z`: each step of the finalizer undone in
 /// turn, a xor with a right shift by `s` by `64 / s` more xors (each fixes `s` more high bits),
 /// a multiplication by an odd constant by its inverse modulo `2^64` (Newton's iteration, the
@@ -338,6 +399,82 @@ fn literal_types_of_one_sum_scale() {
             sets.into_iter()
                 .map(crate::types::Type::ints_of)
                 .collect::<Vec<_>>()
+        },
+    );
+}
+
+/// The big integers `2^64 + k (2^61 - 1)` for `k` in `1..=n`: one residue modulo `2^61 - 1`, so
+/// one digest, which the priorities of big integers read before PERF-fingerprint-montgomery.
+fn tied_bigs(n: usize) -> Vec<crate::value::Value> {
+    use num_bigint::BigInt;
+    let base = BigInt::from(1u8) << 64u32;
+    let step = (BigInt::from(1u8) << 61u32) - 1u8;
+    (1..=n as u64)
+        .map(|k| crate::value::Value::int(&base + &step * k))
+        .collect()
+}
+
+/// The nodes of a tree, each with its depth counted in nodes (the root's is 1), by a stack of
+/// its own: the longest depth and the sum of the depths.
+fn depths_of<T>(t: &Tree<T>) -> (u64, u64) {
+    let (mut most, mut sum, mut stack) = (0, 0, vec![(t.as_ref(), 0u64)]);
+    while let Some((n, d)) = stack.pop() {
+        if let Some(n) = n {
+            most = most.max(d + 1);
+            sum += d + 1;
+            stack.push((n.left.as_ref(), d + 1));
+            stack.push((n.right.as_ref(), d + 1));
+        }
+    }
+    (most, sum)
+}
+
+/// PERF-fingerprint-montgomery, red then green: in a set of `n` big integers of one residue
+/// modulo `2^61 - 1` ([`tied_bigs`]), `n` in 1024, 4096 and 16384, the mean depth of a key is
+/// at most `1.5 (1 + 2 ln n)`. The expected depth of each key of a treap of distinct,
+/// independent priorities is below `1 + 2 ln n`: Seidel and Aragon, "Randomized search trees",
+/// Algorithmica 16(4/5), 464-497, 1996, doi:10.1007/BF01940876, Theorem 4.7 (i):
+/// "Ex[D(x_l)] = H_l + H_{n+1-l} - 1 < 1 + 2 ln n" (checked 2026-11-25 in the authors' copy),
+/// so the mean's expectation is below it too, and the factor 1.5 leaves room for the spread of
+/// one draw. Red: when the priorities read the residue modulo `2^61 - 1`
+/// (`ZED_FINGERPRINT_FORM=m61`, the form before), every key ties, the ties are broken by the
+/// order of the keys, and the set is a path of mean depth `(n + 1) / 2`; green: their
+/// fingerprints, residues modulo two drawn primes, differ. Prints the mean and largest depths.
+#[test]
+fn tied_big_integers_keep_a_logarithmic_depth() {
+    for n in [1024usize, 4096, 16384] {
+        let set: TreapSet<crate::value::Value> = tied_bigs(n).into_iter().collect();
+        assert_eq!(set.len(), n);
+        let (most, sum) = depths_of(&set.root);
+        let mean = sum as f64 / n as f64;
+        let bound = 1.5 * (1.0 + 2.0 * (n as f64).ln());
+        println!(
+            "bench TIED_BIGS n={n} mean_depth={mean:.2} mean_depth_bound={bound:.1} \
+             height={most} (printed, not asserted)"
+        );
+        assert!(
+            mean <= bound,
+            "n {n}: mean depth {mean:.2}, over 1.5 (1 + 2 ln n) = {bound:.1}"
+        );
+    }
+}
+
+/// PERF-fingerprint-montgomery: putting `n` big integers of one residue modulo `2^61 - 1`
+/// ([`tied_bigs`]) into a set, `n` and `8n` at 20,000, made before the count, so each value's
+/// fingerprint is computed in the run, once. `O(n log n)` expected, `8 ln 160000 / ln 20000 =
+/// 9.68`, under 10.5; with the residue modulo `2^61 - 1` as the priority every key tied and the
+/// set was a path, `O(n^2)` ([`tied_big_integers_keep_a_logarithmic_depth`] is the red).
+#[test]
+fn tied_big_integers_scale() {
+    crate::scaling::check_order_fresh(
+        "a set of n big integers of one residue modulo 2^61 - 1",
+        20_000,
+        1,
+        |n, _| tied_bigs(n),
+        |n, values| {
+            let set: TreapSet<crate::value::Value> = values.into_iter().collect();
+            assert_eq!(set.len(), n);
+            set
         },
     );
 }
