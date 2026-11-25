@@ -2449,8 +2449,18 @@ impl Type {
     }
 
     /// Whether this is a recursive type by name, not its unfolding.
-    pub fn is_recursive(&self) -> bool {
+    fn is_recursive(&self) -> bool {
         matches!(&*self.0, Node::Rec(_))
+    }
+
+    /// The name of the recursive member this is and its instance's arguments, `L` and `[int]`
+    /// for `L(int)`: what a message writes by name ([`Type::surface_by_name`]). `None` for any
+    /// other type, a part of a definition kept unevaluated among them, which is written unfolded.
+    pub fn rec_name(&self) -> Option<(&str, &[Type])> {
+        match &*self.0 {
+            Node::Rec(r) => r.key.member_name(),
+            Node::Parts(..) => None,
+        }
     }
 
     /// Whether its parts hold no other type: it is no recursive type by name, it has no

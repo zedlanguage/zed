@@ -240,10 +240,19 @@ pub fn name_vars(out: &mut String, from: usize, taken: &dyn Fn(&str) -> bool) {
                         None => m.to_string(),
                     });
                 }
-                // Every member is a name from `String` on, or a recursive type's text, which
-                // begins with its name (`Ty::write_vars` in zedc-types), so the order of names
-                // orders them (MSG-union-order-rest).
-                members.sort_unstable_by(|a, b| super::order::name_cmp(a, b));
+                // Every member is a name from `String` on, or a recursive type's text `L(args)`
+                // (`Ty::write_vars` in zedc-types), which no name holds a `(` of: each is
+                // ordered by its name, the text up to a `(` (MSG-union-order-rest,
+                // SPEC-union-order-recursive). Two of one name, which no union here holds (a
+                // type holds one kernel set, and the union of two recursive types is their
+                // unfolding, `Type::zip`), are left in the order of their texts.
+                fn name(m: &str) -> &str {
+                    m.find('(').map_or(m, |i| &m[..i])
+                }
+                members.sort_unstable_by(|a, b| {
+                    super::order::name_cmp(name(a), name(b))
+                        .then_with(|| super::order::name_cmp(a, b))
+                });
                 for (j, m) in members.iter().enumerate() {
                     if j > 0 {
                         out.push_str(" | ");
