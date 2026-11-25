@@ -107,7 +107,8 @@ fn an_item_above_the_level_its_needs_give_is_reported() {
 /// its needs.
 fn join(k: usize, copies: usize) -> String {
     let ids: Vec<String> = (0..k).map(|i| format!("N{i}")).collect();
-    let mut rows: Vec<(&str, &str, String)> = ids.iter().map(|id| ("0", &**id, "none".into())).collect();
+    let mut rows: Vec<(&str, &str, String)> =
+        ids.iter().map(|id| ("0", &**id, "none".into())).collect();
     let needs: Vec<&str> = (0..copies).flat_map(|_| ids.iter().map(|s| &**s)).collect();
     rows.push(("1", "J", needs.join(", ")));
     let rows: Vec<(&str, &str, &str)> = rows.iter().map(|(l, id, n)| (*l, *id, &**n)).collect();
