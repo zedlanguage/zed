@@ -438,3 +438,26 @@ fn the_remainders_take_the_cheaper_method() {
         worst.1
     );
 }
+
+/// The intersection of n domains, each all integers but one hole. Deferred by
+/// TESTS-scaling-limit-10_5 (12.2 times the bytes at 64 and 512 on cdf07ac4f, merged in a
+/// balanced tree, which copied the pieces on each of its `log2 n` levels); back with row
+/// PRES-scaling-10_5. `pncx_bound_merge_enumeration` and
+/// `pncx_bound_merge_of_mixed_domains_matches_the_fold` check the answer.
+///
+/// The cost is O(n log n), proof: the clone of the input, two pieces a domain, and each
+/// domain's complement, its one hole, cost O(1) a domain; the `n` holes are sorted by lower
+/// end, O(n log n) compares of numbers of at most `log2(3n)` bits, one or two words;
+/// `complement_spans` reads them once, O(n). The bytes are O(n): no step keeps more than the
+/// `2n` pieces of the input, the `n` holes and the `n + 1` pieces of the answer. So the ratio
+/// is held to that of n log n, 10.0 at 4096 (`check_n_log_n`; at 64 it is 12, past the limit
+/// of 10.5 that n log n meets only from 777). Measured 7.97 times the instructions and 8.0
+/// times the bytes at 4096 and 32768; the balanced tree's fold of pairs put back in its place
+/// (negative control, not committed) took 63.4 times.
+#[test]
+fn pncx_bound_merge_scale() {
+    let inputs = scaling::inputs(4096, holes);
+    scaling::check_n_log_n("bound intersection of n one-hole domains", 4096, |n| {
+        std::hint::black_box(intersect_domains(inputs[&n].clone()));
+    });
+}

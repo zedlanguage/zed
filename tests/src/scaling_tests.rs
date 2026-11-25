@@ -200,6 +200,126 @@ fn the_limit_is_10_5_times_8_to_the_power_less_one() {
     assert!(n_log2_n(1_587_343.0) < limit(1) && n_log2_n(1_587_342.0) > limit(1));
 }
 
+/// [`n_log_n_ratio`] is `8 ln(8n) / ln(n)`, and [`check_n_log_n_by`] holds work to it. Work of
+/// order n log n with a linear part, `50 n (log2 n + 1)` passes, passes at 4096 (128/13 = 9.85
+/// times, under 10) and at 2500; at 64 the ratio of n log n is 12, over the limit, so the bound
+/// is 10.5: linear work passes there and work of order n log n alone fails (12 times). Work of
+/// order `n^1.12` (10.27 times) fails at 4096, though it is under the limit of 10.5, and work
+/// of order `n log² n` fails there, 12.5 times.
+#[test]
+fn work_proved_n_log_n_is_held_to_the_ratio_of_n_log_n() {
+    assert_eq!(format!("{:.2}", n_log_n_ratio(4096)), "10.00");
+    assert_eq!(format!("{:.2}", n_log_n_ratio(2500)), "10.13");
+    assert_eq!(format!("{:.2}", n_log_n_ratio(64)), "12.00");
+    static PASSES: AtomicU64 = AtomicU64::new(0);
+    let meter = &mut meter_of_passes(&PASSES);
+    let n_log_n_and_n = |n: usize| {
+        n_log_n_passes(&PASSES, n);
+        _ = PASSES.fetch_add(n as u64 * 50, Relaxed)
+    };
+    check_n_log_n_by(
+        meter,
+        Measures::WorkOnly,
+        "n log n work",
+        4096,
+        &n_log_n_and_n,
+    );
+    check_n_log_n_by(
+        meter,
+        Measures::WorkOnly,
+        "n log n work",
+        2500,
+        &n_log_n_and_n,
+    );
+    let linear = |n: usize| _ = PASSES.fetch_add(n as u64 * 600, Relaxed);
+    check_n_log_n_by(meter, Measures::WorkOnly, "linear work", 64, &linear);
+    let n_log_n = |n: usize| n_log_n_passes(&PASSES, n);
+    assert!(fails(|| {
+        check_n_log_n_by(meter, Measures::WorkOnly, "n log n work", 64, &n_log_n)
+    }));
+    let above = |n: usize| _ = PASSES.fetch_add(((n as f64).powf(1.12) * 200.0) as u64, Relaxed);
+    assert!(fails(|| {
+        check_n_log_n_by(
+            meter,
+            Measures::WorkOnly,
+            "work of order n^1.12",
+            4096,
+            &above,
+        )
+    }));
+    let n_log2_n = |n: usize| {
+        let log = (n as f64).log2();
+        _ = PASSES.fetch_add((n as f64 * log * log * 50.0) as u64, Relaxed)
+    };
+    let message = message_of(|| {
+        check_n_log_n_by(meter, Measures::WorkOnly, "n log² n work", 4096, &n_log2_n)
+    });
+    assert!(message.contains("12.50 times the work"), "{message}");
+}
+
+/// `n` times the levels of a trie whose leaf holds 4096 numbers and each level above it 64
+/// times as many: 16 times at 4096 and 32,768, where the second level comes, and 8 times at
+/// 512.
+fn n_times_levels(n: usize) -> f64 {
+    let (mut levels, mut held) = (1, 4096);
+    while held < n {
+        (levels, held) = (levels + 1, held * 64);
+    }
+    (n * levels) as f64
+}
+
+/// [`check_proved_cost_by`] holds work to the ratio of the cost given at the two sizes, over
+/// [`LIMIT`] where that cost steps: work of `n` times the levels with a linear part passes at
+/// 4096 (12 times, over 10.5, under 16); work of order n log n fails at 512, where the cost
+/// does not step and the bound is 8; work of `n^1.2` times the levels, 24.25 times at 4096,
+/// fails there.
+#[test]
+fn work_proved_of_a_stepped_cost_is_held_to_that_costs_ratio() {
+    assert_eq!(n_times_levels(32_768) / n_times_levels(4096), 16.0);
+    assert_eq!(n_times_levels(4096) / n_times_levels(512), 8.0);
+    static PASSES: AtomicU64 = AtomicU64::new(0);
+    let meter = &mut meter_of_passes(&PASSES);
+    let cost = ("n L(n)", n_times_levels as fn(usize) -> f64);
+    let levels_and_n =
+        |n: usize| _ = PASSES.fetch_add((n_times_levels(n) * 50.0) as u64 + n as u64 * 50, Relaxed);
+    check_proved_cost_by(
+        meter,
+        Measures::WorkOnly,
+        "n L(n) work",
+        4096,
+        cost,
+        &levels_and_n,
+    );
+    let n_log_n = |n: usize| n_log_n_passes(&PASSES, n);
+    let message = message_of(|| {
+        check_proved_cost_by(
+            meter,
+            Measures::WorkOnly,
+            "n log n work",
+            512,
+            cost,
+            &n_log_n,
+        )
+    });
+    assert!(message.contains("under 8.00 times"), "{message}");
+    let above = |n: usize| {
+        _ = PASSES.fetch_add(
+            (n_times_levels(n) * (n as f64).powf(0.2) * 50.0) as u64,
+            Relaxed,
+        )
+    };
+    assert!(fails(|| {
+        check_proved_cost_by(
+            meter,
+            Measures::WorkOnly,
+            "n^1.2 L(n) work",
+            4096,
+            cost,
+            &above,
+        )
+    }));
+}
+
 /// [`hold`] passes a ratio under the limit, fails one at it or over it, and reads a count of
 /// 0 as 1.
 #[test]

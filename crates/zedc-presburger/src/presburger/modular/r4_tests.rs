@@ -826,6 +826,33 @@ fn pncx_bound_merge_enumeration() {
     }
 }
 
+/// [`intersect_domains`] against the fold of `Domain::intersect` on three domains of every
+/// shape, in every order: none, every integer, bounded on either side or both, one point, and
+/// the complements of these, of two pieces; they overlap, nest and touch. None at all is every
+/// integer.
+#[test]
+fn pncx_bound_merge_of_mixed_domains_matches_the_fold() {
+    let i = |v: i64| Int::from(v);
+    let mut shapes = vec![Domain::empty(), Domain::all()];
+    for (lo, hi) in [(-3, 2), (0, 0), (1, 5), (3, 3), (6, 9)] {
+        shapes.push(Domain::range(i(lo), i(hi)));
+        shapes.push(Domain::ge(i(lo)));
+        shapes.push(Domain::le(i(hi)));
+    }
+    let complements: Vec<Domain> = shapes.iter().map(Domain::complement).collect();
+    shapes.extend(complements);
+    for a in &shapes {
+        for b in &shapes {
+            for c in &shapes {
+                let ds = vec![a.clone(), b.clone(), c.clone()];
+                let want = ds.iter().fold(Domain::all(), |x, y| x.intersect(y));
+                assert_eq!(intersect_domains(ds), want, "{a:?} {b:?} {c:?}");
+            }
+        }
+    }
+    assert_eq!(intersect_domains(Vec::new()), Domain::all());
+}
+
 /// The formula of the bound-merging benchmark: `x >= 1`, `x mod 3` and `x mod 5` named by
 /// remainders, and `n` clauses each allowing either remainder to be 0 or `x != 3i + 1`.
 fn bound_merge_formula(n: usize) -> Formula {

@@ -564,7 +564,32 @@ impl Tally {
         }
         // `found` takes the nodes it shares with `s`, so that later sets made from either are
         // compared by their difference.
-        self.found = Found::union(&self.found, &s.found);
+        //
+        // Complexity tradeoff (SCALE-near-prov-members): the union allocates a new node on each
+        // level of every path where the two differ, a leaf of 64 words (512 bytes) and inner
+        // nodes of 64 children, and reads all 64 slots of each, though `s` is most often one
+        // failure (`Held::of` gives each member its own unit set). A tally made for a family
+        // that adds `m` entries to its base's then allocated `m` leaves, 512 bytes each, where
+        // the failures fill one leaf for each 4,096 (measured 25 KB a member at 4,096 members).
+        // Used: a set `s` of at most 64 members (`WIDTH`) is inserted member by member, in
+        // place where `found`'s nodes are its own (`Arc::make_mut`), O(h + 1) node steps
+        // each for a trie of height `h`, so `64 (h + 1)` at most, which a union's read of 64
+        // slots on each of the `h + 1` levels of one path matches; a shared path is copied
+        // once and then changed in place. A larger `s` keeps the union, O(64 (h + 1)) per path
+        // where they differ, and shares `s`'s nodes. Tradeoff: `found` no longer shares a small
+        // `s`'s leaf, so a later difference against a set made from `s` reads that leaf, at
+        // most 64 words, the read the union would have made here. Tests:
+        // `a_tally_keeps_the_failures_of_its_entries_when_the_set_counted_whole_changes` and
+        // `holds_agrees_with_a_tree_read_over_values_and_families_made_from_others` (this file)
+        // check `found` on both paths; the cost is bench
+        // `l01_20_provenance::bench::the_origins_of_a_failure_with_many_members_scale`.
+        if s.found.len() <= crate::idset::WIDTH {
+            for x in s.found.iter() {
+                self.found.insert(x);
+            }
+        } else {
+            self.found = Found::union(&self.found, &s.found);
+        }
         self.count(s.id, nodes);
     }
 
@@ -1459,6 +1484,56 @@ mod tests {
         check(&t, &[set(3)], "leave 4");
         t.leave(set(3));
         check(&t, &[], "leave 3 last");
+    }
+
+    /// `Tally::enter` inserts a set of at most `WIDTH` failures member by member and takes the
+    /// union of a larger one (SCALE-near-prov-members): both give the failures of the sets
+    /// entered, across leaves and as the trie grows a level (past 4,096 and 262,144), and
+    /// after the tally is cloned (a tally made from a base's), with the clone's set unchanged.
+    #[test]
+    fn a_tally_enters_small_sets_in_place_and_large_ones_by_union() {
+        let wide: Vec<u32> = (0..65).collect();
+        let edge: Vec<u32> = (0..64).map(|i| 4_000 + 3 * i).collect();
+        let spread: Vec<u32> = (0..500).map(|i| 37 * i).collect();
+        let s = Sets::new(&[
+            (1, 0, wide.as_slice()),
+            (2, 0, edge.as_slice()),
+            (3, 0, &[4_095, 4_096]),
+            (4, 0, spread.as_slice()),
+            (5, 0, &[262_144]),
+            (6, 0, &[7]),
+        ]);
+        let set = |id: u64| &s.sets[&id];
+        let mut t = Tally::default();
+        let mut held = vec![];
+        for id in [6, 1, 2, 3, 4, 5] {
+            t.enter(set(id), &s.nodes);
+            held.push(set(id));
+            assert_eq!(found(&t), expected(&held), "enter {id}");
+        }
+        // A clone entering more leaves the tally it was cloned from as it was.
+        let before = found(&t);
+        let mut u = t.clone();
+        let middle: Vec<u32> = (100..300).collect();
+        let more = Sets::new(&[(7, 0, &[1, 5_000, 300_000]), (8, 0, middle.as_slice())]);
+        u.enter(&more.sets[&7], &more.nodes);
+        u.enter(&more.sets[&8], &more.nodes);
+        assert_eq!(found(&t), before, "the clone's sets");
+        held.push(&more.sets[&7]);
+        held.push(&more.sets[&8]);
+        assert_eq!(
+            found(&u),
+            expected(&held),
+            "the clone after entering 7 and 8"
+        );
+        for id in [1, 4, 6] {
+            t.leave(set(id));
+        }
+        assert_eq!(
+            found(&t),
+            expected(&[set(2), set(3), set(5)]),
+            "after leaving 1, 4 and 6"
+        );
     }
 
     /// Whether `v` is a failure or holds one where [`Holds`] reads, read as a tree.

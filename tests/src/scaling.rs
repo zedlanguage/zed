@@ -1309,6 +1309,98 @@ pub fn check_instructions_only(what: &str, n: usize, power: u32, run: impl Fn(us
     check_by(&mut Meter::new(), Measures::WorkOnly, what, n, power, run)
 }
 
+/// The ratio at sizes n and 8n of work of order n log n: `8 ln(8n) / ln(n)`, 12 at 64, 11 at
+/// 256, 10.13 at 2,500, 10 at 4,096 and 9.68 at 20,000.
+pub fn n_log_n_ratio(n: usize) -> f64 {
+    let n = n as f64;
+    FACTOR as f64 * (FACTOR as f64 * n).ln() / n.ln()
+}
+
+/// [`check`] for a pass whose cost is proved O(n log n) at the code: the work and the bytes at
+/// 8n are held to [`n_log_n_ratio`]`(n)` times those at n where that is under [`LIMIT`], and to
+/// [`LIMIT`] otherwise, so the bound is never wider than [`check`]'s. A pass of order n log n
+/// measures under the ratio of n log n at its own sizes, whatever its share of linear work; a
+/// ratio over it is growth the proof does not allow (plan rows SCALE-near-*).
+pub fn check_n_log_n(what: &str, n: usize, run: impl Fn(usize) + Sync) {
+    check_n_log_n_by(&mut Meter::new(), Measures::Both, what, n, &run)
+}
+
+/// [`check_n_log_n`] with the meter and the measures given, for the harness's own tests.
+pub(crate) fn check_n_log_n_by(
+    meter: &mut Meter,
+    measures: Measures,
+    what: &str,
+    n: usize,
+    run: &(dyn Fn(usize) + Sync),
+) {
+    let bound = n_log_n_ratio(n).min(LIMIT);
+    let why = format!(
+        "the work proved O(n log n) is under {bound:.2} times at sizes {n} and {}, the ratio of \
+         n log n there or the limit {LIMIT}",
+        FACTOR * n
+    );
+    check_bound_by(meter, measures, what, n, bound, &why, run)
+}
+
+/// [`check`] for a pass whose cost the code proves to be at most a constant times `cost(n)`,
+/// a function of order at most n log n, or of the size of an output the problem forces (the
+/// n² values a spreadsheet prints), that grows by steps, such as `n` times the levels of a trie
+/// of fixed fan-out or a buffer grown by doubling: the work and the bytes at 8n are held to
+/// `cost(8n) / cost(n)` times
+/// those at n. That ratio is over [`LIMIT`] at the sizes where the step falls (16 where a trie
+/// gains its second level), and is held there rather than avoided by choosing sizes that miss
+/// the step, so the bench checks the cost the proof states, the step included. A ratio over it
+/// is growth the proof does not allow (plan row SCALE-near-prov-members).
+pub fn check_proved_cost(
+    what: &str,
+    n: usize,
+    cost: (&str, fn(usize) -> f64),
+    run: impl Fn(usize) + Sync,
+) {
+    check_proved_cost_by(&mut Meter::new(), Measures::Both, what, n, cost, &run)
+}
+
+/// [`check_proved_cost`] with the meter and the measures given, for the harness's own tests.
+pub(crate) fn check_proved_cost_by(
+    meter: &mut Meter,
+    measures: Measures,
+    what: &str,
+    n: usize,
+    (name, cost): (&str, fn(usize) -> f64),
+    run: &(dyn Fn(usize) + Sync),
+) {
+    let bound = cost(FACTOR * n) / cost(n);
+    let why = format!(
+        "the work proved of order {name} is under {bound:.2} times at sizes {n} and {}, the \
+         ratio of {name} there",
+        FACTOR * n
+    );
+    check_bound_by(meter, measures, what, n, bound, &why, run)
+}
+
+/// The work and the bytes of `run` at 8n held to `bound` times those at n, for `why`.
+fn check_bound_by(
+    meter: &mut Meter,
+    measures: Measures,
+    what: &str,
+    n: usize,
+    bound: f64,
+    why: &str,
+    run: &(dyn Fn(usize) + Sync),
+) {
+    let what = format!("{what}: sizes {n} and {}", FACTOR * n);
+    compare_by_dyn(
+        meter,
+        measures,
+        Some(n),
+        &what,
+        Bound::Given(bound, why),
+        &|| run(n),
+        &|| run(FACTOR * n),
+        &|_| {},
+    );
+}
+
 /// [`check_order`] by the given meter and measures, for work of order `n^power`.
 /// The body is [`check_by_dyn`], which is not generic: a generic body is compiled again for
 /// each test's closure, and in a test binary those copies share one large codegen unit that is

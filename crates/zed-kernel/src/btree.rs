@@ -579,7 +579,7 @@ impl<K, V> Map<K, V> {
     // node as few children as hold its entries, which are spread evenly, so every node is
     // allocated once at its length and holds at least `MIN`. Tradeoff: none in time; a tree
     // built this way is fuller, so an insertion into it splits sooner.
-    fn from_sorted(v: Vec<(K, V)>) -> Self {
+    pub(crate) fn from_sorted(v: Vec<(K, V)>) -> Self {
         let len = v.len();
         if len == 0 {
             return Map::default();

@@ -25,7 +25,7 @@
 use std::sync::Arc;
 
 /// The words of a leaf, and the children of an inner node.
-const WIDTH: usize = 64;
+pub(crate) const WIDTH: usize = 64;
 /// The bits of a number that pick its place in a leaf: 64 words of 64 bits.
 const LEAF_BITS: u32 = 12;
 /// The bits of a number that pick a child of an inner node.

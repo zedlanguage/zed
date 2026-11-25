@@ -42,3 +42,12 @@ fn laps_without_the_closing_edge_take_near_linear_time() {
         inst
     });
 }
+
+/// Claude round 4 (`probe_r4_holes_collective_chain`): copies of the collective example in one
+/// chain ([`collective_chain`]). Deferred by TESTS-scaling-limit-10_5 at 4 and 32 copies (11.4
+/// times the instructions on cdf07ac4f); back with row RP-scaling-10_5 at 32 and 256, the
+/// bench sizes of the families above.
+#[test]
+fn a_chain_of_collective_examples_has_exact_ends_in_near_linear_time() {
+    family("collective chain (copies)", 32, collective_chain);
+}

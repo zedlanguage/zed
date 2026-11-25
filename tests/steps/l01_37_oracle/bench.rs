@@ -3,7 +3,7 @@
 //! and each unit elaborated, before it is measured. Each check they make besides the ratio is
 //! made at a small size by the correctness test named in its doc.
 
-use zed_tests::scaling::{check, inputs};
+use zed_tests::scaling::{check, check_n_log_n, inputs};
 
 use super::{alone, counts, scaling};
 
@@ -100,13 +100,31 @@ fn bindings_that_share_a_cone_scale() {
 /// Small instances: `alone::stops_that_reach_functions_end_the_walk_at_the_second` and
 /// `alone::a_second_stop_through_functions_is_not_compared`.
 ///
-/// The kernel's environment (COMPLEXITY.md K8) costs `O(log n)` per binding, so the work is
-/// `n log n`: the least of three runs at 8n against n was 10.05 to 10.55 times at n = 250 to
-/// 4,000 (2026-11-14), near the limit at every size (plan row ORACLE-env-nlogn).
+/// Proof that the work is O(n log n), for the unit of `n` functions and `2n` bindings:
+/// 1. The engine's runs bind at most 13 lets a function and 44 a run for the prelude over
+///    `O(log n)` runs, as counted exactly by
+///    `alone::the_search_for_a_stop_through_functions_binds_them_once_a_probe`: the tuple of
+///    all the bindings, the doubling prefixes up to the stop `b0` (at most twice the prefix
+///    that stops), three runs that confirm `b0` (`first_stop`), and three runs after it that
+///    end the walk. The interpreter's runs, of the tuple and of the same walk, bind as many,
+///    and one more run of the window locates `b0`. So the lets are O(n).
+/// 2. A let, a lookup of a name and a closure's capture each cost O(log n) in the kernel's
+///    environment, an AVL tree of the names in scope (COMPLEXITY.md K8, `eval/env.rs`): one
+///    path from the root, of height at most 1.44 log2(n + 2). A name is compared in O(1), as
+///    it is at most 8 bytes for n up to 10^6 (`f`, `b`, `c` and a decimal index).
+/// 3. A call `f(n−1)(j)` runs one body, whose `if false` arm is not taken: O(log n).
+/// 4. The rest is linear: the walk's visited set and marks (`reads_a_stop`, `leave`), one
+///    entry a definition, and the report's `2n − 3` lines.
+///
+/// So O(n log n), and the ratio at n and 8n is held to that of n log n, 10.13 at 2,500
+/// (`check_n_log_n`). Before SCALE-near-oracle-stops the search halved its window, binding
+/// the `n` functions once per probe, O(n log² n), though this comment said n log n.
+/// It measured 9.79 times the instructions at 2,500 and 20,000, under 10.5 only because the
+/// extra log factor has a small constant; after it, 8.54 and 8.55 times on two runs.
 #[test]
 fn stops_that_reach_functions_scale() {
     let units = inputs(2_500, alone::stops_reaching_functions);
-    check("n stops each reaching n functions", 2_500, |k| {
+    check_n_log_n("n stops each reaching n functions", 2_500, |k| {
         alone::the_walk_ends_at_the_second_stop(&units[&k], k);
     });
 }

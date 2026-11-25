@@ -589,7 +589,9 @@ impl Value {
         // nodes are changed in place, where a clone shared them and copied the O(log n) nodes on
         // the path of every insertion (BENCH-ratios-over-nine-2026-11-16). A set another value
         // still holds is shared and path-copied as before. Tradeoff: the smaller sets are still
-        // copied in; merging many sets of equal size costs their sum.
+        // copied in; merging two sets of equal size `n / 2` costs `O(n)` by `Family::extend`'s
+        // sorted merge (SCALE-near-prov-members), so a balanced tree of `n` failing operands
+        // costs `O(n log n)`, where inserting each member cost `O(n log² n)`.
         let mut atoms: Vec<Value> = atoms.into_iter().collect();
         let base = atoms
             .iter()
@@ -3176,10 +3178,53 @@ impl Family {
     // O(log n), within the insert's own O(log n); a key held now also skips the insert's path
     // copy. Which value of a written family a merge should keep is row
     // SPEC-errs-written-family-not-a-set.
+    //
+    // Complexity tradeoff (COMPLEXITY.md K18, SCALE-near-prov-members): inserting the `m`
+    // entries one by one costs a lookup and an insert each, `O(log n)` comparisons by the binary
+    // search in each node from the root, so `O(m log n)`; merging the two sorted sequences and
+    // laying the tree out at once (`btree::Map::from_sorted`) costs `O(n + m)`, after a sort of
+    // the `m`, `O(m)` when they come in order from one family. Used: the merge when
+    // `m · ⌈log2(n + 1)⌉ > n + m`, which compares the two counts of comparisons, so either way
+    // the cost is `O(min(m log n, n + m))` up to the constant of the choice. A balanced tree of
+    // `n` failing operands, `#e0 * … * #e(n-1)` split at the middle, merged two sets of `n / 2^d`
+    // members at each of the `2^d` products of depth `d`: `O(n)` at each depth with the merge,
+    // `O(n log n)` in all, where the inserts cost `O(n log n)` at each depth, `O(n log² n)` in
+    // all. A chain adds one member to a set of `k`, `1 · ⌈log2(k + 1)⌉ ≤ k + 1`, so it keeps the
+    // insert, `O(log k)` and `O(n log n)` in all, as before. Tradeoff: the merge copies all `n`
+    // entries into new nodes, where the inserts shared the nodes they did not change with the
+    // map it was cloned from; provenance reads such a family by its difference from that map
+    // (`provenance::Holds`, `Held::base`), which then walks the `n` entries rather than skipping
+    // the shared nodes, `O(n + m)`, of the order of the merge itself. Tests:
+    // `extending_a_family_by_many_entries_merges_and_by_few_inserts` (this file).
     pub(crate) fn extend(&mut self, entries: impl IntoIterator<Item = (Value, Value)>) {
-        for (k, v) in entries {
-            if self.0.built_map().get(&k).is_none() {
-                self.0.built_map_mut().insert(k, v);
+        let mut added: Vec<(Value, Value)> = entries.into_iter().collect();
+        let n = self.0.built_map().len();
+        let log = (usize::BITS - n.leading_zeros()) as usize;
+        if added.len().saturating_mul(log) > n + added.len() {
+            // Of two added entries with one key the first is kept, as the inserts keep it: the
+            // sort is stable, and `dedup_by` drops the later of two equal neighbors.
+            added.sort_by(|x, y| x.0.cmp(&y.0));
+            added.dedup_by(|later, kept| later.0.cmp(&kept.0).is_eq());
+            let map = self.0.built_map();
+            let mut merged = Vec::with_capacity(n + added.len());
+            let mut held = map.iter().peekable();
+            for (k, v) in added {
+                // Keys are compared by `Ord`, the order of the map.
+                while let Some((hk, hv)) = held.next_if(|e| e.0.cmp(&k).is_lt()) {
+                    merged.push((hk.clone(), hv.clone()));
+                }
+                // A key held keeps its value.
+                if held.peek().is_none_or(|e| e.0.cmp(&k).is_ne()) {
+                    merged.push((k, v));
+                }
+            }
+            merged.extend(held.map(|(k, v)| (k.clone(), v.clone())));
+            *self.0.built_map_mut() = btree::Map::from_sorted(merged);
+        } else {
+            for (k, v) in added {
+                if self.0.built_map().get(&k).is_none() {
+                    self.0.built_map_mut().insert(k, v);
+                }
             }
         }
         if !self.is_empty() {
@@ -5353,6 +5398,72 @@ mod tests {
         let set = merged.errs().expect("a merge of two `#errs` is an `#errs`");
         assert_eq!(set.len(), 3);
         assert_eq!(set.get(&a), Some(&a));
+    }
+
+    /// `Family::extend` by few entries inserts them and by many merges the sorted sequences
+    /// (SCALE-near-prov-members); both keep a key held at its value, keep the first of two
+    /// added entries with one key, link the new id to the old, and give the map the naive
+    /// inserts give, entry for entry. Sizes span the switch, `m · ⌈log2(n + 1)⌉ > n + m`:
+    /// `m` = 1 into 1,000 inserts, 1,000 into 1,000 merges, and every `m` from 0 to 40 into
+    /// `n` from 0 to 40 crosses it in both directions.
+    #[test]
+    fn extending_a_family_by_many_entries_merges_and_by_few_inserts() {
+        let key = |i: i64| Value::int(BigInt::from(i));
+        let naive = |base: &Family, added: &[(Value, Value)]| {
+            let mut m = base.0.built_map().clone();
+            for (k, v) in added {
+                if m.get(k).is_none() {
+                    m.insert(k.clone(), v.clone());
+                }
+            }
+            m.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<Vec<_>>()
+        };
+        let check = |n: i64, m: i64| {
+            // Held keys are the even numbers below 2n, valued `#held`; the added are taken
+            // from 0 up by 3s in descending order, valued `#added` then `#again` for a
+            // second offer of each, so a third of them are held and they come unsorted.
+            let base = Family::of((0..n).map(|i| (key(2 * i), Value::atom("held"))));
+            let mut added: Vec<(Value, Value)> = (0..m)
+                .rev()
+                .map(|i| (key(3 * i), Value::atom("added")))
+                .collect();
+            added.extend((0..m).map(|i| (key(3 * i), Value::atom("again"))));
+            let want = naive(&base, &added);
+            let mut got = base.clone();
+            got.extend(added);
+            let have: Vec<_> = got
+                .0
+                .built_map()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            assert_eq!(have, want, "n = {n}, m = {m}");
+            assert_eq!(got.len(), want.len(), "n = {n}, m = {m}");
+            for (k, v) in &want {
+                assert_eq!(got.get(k), Some(v), "n = {n}, m = {m}, key {k}");
+            }
+            if !want.is_empty() {
+                assert_eq!(got.from(), base.id(), "n = {n}, m = {m}");
+                assert_ne!(got.id(), base.id(), "n = {n}, m = {m}");
+            }
+            if let Some((k, _)) = want.iter().find(|(k, _)| base.get(k).is_some()) {
+                assert_eq!(got.get(k), Some(&Value::atom("held")));
+            }
+            // Key 3 is offered as `#added` first and `#again` second, and is never held.
+            if m > 1 {
+                assert_eq!(got.get(&key(3)), Some(&Value::atom("added")));
+            }
+        };
+        for n in 0..=40 {
+            for m in 0..=40 {
+                check(n, m);
+            }
+        }
+        check(1_000, 1);
+        check(1_000, 1_000);
+        check(1, 1_000);
     }
 
     /// Families of one size and different entries hash apart (plan row

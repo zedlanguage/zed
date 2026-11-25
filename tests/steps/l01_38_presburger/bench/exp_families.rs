@@ -86,9 +86,14 @@ costs!(skew_block_answers, skew_block, "a0", 'a', 180, 1);
 costs!(nest_point_decide, nest_point, "x0", 'd', 2500, 1);
 costs!(nest_point_satisfiable, nest_point, "x0", 's', 2600, 1);
 costs!(nest_point_answers, nest_point, "x0", 'a', 1900, 1);
-// Deferred by TESTS-scaling-limit-10_5 (10.56 times at k = 16 on cdf07ac4f); back with row
-// PRES-scaling-10_5.
-costs!(nest_point_project_each, nest_point, "x0", 'p', 16, 1);
+// Deferred by TESTS-scaling-limit-10_5 (10.56 times at k = 16 on cdf07ac4f, 10.30 in row
+// SCALE-near-nest-point). The size grows to 128 (SCALE-near-nest-point, b24-scale1, 2026-11-25):
+// 6.50 times the instructions and 6.9 times the bytes at 128 and 1,024 (179,083,489 and
+// 1,164,579,894 instructions, DynamoRIO's count on a Colab VM). The ratio falls from 10.3 to
+// 6.5 as k grows, which a cost growing faster than k log k at large k would not do. Not
+// explained: which part grew faster than 8 times from k = 16 to 128; the perf profile at 128
+// (`project_each` 64%, of it `solve_omega` 28%, `settle` 24%) has no part that stands out.
+costs!(nest_point_project_each, nest_point, "x0", 'p', 128, 1);
 costs!(nest_empty_decide, nest_empty, "x0", 'd', 2800, 1);
 costs!(nest_empty_satisfiable, nest_empty, "x0", 's', 3400, 1);
 costs!(nest_empty_project_each, nest_empty, "x0", 'p', 16, 1);

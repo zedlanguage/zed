@@ -177,3 +177,33 @@ fn a_value_200000_levels_deep_is_digested() {
     let deep = shared(200_000);
     let _ = digest(&deep);
 }
+
+/// The failures `#e0`, …, `#e(n-1)` merged as a balanced tree, each half merged first, as the
+/// product `#e0 * … * #e(n-1)` that l01_20's provenance benchmark evaluates merges them
+/// (SCALE-near-prov-members). Proof that the work is O(n log n): the tree has `⌈log2 n⌉`
+/// levels; at each, the merges take sets of `n` members in all, and a merge of two sets of
+/// `a ≥ b` members keeps the larger and adds the `b` others (`Value::merge_failures`), by
+/// inserts when `b · ⌈log2(a + 1)⌉ ≤ a + b` (then `O(a + b)` comparisons) and else by
+/// `Family::extend`'s sorted merge, `O(a + b)`; the sets of one level so cost `O(n)`, and the
+/// tree `O(n log n)`. Before the merge, each of the `b` was inserted, `O(b log a)`, so
+/// `O(n log n)` a level and `O(n log² n)` in all, 8·(ln 8n / ln n)² = 11.37 at n = 50,000
+/// against n log n's 9.54. Held to n log n's ratio (`check_n_log_n`). Small instances:
+/// `extending_a_family_by_many_entries_merges_and_by_few_inserts` in the tests of `value.rs`.
+#[test]
+fn merging_a_balanced_tree_of_failures_scales() {
+    fn merge(xs: &[Value]) -> Value {
+        match xs.len() {
+            1 => xs[0].clone(),
+            k => Value::merge_failures([merge(&xs[..k / 2]), merge(&xs[k / 2..])]),
+        }
+    }
+    let atoms = crate::scaling::inputs(50_000, |n| {
+        (0..n)
+            .map(|i| Value::atom(&format!("e{i}")))
+            .collect::<Vec<_>>()
+    });
+    crate::scaling::check_n_log_n("a balanced merge of n failures", 50_000, |n| {
+        let all = merge(&atoms[&n]);
+        assert_eq!(all.errs().map(|f| f.len()), Some(n));
+    });
+}

@@ -298,9 +298,13 @@ enum End {
 // each stop. With the walk ended there, it costs O(n log n): each run before the end binds the
 // definitions between one stop and the next, which run there for the first time, and literals
 // for the bindings before them, and these runs are O(log n) doubling prefixes of that stretch,
-// O(stretch) lets in all, and halvings of it that each run only the half window left, with
-// the definitions before it as literals (see `first_stop`, which was O(n log² n) before
-// BENCH-over-nlogn-prediction, rerunning each prefix whole). Tests:
+// O(stretch) lets in all, and, at a stop, three runs of the window the stop lies in (see
+// `first_stop`), each binding the window, the literals it reads and the function definitions
+// it reaches once, so O(stretch + F) lets per stop. Until SCALE-near-oracle-stops,
+// `first_stop` halved the window, O(log m) probes that each bound those `F` function
+// definitions again, O(F log n) lets: O(n log² n) work for `n` bindings reaching `n`
+// functions, though this comment said O(n log n); before BENCH-over-nlogn-prediction it also
+// reran each prefix whole. Tests:
 // `l01_37_oracle::bench::stops_that_reach_functions_scale` and
 // `a_second_stop_through_functions_is_not_compared`; COMPLEXITY.md F107. A complete solution
 // builds the unit's function definitions once, in an environment each run starts from: both
@@ -477,9 +481,48 @@ impl<'a> Runs<'a> {
     // `the_search_for_the_stop_binds_each_definition_a_bounded_number_of_times`). The outcomes are
     // the same: a probe's run stops at its first let that stops, every definition before `lo`
     // running, and that let's error is its own.
+    //
+    // The `F log m` term is O(n log n) lets, O(n log² n) work, where `n` bindings reach `n`
+    // function definitions, which have no literal (`stops_reaching_functions`, plan row
+    // SCALE-near-oracle-stops). So the stop is first located by one run of the
+    // interpreter over the window, which pushes each let's position to an output port as it
+    // runs ([`Runs::located`]): the stop is the let after the last pushed. Two runs of the
+    // engine confirm it, `ready[lo..q]` running and `ready[lo..=q]` stopping, which is what
+    // the halving would conclude, as the stop is the first let of the window that stops. That
+    // is three runs, O(m + reads + F) lets, for each stop. An engine that disagrees with the
+    // interpreter there falls back to the halving, which then finds its own stop, so a
+    // mismatch still shows. Alternatives weighed: an environment kept by the engines from one
+    // run to the next (the complete solution of `Runs`), which needs a change of both engines'
+    // `Through` and of the native code's JIT modules; and a catch of a stop in the kernel,
+    // which has none. The port needs neither, and the pushes leave every value as it was.
+    // Test: `l01_37_oracle::alone::the_search_for_a_stop_through_functions_binds_them_once_a_probe`.
     fn first_stop(&mut self, ready: &[usize], ran: usize, mut error: String) -> (usize, String) {
         let (mut lo, mut hi) = (ran, ready.len());
         self.values_of(&ready[..lo]);
+        // The interpreter's run of the window with pushes names the stop `q`; the engine's run
+        // of `ready[lo..q]` running and of `ready[lo..=q]` stopping confirm it, as a probe
+        // would. So where the engine agrees, a stop costs three runs of the window, each
+        // binding the function definitions it reaches once, not one per probe.
+        if let Some(q) = self
+            .located(&ready[lo..hi])
+            .map(|q| lo + q)
+            .filter(|&q| q < hi)
+        {
+            if q == lo || self.run(&ready[lo..q], Self::nothing()).is_ok() {
+                self.values_of(&ready[lo..q]);
+                lo = q;
+                match self.run(&ready[lo..=q], Self::nothing()) {
+                    Err(e) => return (q, e),
+                    // The engine runs the let the interpreter stops at: the halving below
+                    // searches the rest, `ready[..hi]` stopping as before.
+                    Ok(_) if q + 1 < hi => {
+                        self.values_of(&ready[lo..=q]);
+                        lo = q + 1;
+                    }
+                    Ok(_) => {}
+                }
+            }
+        }
         // `ready[..lo]` runs and `ready[..hi]` stops with `error`, its own let at `hi - 1`
         // when `hi == lo + 1`.
         while hi - lo > 1 {
@@ -549,6 +592,30 @@ impl<'a> Runs<'a> {
     /// ends the walk there, and the others as their own terms. Sets `again` when one of those
     /// others is not among `targets`.
     fn run(&mut self, targets: &[usize], body: Term) -> Result<Value, String> {
+        let t = self.lets(targets, body, false);
+        (self.engine)(&interp::prelude(t), &mut Evaluator::new(World::new()))
+    }
+
+    /// The position in `targets` of the first whose let stops in the interpreter's run of the
+    /// term [`Runs::run`] makes of them, found from that one run: after each target's let the
+    /// run pushes the target's position to the port [`PROGRESS`], so the stop is the target
+    /// after the last pushed. `None` where that run does not stop. A guess for the engine:
+    /// [`Runs::first_stop`] confirms it by the engine's own runs.
+    fn located(&mut self, targets: &[usize]) -> Option<usize> {
+        let t = self.lets(targets, Self::nothing(), true);
+        let mut ev = Evaluator::new(World::new().output(PROGRESS));
+        run::direct(&interp::prelude(t), &mut ev).err()?;
+        let last = ev.world.outputs[PROGRESS].log.last();
+        Some(match last {
+            Some(Value::Int(i)) => targets.partition_point(|&t| t as i64 <= *i),
+            _ => 0,
+        })
+    }
+
+    /// The term [`Runs::run`] runs: `body` under the lets of `targets` and of the definitions
+    /// they reach, in the unit's order. With `progress`, each target's let is followed by a
+    /// push of its position to [`PROGRESS`], bound to a name no definition has.
+    fn lets(&mut self, targets: &[usize], body: Term, progress: bool) -> Term {
         self.walks += 1;
         let walk = self.walks;
         let cones = self.cones;
@@ -576,17 +643,29 @@ impl<'a> Runs<'a> {
             }
         }
         lets.sort_unstable();
-        let t = lets.iter().rev().fold(body, |body, &i| {
+        lets.iter().rev().fold(body, |body, &i| {
             let d = &self.unit.defs[i];
             let term = match &self.known[i] {
                 Known::Value(v) => v.clone(),
                 _ => d.term.clone(),
             };
+            let body = if progress && targets.binary_search(&i).is_ok() {
+                let push = Term::Push(
+                    PROGRESS.into(),
+                    Shared::new(Term::Lit(Value::Int(i as i64))),
+                );
+                Term::Let(PROGRESS.into(), Shared::new(push), Shared::new(body))
+            } else {
+                body
+            };
             Term::Let(d.kernel.clone(), term, Shared::new(body))
-        });
-        (self.engine)(&interp::prelude(t), &mut Evaluator::new(World::new()))
+        })
     }
 }
+
+/// The output port of the interpreter's run that locates a stop ([`Runs::located`]), and the
+/// name its pushes are bound to: not an identifier, so no unit's port or definition has it.
+const PROGRESS: &str = "oracle progress";
 
 /// Compares the unit `text` under each of `engines`: its bindings with no function component,
 /// and the checks of its tables. A rejected unit compares nothing.

@@ -9,29 +9,108 @@ mod digits;
 
 use std::fs;
 
-use zed_tests::scaling::check_order;
+use zed_tests::scaling::{check_order, check_proved_cost};
 
 use crate::scaling::*;
 
 /// Checks reference `input.number` at n and 8n on the input it builds for each size.
 fn scales(input: &Input) {
+    scales_by(input, |run| {
+        check_order(input.what, input.n, input.power, run)
+    });
+}
+
+/// Writes the inputs of reference `input.number` at n and 8n, hands `check` the run at a size,
+/// and removes the inputs.
+fn scales_by(input: &Input, check: impl FnOnce(&(dyn Fn(usize) + Sync))) {
     let Input {
         what,
         number,
         n,
-        power,
         input,
+        ..
     } = *input;
     for m in [n, zed_tests::scaling::FACTOR * n] {
         fs::write(input_path(what, m), input(m)).expect("writing an input");
     }
-    check_order(what, n, power, |m| {
+    check(&|m| {
         let (_, result) = zed_corpus_ref::run(number, &input_path(what, m));
         assert_eq!(result, Ok(()), "{what}");
     });
     for m in [n, zed_tests::scaling::FACTOR * n] {
         fs::remove_file(input_path(what, m)).expect("removing an input");
     }
+}
+
+/// The bytes reference 15 prints on `SPREADSHEET_ALL_DEPEND` at `n`: after each of the first n
+/// lines, `c{j}=1` for each cell defined so far, and after each edit `s = {i}`, `c{j}={i+1}` for
+/// all n cells and `s={i}`; the entries of a line apart by spaces, and a newline.
+fn spreadsheet_all_depend_output(n: usize) -> usize {
+    let digits = |x: usize| x.to_string().len();
+    let (mut total, mut line) = (0, 0);
+    for i in 0..n {
+        line += 3 + digits(i);
+        total += line + i + 1;
+    }
+    let names: usize = (0..n).map(|j| 2 + digits(j)).sum();
+    for i in 0..n {
+        total += names + n * digits(i + 1) + 2 + digits(i) + n + 1;
+    }
+    total
+}
+
+/// The capacity of the `String` reference 15 prints to at `n`: grown from 8 bytes by doubling,
+/// the least power of two that holds the output.
+fn spreadsheet_all_depend_buffer(n: usize) -> f64 {
+    spreadsheet_all_depend_output(n).next_power_of_two() as f64
+}
+
+/// Proof of the cost, for n cells and n edits, `out(n)` bytes printed
+/// (`spreadsheet_all_depend_output`, n² values of up to `log10 n + 1` digits, so of order
+/// n² log n, which the n² values printed force):
+/// 1. The first n lines each set one formula and walk the one cell that reads nothing: O(1)
+///    each, besides the line printed.
+/// 2. An edit of `s` walks its n readers once each (`Sheet::dependents`), hands each its change,
+///    a product and a sum of numbers of one word, and formats its `name=value` once
+///    (`Sheet::spread`): O(1) instructions and bytes a cell besides its digits.
+/// 3. Each line printed gathers its entries in name order from the ordered map of defined
+///    cells, O(n), and joins them, O(the line's bytes).
+/// So the instructions and the bytes are O(out(n)), but for the one output `String`: the meter
+/// counts each regrowth as a new block of the full new size, so its bytes are about twice its
+/// last capacity, `2^⌈log2 out(n)⌉`, a step function of the output. The cost is the sum of these
+/// two nonnegative terms, so its ratio at 8n is at most the greater of their ratios: at 200 and
+/// 1600, 76.2 for the output (441,185 and 33,597,785 bytes) and 128 for the capacity (2^19 and
+/// 2^26; the output at 1600 lies just past 2^25), so the bench holds both measures to the
+/// capacity's ratio, the step included. Before it the bench was held to power 2 (84): 65.3 times
+/// the instructions, 84.9 times the bytes on cdf07ac4f, deferred by TESTS-scaling-limit-10_5 and
+/// back with row M0-scaling-10_5. The output's count is checked against the program's output at
+/// 200 here. Measured 65.3 times the instructions and 84.9 times the bytes (b24-scale1); with
+/// the whole output copied at each line printed (negative control, not committed), 138.2 times
+/// the instructions, which this test fails.
+#[test]
+fn spreadsheet_edits_of_a_cell_that_every_cell_depends_on() {
+    let input = &SPREADSHEET_ALL_DEPEND;
+    let n = input.n;
+    let ratio = |f: fn(usize) -> f64| f(8 * n) / f(n);
+    let out = |m: usize| spreadsheet_all_depend_output(m) as f64;
+    assert!(ratio(spreadsheet_all_depend_buffer) >= ratio(out));
+    let path = input_path(input.what, n);
+    fs::write(&path, (input.input)(n)).expect("writing an input");
+    let (printed, result) = zed_corpus_ref::run(input.number, &path);
+    fs::remove_file(&path).expect("removing an input");
+    assert_eq!(result, Ok(()));
+    assert_eq!(printed.len(), spreadsheet_all_depend_output(n));
+    scales_by(input, |run| {
+        check_proved_cost(
+            input.what,
+            n,
+            (
+                "the output's buffer, 2^⌈log2 out(n)⌉",
+                spreadsheet_all_depend_buffer,
+            ),
+            run,
+        )
+    });
 }
 
 /// Checks reference 14 at n and 8n, after its output at n, or at 1000 points where n is larger,

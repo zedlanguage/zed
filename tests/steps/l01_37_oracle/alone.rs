@@ -281,6 +281,54 @@ fn the_search_for_the_stop_binds_each_definition_a_bounded_number_of_times() {
     }
 }
 
+/// The walk over [`stops_reaching_functions`] binds the `n` functions a bounded number of
+/// times. A function has no literal, and every run of the search for the first stop
+/// (`first_stop` in `zed_tests::oracle`) reaches the last function, which reaches every other.
+/// The search halved its window, about `log2 n` probes, so `n log n` lets, each `O(log n)` in
+/// the kernel's environment (COMPLEXITY.md K8): `n log² n` work (plan row
+/// SCALE-near-oracle-stops; 23.15 lets a function at 512, measured on b24-scale1 with
+/// the halving put back). Now the stop is located by one run of the interpreter, which is not
+/// counted here, and confirmed by the engine. For `n` a power of 2, the engine's runs, counted
+/// here, bind exactly `9n + 2p + 6 + 44 (log2 p + 8)` lets, for `p = 2n` the least power of 2
+/// at least `n + 2`, the position past `b0`, and 44 the lets of the prelude
+/// (`interp::prelude`), which each of the `log2 p + 8` runs binds (for another `n`, the last
+/// prefix that runs may hold `c0`, and step 3 then runs `c0` once less):
+/// 1. the tuple of all the bindings, the `3n` definitions;
+/// 2. the doubling prefixes `1, 2, 4, …, p`, the first to hold `b0`, `2p − 1` in all
+///    (`Runs::outcomes`), the definitions they reach lying inside them;
+/// 3. in `first_stop`, the run of `c0` that confirms it runs, the run of its value, and the
+///    run of `b0` that confirms it stops, each `n + 1` with the `n` functions `c0` and `b0`
+///    reach;
+/// 4. after `b0`, the prefix `c1` (`n + 1`), the prefix `c1, b1` (`n + 2`), which binds again
+///    the functions and stops, and so ends the walk (`End::Again`), and the run of `c1`'s
+///    value (`n + 1`).
+/// At 512 that is 7,454 lets, 14.56 a function, and at 4,096 54,178, 13.23 a function: the
+/// `9n` and the prefixes' `4n − 1` are 13 lets a function, and the prelude adds `O(log n)` in
+/// all.
+#[test]
+fn the_search_for_a_stop_through_functions_binds_them_once_a_probe() {
+    fn lets(mut t: &Term) -> usize {
+        let mut count = 0;
+        while let Term::Let(_, _, body) = t {
+            count += 1;
+            t = body;
+        }
+        count
+    }
+    for (n, want) in [(2usize, 472), (512, 7_454), (4096, 54_178)] {
+        let p = (n + 2).next_power_of_two();
+        assert_eq!(want, 9 * n + 2 * p + 6 + 44 * (p.ilog2() as usize + 8));
+        let bound = std::cell::Cell::new(0);
+        let counting = |t: &Term, ev: &mut Evaluator| {
+            bound.set(bound.get() + lets(t));
+            marked(t, ev)
+        };
+        let r = bindings(&stops_reaching_functions(n), &[("counting", &counting)]);
+        assert_eq!(r.mismatches.len(), 1, "{:?}", r.mismatches);
+        assert_eq!(bound.get(), want, "lets at n = {n}");
+    }
+}
+
 /// `n` functions, each `(x) -> if false { f(x) } else { x }` with `f` the one before, `n`
 /// bindings each calling the last, and a binding that stops: each binding reaches every
 /// function, though its run calls one.

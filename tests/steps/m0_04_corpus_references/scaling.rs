@@ -407,6 +407,21 @@ pub(super) const SPREADSHEET_LONG_FORMULA: Input = Input {
     },
 };
 
+/// All n cells depend on the edited one, so each edit costs one visit per dependency edge, and
+/// it changes every value on the line it prints. n edits must print n² values, so no method does
+/// better than this power. The bench holds it to the cost proved at
+/// `bench::spreadsheet_edits_of_a_cell_that_every_cell_depends_on`, not to this power.
+pub(super) const SPREADSHEET_ALL_DEPEND: Input = Input {
+    what: "spreadsheet all depend",
+    number: "15",
+    n: 200,
+    power: 2,
+    input: |n| {
+        let cells = lines(n, |i| format!("c{i} = s+1"));
+        format!("{cells}{}", lines(n, |i| format!("s = {i}")))
+    },
+};
+
 /// A formula keeps each name once with its multiplicity, so its n terms are one dependency edge.
 pub(super) const SPREADSHEET_REPEATED_TERM: Input = Input {
     what: "spreadsheet repeated term",
@@ -606,7 +621,7 @@ pub(super) const TYPECHECKER_CYCLE: Input = Input {
 };
 
 /// The inputs whose reference is not 14.
-const OTHERS: [Input; 42] = [
+const OTHERS: [Input; 43] = [
     WORD_COUNT,
     HISTOGRAM,
     EDIT_DISTANCE,
@@ -629,6 +644,7 @@ const OTHERS: [Input; 42] = [
     SPREADSHEET,
     SPREADSHEET_LONG_FORMULA,
     SPREADSHEET_REPEATED_TERM,
+    SPREADSHEET_ALL_DEPEND,
     GAME_PLAYERS,
     GAME_TICKS,
     SENSOR_PIPELINE,
