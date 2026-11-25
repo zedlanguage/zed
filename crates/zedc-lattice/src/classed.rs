@@ -531,7 +531,14 @@ impl Classed {
     /// v values (the class `i mod 10 == 3` over `[0, 10^9]` holds 10^8); used: each member
     /// prints as `a..=a`, five characters at least, so where `5·v` passes the class text's
     /// length the class is shorter and nothing is listed; O(p) for p ranges, and the members
-    /// listed only where they are fewer than a fifth of that length.
+    /// listed only where they are fewer than a fifth of that length. The test `5·v > len` is
+    /// not a threshold chosen or measured: it is an exact bound, so it gives the same choice
+    /// as comparing the two texts. Proof: the modulus `m` is above 1 (`strided`), so no two
+    /// members are adjacent and each is a piece of its own, printed `a..=a`, at least
+    /// 1 + 3 + 1 characters; the `v` pieces are joined by `v - 1` separators `", "` inside the
+    /// same `int[` and `]` the class text has, so the members text is at least
+    /// `5·v + 2·(v - 1) + 5` characters, longer than the class text's `len` (which counts its
+    /// own `int[`, `]`) wherever `5·v > len`, and the comparison would then choose the class.
     pub fn printed_members(&self) -> Option<IntervalSet> {
         let (m, r) = self.strided()?;
         let class = format!("{} where x mod {m} == {r}", self.ranges.type_text());

@@ -545,8 +545,8 @@ impl TwoPins<'_, '_> {
         let Some(&j) = self.prep.index.get(s) else {
             return Ok(None);
         };
-        // `(g, γ, runs of u)` for each query with a point: the values `γ + g·u`.
-        let mut found: Vec<(i128, i128, Vec<Run>)> = Vec::new();
+        // `(γ, query)` for each query with a point ([`Query`]).
+        let mut queried: Vec<(i128, Query)> = Vec::new();
         for cell in &self.cells {
             let queries = match cell.leaves.get(&j) {
                 None => vec![(cell.forms[j], None)],
@@ -558,24 +558,73 @@ impl TwoPins<'_, '_> {
                 }
             };
             for (f, cut) in queries {
-                let Some((g, us)) = form_values(f, cell, cut, work)? else {
+                let Some(q) = form_values(f, cell, cut, work)? else {
                     return Ok(None);
                 };
-                if !us.is_empty() {
-                    found.push((g, f.2, us));
+                if !q.3.is_empty() {
+                    queried.push((f.2, q));
                 }
             }
         }
-        // The union is one class only where every query with a step has the same step `m`
-        // and every query the same residue modulo `m`; otherwise the per-name path answers.
-        let Some(m) = found.iter().map(|q| q.0).max() else {
-            return Ok(None);
+        // `(g, γ, runs of u)` for each query: the values `γ + g·u`. A flat query's values
+        // `γ + g·(u0 + k·t)` are first taken whole, as the step `g·k` from `γ + g·u0`; where
+        // the queries' steps or residues then differ (a flat cell among cells of other shapes,
+        // `exact::tests::empty_cells_are_pruned_before_they_are_read`), each flat query's values
+        // are listed at the step `g`, one run a value, as the per-value reading of `u_values`
+        // gave them before [`flat_values`] (and charged as it charged them, a unit a value), so
+        // the answer is the same and no slower than it was.
+        let whole = (queried.iter())
+            .map(|(c, (g, k, u0, ts))| {
+                Some((
+                    g.checked_mul(*k)?,
+                    c.checked_add(g.checked_mul(*u0)?)?,
+                    ts.clone(),
+                ))
+            })
+            .collect::<Option<Vec<_>>>();
+        let found = match whole.filter(|w| one_class(w)) {
+            Some(w) => w,
+            None => {
+                let mut listed = Vec::with_capacity(queried.len());
+                for (c, (g, k, u0, ts)) in queried {
+                    if k == 1 {
+                        // A run of `t` is a run of `u`, moved by `u0`.
+                        let moved = |t: Option<i128>| match t {
+                            None => Some(None),
+                            Some(t) => t.checked_add(u0).map(Some),
+                        };
+                        let Some(us) = (ts.into_iter())
+                            .map(|(lo, hi)| Some((moved(lo)?, moved(hi)?)))
+                            .collect::<Option<Vec<Run>>>()
+                        else {
+                            return Ok(None);
+                        };
+                        listed.push((g, c, us));
+                        continue;
+                    }
+                    let mut us = Vec::new();
+                    for (lo, hi) in ts {
+                        let (Some(lo), Some(hi)) = (lo, hi) else {
+                            return Ok(None);
+                        };
+                        let n = hi.checked_sub(lo).and_then(|d| u64::try_from(d).ok());
+                        work.charge(n.map_or(u64::MAX, |n| n.saturating_add(1)))?;
+                        for t in lo..=hi {
+                            let Some(u) = k.checked_mul(t).and_then(|kt| kt.checked_add(u0)) else {
+                                return Ok(None);
+                            };
+                            us.push((Some(u), Some(u)));
+                        }
+                    }
+                    listed.push((g, c, us));
+                }
+                listed
+            }
         };
-        if found.iter().any(|q| q.0 > 0 && q.0 != m)
-            || (m > 1 && found.iter().any(|q| (q.1 - found[0].1).rem_euclid(m) != 0))
-        {
+        if !one_class(&found) {
             return Ok(None);
         }
+        let m = found.iter().map(|q| q.0).max().unwrap_or(0);
         let residue = found[0].1.rem_euclid(m.max(1));
         let mut pieces = Vec::new();
         for (g, ga, us) in found {
@@ -610,15 +659,30 @@ impl TwoPins<'_, '_> {
     }
 }
 
-/// The values of the form `f` over the integer points of `cell`, cut by `cut` where given: its
-/// step `g` (`gcd(α, β)`, 0 for a form with no pin) and the runs of `u` with `f = γ + g·u`;
-/// `None` where it declines ([module note](self)).
+/// Whether the queries `(g, γ, runs of u)`, the values `γ + g·u`, are at least one and make one
+/// class: every query with a step has the same step `m` and every query the same residue
+/// modulo `m`; otherwise the per-name path answers.
+fn one_class(found: &[(i128, i128, Vec<Run>)]) -> bool {
+    let Some(m) = found.iter().map(|q| q.0).max() else {
+        return false;
+    };
+    !(found.iter().any(|q| q.0 > 0 && q.0 != m)
+        || (m > 1 && found.iter().any(|q| (q.1 - found[0].1).rem_euclid(m) != 0)))
+}
+
+/// The values of one query of a form `f = α·p + β·q + γ`: `(g, k, u0, runs of t)`, the values
+/// `γ + g·u` with `u = u0 + k·t` for `t` in the runs; `g = gcd(α, β)` (0 for a form with no
+/// pin). `k` is 1 and `u0` is 0 except on a flat region read by [`flat_values`].
+type Query = (i128, i128, i128, Vec<Run>);
+
+/// The values of the form `f` over the integer points of `cell`, cut by `cut` where given, as a
+/// [`Query`]; `None` where it declines ([module note](self)).
 fn form_values(
     f: Form,
     cell: &Cell,
     cut: Option<Form>,
     work: &mut Work,
-) -> Result<Option<(i128, Vec<Run>)>, Refusal> {
+) -> Result<Option<Query>, Refusal> {
     let (al, be, _) = f;
     let (g, a, b) = if al == 0 && be == 0 {
         (0, 1, 0)
@@ -633,17 +697,145 @@ fn form_values(
         // A guard with no pin: true on the whole cell, or false on it.
         Some(c) if c.0 == 0 && c.1 == 0 => {
             if c.2 < 0 {
-                return Ok(Some((g, Vec::new())));
+                return Ok(Some((g, 1, 0, Vec::new())));
             }
             None
         }
         c => c,
     };
+    if g > 0
+        && let Shape::Rows(halves) = &cell.shape
+    {
+        let mut halves = halves.clone();
+        halves.extend(cut);
+        if let Some((k, u0, ts)) = flat_values((a, b), &halves, work)? {
+            return Ok(Some((g, k, u0, ts)));
+        }
+    }
     let us = match cut {
         None => shape_values(&cell.shape, (a, b), work)?,
         Some(c) => cut_values(&cell.shape, c, (a, b), work)?,
     };
-    Ok(us.map(|us| (g, us)))
+    Ok(us.map(|us| (g, 1, 0, us)))
+}
+
+/// The values of `u = a·p + b·q` (`a`, `b` coprime) over the integer points of `halves` where
+/// they hold an equation whose line is not one of constant `u`: `(k, u0, runs of t)` with the
+/// values `u0 + k·t`, `k >= 1`; `None` where `halves` hold no such equation or a number passes
+/// `i128`, and [`u_values`] reads them instead.
+///
+/// Exact. An equation is two half-planes `f >= 0` and `-f >= 0`. In the coordinates `(u, w)`
+/// of [`u_values`] (unimodular, so the integer points are the same) it reads
+/// `E·u + D·w + C == 0`, `D != 0`. With `d = gcd(E, D)`: no integer point where `d` does not
+/// divide `C`; else `e·u + δ·w + c == 0` with `(e, δ, c) = (E, D, C) / d`, signs taken so that
+/// `δ > 0`, and `gcd(e, δ) == 1`. Its integer solutions are exactly `u = u0 + δ·t`,
+/// `w = w0 - e·t` for integer `t`, where `u0` is the least `u >= 0` with `e·u ≡ -c` (mod `δ`)
+/// (one such `u` in each `δ` consecutive integers, since `e` is invertible mod `δ`) and
+/// `w0 = (-c - e·u0) / δ`, an integer: for an integer solution `(u, w)`, `δ` divides `e·u + c`,
+/// so `u ≡ u0`, `u = u0 + δ·t`, and then `w = (-c - e·u0)/δ - e·t`; each such pair is a
+/// solution. Each half-plane `E_i·u + D_i·w + C_i >= 0` then reads
+/// `(E_i·δ - D_i·e)·t + (E_i·u0 + D_i·w0 + C_i) >= 0`, a bound on `t` or a test with no `t`
+/// ([`meet`]); the equation's own two give `0 >= 0`. So the points are the integer `t` between
+/// the bounds, one point each, and the values of `u` are `u0 + δ·t` over them: `k = δ`.
+///
+/// Complexity tradeoff: [`u_values`] reads a flat region by its real shadow and then each `u`
+/// outside the dark shadow one by one (the splinters). On the line the dark shadow is empty
+/// wherever `|D| > 1` (Pugh's raise `(D_l - 1)·(-D_u - 1)` passes the line's zero width), so
+/// every `u` of the real shadow is tried: O(h·n) for `n` values. In
+/// `l01_39_scope_relations::families::bench::a_strided_set_kept_as_its_class_scales`
+/// (`(y == 2z || y == 2z + 4n + 2) && 0 <= z <= n`) that was 32,004 calls of [`fiber`] at
+/// n = 8,000 against 4,004 at 1,000, 4.6M to 37.0M instructions (callgrind, 2026-11-25). Here
+/// O(h) for h half-planes, whatever the width; the values come as one progression, the class
+/// [`TwoPins::values`] then keeps.
+fn flat_values(
+    (a, b): (i128, i128),
+    halves: &[Form],
+    work: &mut Work,
+) -> Result<Option<(i128, i128, Vec<Run>)>, Refusal> {
+    let Some((s, t)) = bezout(a, b) else {
+        return Ok(None);
+    };
+    let uw = |&(ha, hb, hc): &Form| -> Option<Row> {
+        let e = ha.checked_mul(s)?.checked_add(hb.checked_mul(t)?)?;
+        let d = hb.checked_mul(a)?.checked_sub(ha.checked_mul(b)?)?;
+        Some((e, d, hc))
+    };
+    let h = halves.len() as u64;
+    work.charge(2 * h)?;
+    let set: std::collections::HashSet<&Form> = halves.iter().collect();
+    let equation = halves.iter().find_map(|f| {
+        let neg = (f.0.checked_neg()?, f.1.checked_neg()?, f.2.checked_neg()?);
+        let row = uw(f)?;
+        (row.1 != 0 && set.contains(&neg)).then_some(row)
+    });
+    let Some((e, d, c)) = equation else {
+        return Ok(None);
+    };
+    let Some(g) = Int::from(e).gcd(&Int::from(d)).to_i128() else {
+        return Ok(None);
+    };
+    if c % g != 0 {
+        return Ok(Some((1, 0, Vec::new())));
+    }
+    let sign = d.signum();
+    let (Some(e), Some(dl), Some(c)) = (
+        (e / g).checked_mul(sign),
+        (d / g).checked_mul(sign),
+        (c / g).checked_mul(sign),
+    ) else {
+        return Ok(None);
+    };
+    let u0 = if dl == 1 {
+        0
+    } else {
+        let Some((inv, _)) = bezout(e.rem_euclid(dl), dl) else {
+            return Ok(None);
+        };
+        let Some(u0) = c
+            .checked_neg()
+            .map(|nc| nc.rem_euclid(dl))
+            .and_then(|nc| nc.checked_mul(inv.rem_euclid(dl)))
+        else {
+            return Ok(None);
+        };
+        u0.rem_euclid(dl)
+    };
+    let Some(num) = c
+        .checked_neg()
+        .and_then(|nc| nc.checked_sub(e.checked_mul(u0)?))
+    else {
+        return Ok(None);
+    };
+    if num % dl != 0 {
+        return Ok(None);
+    }
+    let w0 = num / dl;
+    let (mut lo, mut hi) = (None, None);
+    let mut holds = true;
+    for f in halves {
+        let terms = (|| {
+            let (ei, di, ci) = uw(f)?;
+            let p = ei.checked_mul(dl)?.checked_sub(di.checked_mul(e)?)?;
+            let q = ei
+                .checked_mul(u0)?
+                .checked_add(di.checked_mul(w0)?)?
+                .checked_add(ci)?;
+            Some((p, q))
+        })();
+        let Some((p, q)) = terms else {
+            return Ok(None);
+        };
+        let Some(ok) = meet(p, q, &mut lo, &mut hi) else {
+            return Ok(None);
+        };
+        holds &= ok;
+    }
+    let empty = !holds || matches!((lo, hi), (Some(l), Some(h)) if l > h);
+    Ok(Some((
+        dl,
+        u0,
+        if empty { Vec::new() } else { vec![(lo, hi)] },
+    )))
 }
 
 /// The runs of `u = a·p + b·q` over the integer points of `shape`.
@@ -2268,5 +2460,80 @@ mod edges_tests {
             }
         }
         assert!(found > 1000, "only {found} polygons");
+    }
+}
+
+#[cfg(test)]
+mod flat_tests {
+    use std::collections::BTreeSet;
+
+    use super::super::super::super::SOLVER;
+    use super::{Form, Work, flat_values};
+
+    /// Random flat regions: an equation `A·p + B·q + C == 0` (`|A|, |B| <= 4`, `|C| <= 9`, as
+    /// its two half-planes), 2 or 3 more half-planes, and the box `[-20, 20]²`. Where
+    /// [`flat_values`] answers, its values `u0 + k·t` are exactly the values of `u = a·p + b·q`
+    /// at the integer points of the region, found by trying every point of the box; equations
+    /// whose `gcd(A, B)` does not divide `C` (no point) are among them.
+    #[test]
+    fn flat_values_are_the_values_of_the_points() {
+        let mut s: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |m: i128| -> i128 {
+            s = s
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((s >> 33) % (2 * m as u64 + 1)) as i128 - m
+        };
+        let coords = [(1, 0), (0, 1), (1, 1), (1, -1), (2, 1), (1, 3), (3, -2)];
+        let (mut found, mut strided, mut empty) = (0, 0, 0);
+        for _ in 0..20_000 {
+            let (ea, eb, ec) = (next(4), next(4), next(9));
+            if ea == 0 && eb == 0 {
+                continue;
+            }
+            let mut halves: Vec<Form> = vec![(ea, eb, ec), (-ea, -eb, -ec)];
+            for _ in 0..(next(1) + 2) {
+                let (x, y) = (next(3), next(3));
+                if x != 0 || y != 0 {
+                    halves.push((x, y, next(15)));
+                }
+            }
+            halves.extend([(1, 0, 20), (-1, 0, 20), (0, 1, 20), (0, -1, 20)]);
+            let (a, b) = coords[(next(3) + 3) as usize];
+            let mut work = Work {
+                used: 0,
+                limit: u64::MAX,
+                solver: SOLVER,
+            };
+            let Some((k, u0, runs)) = flat_values((a, b), &halves, &mut work).unwrap() else {
+                continue;
+            };
+            found += 1;
+            assert!(k >= 1, "{halves:?}: step {k}");
+            let mut got = BTreeSet::new();
+            for (lo, hi) in runs {
+                let (Some(lo), Some(hi)) = (lo, hi) else {
+                    panic!("{halves:?}: an open run on a box");
+                };
+                for t in lo..=hi {
+                    got.insert(u0 + k * t);
+                }
+            }
+            let mut want = BTreeSet::new();
+            for p in -20..=20 {
+                for q in -20..=20 {
+                    if halves.iter().all(|f| f.0 * p + f.1 * q + f.2 >= 0) {
+                        want.insert(a * p + b * q);
+                    }
+                }
+            }
+            assert_eq!(got, want, "{halves:?}, u = {a}·p + {b}·q");
+            strided += usize::from(k > 1 && got.len() > 1);
+            empty += usize::from(got.is_empty());
+        }
+        assert!(
+            found > 5_000 && strided > 500 && empty > 500,
+            "found {found}, strided {strided}, empty {empty}"
+        );
     }
 }

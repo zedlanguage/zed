@@ -27,10 +27,16 @@
 //! pair with no side of coefficient 1, a form whose coefficients have a common factor above 1
 //! (its values are a progression, as many pieces as values), or a number past `i128` is not
 //! taken here: the formula goes to the join, which is exact, as before.
+//!
+//! Rows over one atom besides those an equation defines go to [`line`] instead: each defined
+//! atom is an affine image of that atom, its set a progression held as ranges and a class
+//! (`Classed`), with no value listed.
 
 use zed_numtheory::{bezout_i128, gcd_u128 as gcd};
 use zedc_int::int::{i128_div_ceil, i128_div_floor};
+use zedc_lattice::classed::Classed;
 use zedc_lattice::interval::{End, IntervalSet, Num};
+use zedc_lattice::lattice::Congruence;
 
 use super::rows::Rows;
 
@@ -174,26 +180,7 @@ impl<'a> Shape<'a> {
     /// The shape of `rows`; `None` where they are not of the class the module note names.
     pub(super) fn of(rows: &'a Rows) -> Option<Shape<'a>> {
         let n = rows.atoms.len();
-        let mut uses = vec![0usize; n];
-        for row in &rows.rows {
-            for &(j, _) in &row.terms {
-                uses[j] += 1;
-            }
-        }
-        // Each equation defines its first atom that appears in it alone with coefficient 1 or -1.
-        let mut defines: Vec<Option<(usize, i128)>> = vec![None; rows.rows.len()];
-        let mut defined = vec![false; n];
-        for (r, row) in rows.rows.iter().enumerate() {
-            if row.eq
-                && let Some(&(j, c)) =
-                    (row.terms.iter()).find(|&&(j, c)| uses[j] == 1 && c.abs() == 1)
-            {
-                defines[r] = Some((j, c));
-                defined[j] = true;
-            }
-        }
-        let mut axes: Vec<usize> = (0..n).filter(|&j| uses[j] > 0 && !defined[j]).collect();
-        axes.sort_unstable();
+        let (defines, axes) = defines_and_axes(rows);
         let [ax, ay] = axes[..] else {
             return None;
         };
@@ -341,6 +328,180 @@ impl<'a> Shape<'a> {
         }
         Some(sets)
     }
+}
+
+/// The atom each row defines, with its coefficient, and the axes, the atoms of a row that no
+/// row defines, in increasing order. Each equation defines its first atom that appears in it
+/// alone with coefficient 1 or -1. O(t + n) for t terms and n atoms.
+fn defines_and_axes(rows: &Rows) -> (Vec<Option<(usize, i128)>>, Vec<usize>) {
+    let n = rows.atoms.len();
+    let mut uses = vec![0usize; n];
+    for row in &rows.rows {
+        for &(j, _) in &row.terms {
+            uses[j] += 1;
+        }
+    }
+    let mut defines: Vec<Option<(usize, i128)>> = vec![None; rows.rows.len()];
+    let mut defined = vec![false; n];
+    for (r, row) in rows.rows.iter().enumerate() {
+        if row.eq
+            && let Some(&(j, c)) = (row.terms.iter()).find(|&&(j, c)| uses[j] == 1 && c.abs() == 1)
+        {
+            defines[r] = Some((j, c));
+            defined[j] = true;
+        }
+    }
+    let axes = (0..n).filter(|&j| uses[j] > 0 && !defined[j]).collect();
+    (defines, axes)
+}
+
+/// Each wanted atom's set of values over the points of rows over one atom `x` (the axis) and
+/// atoms that each appear in one equation alone with coefficient 1 or -1, which defines them
+/// (`y == 2·x + 4`); `None` for rows of another shape, or a number past `i128`.
+///
+/// Exactness, every step. A row that defines `d` is `s·d + a·x + c == 0` with `s` 1 or -1, so
+/// at every point `d = g·x + h` with `g = -s·a` and `h = -s·c`; `d` is in no other row. Every
+/// other row is `a·x + c >= 0` (or `== 0`), since an atom of a row that no row defines is the
+/// axis. So the points are the `(x, (g_d·x + h_d)_d)` with `x` in `X`, the set of `x` in its
+/// domain that meet each other row and have `g_d·x + h_d` in `d`'s domain for each `d`; their
+/// projection onto `x` is `X` and onto `d` is `{g_d·x + h_d : x ∈ X}`. `X` is met here range by
+/// range: `a·x + c >= 0` is `x >= ⌈-c/a⌉` for `a > 0` and `x <= ⌊c/-a⌋` for `a < 0` (an
+/// integer is at least a number if and only if at least its ceiling), and every `x` or none for
+/// `a == 0`; `g·x + h ∈ [l, u]` is `x ∈ [⌈(l - h)/g⌉, ⌊(u - h)/g⌋]` for `g > 0`, the ends
+/// swapped for `g < 0`, and every `x` or none for `g == 0`. The image of a range `[p, q]` of `X`
+/// under `g·x + h`, `g != 0`, is the members of class `h` modulo `|g|` in `[g·p + h, g·q + h]`
+/// (ends swapped for `g < 0`): each member `v` there is `g·x + h` for `x = (v - h)/g`, an
+/// integer between `p` and `q`, and each `g·x + h` is such a member. All ranges of `X` share
+/// the one map, so the union of their images is the members of that one class in the union of
+/// the image ranges, which [`Classed::new`] holds exactly. An atom of no row takes every value of
+/// its domain where `X` is not empty and none where it is.
+// Complexity tradeoff: the join of row sums builds the table of `x`'s and `d`'s keys, one bit
+// per key over the ranges' widths, O(m / 64) word steps for ranges of m values, and its sets are
+// ranges alone, so `d`'s answer `{2x : x ∈ [0, m]}` is m + 1 ranges (`plane` refuses such a
+// form for that reason: as many pieces as values). The `families` strided bench of
+// l01_39_scope_relations spent 4.0 times the instructions at 8 times m there (callgrind,
+// 2026-11-25, LIMITS-classed-listing-per-set: `row_sums::Plan::project` 6.0M to 102.8M). Here:
+// O(Σ p log p) for p ranges of the atoms' domains, the meets of sorted range lists and
+// `Classed::new` of each image, nothing depending on the ranges' widths.
+pub(super) fn line(rows: &Rows, want: &[bool]) -> Option<Vec<Option<Classed>>> {
+    let (defines, axes) = defines_and_axes(rows);
+    let [ax] = axes[..] else {
+        return None;
+    };
+    let mut xs: Vec<(i128, i128)> = rows.domains[ax].clone();
+    // Each defined atom's map `(g, h)`.
+    let mut maps: Vec<Option<(i128, i128)>> = vec![None; rows.atoms.len()];
+    for (row, def) in rows.rows.iter().zip(&defines) {
+        let (mut a, c) = (0i128, row.k);
+        for &(j, t) in &row.terms {
+            if j == ax {
+                a = a.checked_add(t)?;
+            }
+        }
+        let allowed: Vec<(i128, i128)> = match *def {
+            Some((d, s)) => {
+                let (g, h) = (
+                    s.checked_neg()?.checked_mul(a)?,
+                    s.checked_neg()?.checked_mul(c)?,
+                );
+                maps[d] = Some((g, h));
+                preimage(&rows.domains[d], g, h)?
+            }
+            None => {
+                let mut r = at_least(a, c)?;
+                if row.eq {
+                    r = meet(&r, &at_least(a.checked_neg()?, c.checked_neg()?)?);
+                }
+                r
+            }
+        };
+        xs = meet(&xs, &allowed);
+    }
+    let set = |r: &[(i128, i128)]| {
+        IntervalSet::from_pieces(r.iter().map(|&(l, h)| (fin(l), fin(h))).collect())
+    };
+    let mut sets = vec![None; rows.atoms.len()];
+    for (a, w) in want.iter().enumerate() {
+        if !*w {
+            continue;
+        }
+        sets[a] = Some(match maps[a] {
+            _ if a == ax => Classed::plain(set(&xs)),
+            Some((0, h)) if !xs.is_empty() => Classed::plain(set(&[(h, h)])),
+            Some((g, h)) => {
+                let mut image = Vec::with_capacity(xs.len());
+                for &(p, q) in &xs {
+                    let (u, v) = (
+                        g.checked_mul(p)?.checked_add(h)?,
+                        g.checked_mul(q)?.checked_add(h)?,
+                    );
+                    image.push((u.min(v), u.max(v)));
+                }
+                if g < 0 {
+                    image.reverse();
+                }
+                Classed::new(set(&image), Congruence::new(Num::from(g), Num::from(h)))
+            }
+            None if xs.is_empty() => Classed::plain(IntervalSet::empty()),
+            None => Classed::plain(set(&rows.domains[a])),
+        });
+    }
+    Some(sets)
+}
+
+/// The `x` with `a·x + c >= 0`, as ranges: at most one.
+fn at_least(a: i128, c: i128) -> Option<Vec<(i128, i128)>> {
+    Some(match a.signum() {
+        0 if c >= 0 => vec![(i128::MIN, i128::MAX)],
+        0 => Vec::new(),
+        1 => vec![(i128_div_ceil(c.checked_neg()?, a)?, i128::MAX)],
+        _ => vec![(i128::MIN, i128_div_floor(c, a.checked_neg()?)?)],
+    })
+}
+
+/// The `x` with `g·x + h` in `ranges` (sorted, disjoint), as sorted disjoint ranges.
+fn preimage(ranges: &[(i128, i128)], g: i128, h: i128) -> Option<Vec<(i128, i128)>> {
+    if g == 0 {
+        let inside = ranges.iter().any(|&(l, u)| l <= h && h <= u);
+        return Some(if inside {
+            vec![(i128::MIN, i128::MAX)]
+        } else {
+            Vec::new()
+        });
+    }
+    let mut out = Vec::with_capacity(ranges.len());
+    for &(l, u) in ranges {
+        let (l, u) = (l.checked_sub(h)?, u.checked_sub(h)?);
+        let (p, q) = if g > 0 {
+            (i128_div_ceil(l, g)?, i128_div_floor(u, g)?)
+        } else {
+            (i128_div_ceil(u, g)?, i128_div_floor(l, g)?)
+        };
+        if p <= q {
+            out.push((p, q));
+        }
+    }
+    if g < 0 {
+        out.reverse();
+    }
+    Some(out)
+}
+
+/// The meet of two lists of sorted disjoint ranges, sorted and disjoint: O(p + q).
+fn meet(xs: &[(i128, i128)], ys: &[(i128, i128)]) -> Vec<(i128, i128)> {
+    let (mut i, mut j, mut out) = (0, 0, Vec::new());
+    while i < xs.len() && j < ys.len() {
+        let (lo, hi) = (xs[i].0.max(ys[j].0), xs[i].1.min(ys[j].1));
+        if lo <= hi {
+            out.push((lo, hi));
+        }
+        if xs[i].1 < ys[j].1 {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
 }
 
 fn fin(v: i128) -> End {
@@ -712,5 +873,107 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Random rows over one atom `x` (atom 0), up to two atoms an equation defines over it
+    /// (`d == g·x + h`, `g` in `[-3, 3]`, so most images are progressions) and one atom of no
+    /// row, each over up to three ranges: each set [`line`] gives, listed, is that of the
+    /// points, found by trying every value of `x`. Rows over two axes are declined.
+    #[test]
+    fn line_projections_are_those_of_the_points() {
+        let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = move |n: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % n
+        };
+        let ranges = |w: u64, next: &mut dyn FnMut(u64) -> u64| {
+            let mut at = -(w as i128) + next(6) as i128;
+            let mut out = Vec::new();
+            for _ in 0..1 + next(3) {
+                let hi = at + next(w) as i128;
+                out.push((at, hi));
+                at = hi + 2 + next(4) as i128;
+            }
+            out
+        };
+        let (mut nonempty, mut strided) = (0, 0);
+        for case in 0..4000 {
+            let n_def = 1 + (case % 2) as usize;
+            let alone = case % 5 == 0;
+            let n = 1 + n_def + usize::from(alone);
+            let domains: Vec<_> = (0..n)
+                .map(|j| ranges(if j == 0 { 12 } else { 40 }, &mut next))
+                .collect();
+            let mut rows_v = Vec::new();
+            for _ in 0..next(3) {
+                rows_v.push(Row {
+                    terms: vec![(0, next(7) as i128 - 3)],
+                    k: next(13) as i128 - 6,
+                    eq: next(6) == 0,
+                });
+            }
+            let mut maps = Vec::new();
+            for d in 0..n_def {
+                let (a, s) = (next(7) as i128 - 3, if next(2) == 0 { 1 } else { -1 });
+                let k = next(11) as i128 - 5;
+                rows_v.push(Row {
+                    terms: vec![(0, a), (1 + d, s)],
+                    k,
+                    eq: true,
+                });
+                maps.push((-s * a, -s * k));
+            }
+            let rows = Rows {
+                atoms: (0..n).map(|i| Atom::Sym(format!("a{i}").into())).collect(),
+                domains,
+                rows: rows_v,
+                empty: false,
+            };
+            let inside = |j: usize, v: i128| rows.domains[j].iter().any(|&(l, h)| l <= v && v <= h);
+            let mut each = vec![std::collections::BTreeSet::new(); n];
+            for x in rows.domains[0].iter().flat_map(|&(l, h)| l..=h) {
+                let ds: Vec<i128> = maps.iter().map(|&(g, h)| g * x + h).collect();
+                let fits = ds.iter().enumerate().all(|(d, &v)| inside(1 + d, v))
+                    && rows.rows[..rows.rows.len() - n_def].iter().all(|r| {
+                        let v = r.k + r.terms[0].1 * x;
+                        if r.eq { v == 0 } else { v >= 0 }
+                    });
+                if fits {
+                    each[0].insert(x);
+                    for (d, v) in ds.into_iter().enumerate() {
+                        each[1 + d].insert(v);
+                    }
+                    if alone {
+                        each[n - 1].extend(rows.domains[n - 1].iter().flat_map(|&(l, h)| l..=h));
+                    }
+                }
+            }
+            let sets = line(&rows, &vec![true; n]).expect("one axis");
+            for (a, (got, w)) in sets.iter().zip(&each).enumerate() {
+                let got = got.as_ref().expect("wanted");
+                strided += usize::from(got.strided().is_some());
+                let w: Vec<i128> = w.iter().copied().collect();
+                assert_eq!(values(&got.met()), w, "case {case}, atom {a}");
+            }
+            nonempty += usize::from(!each[0].is_empty());
+        }
+        assert!(
+            nonempty > 1000 && strided > 500,
+            "{nonempty} with a point, {strided} strided"
+        );
+        // Two axes: not of the class.
+        let two = Rows {
+            atoms: (0..2).map(|i| Atom::Sym(format!("a{i}").into())).collect(),
+            domains: vec![vec![(0, 9)], vec![(0, 9)]],
+            rows: vec![Row {
+                terms: vec![(0, 1), (1, -2)],
+                k: 0,
+                eq: false,
+            }],
+            empty: false,
+        };
+        assert!(line(&two, &[true, true]).is_none());
     }
 }

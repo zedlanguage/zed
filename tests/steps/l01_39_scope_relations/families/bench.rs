@@ -282,7 +282,48 @@ fn a_strided_set_kept_as_its_class_scales() {
         large as f64 / small as f64 >= scaling::limit(0),
         "control: {small} and {large} ranges listed"
     );
-    scaling::check_order("a strided set of n values kept as its class", 1_000, 0, |n| {
-        std::hint::black_box(strided_at(n));
-    });
+    scaling::check_order(
+        "a strided set of n values kept as its class",
+        1_000,
+        0,
+        |n| {
+            std::hint::black_box(strided_at(n));
+        },
+    );
+}
+
+/// TEMPORARY probe (remove before landing): audit seed 4's steps 0 to 4, each name's product
+/// after each step, with the exact cover and with the solver alone.
+#[test]
+fn probe_seed_4_steps() {
+    let run = || {
+        let tests = &audit_tests()[4];
+        let p = Premises::new();
+        let ns: Vec<Arc<str>> = AUDIT_NAMES.into_iter().map(Arc::from).collect();
+        let mut s = ints(&ns);
+        for n in &ns {
+            s = s.assume(&and(ge(var(n), int(-8)), le(var(n), int(8))), true, &p);
+        }
+        let mut out = Vec::new();
+        for (step, t) in tests.iter().enumerate().take(5) {
+            s = if step % 3 == 2 {
+                s.assume(t, true, &p).join(&s.assume(t, false, &p))
+            } else {
+                s.assume(t, true, &p)
+            };
+            out.push(format!("step {step}: {t}"));
+            for n in &ns {
+                let q = s.get(n);
+                out.push(format!(
+                    "  {n}: ints {} class {} shown {} {q:?}",
+                    q.ints(),
+                    q.cell.congruence.element,
+                    shown(&q)
+                ));
+            }
+        }
+        out.join("\n")
+    };
+    let alone = zed_tests::step_helpers::l01_38_presburger::solver_alone(run);
+    println!("PROBE cover:\n{}\nPROBE alone:\n{alone}", run());
 }

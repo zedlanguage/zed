@@ -365,7 +365,7 @@ use zedc_int::int::{Int, i128_div_ceil};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
 use super::formula::{Atom, Conjuncts, Formula, Id, Model, Rel, one_bound};
-use super::refusal::{EachClassed, Refusal};
+use super::refusal::{Classed, EachClassed, Refusal};
 use super::row_domains::{self, Settled, range};
 
 mod classes;
@@ -788,6 +788,24 @@ pub(super) fn project(
     // the join's work (`Plan::project`, `plane::project`); else the join. The test controls of
     // the join's limit ask for the join itself, so they skip this.
     let join_asked = ROW_SUMS_JOIN.with(Cell::get) || JOIN_LIMIT_SET.with(Cell::get).is_some();
+    // One atom besides those an equation defines: each set is an affine image of the one
+    // atom's, exact as ranges and a class, at a cost that does not grow with the widths of the
+    // ranges (`plane::line`, LIMITS-classed-listing-per-set).
+    if !join_asked && let Some(mut sets) = plane::line(&rows, &want) {
+        let sets = (syms.iter())
+            .map(|s| {
+                let at = rows.atoms.binary_search(s).ok();
+                Ok(match at.and_then(|a| sets[a].take()) {
+                    Some(set) => set,
+                    None => Classed::plain(IntervalSet::range(End::NegInf, End::PosInf)),
+                })
+            })
+            .collect();
+        return Ok(EachClassed {
+            sets,
+            causes: Vec::new(),
+        });
+    }
     let shape = if join_asked {
         None
     } else {

@@ -1254,13 +1254,14 @@ fn three_cases_at(r: i64, lazy: bool) -> zedc::store::product::Product {
 /// `0 <= x <= 3·r` and the third on `5·r <= x <= 5·r + 9`, at `r` = 10^3 and 10^6: the cases'
 /// classes 0 and 1 modulo 3 hold 2·r + 2 values, each case in an arm of its own and the arms
 /// joined ([`three_cases_at`]). Each value of `x` asked is in the answer exactly where it is in
-/// a case (`Product::contains`), eager and lazy. At r = 10^6 each arm's values are past the
-/// limit at which a set is listed (`presburger::listed_within_limit`, about 134,800 values), so
-/// each arm keeps its ranges and class, and `x`'s interval keeps two ranges (a listed answer
-/// has one for each of the 2·r + 2 values). Red before green, run on origin/main at 7351ba062:
-/// at r = 10^6, eager, the join of the arms' classes 0 and 1 modulo 3 was every integer, `x`
-/// was `[0..=3000000, 5000000..=5000009]` modulo 1, so `x = 2` was held. At r = 10^3 the arms
-/// are listed, the answer is exact on both sides, the negative control.
+/// a case (`Product::contains`), eager and lazy. At r = 10^6 each arm's values were past the
+/// limit at which a set was listed before this row (`presburger::listed_within_limit`, about
+/// 134,800 values, since removed); each arm keeps its ranges and class at every r now, and
+/// `x`'s interval keeps two ranges (a listed answer has one for each of the 2·r + 2 values).
+/// Red before green, run on origin/main at 7351ba062: at r = 10^6, eager, the join of the arms'
+/// classes 0 and 1 modulo 3 was every integer, `x` was `[0..=3000000, 5000000..=5000009]`
+/// modulo 1, so `x = 2` was held. At r = 10^3 the arms were listed then, the answer exact on
+/// both sides, the negative control.
 #[test]
 fn three_cases_whose_classes_join_wide_past_the_old_listing_limit() {
     for r in [1_000i64, 1_000_000] {

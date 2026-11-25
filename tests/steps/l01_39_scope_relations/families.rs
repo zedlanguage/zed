@@ -2689,9 +2689,12 @@ fn audit_seed_126_keeps_the_ends_the_solver_alone_finds() {
     let cover = audit(126..127);
     // The solver alone had the oracle's ends at all 9 steps while the block held `g || !g`
     // (`g` a conjunction), whose two cases it split; with `Formula::or` finding that
-    // disjunction true (PRES-again-monotone) it keeps `a` wider at steps 6 to 8, and the
-    // cover still gives the oracle's ends at every step.
-    assert_eq!(alone.iter().filter(|r| r.ends).count(), 6);
+    // disjunction true (PRES-again-monotone) it kept `a` wider at steps 6 to 8 (6 steps of 9),
+    // and the cover still gave the oracle's ends at every step. Since a strided set is kept as
+    // its ranges and class (LIMITS-classed-listing-per-set), a range holding two values of a
+    // class asks for the whole block (`Product::holed`), and the solver alone has the oracle's
+    // ends at all 9 steps again; each record's ends are checked against the oracle's points.
+    assert_eq!(alone.iter().filter(|r| r.ends).count(), 9);
     assert_eq!(cover.iter().filter(|r| r.ends).count(), 9);
     for (a, c) in alone.iter().zip(&cover) {
         assert!(

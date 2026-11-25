@@ -23058,9 +23058,10 @@ pub fn project_each_boxed_classed(f: &Formula, syms: &[Atom]) -> BoxedOf<Classed
 /// its ranges, and its class where that is not every integer. Each holds every value of
 /// `set`, so each meet is sound, and the ranges with the class hold exactly `set` (Lemma E of
 /// zedc-preimage `Scope::project_part`; zedc-lattice `Classed`). A strided set is not listed
-/// by a count of its values (but see the last paragraph): the domains record `{-1, 2, 5}` as `[-1..=5]` beside `2 mod 3`, a reader that prints
-/// or compares the set reads both (zedc-preimage `Product::classed`), and a join of cases of
-/// different classes keeps their union (zedc-preimage `Product::join`).
+/// by a count of its values (but see the last paragraph): the domains record `{-4, -1, 2, 5}`
+/// as `[-4..=5]` beside `2 mod 3`, a reader that prints or compares the set reads both
+/// (zedc-preimage `Product::classed`), and a join of cases of different classes keeps their
+/// union (zedc-preimage `Product::join`).
 ///
 /// Complexity tradeoff (LIMITS-classed-listing-per-set): O(p) for p ranges, whatever the
 /// number of values. Naive version, every class listed, O(v) for v values, is what

@@ -6,11 +6,11 @@
 //! `zedc_lattice::class_union::ClassUnion`) where the congruence domain alone joins them to a
 //! wider class, so no value is listed.
 //!
-//! A case's set is listed up to about 134,800 values (`presburger::listed_within_limit`), so
-//! at the small sizes here every set is listed, the answers were exact on origin/main at
-//! 7351ba062 too, and the union is not reached: this is an oracle check that the join per
-//! class changes no answer. Its red case is the same kind of cases past that limit,
-//! `scope_relations::lazy::three_cases_whose_classes_join_wide_past_the_old_listing_limit`.
+//! A case's set was listed up to about 134,800 values before this row
+//! (`presburger::listed_within_limit`, since removed), so at the small sizes here every set was
+//! listed and the answers were exact on origin/main at 7351ba062 too: this is an oracle check
+//! that the join per class changes no answer. Its red case is the same kind of cases past that
+//! limit, `scope_relations::lazy::three_cases_whose_classes_join_wide_past_the_old_listing_limit`.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

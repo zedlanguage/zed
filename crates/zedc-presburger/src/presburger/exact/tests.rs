@@ -4999,6 +4999,19 @@ fn empty_cells_are_pruned_before_they_are_read() {
     assert_eq!(readings, 7, "the readings of the part");
 }
 
+/// The line of the per-unit bench (`bench::line`, `p` in `0..=n` on `7·q == 5·p`, the name
+/// `y == p + 2·q`) is read by `flat_values` as one progression a name, in units that do not
+/// grow with `n`: 584 at n = 16,000 (VM, 2026-11-25), the same at n = 1,000. Red before it:
+/// each value of the real shadow was tried (`u_runs`), 137,747 units at n = 16,000 (the bench
+/// doc, 2026-11-22), so the two counts differed about 16 times.
+#[test]
+fn a_two_pin_line_is_read_in_units_that_do_not_grow_with_it() {
+    let names = ["p", "q", "y"];
+    let small = bench::read_all(&bench::line(1_000), &names);
+    let large = bench::read_all(&bench::line(16_000), &names);
+    assert_eq!((small, large), (584, 584));
+}
+
 /// The search stop of the two-pin reading where the pass before it counts nothing: a choice
 /// `a + b == p` where `p >= 0`, else `a + b == -p`, with `b >= 0`. Its possible heads are `a`,
 /// read by nothing else (so the choice could be a leaf, and the pass does not count it), and

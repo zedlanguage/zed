@@ -8,34 +8,39 @@ use super::*;
 /// which the checker pays too), the least of five runs ([`crate::scaling::least_cpu_ns`]), with
 /// the units it charged, the same in each run.
 fn timed(f: &Formula, names: &[&str]) -> (u128, u64) {
+    crate::scaling::least_cpu_ns(5, || read_all(f, names))
+}
+
+/// The units the whole two-pin reading of `f` charges ([`timed`] reads it once).
+pub(super) fn read_all(f: &Formula, names: &[&str]) -> u64 {
     let syms: Vec<Atom> = names.iter().map(|s| a(s)).collect();
-    crate::scaling::least_cpu_ns(5, || {
-        let mut work = Work {
-            used: 0,
-            limit: u64::MAX,
-            solver: SOLVER,
-        };
-        let prep = guarded::prepare(f, &mut work)
-            .expect("no refusal")
-            .expect("prepared");
-        let two = prep
-            .two_pins(syms.len(), &mut work)
-            .expect("no refusal")
-            .expect("the part is read with two pins");
-        for s in &syms {
-            let set = two.values(s, &mut work).expect("no refusal");
-            assert!(set.is_some(), "{s:?} declined");
-            std::hint::black_box(set);
-        }
-        work.used
-    })
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    let prep = guarded::prepare(f, &mut work)
+        .expect("no refusal")
+        .expect("prepared");
+    let two = prep
+        .two_pins(syms.len(), &mut work)
+        .expect("no refusal")
+        .expect("the part is read with two pins");
+    for s in &syms {
+        let set = two.values(s, &mut work).expect("no refusal");
+        assert!(set.is_some(), "{s:?} declined");
+        std::hint::black_box(set);
+    }
+    work.used
 }
 
 /// `p` in `0..=n` on the line `7·q == 5·p`, read with two pins `p` and `q` and the name
-/// `y == p + 2·q`. The polygon is flat, so each name reads the half-planes whole
-/// (`u_values`), and its dark shadow is empty: the values are tried one by one, each
-/// charged a unit for each half-plane.
-fn line(n: i64) -> Formula {
+/// `y == p + 2·q`. The polygon is flat: each name is read by `flat_values` as one progression,
+/// in units that do not grow with `n`
+/// (`exact::tests::a_two_pin_line_is_read_in_units_that_do_not_grow_with_it`); before it, its
+/// dark shadow was empty and the values were tried one by one (`u_runs`), a unit a half-plane
+/// for each.
+pub(super) fn line(n: i64) -> Formula {
     Formula::and(vec![
         eq(&[("q", 7), ("p", -5)], 0),
         ge(&[("p", 1)], 0),
@@ -45,7 +50,8 @@ fn line(n: i64) -> Formula {
 }
 
 /// The same line with `p` in `0..=10` and `h` more sides `p + i·q <= 10^6 + i` that no point
-/// meets: each name reads `h + 4` half-planes, `3·h² + h` pairs for its shadows.
+/// meets: each name reads `h + 4` half-planes, `flat_values` two units a half-plane (before
+/// it, `3·h² + h` pairs for its shadows in `u_values`).
 fn sides(h: i64) -> Formula {
     let mut all = vec![
         eq(&[("q", 7), ("p", -5)], 0),
@@ -90,12 +96,22 @@ fn strip(n: i64) -> Formula {
 /// `sides` grew to keep 10^5 units. Measured (2026-11-22, VM, one run, before the sides charge
 /// went from 4 to 16 pairs a unit): `line n=16000` 137,747 units at 52.3 ns a unit, `sides
 /// h=240` 183,115 at 5.6 ns, `strip n=4000` 140,000 at 37.3 ns; at most 162 ms at the limit.
+///
+/// Since `flat_values` (LIMITS-classed-listing-per-set, 2026-11-25) a flat region is read in
+/// O(h) units whatever its length: `line n=16000` charged 584 units (VM, 2026-11-25), under the
+/// 10^5 of this bench at every n, so it moved to the correctness test
+/// `exact::tests::a_two_pin_line_is_read_in_units_that_do_not_grow_with_it`, which holds its
+/// units to the same count at n = 1,000 and 16,000. `sides` is read by `flat_values` too, two
+/// units a half-plane for each name, and grew from h = 480 to 60,000 to keep 10^5 units: it
+/// now measures the time per unit of `flat_values`. The charges of `u_values` and `u_runs`
+/// that `line` and `sides` measured are now reached only by the other regions of `Shape::Rows`
+/// (a half-plane, a strip with no corner, an empty region) and by a flat region that
+/// `flat_values` declines (a number past `i128`); no case here measures them now.
 #[test]
 fn the_two_pin_reading_takes_a_bounded_time_per_unit_of_work() {
     let names = ["p", "q", "y"];
     let cases: Vec<(String, Formula)> = vec![
-        ("line n=16000".into(), line(16000)),
-        ("sides h=480".into(), sides(480)),
+        ("sides h=60000".into(), sides(60_000)),
         ("strip n=4000".into(), strip(4000)),
     ];
     let measured: Vec<(String, u128, u64)> = (cases.into_iter())

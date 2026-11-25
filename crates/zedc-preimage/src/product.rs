@@ -457,6 +457,43 @@ impl Product {
         self.cell.ints.element.concrete()
     }
 
+    /// Whether the integers the product holds leave out an integer between two of them: the
+    /// trigger of the whole-block projections ([`Block::hole_pending`], `Scope::project_block`).
+    /// A hole is two or more ranges in the interval domain, or one range that holds two values
+    /// of a class other than every integer, or a union of cases of different classes.
+    ///
+    /// Before LIMITS-classed-listing-per-set the cover gave a strided set of few values as its
+    /// values, one range each, so the piece count saw its holes; held as one range and a class
+    /// (`presburger::ranges_and_class`), `x` in `{-4, -1, 2, 5}` was one piece, and audit seeds
+    /// 4, 65, 108 and 126 lost the oracle's ends that the whole block gives
+    /// (`l01_39_scope_relations::families::audit_seed_4_keeps_its_exact_sets_with_the_cover`).
+    ///
+    /// Proof for one range `[l, h]` and the class `r mod m`, `m > 1`: the least member at or
+    /// above `l` is `l' = l + ((r - l) mod m)` (the Euclidean remainder, in `[0, m)`), and the
+    /// next is `l' + m`, so the range holds two members exactly when `l' + m <= h`; two members
+    /// with `m > 1` leave out the `m - 1 >= 1` integers between them. With an infinite end the
+    /// range holds infinitely many. A union of several classes is counted as a hole without a
+    /// test: a hole reported where there is none asks only for a whole-block projection, which
+    /// gives the block's exact projection, so it can cost work and never widen a set.
+    /// Cost: O(1).
+    fn holed(&self) -> bool {
+        let ints = self.ints();
+        if ints.len() > 1 || self.classes.as_ref().is_some_and(|u| u.len() > 1) {
+            return true;
+        }
+        match (&self.cell.congruence.element, ints.bounds()) {
+            (Congruence::Class { modulus, residue }, Some((l, h))) if *modulus > Num::ONE => {
+                match (l, h) {
+                    (End::Fin(l), End::Fin(h)) => {
+                        &(l + &(residue - l).rem_euclid(modulus)) + modulus <= *h
+                    }
+                    _ => true,
+                }
+            }
+            _ => false,
+        }
+    }
+
     /// The integers of the interval domain met with the congruence's class, as one
     /// [`Classed`](zedc_lattice::classed::Classed): [`Product::classed_in`] of [`Product::ints`].
     pub fn classed(&self) -> zedc_lattice::classed::Classed {
@@ -6871,9 +6908,9 @@ struct Block {
     outer_names_at: imbl::OrdMap<Arc<str>, Product>,
     /// The keys of the parts added since the block was last kept ([`Seen::owners`]).
     added: Vec<PartKey>,
-    /// A name of the block was given a set of more than one piece by a step outside the
-    /// block's projection, or a conjunct came into the block that reads a name holding more
-    /// than one piece ([`Block::update`]), and the block has not been projected whole since
+    /// A name of the block was given a set with a hole ([`Product::holed`]) by a step outside
+    /// the block's projection, or a conjunct came into the block that reads a name holding a
+    /// hole ([`Block::update`]), and the block has not been projected whole since
     /// ([`Block::gained_hole`], [`Scope::project_block`]).
     hole_pending: bool,
 }
@@ -6971,26 +7008,25 @@ impl Block {
             out.enter(g, *k);
         }
         out.add_constraints();
-        // A new block has no products of its own from before, so a name it finds with more
-        // than one piece was given them outside its projection ([`Block::hole_pending`]).
+        // A new block has no products of its own from before, so a name it finds with a hole
+        // ([`Product::holed`]) was given it outside its projection ([`Block::hole_pending`]).
         // Cost: O(N) for N names, once per block made, which reads its N names already.
-        out.hole_pending = (out.users.keys()).any(|n| {
-            out.leaf.as_ref() != Some(n) && names.get(n).is_some_and(|p| p.ints().len() > 1)
-        });
+        out.hole_pending = (out.users.keys())
+            .any(|n| out.leaf.as_ref() != Some(n) && names.get(n).is_some_and(Product::holed));
         out
     }
 
     /// Whether `g`, a conjunct new to the block, reads a name other than the star's leaf that
-    /// holds more than one piece in `names`: the test of [`Block::update`] for asking for the
-    /// whole block ([`Block::hole_pending`]). O(m log N) for the `m` names of `g`.
+    /// holds a hole in `names` ([`Product::holed`]): the test of [`Block::update`] for asking
+    /// for the whole block ([`Block::hole_pending`]). O(m log N) for the `m` names of `g`.
     fn reads_hole(&self, g: &Formula, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
-        conjuncts::names(g).iter().any(|n| {
-            self.leaf.as_ref() != Some(n) && names.get(n).is_some_and(|p| p.ints().len() > 1)
-        })
+        conjuncts::names(g)
+            .iter()
+            .any(|n| self.leaf.as_ref() != Some(n) && names.get(n).is_some_and(Product::holed))
     }
 
-    /// Whether a name of the block changed since it was last kept and now holds more than one
-    /// piece, or such a change is still pending ([`Block::hole_pending`]).
+    /// Whether a name of the block changed since it was last kept and now holds a hole
+    /// ([`Product::holed`]), or such a change is still pending ([`Block::hole_pending`]).
     ///
     /// Complexity tradeoff: naive version, every name of the block compared with its product
     /// when kept, O(N) for N names. Used: the names changed since then, from the persistent
@@ -7059,8 +7095,8 @@ impl Block {
         self.users.len() * (n.ilog2() as usize + 1) <= n
     }
 
-    /// Whether a name of the block changed between `at` and `names` and now holds more than one
-    /// piece ([`Block::gained_hole`]).
+    /// Whether a name of the block changed between `at` and `names` and now holds a hole
+    /// ([`Product::holed`]; [`Block::gained_hole`]).
     fn gained_hole_since(
         &self,
         at: &imbl::OrdMap<Arc<str>, Product>,
@@ -7072,7 +7108,7 @@ impl Block {
             self.users.contains_key(n)
                 && self.leaf.as_ref() != Some(n)
                 && !same_framed_opt(at.get(n), names.get(n))
-                && names.get(n).is_some_and(|p| p.ints().len() > 1)
+                && names.get(n).is_some_and(Product::holed)
         };
         if self.users_cheaper_than_diff(names) {
             return self.users.keys().any(holed);
@@ -9293,8 +9329,9 @@ impl Block {
             }
             if added > 0 {
                 // A conjunct new to the block that reads a name, not the star's leaf, already
-                // holding more than one piece asks for the whole block ([`Block::hole_pending`]),
-                // as [`Block::of`] asks when it makes the block new with that name so. The hole
+                // holding a hole ([`Product::holed`]) asks for the whole block
+                // ([`Block::hole_pending`]), as [`Block::of`] asks when it makes the block new
+                // with that name so. The hole
                 // came before the conjunct, so no comparison of the names finds it changed
                 // ([`Block::gained_hole`]), and the block's last whole projection, if any, did
                 // not have the conjunct. FAIL-case-wake-pair-8644546066124090035
@@ -14521,12 +14558,12 @@ impl Scope {
             if let Some(cause) = pre.refusal {
                 // What the refused preimage kept: its bounds on the test's variables, which
                 // hold every value at which the test has this outcome. A set with a class is
-                // kept listed where the cover would have listed it, else as its ranges, which
-                // hold every member of the class ([`presburger::listed_within_limit`]).
+                // kept as its ranges, which hold every member of the class, never listed
+                // ([`presburger::ranges_and_class`]).
                 let kept: Kept = Arc::new(
                     (pre.domains.iter())
                         .filter(|(n, _)| self.names.contains_key(n))
-                        .map(|(n, d)| (n.clone(), presburger::listed_within_limit(d).0))
+                        .map(|(n, d)| (n.clone(), presburger::ranges_and_class(d).0))
                         .collect(),
                 );
                 // The names read free in the test are in scope where it is written; a name it
@@ -14591,14 +14628,14 @@ impl Scope {
                 b.map(|(l, h)| (l.clone(), h.clone()))
             };
             // A set of the preimage that is ranges met with a class other than every integer
-            // (row DOMAINS-classed-sets) meets the name's integers with the set listed where
-            // the cover would have listed it, else with its ranges and its congruence with the
-            // class ([`presburger::listed_within_limit`]): every value at which the test has
-            // this outcome lies in each, so each meet is sound, and together they hold what
-            // the set says. A set of ranges alone is met as it is, not copied.
+            // (row DOMAINS-classed-sets) meets the name's integers with its ranges and its
+            // congruence with the class, never listed ([`presburger::ranges_and_class`]):
+            // every value at which the test has this outcome lies in each, so each meet is
+            // sound, and together they hold what the set says. A set of ranges alone is met as
+            // it is, not copied.
             let classed = (pre.domains.iter()).map(|(n, d)| match d.strided() {
                 Some(_) => {
-                    let (ints, class) = presburger::listed_within_limit(d);
+                    let (ints, class) = presburger::ranges_and_class(d);
                     (n, Cow::Owned(ints), class)
                 }
                 None => (n, Cow::Borrowed(&d.ranges), None),
@@ -16916,8 +16953,9 @@ impl Scope {
         // costs its own part and not the block's (the walk through a shared name). The parts
         // due come from the block kept from the last projection ([`Scope::block`]).
         //
-        // A name of the block given a set of more than one piece by a step outside this loop
-        // (the atom of a linear test, `Scope::narrow_linear`) asks for the whole block, just
+        // A name of the block given a set with a hole ([`Product::holed`]) by a step outside
+        // this loop (the atom of a linear test, `Scope::narrow_linear`) asks for the whole
+        // block, just
         // as one given it inside the loop does (the trigger at `again` below): the parts then
         // find it at their fixpoint and move nothing, so no move inside the loop asks. Audit
         // seed 4 step 4 (`AUDIT_EVEN`): the atom `x == 3z - 4` gives x {-4, -1, 2, 5} at once
@@ -17349,12 +17387,13 @@ impl Scope {
                 // `3x + y == 4` gives y {-8, -5, -2, 1, 4, 7} at once, y moves once in the
                 // block of seven parts, and a stays [-8, 8], where the box answer
                 // [-8, 7] moves twice and the whole block gives a [-8, 2], z [0, 8].
-                // A set of more than one piece is the case the cover creates (a box never
+                // A set with a hole ([`Product::holed`]: more than one piece, or one range
+                // with two values of a class) is the case the cover creates (a box never
                 // has a hole), so it is the trigger. Naive version, the whole block after
                 // every move: 8 more of the 175 l01_39 benchmarks over 20 s
                 // (coordkk, coordmix, hole_end*_pad), against none for this trigger
-                // (2026-11-16). Cost: one O(1) piece count a moved name.
-                again |= p.ints().len() > 1;
+                // (2026-11-16). Cost: one O(1) test a moved name.
+                again |= p.holed();
                 if self.in_case && !b.ray_managed {
                     let allow_self = aggregated.contains(n);
                     if let Some(us) = b.unchained_users.get(n) {
@@ -17849,10 +17888,10 @@ impl Scope {
             // Lemma E: a [`Scope::project_part`] that records no refusal meets each name `n`
             // of the part `P` with exactly `proj_n(P ∧ B)`, `B` the box of the names (their
             // integers and classes, framed). Proof, by its two routes. The whole route asks
-            // `presburger::project_each_boxed_classed` and meets `n`'s integers with each set
-            // listed, or past the cover's limit with its ranges and `n`'s congruence with the
-            // set's class (`presburger::listed_within_limit`): either way the meets hold exactly
-            // the set (zedc-lattice `Classed`, row DOMAINS-classed-sets); with no cause
+            // `presburger::project_each_boxed_classed` and meets `n`'s integers with each set's
+            // ranges and `n`'s congruence with the set's class (`presburger::ranges_and_class`):
+            // the two meets hold exactly the set (zedc-lattice `Classed`, rows
+            // DOMAINS-classed-sets and LIMITS-classed-listing-per-set); with no cause
             // (`BoxedOf::cause` none: the whole
             // question, no symbol and no disjunction refused) each set is the exact projection,
             // since module `exact` of zedc-presburger answers each set exactly or refuses the
@@ -19334,7 +19373,7 @@ impl Scope {
             let each = syms.iter().zip(&got.each).enumerate();
             let sets = each.filter_map(|(i, (a, (x, _)))| match a {
                 Atom::Sym(n) if only.is_none_or(|k| k == i) && s.names.contains_key(n) => {
-                    Some((n.clone(), presburger::listed_within_limit(x).0))
+                    Some((n.clone(), presburger::ranges_and_class(x).0))
                 }
                 _ => None,
             });
@@ -19359,15 +19398,15 @@ impl Scope {
             refuse(self, asked, cause, kept);
         }
         // A set kept as ranges met with a class (row DOMAINS-classed-sets) meets the integers
-        // with the set listed where the cover would have listed it, else with its ranges and
-        // the congruence with its class ([`presburger::listed_within_limit`]), as the
-        // preimage route above does: either way the meets hold exactly the set (Lemma E).
+        // with its ranges and the congruence with its class, never listed
+        // ([`presburger::ranges_and_class`]), as the preimage route above does: the two meets
+        // hold exactly the set (Lemma E).
         for (a, (x, _)) in syms.iter().zip(got.each) {
             if let Atom::Sym(n) = a
                 && let Some(p) = self.names.get_mut(n)
             {
                 let prem = p.premises();
-                let (ints, class) = presburger::listed_within_limit(&x);
+                let (ints, class) = presburger::ranges_and_class(&x);
                 p.meet_ints(ints, &prem);
                 if let Some(class) = class {
                     p.cell.congruence.meet(&class, &prem);
