@@ -25047,10 +25047,17 @@ impl Ty {
             false => None,
         };
         // A set that prints as one text whatever stands beside it, a recursive type's name
-        // or `_ \ c`, stands first, as a set alone does.
+        // or `_ \ c`. A recursive type is a named type, so it stands among the type variables
+        // by name ([`Ty::write_vars`]; DESIGN.md sec:diagnostics: "named types (the string
+        // types, structs and aliases) and type variables, by name in code-point order"); `_ \
+        // c` is a difference, which stands first, as `(T \ #a) | 0` does (MSG-union-order-rest).
         let whole = match (&groups, set.is_empty()) {
             (None, false) => Some(set.clone()),
             _ => None,
+        };
+        let (whole, named) = match whole {
+            Some(t) if t.is_recursive() && others => (None, Some(t)),
+            whole => (whole, None),
         };
         let holes = groups.as_ref().map_or(0, |g| {
             [&g.low, &g.string, &g.tuples, &g.morphisms]
@@ -25061,7 +25068,7 @@ impl Ty {
         });
         let twins = Sig::twins(&self.fns);
         let members = holes
-            + usize::from(whole.is_some())
+            + usize::from(whole.is_some() || named.is_some())
             + shaped.iter().map(|(_, ss)| ss.len()).sum::<usize>()
             + self.tuples.len()
             + self.fns.len()
@@ -25115,7 +25122,15 @@ impl Ty {
         }
         let string = groups.as_ref().and_then(|g| {
             hole(parts, &g.low);
-            (!g.string.is_empty()).then(|| (g.string.clone(), place, apart))
+            (!g.string.is_empty()).then(|| (g.string.clone(), place, apart, "String".into()))
+        });
+        // The name it is ordered by is its text alone (`L(int | #x)`), made once here: linear
+        // in its graph, as the text written in its hole is. `groups` is `None` beside it, so
+        // there is no `String` hole to place too.
+        let string = string.or_else(|| {
+            let t = named?;
+            let name = t.surface_by_name(place).root;
+            Some((t, place, false, name))
         });
         parts.push(Print::Vars(self, string));
         if let Some(g) = &groups {
@@ -25278,19 +25293,24 @@ impl Ty {
         }
     }
 
-    /// Writes its type variables to `out`, those printed by name in code-point order, with
-    /// `string`, the kernel set `String` or what is left of it, among them by its name (the
-    /// order of a union, `order::cmp`), and keeps in `walk` what [`Ty::write_end`] needs. On
-    /// the first pass of `walk` each unbounded variable is recorded and left to be printed `_`;
-    /// on the second, one that stands in two places or more is written as a mark that
-    /// [`defs::name_vars`] names, in one union with the names after `String`: a mark is named by
-    /// [`fresh_name`], from `T` on, which comes after `String`: every name it gives is `T`, `U`,
-    /// `V`, `W` or `T<k>` (`Names::nth`, zed-kernel `types/print/names.rs`), and each begins
-    /// with a letter after `S` in code-point order, so every mark is named after `String`
-    /// whatever names it skips.
+    /// Writes its type variables to `out`, those printed by name in the order of names
+    /// (`order::name_cmp`: code points, a run of digits as a number), with
+    /// `string`, a named kernel set (`String` or what is left of it, or a recursive type) and
+    /// the name it is ordered by, among them by that name (the order of a union,
+    /// `order::cmp`), and keeps in `walk` what [`Ty::write_end`] needs. On the first pass of
+    /// `walk` each unbounded variable is recorded and left to be printed `_`; on the second,
+    /// one that stands in two places or more is written as a mark that [`defs::name_vars`]
+    /// names, in one union with the names after the named set. A mark is named by
+    /// [`fresh_name`], from `T` on: every name it gives is `T`, `U`, `V`, `W` or `T<k>`
+    /// (`Names::nth`, zed-kernel `types/print/names.rs`), so each is `T` or after it in
+    /// code-point order, whatever names it skips. So a set named before `T`, as `String` is,
+    /// comes before every mark and is written before their union; one named `T` or after
+    /// cannot be placed until the marks are named, so it is written as a member of their union,
+    /// which [`defs::name_vars`] sorts once the marks are named and the set's text is in
+    /// (MSG-union-order-rest).
     fn write_vars(
         &self,
-        string: Option<(KType, TextPlace, bool)>,
+        string: Option<(KType, TextPlace, bool, String)>,
         out: &mut String,
         scope: &Scope,
         walk: &mut Walk,
@@ -25350,11 +25370,16 @@ impl Ty {
         end.named = !names.is_empty() || left_named;
         end.blank = blank;
         end.occ = at..walk.occ.len();
-        names.sort_unstable();
-        // The names before `String`, then `String`, then the others with the marks.
-        let split = match string {
-            Some(_) => names.partition_point(|n| {
-                order::cmp(&order::Member::Named(n), &order::Member::Named("String")).is_lt()
+        names.sort_unstable_by(|a, b| order::name_cmp(a, b));
+        // The names before the named set, then the set, then the others with the marks; or,
+        // when the set is named `T` or after and there are marks, the set in their union.
+        // In the union, the names before it are those before `T`, so before every mark too.
+        let joins =
+            matches!(&string, Some((.., name)) if !marks.is_empty() && name.as_str() >= "T");
+        let split = match &string {
+            Some((.., name)) => names.partition_point(|n| {
+                let bound = if joins { "T" } else { name.as_str() };
+                order::cmp(&order::Member::Named(n), &order::Member::Named(bound)).is_lt()
             }),
             None => 0,
         };
@@ -25363,12 +25388,17 @@ impl Ty {
             walk.sep(out);
             out.push_str(name);
         }
-        if let Some(s) = string {
-            walk.sep(out);
-            let (set, place, apart) = s;
-            kernel.at.push(out.len());
-            kernel.sets.push((set, place));
-            kernel.apart.push(apart);
+        let mut in_union = None;
+        if let Some((set, place, apart, _)) = string {
+            match joins {
+                false => {
+                    walk.sep(out);
+                    kernel.at.push(out.len());
+                    kernel.sets.push((set, place));
+                    kernel.apart.push(apart);
+                }
+                true => in_union = Some((set, place, apart)),
+            }
         }
         match marks.is_empty() {
             true => {
@@ -25386,6 +25416,15 @@ impl Ty {
                     out.push_str(name);
                     out.push(defs::NEXT);
                 }
+                // Its text goes in here before the marks are named ([`write_text`]), so
+                // [`defs::name_vars`] sorts it as one more member.
+                let set_len = usize::from(in_union.is_some());
+                if let Some((set, place, apart)) = in_union {
+                    kernel.at.push(out.len());
+                    kernel.sets.push((set, place));
+                    kernel.apart.push(apart);
+                    out.push(defs::NEXT);
+                }
                 for r in marks {
                     out.push(defs::VAR);
                     out.push_str(&r.to_string());
@@ -25399,7 +25438,7 @@ impl Ty {
                     .ends
                     .last_mut()
                     .expect("a type's variables are in the type");
-                end.members += after.len() + marks_len - 1;
+                end.members += after.len() + set_len + marks_len - 1;
             }
         }
     }
@@ -25796,9 +25835,10 @@ enum Print<'a> {
     Found(&'a Ty),
     /// A signature written as a family ([`Sig::family_parts`]), standing as a payload.
     Family(&'a Sig),
-    /// The type variables of a type, with the kernel set `String` it holds, to be written
-    /// among them ([`Ty::write_vars`]).
-    Vars(&'a Ty, Option<(KType, TextPlace, bool)>),
+    /// The type variables of a type, with the named kernel set it holds, `String` or a
+    /// recursive type, and the name it is ordered by, to be written among them
+    /// ([`Ty::write_vars`]).
+    Vars(&'a Ty, Option<(KType, TextPlace, bool, String)>),
     /// What failed tests leave of the type variables of a type, written as differences, `T \
     /// #a`, at its place ([`Ty::write_lefts`]).
     Lefts(&'a Ty, PrintAt),
@@ -27895,6 +27935,43 @@ mod tests {
         // A variable beside `_` is absorbed too; the walk keeps it until the union is made.
         let t = Ty::tuple(vec![Ty::dynamic().union(&Ty::var("T".into())), int()]);
         assert_eq!(t.to_string(), "(_, int)");
+    }
+
+    /// A recursive type stands among the type variables by its name, as the order of a union
+    /// puts named types (DESIGN.md sec:diagnostics); before, it stood first, `L(int) | A | Z`
+    /// (MSG-union-order-rest). Named `T` or after beside marks, it is sorted with them once
+    /// they are named ([`Ty::write_vars`]). `_ \ c`, a difference, still stands first.
+    #[test]
+    fn a_recursive_type_stands_among_the_variables_by_its_name() {
+        use zed_kernel::types::rec::{Def, Expr, Group};
+        let list = |name: &str| {
+            let tail = Expr::Ref(0, vec![Expr::Param(0)]);
+            let body = Expr::Union(vec![
+                Expr::Type(KType::atom("nil")),
+                Expr::Atom("cons".into(), vec![Expr::Param(0), tail]),
+            ]);
+            let def = Def {
+                name: name.into(),
+                params: vec!["a".into()],
+                body,
+            };
+            Group::new(vec![def])
+                .unwrap()
+                .instance(vec![KType::int()])
+                .remove(0)
+        };
+        let v = |n: &str| Ty::var(n.into());
+        let named = Ty::set(list("L")).union(&v("A")).union(&v("Z"));
+        assert_eq!(named.to_string(), "A | L(int) | Z");
+        // Beside two marks, named between them.
+        let rec = Ty::set(list("Ta"));
+        let marked = Ty::tuple(vec![rec.union(&v("$1")).union(&v("$2")), v("$1"), v("$2")]);
+        assert_eq!(marked.to_string(), "(T | Ta(int) | U, T, U)");
+        // Named before `T`, before the marks.
+        let early = Ty::tuple(vec![Ty::set(list("L")).union(&v("$1")), v("$1")]);
+        assert_eq!(early.to_string(), "(L(int) | T, T)");
+        let rest = Ty::set(&KType::top() - &KType::atom("x")).union(&v("A"));
+        assert!(rest.to_string().starts_with("(_ \\ #x)"), "{rest}");
     }
 
     /// An atom whose payload is not known (`None`) equals only an atom whose payload is not
