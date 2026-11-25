@@ -51,7 +51,7 @@ use crate::deep;
 use crate::frames::{Deep, Stack};
 use crate::num::Rat;
 use crate::priority::Priorities;
-use crate::treap_set::{Elem, TreapSet};
+use crate::treap_set::{Elem, HashConsTable, TreapSet};
 use crate::value::{Id, Items, Value};
 use bdd::{Bdd, Form, Literal, Op, Owned, Part, Tables, Walk};
 use bucket::Bucket;
@@ -2328,6 +2328,21 @@ impl Type {
                 Type(n)
             });
         }
+        // Equal literal sets made apart become one tree ([`HashConsTable`], TYPE-hashcons), so
+        // `Lits::cmp` decides them by `ptr_eq`. The digest reads only each set's sum, which
+        // sharing leaves as it is.
+        crate::local::with(&LITS, |t| {
+            let mut t = t.borrow_mut();
+            for l in [
+                &mut p.ints,
+                &mut p.rats,
+                &mut p.floats,
+                &mut p.f32s,
+                &mut p.strings,
+            ] {
+                t.share(&mut l.values);
+            }
+        });
         (p.digest, p.name_digest) = p.hashes();
         Type(Arc::new(Node::Parts(p, Shown::default())))
     }
@@ -3808,6 +3823,8 @@ type CompoundTypes = crate::digest::DigestMap<Arc<CompoundKey>, (u64, Weak<Node>
 thread_local! {
     static COMPOUND_TYPES: RefCell<CompoundTypes> = RefCell::new(CompoundTypes::default());
     static COMPOUND_SEARCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The live literal sets of the thread's types, by sum ([`Type::new`], TYPE-hashcons).
+    static LITS: RefCell<HashConsTable<Value>> = RefCell::new(HashConsTable::default());
 }
 
 /// Reuse is useful to the search's local graph memos; ordinary type construction

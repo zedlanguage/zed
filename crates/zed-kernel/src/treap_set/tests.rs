@@ -339,3 +339,37 @@ fn is_subset_work_within_its_bound() {
         "is_subset did {work} units of work, over the bound 2U + 2D + 4gh + 1 = {bound}"
     );
 }
+
+/// [`HashConsTable`] (TYPE-hashcons): two equal sets made apart, the keys put in up and down,
+/// become one tree, still the set of their keys; a set with one key more stays apart; an empty
+/// set is left as it is; and the table keeps no set alive, so once both are dropped an equal
+/// set made later keeps its own tree, held by it alone. Negative control: without the table,
+/// the two equal sets are two trees.
+#[test]
+fn equal_sets_made_apart_become_one_tree() {
+    let set = |keys: &mut dyn Iterator<Item = i64>| {
+        let mut s = TreapSet::new();
+        keys.for_each(|k| {
+            s.insert(k);
+        });
+        s
+    };
+    let mut up = set(&mut (0..1000));
+    let mut down = set(&mut (0..1000).rev());
+    let mut more = set(&mut (0..1001));
+    assert!(!up.ptr_eq(&down), "the control: two trees before the table");
+    let mut table = HashConsTable::default();
+    for s in [&mut up, &mut down, &mut more] {
+        table.share(s);
+    }
+    assert!(up.ptr_eq(&down));
+    assert!(!up.ptr_eq(&more));
+    assert_eq!(checked(&down), (0..1000).collect::<Vec<_>>());
+    let mut empty = TreapSet::new();
+    table.share(&mut empty);
+    assert!(empty.is_empty());
+    drop((up, down));
+    let mut later = set(&mut (0..1000));
+    table.share(&mut later);
+    assert_eq!(Arc::strong_count(later.root.as_ref().unwrap()), 1);
+}

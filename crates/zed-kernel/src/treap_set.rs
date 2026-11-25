@@ -1011,6 +1011,67 @@ impl<T: Elem> PartialEq for TreapSet<T> {
 
 impl<T: Elem> Eq for TreapSet<T> {}
 
+/// A table of live sets by their sum of weights, so that equal sets made apart become one tree
+/// (plan row TYPE-hashcons): [`HashConsTable::share`] gives a set the root of an equal set the table
+/// holds, or puts its own root in. Two sets made apart, as `{0, 1, ..., n}` built up in two
+/// orders, then compare by [`TreapSet::ptr_eq`], `O(1)`, where `==` walked every node, `O(n)`,
+/// at each comparison. The table holds weak handles, so it keeps no set alive; dead handles
+/// are taken out when the table has doubled since its last sweep, `O(1)` amortized per set
+/// put in.
+///
+/// Complexity tradeoff: the naive way, comparing equal sets made apart in full each time,
+/// costs `O(n)` per comparison, `O(n k)` for `k` comparisons. Used: one `==` per set put in
+/// against the live sets of its sum and size, `O(n)` only where an equal set is alive (the walk
+/// of a set built in `O(n)` already) or on a collision of the 64-bit sums, then `O(1)` per
+/// comparison. Cost: a hash lookup per set put in, and a weak handle per live set.
+pub struct HashConsTable<T> {
+    table: crate::digest::DigestMap<u64, Vec<std::sync::Weak<Node<T>>>>,
+    held: usize,
+    swept_at: usize,
+}
+
+impl<T> Default for HashConsTable<T> {
+    fn default() -> Self {
+        HashConsTable {
+            table: Default::default(),
+            held: 0,
+            swept_at: 0,
+        }
+    }
+}
+
+impl<T: Elem> HashConsTable<T> {
+    /// `set` made one tree with an equal live set of the table, or put in the table.
+    pub fn share(&mut self, set: &mut TreapSet<T>) {
+        let Some(root) = &set.root else {
+            return;
+        };
+        let bucket = self.table.entry(root.sum).or_default();
+        bucket.retain(|w| w.strong_count() > 0);
+        for w in bucket.iter() {
+            let Some(other) = w.upgrade() else { continue };
+            if Arc::ptr_eq(&other, root) {
+                return;
+            }
+            let other = TreapSet { root: Some(other) };
+            if other == *set {
+                *set = other;
+                return;
+            }
+        }
+        bucket.push(Arc::downgrade(root));
+        self.held += 1;
+        if self.held > 2 * self.swept_at {
+            self.table.retain(|_, b| {
+                b.retain(|w| w.strong_count() > 0);
+                !b.is_empty()
+            });
+            self.held = self.table.values().map(Vec::len).sum();
+            self.swept_at = self.held;
+        }
+    }
+}
+
 /// The keys in order compared as sequences, as `BTreeSet` orders; one tree is equal at once.
 impl<T: Elem> Ord for TreapSet<T> {
     fn cmp(&self, other: &Self) -> Ordering {

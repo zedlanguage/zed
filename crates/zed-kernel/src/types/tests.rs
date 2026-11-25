@@ -1466,3 +1466,26 @@ fn a_meet_of_two_recursive_lists_is_not_known_finite() {
     assert!(!t.finite(), "{t}");
     assert!(t.values_listed().is_none(), "{t}");
 }
+
+/// TYPE-hashcons: two types of one finite set of integers, the set built up and built down,
+/// keep one tree of literals ([`Type::new`]), so they compare by `ptr_eq`; a type of one
+/// integer more keeps its own.
+#[test]
+fn equal_literal_sets_made_apart_are_one_tree() {
+    let set = |keys: &mut dyn Iterator<Item = i64>| {
+        let mut s = TreapSet::new();
+        keys.for_each(|k| {
+            s.insert(Value::Int(k));
+        });
+        Type::ints_of(s)
+    };
+    let (up, down, more) = (
+        set(&mut (0..500)),
+        set(&mut (0..500).rev()),
+        set(&mut (0..501)),
+    );
+    let lits = |t: &Type| t.ints_set().unwrap();
+    assert!(lits(&up).ptr_eq(&lits(&down)));
+    assert!(!lits(&up).ptr_eq(&lits(&more)));
+    assert_eq!(up.cmp(&down), std::cmp::Ordering::Equal);
+}

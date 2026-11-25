@@ -3913,6 +3913,64 @@ mod tests {
         assert!(power(2, 1 << 20).sum_least_beside(65).is_none());
     }
 
+    /// The `x` with `0 < |x| < 2^m`, in either order beside `f`, for which [`Rat::sum_least`]
+    /// gives less than `bound`: every one of them, by brute force.
+    fn below_bound(f: &Rat, m: u32, bound: &BigUint) -> Option<i64> {
+        (1..1i64 << m).flat_map(|v| [v, -v]).find(|&v| {
+            let x = Rat::int(BigInt::from(v));
+            [f.sum_least(&x).unwrap(), x.sum_least(f).unwrap()]
+                .iter()
+                .any(|got| got < bound)
+        })
+    }
+
+    /// [`Rat::sum_least_beside`] against brute force on random integers: kept powers of 2, 3,
+    /// 5 and 7 beside a random coefficient of either sign, and plain built integers, with
+    /// every `x`, `0 < |x| < 2^m`, `m` up to 8, tried in both orders; no `x` gives less
+    /// than the bound. Negative control: the integer's own `least_log2`, the bound with no
+    /// loss taken off, is a wrong bound (an `x` sharing a kept power cuts the sum's part above
+    /// the shared powers), and the same brute force must find an `x` below it in many cases.
+    #[test]
+    fn a_sum_beside_a_bounded_int_holds_its_bound_on_random_integers() {
+        let mut n = 0u64;
+        let mut draw = |below: u64| {
+            n += 1;
+            crate::digest::step(0x5eed_b22f, n) % below
+        };
+        let (mut checked, mut control_caught) = (0, 0);
+        for _ in 0..1500 {
+            let m = 1 + draw(8) as u32;
+            let c = 1 + draw(1 << 20);
+            let mut f = Rat::int(BigInt::from(c));
+            if draw(4) == 0 {
+                f = Rat::int((BigInt::from(c) << (64 + draw(400))) + draw(1 << 40));
+            } else {
+                for p in [2, 3, 5, 7] {
+                    if draw(2) == 0 {
+                        f = f.mul(&power(p, 1 + draw(300))).unwrap();
+                    }
+                }
+            }
+            if draw(2) == 0 {
+                f = f.mul(&Rat::int(BigInt::from(-1))).unwrap();
+            }
+            let Some(bound) = f.sum_least_beside(m) else {
+                continue;
+            };
+            checked += 1;
+            if let Some(v) = below_bound(&f, m, &bound) {
+                panic!("x = {v} gives less than the bound {bound} beside {f:?} at m = {m}");
+            }
+            let wrong = least_log2(&f.num, f.pows.iter().map(|(p, e)| (*p, e.magnitude())));
+            control_caught += usize::from(below_bound(&f, m, &wrong).is_some());
+        }
+        assert!(checked >= 1000, "only {checked} cases had a bound");
+        assert!(
+            control_caught >= 200,
+            "the wrong bound was caught in only {control_caught} cases"
+        );
+    }
+
     /// [`Rat::merged`], the product and quotient with no coprime base, gives the form that
     /// [`Rat::normal`] gives, field by field, where it applies, and declines where an atom
     /// shares a factor with the other operand's plain part beyond its one allowed strip: equal
