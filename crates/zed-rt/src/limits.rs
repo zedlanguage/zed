@@ -63,20 +63,12 @@ pub fn enforce(limits: &MainLimits) -> Result<(), String> {
 /// with no allocation, no lock and no unwinding, all of which may be held by the code the
 /// signal stopped.
 pub(crate) fn fault_exit(bytes: &[u8]) -> ! {
-    #[expect(unsafe_code, reason = "write and _exit are libc calls")]
-    // SAFETY: `write` reads `bytes`, which is borrowed for the call; `write` and `_exit` are
-    // async-signal-safe (signal-safety(7)).
+    crate::close::write_all(bytes);
+    // The streams closed as at the end of every run, the status kept (step L7.3p).
+    crate::close::after_stop();
+    #[expect(unsafe_code, reason = "_exit is a libc call")]
+    // SAFETY: `_exit` is async-signal-safe (signal-safety(7)).
     unsafe {
-        let mut rest = bytes;
-        while !rest.is_empty() {
-            let n = libc::write(libc::STDERR_FILENO, rest.as_ptr().cast(), rest.len());
-            if n <= 0 {
-                break;
-            }
-            rest = &rest[n.unsigned_abs()..];
-        }
-        // The streams closed as at the end of every run, the status kept (step L7.3p).
-        crate::close::after_stop();
         libc::_exit(FAULT)
     }
 }

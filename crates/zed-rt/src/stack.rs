@@ -24,8 +24,8 @@
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
+use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
-use std::sync::{Once, OnceLock};
 
 use crate::limits::{fault_exit, install, memory_limit, write_bytes};
 use crate::line::Line;
@@ -216,6 +216,78 @@ use growing::{GROWING, Grows};
 /// stack under a limit is passed to.
 static BEFORE: OnceLock<libc::sigaction> = OnceLock::new();
 
+/// Installs [`on_fault`] as the handler of `SIGSEGV`, once for the process, keeping the action
+/// before it in [`BEFORE`]; the outcome of that one install, on every call.
+fn catch_segv() -> Result<(), String> {
+    static INSTALLED: OnceLock<Result<(), String>> = OnceLock::new();
+    INSTALLED
+        .get_or_init(|| {
+            #[expect(unsafe_code, reason = "sigaction is a libc call")]
+            // SAFETY: the action is read into a struct owned here.
+            let before = unsafe {
+                let mut before: libc::sigaction = std::mem::zeroed();
+                libc::sigaction(libc::SIGSEGV, ptr::null(), &mut before);
+                before
+            };
+            let _ = BEFORE.set(before);
+            install(libc::SIGSEGV, on_fault)
+        })
+        .clone()
+}
+
+/// Installs [`on_trap`] as the handler of `SIGILL` and `SIGFPE`, once for the process; the
+/// outcome of that one install, on every call. Neither zed-rt nor Rust's standard library
+/// (which catches `SIGSEGV` and `SIGBUS` only, for stack overflow) installs another handler of
+/// these, so a trap outside the program's code is ended by their default action.
+fn catch_traps() -> Result<(), String> {
+    static INSTALLED: OnceLock<Result<(), String>> = OnceLock::new();
+    INSTALLED
+        .get_or_init(|| {
+            install(libc::SIGILL, on_trap)?;
+            install(libc::SIGFPE, on_trap)
+        })
+        .clone()
+}
+
+/// The handler of `SIGILL` and `SIGFPE`: a trap in the program's code is a bug in zedc, and
+/// stops the run with its report (`code::report`); any other trap ends the process by the
+/// signal's default action, restored here, when the trapping instruction runs again on return.
+/// `errno` is saved and restored as [`on_fault`] does. Async-signal-safe: `code::report`, as
+/// its doc argues, and `sigaction`, which signal-safety(7) lists.
+extern "C" fn on_trap(signal: libc::c_int, _: *mut libc::siginfo_t, context: *mut libc::c_void) {
+    #[expect(
+        unsafe_code,
+        reason = "errno, the context and sigaction are reached through libc"
+    )]
+    // SAFETY: as at `on_fault` for `errno`; `context` is the kernel's for a handler installed
+    // with SA_SIGINFO (`install`).
+    unsafe {
+        let errno = libc::__errno_location();
+        let saved = *errno;
+        crate::code::report(signal, crate::code::pc_of(context), None);
+        let mut default: libc::sigaction = std::mem::zeroed();
+        default.sa_sigaction = libc::SIG_DFL;
+        libc::sigaction(signal, &default, ptr::null_mut());
+        *errno = saved;
+    }
+}
+
+impl Stack {
+    /// [`Stack::run`] with a fault in the code `map` describes reported as a bug in zedc
+    /// (plan row RT-internal-fault, `crate::code`), not ended by the signal. An error when the
+    /// system refuses a handler of the faults.
+    pub fn run_mapped<R>(
+        &self,
+        map: &crate::code::CodeMap<'_>,
+        f: impl FnOnce() -> R,
+    ) -> Result<R, String> {
+        catch_segv()?;
+        catch_traps()?;
+        let stack = (self.base as usize, self.base as usize + self.len);
+        Ok(crate::code::with_map(map, stack, || self.run(f)))
+    }
+}
+
 /// A stack for the handler of faults, mapped writable and unmapped when dropped.
 #[derive(Debug)]
 struct Alt(*mut libc::c_void);
@@ -293,15 +365,7 @@ impl Stack {
                 libc::munmap(alt, ALT);
                 return Err(too_small(limit));
             }
-            static INSTALL: Once = Once::new();
-            let mut installed = Ok(());
-            INSTALL.call_once(|| {
-                let mut before: libc::sigaction = std::mem::zeroed();
-                libc::sigaction(libc::SIGSEGV, ptr::null(), &mut before);
-                let _ = BEFORE.set(before);
-                installed = install(libc::SIGSEGV, on_fault);
-            });
-            installed.inspect_err(|_| {
+            catch_segv().inspect_err(|_| {
                 libc::munmap(alt, ALT);
             })?;
             let grows: &'static Grows = Box::leak(Box::new(Grows::new(low, high, writable, page)));
@@ -359,6 +423,14 @@ impl Stack {
 //    no lock: `core` has neither), reads `memory_limit` (F4) and ends in `fault_exit`, which
 //    calls only `write` and `_exit` (F1). It never returns, so step 6 is not needed: the
 //    stopped code never runs again.
+// 5a. A fault in no stack under a limit, while a run of this thread has a map of its code
+//    (`Stack::run_mapped`): `code::pc_of` reads the context the kernel passed; `code::report`
+//    reads the thread's run, a `const`-initialized thread-local that needs no drop, so no
+//    lazy initialization and no lock, and the map, which `with_map` keeps alive and unchanged
+//    while the run is set; it searches sorted arrays, formats into `Line`s on the handler's
+//    stack, and, when the instruction is in the program's code and the address not in the
+//    run's stack, ends in `write` and `fault_exit`, as step 4 does. Else it returns, and step
+//    5 follows.
 // 5. A fault in no stack under a limit: `OnceLock::get` (F4), then either the action before
 //    this one is called as the kernel would have called it, with the kernel's own arguments:
 //    whoever installed it as a handler of `SIGSEGV` (std's handler of stack overflow, in
@@ -437,6 +509,9 @@ fn serve(signal: libc::c_int, info: *mut libc::siginfo_t, context: *mut libc::c_
                 return;
             }
         }
+        // A fault in the program's code and not in its stack is a bug in zedc: it stops the
+        // run here (step 5a).
+        crate::code::report(signal, crate::code::pc_of(context), Some(at));
         match BEFORE.get() {
             Some(b)
                 if b.sa_sigaction != libc::SIG_DFL

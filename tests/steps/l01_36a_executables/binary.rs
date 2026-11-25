@@ -109,6 +109,57 @@ fn a_built_executable_runs() {
     assert_eq!(working(&d, "hello"), Vec::<String>::new());
 }
 
+/// Plan row RT-internal-fault: a fault in the code zedc made that no rule of the language
+/// explains is reported as a bug in zedc, with the program's content address and the site of
+/// the node whose code faulted, status 3, never as an error of the program. The fault is
+/// injected by the test build of `zedc build` (`ZED_TEST_FAULT`, which this test's `zedc` reads
+/// since zed-native's tests build it with the feature `counts`): a read of address 0 before
+/// the code of each `+`. Control: the same program built with no fault runs.
+#[test]
+fn an_injected_fault_is_reported_as_a_bug_in_zedc() {
+    let d = dir();
+    let src = d.join("fault.zed");
+    std::fs::write(
+        &src,
+        "main(m: MainArgs) {\n    n = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> \
+         1;\n    m.stdout <- String(n + 1);\n}\n",
+    )
+    .unwrap();
+    let exe = d.join("fault");
+    let run = || Command::new(&exe).args(["--", "4"]).output().unwrap();
+    assert_eq!(
+        failed(&zedc_build(&src, &exe, &[])),
+        (Some(0), String::new())
+    );
+    let ran = run();
+    assert_eq!(
+        (ran.status.code(), String::from_utf8(ran.stdout).unwrap()),
+        (Some(0), "5\n".to_string())
+    );
+    let built = zedc_build(&src, &exe, &[("ZED_TEST_FAULT", "+")]);
+    assert_eq!(failed(&built), (Some(0), String::new()));
+    let (status, err) = failed(&run());
+    assert_eq!(status, Some(3), "{err}");
+    assert!(
+        err.starts_with(
+            "the run stopped because of a bug in zedc, not in your program. The machine code \
+             zedc made for the program reached memory or an instruction that no rule of the \
+             language lets it reach.\nPlease report it at "
+        ),
+        "{err}"
+    );
+    let tail = format!("\n  signal: SIGSEGV\n  site: {}:3:24\n", src.display());
+    assert!(err.ends_with(&tail), "{err}");
+    // The program's content address, 64 hexadecimal digits, on the line before.
+    let address = err[..err.len() - tail.len()]
+        .rsplit_once("\nDetails for the report:\n  program: ")
+        .map(|(_, a)| a);
+    assert!(
+        address.is_some_and(|a| a.len() == 64 && a.bytes().all(|b| b.is_ascii_hexdigit())),
+        "{err}"
+    );
+}
+
 /// The bytes of the section `.comment` of the executable `exe`, where LLD writes
 /// `Linker: [<vendor> ]LLD <version>` and GNU ld writes nothing of its own.
 fn comment(exe: &Path) -> Vec<u8> {

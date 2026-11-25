@@ -171,7 +171,7 @@ fn run_in(
         reason = "calling generated code needs a function pointer from it"
     )]
     let root: extern "C" fn() -> Word = unsafe { std::mem::transmute(code) };
-    let o = call(t, root, ev).map_err(|(e, _)| e);
+    let o = call(t, root, ev, None).map_err(|(e, _)| e);
     drop(m);
     o
 }
@@ -223,7 +223,7 @@ pub fn executable_object(
     let (t, plans) = Tables::new(&g, &plan)?;
     let mut m = object_module()?;
     let f = codegen::define(&mut m, &t, &plans, None)?;
-    exe::define_main(&mut m, f.root, &data)?;
+    exe::define_main(&mut m, f.root, &data, &f.code)?;
     m.finish().emit().map_err(bug)
 }
 

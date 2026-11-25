@@ -216,9 +216,9 @@ fn first_not_nfc(text: &str) -> Span {
 /// The 1-based line and column of byte `offset` of `bytes`, the column counted in Unicode
 /// scalars. `\r\n`, `\r` and `\n` each end a line. The bytes before `offset` must be UTF-8,
 /// as they are for the start of every rejection's span. For many offsets in one text, make
-/// its [`Lines`] once.
+/// its [`Lines`] once. One pass, with no allocation (`zed_kernel::sites::line_col`).
 pub fn line_col(bytes: &[u8], offset: usize) -> (usize, usize) {
-    Lines::new(&bytes[..offset]).line_col(bytes, offset)
+    zed_kernel::sites::line_col(bytes, offset)
 }
 
 /// The lines of `text` that hold bytes `from..to`: the start of the line holding `from` and
@@ -335,6 +335,20 @@ mod tests {
             all.extend(level.iter().cloned());
         }
         all
+    }
+
+    /// Plan row RT-internal-fault: the one-pass `line_col`, which a handler of signals calls,
+    /// agrees with `Lines` at every boundary of every text of [`short_texts`], and at the
+    /// offset between the `\r` and the `\n` of a `\r\n`.
+    #[test]
+    fn line_col_agrees_with_lines_at_every_boundary() {
+        for text in short_texts() {
+            let lines = Lines::new(text.as_bytes());
+            for i in (0..=text.len()).filter(|&i| text.is_char_boundary(i)) {
+                let want = lines.line_col(text.as_bytes(), i);
+                assert_eq!(line_col(text.as_bytes(), i), want, "{text:?} at {i}");
+            }
+        }
     }
 
     /// TEST-dry-shared-units: the bounds agree with the rule read directly at every ordered
