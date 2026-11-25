@@ -178,11 +178,12 @@ pub fn cmp(a: &Member<'_>, b: &Member<'_>) -> Ordering {
 pub fn name_cmp(x: &str, y: &str) -> Ordering {
     let (a, b) = (x.as_bytes(), y.as_bytes());
     let (mut i, mut j) = (0, 0);
-    let run = |s: &[u8], from: usize| {
+    /// The run of digits from `from`, its leading zeros dropped, and where it ends.
+    fn run(s: &[u8], from: usize) -> (&[u8], usize) {
         let end = from + s[from..].iter().take_while(|c| c.is_ascii_digit()).count();
         let first = from + s[from..end].iter().take_while(|&&c| c == b'0').count();
         (&s[first..end], end)
-    };
+    }
     while i < a.len() && j < b.len() {
         if a[i].is_ascii_digit() && b[j].is_ascii_digit() {
             let ((p, pe), (q, qe)) = (run(a, i), run(b, j));
