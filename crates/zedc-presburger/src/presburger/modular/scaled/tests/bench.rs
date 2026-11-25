@@ -333,3 +333,22 @@ const N_MISSING: usize = 400;
 
 /// The size of [`sums_moved_by_x_alone_scale`].
 const N_BY_X: usize = 100;
+
+/// [`shared_prime_bits`] at `k = n` and `8n` (FAIL-scaled-rewrite-still-shadows): `k` start rows
+/// whose quotients are kept whole (G2) and `k` bits (G1), with the start's period `T = 8` at both
+/// sizes, so the start, O(T (C + k_0 + e)) for `C = k + 1` coordinates and `e = k` terms, and
+/// the literals at the 8 or fewer tuples reached are linear in `k`. Taken whatever the costs
+/// ([`sumset::ALWAYS`]): with so small a period the residues of `x` cost less and keep these
+/// formulas, so without it the path's work would not be timed.
+#[test]
+fn start_rows_with_nested_literals_scale() {
+    let inputs = scaling::inputs(N_SHARED_BITS, shared_prime_bits);
+    scaling::check_order("k start rows with nested literals", N_SHARED_BITS, 1, |n| {
+        sumset::ALWAYS.with(|a| a.set(true));
+        by_sumset(&inputs[&n], |got| matches!(got, Some(None)));
+        sumset::ALWAYS.with(|a| a.set(false));
+    });
+}
+
+/// The size of [`start_rows_with_nested_literals_scale`].
+const N_SHARED_BITS: usize = 50;

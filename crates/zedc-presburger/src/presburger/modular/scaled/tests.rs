@@ -3,6 +3,7 @@
 //! enumeration, and the shapes that are still declined, among them the row's nested example
 //! (row PRES-nested-quotient-residues).
 
+use super::super::{PATHS, Path};
 use super::*;
 use crate::scaling;
 use crate::seed::Rng;
@@ -1238,8 +1239,10 @@ fn sumset_decisions_match_enumeration() {
     );
 }
 
-/// The path's scope: moduli that share a factor, a literal on `x`, and a literal on a row's
-/// remainder under a disjunction are left to the other paths, which give the enumerated answer.
+/// The path's scope: moduli that share a factor (G2) and a literal on a row's remainder under a
+/// disjunction (G1) are taken (FAIL-scaled-rewrite-still-shadows; until that row they were left
+/// to the other paths); a literal on `x` is left to the other paths. Each gives the enumerated
+/// answer.
 #[test]
 fn the_sumset_path_takes_the_coprime_sums() {
     let row = |a, m| Div {
@@ -1262,13 +1265,13 @@ fn the_sumset_path_takes_the_coprime_sums() {
             "a sum modulus shares 3",
             vec![row(1, 3), row(1, 5)],
             even.clone(),
-            false,
+            true,
         ),
         (
             "rows share 3",
             vec![row(1, 3), row(1, 9)],
             even.clone(),
-            false,
+            true,
         ),
         (
             "a literal on x",
@@ -1286,7 +1289,7 @@ fn the_sumset_path_takes_the_coprime_sums() {
                 even.clone(),
                 Formula::Con(Con::eq(&r(0), &Lin::constant(1))),
             ]),
-            false,
+            true,
         ),
     ];
     for (what, divs, lits, takes) in cases {
@@ -1590,6 +1593,109 @@ fn sumset_shapes_match_enumeration() {
     );
 }
 
+/// [`sumset`]'s extension (FAIL-scaled-rewrite-still-shadows) against enumeration over the
+/// period (the sums' lcm times the rows' moduli, as in `sumset_shapes_match_enumeration`):
+/// moduli of rows and sums that share primes (G2: 2, 3, 4, 6, 9 beside 5, so rows join blocks
+/// of several moduli or the start, and sums read quotients with no inverse, kept whole), and
+/// literals on rows' remainders under a disjunction or a negation (G1, the bits). Each kind is
+/// counted among the formulas the path answers, so a guard that declines it again fails here.
+#[test]
+fn sumset_shared_primes_and_nested_literals_match_enumeration() {
+    let (mut rng, seed) = Rng::fresh("sumset_shared_primes_and_nested_literals_match_enumeration");
+    crate::presburger::CHECK_LOSSLESS.with(|c| c.set(true));
+    let mut answered = [0usize; 2];
+    let (mut taken, mut shared, mut kept, mut nested) = (0, 0, 0, 0);
+    for case in 0..200 {
+        let mut divs: Vec<Div> = Vec::new();
+        for _ in 0..1 + rng.below(3) {
+            let m = rng.pick(&[2, 3, 4, 5, 6, 9]);
+            let a = rng.int(1, 2 * m);
+            divs.push(Div {
+                t: 0,
+                a: if rng.coin() { a } else { -a },
+                k: rng.int(-12, 12),
+                m,
+                fixed: None,
+            });
+        }
+        let sums: Vec<Sum> = random_sums(&mut rng, &divs)
+            .into_iter()
+            .map(|s| Sum {
+                m: rng.pick(&[2, 3, 4, 6]),
+                ..s
+            })
+            .collect();
+        let row_lit = |rng: &mut Rng, i: usize, m: i64| {
+            let c = Lin::constant(rng.int(0, m - 1));
+            Formula::Con(match rng.below(3) {
+                0 => Con::ge(&r(i), &c),
+                1 => Con::ge(&c, &r(i)),
+                _ => Con::eq(&r(i), &c),
+            })
+        };
+        let mut lits = vec![random_sum_literals(&mut rng, &divs, &sums, 2)];
+        let mut has_nested = false;
+        for (i, d) in divs.iter().enumerate() {
+            if rng.below(3) == 0 {
+                lits.push(row_lit(&mut rng, i, d.m));
+            }
+            if rng.coin() {
+                // A literal on the row's remainder beside one on a sum's, under an `Or` or a
+                // negation, so not at the top level.
+                let other = random_sum_literals(&mut rng, &divs, &sums, 0);
+                let mine = row_lit(&mut rng, i, d.m);
+                lits.push(if rng.coin() {
+                    Formula::or(vec![mine, other])
+                } else {
+                    Formula::negate(Formula::and(vec![mine, other]))
+                });
+                has_nested = true;
+            }
+        }
+        let f = formula(&divs, Formula::and(lits), sum_formulas(&divs, &sums));
+        let lcm = sums.iter().fold(1, |l, s| l / num_gcd(l, s.m) * s.m);
+        let period: i64 = lcm * divs.iter().map(|d| d.m).product::<i64>();
+        let want = (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
+        let what = format!("seed {seed} case {case} {divs:?} {sums:?}");
+        let (_, n) = with_sumset_always(|| {
+            for want_model in [true, false] {
+                if let Some(got) = solve(&f, want_model) {
+                    assert_eq!(got.is_some(), want, "{what}: solve\n{f}");
+                    if let Some(m) = got.filter(|_| want_model) {
+                        assert!(f.holds(&m), "{what}: point {m:?} of\n{f}");
+                    }
+                }
+            }
+            check(&f, want, &what);
+        });
+        if n > 0 {
+            taken += 1;
+            let moduli: Vec<i64> = (divs.iter().map(|d| d.m))
+                .chain(sums.iter().map(|s| s.m))
+                .collect();
+            shared += usize::from(
+                (0..moduli.len())
+                    .any(|a| (a + 1..moduli.len()).any(|b| num_gcd(moduli[a], moduli[b]) > 1)),
+            );
+            kept += usize::from(sums.iter().any(|s| {
+                (s.parts.iter()).any(|&(p, _)| p % 2 == 1 && num_gcd(divs[p / 2].m, s.m) > 1)
+            }));
+            nested += usize::from(has_nested);
+        }
+        answered[usize::from(want)] += 1;
+    }
+    assert!(
+        answered[0] > 20
+            && answered[1] > 20
+            && taken > 120
+            && shared > 60
+            && kept > 30
+            && nested > 60,
+        "seed {seed}: answers {answered:?}, taken {taken}, shared primes {shared}, \
+         quotients kept whole {kept}, nested row literals {nested}"
+    );
+}
+
 /// The rows `x == p_i q_i + r_i`, one for each modulus in `moduli`.
 fn unit_rows(moduli: impl IntoIterator<Item = i64>) -> Vec<Div> {
     (moduli.into_iter())
@@ -1647,21 +1753,25 @@ fn every_tuple_reached(j: usize, want: i64) -> Formula {
 /// XR-presburger4 round 2 F1: on Claude's family at `j = 20` the path reached 1,048,576 tuples
 /// with no meter running (0.79 s on an extraction), where [`sum_residues`] declines at once (the
 /// period does not fit a word), since [`sumset`]'s charges count nothing with no meter. With no
-/// meter the path must decline, as the other paths do; under a question's meter at the solver's
+/// meter the first try of the path declines, as the other paths do, and the last try
+/// (FAIL-scaled-rewrite-still-shadows, after the rewrite declines) runs under a meter of its own
+/// at the question's limit, so it is selected once and, as the question at that limit is
+/// refused (below), passes its limit and declines; under a question's meter at the solver's
 /// limit the question must be refused, not run to the end. The scaled path [`solve`] is asked,
 /// not [`solve_modular_or_scaled`], whose modular solver can answer first; `f` has a point
-/// (every `q_i` odd), so an answer of a later path with no meter must be one.
+/// (every `q_i` odd).
 #[test]
 fn the_sumset_path_runs_only_under_a_meter() {
     let f = every_tuple_reached(20, 1);
     let selected = sumset::SELECTED.with(std::cell::Cell::get);
     let got = solve(&f, false);
-    assert!(matches!(got, None | Some(Some(_))), "{got:?}\n{f}");
+    assert!(got.is_none(), "{got:?}\n{f}");
     assert_eq!(
         sumset::SELECTED.with(std::cell::Cell::get),
-        selected,
-        "selected with no meter"
+        selected + 1,
+        "selected other than once, by the last try under its own meter"
     );
+    let selected = sumset::SELECTED.with(std::cell::Cell::get);
     let got = metered(crate::presburger::meter::EXACT_LIMIT, || solve(&f, false));
     assert!(
         matches!(got, Err(crate::presburger::Refusal::Questions)),
@@ -1934,6 +2044,92 @@ fn moved_by_x_alone(k: usize) -> Formula {
         Formula::Con(Con::eq(&r(n + k), &Lin::constant(1))),
     ]);
     formula(&divs, lits, sum_formulas(&divs, &sums))
+}
+
+/// `k` rows `x + i == 4 q_i + r_i` (`i` in `0..k`), the sum `sum_i q_i` modulo 2 with `== 1`,
+/// and for each row `r_i <= 1 || rs == 0`, `rs` the sum's remainder
+/// (FAIL-scaled-rewrite-still-shadows). Every row's modulus shares the prime 2 with the sum's,
+/// so every row is a start row and every quotient is kept whole (G2), and each row's literal is
+/// under a disjunction, a bit (G1); `T = lcm(2, 4, 4 * 2) = 8` at every `k`. Under `rs == 1`
+/// every `r_i` is at most 1. For `k = 1` there is a point, `x = 4` (`q_0 = 1`, `r_0 = 0`). For
+/// `k = 2`, `r_0 = x mod 4` and `r_1 = (x + 1) mod 4` are both at most 1 only when
+/// `x = 0 (mod 4)`, and then `q_0 = q_1 = x / 4`, so the sum is even and `rs = 0`: no point;
+/// for `k >= 3` the rows include those two, so no point either.
+fn shared_prime_bits(k: usize) -> Formula {
+    let divs: Vec<Div> = (0..k as i64)
+        .map(|i| Div {
+            t: 0,
+            a: 1,
+            k: i,
+            m: 4,
+            fixed: None,
+        })
+        .collect();
+    let sums = vec![Sum {
+        parts: (0..k).map(|i| (2 * i + 1, 1)).collect(),
+        k: 0,
+        m: 2,
+        rem: true,
+    }];
+    let rs = r(k);
+    let mut lits = vec![Formula::Con(Con::eq(&rs, &Lin::constant(1)))];
+    lits.extend((0..k).map(|i| {
+        Formula::or(vec![
+            Formula::Con(Con::ge(&Lin::constant(1), &r(i))),
+            Formula::Con(Con::eq(&rs, &Lin::constant(0))),
+        ])
+    }));
+    formula(&divs, Formula::and(lits), sum_formulas(&divs, &sums))
+}
+
+/// [`shared_prime_bits`] at small `k` against enumeration over the period `2 * 4^k`, decided by
+/// [`sumset`] (taken whatever the costs) from `k = 2` on, and at every `k` by
+/// [`crate::presburger::decide`]: a point for `k = 1`, none from 2 on. At `k = 1` the sum
+/// `q_0 == 2 q_s + r_s` has one part, and with `0 <= r_s <= 1` it reads as a row on the quotient
+/// `q_0` ([`read_shape`]): a chain, which [`solve`] declines before the sums are read (the
+/// tradeoff at [`solve`], row PRES-nested-quotient-residues), so there only the decline and
+/// `decide`'s answer are checked.
+#[test]
+fn shared_prime_bits_have_their_answers_at_small_sizes() {
+    for k in 1..=5 {
+        let f = shared_prime_bits(k);
+        let divs: Vec<Div> = (0..k as i64)
+            .map(|i| Div {
+                t: 0,
+                a: 1,
+                k: i,
+                m: 4,
+                fixed: None,
+            })
+            .collect();
+        let sums = vec![Sum {
+            parts: (0..k).map(|i| (2 * i + 1, 1)).collect(),
+            k: 0,
+            m: 2,
+            rem: true,
+        }];
+        let period = 2 * 4_i64.pow(k as u32);
+        let want = (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
+        assert_eq!(want, k == 1, "k = {k}");
+        let what = format!("k = {k}");
+        if k == 1 {
+            assert_eq!(solve(&f, true), None, "{what}: a chain, declined\n{f}");
+            check(&f, want, &what);
+            continue;
+        }
+        let (_, n) = with_sumset_always(|| {
+            for want_model in [true, false] {
+                let got = solve(&f, want_model)
+                    .unwrap_or_else(|| panic!("{what}: declined (want_model {want_model})\n{f}"));
+                assert_eq!(got.is_some(), want, "{what}: solve\n{f}");
+                if let Some(m) = got.filter(|_| want_model) {
+                    assert!(f.holds(&m), "{what}: point {m:?} of\n{f}");
+                }
+            }
+            check(&f, want, &what);
+        });
+        assert!(n > 0, "{what}: the path did not answer");
+    }
 }
 
 /// [`moved_by_x_alone`]: no point, and the units grow as `k`, about 8 times from 50 to 400.
@@ -2837,4 +3033,230 @@ fn what_the_old_switchover_swept_is_answered() {
     }
     eprintln!("seed {seed}: {checked} formulas the old switchover swept, of {tried}");
     assert!(checked >= 10, "seed {seed}: {checked} of {tried}");
+}
+
+/// A literal tree of [`sums_past_the_period_limit_match_enumeration`]: one-term constraints on
+/// the remainder of row `i` (of the divisions, then of the sums), and their combinations; kept
+/// apart from its [`Formula`] so that each `x` of a period is evaluated on integers.
+#[derive(Clone, Debug)]
+enum Lit {
+    /// `r_i >= c` (`0`), `r_i <= c` (`1`) or `r_i == c` (`2`).
+    Rem(usize, u8, i64),
+    And(Vec<Lit>),
+    Or(Vec<Lit>),
+    Not(Box<Lit>),
+}
+
+impl Lit {
+    fn formula(&self) -> Formula {
+        match self {
+            Lit::Rem(i, rel, c) => {
+                let c = Lin::constant(*c);
+                Formula::Con(match rel {
+                    0 => Con::ge(&r(*i), &c),
+                    1 => Con::ge(&c, &r(*i)),
+                    _ => Con::eq(&r(*i), &c),
+                })
+            }
+            Lit::And(k) => Formula::and(k.iter().map(Lit::formula).collect()),
+            Lit::Or(k) => Formula::or(k.iter().map(Lit::formula).collect()),
+            Lit::Not(k) => Formula::negate(k.formula()),
+        }
+    }
+
+    fn holds(&self, rem: &[i64]) -> bool {
+        match self {
+            Lit::Rem(i, 0, c) => rem[*i] >= *c,
+            Lit::Rem(i, 1, c) => rem[*i] <= *c,
+            Lit::Rem(i, _, c) => rem[*i] == *c,
+            Lit::And(k) => k.iter().all(|l| l.holds(rem)),
+            Lit::Or(k) => k.iter().any(|l| l.holds(rem)),
+            Lit::Not(k) => !k.holds(rem),
+        }
+    }
+}
+
+/// A random [`Lit`] over the remainders `rows` (index, modulus), of depth up to `depth`.
+fn random_lit(rng: &mut Rng, rows: &[(usize, i64)], depth: u32) -> Lit {
+    if depth == 0 || rng.below(3) == 0 {
+        let (i, m) = rng.pick(rows);
+        return Lit::Rem(i, rng.below(3) as u8, rng.int(0, m - 1));
+    }
+    let kids = (0..2 + rng.below(2))
+        .map(|_| random_lit(rng, rows, depth - 1))
+        .collect();
+    match rng.below(3) {
+        0 => Lit::And(kids),
+        1 => Lit::Or(kids),
+        _ => Lit::Not(Box::new(Lit::And(kids))),
+    }
+}
+
+/// `(A1 && B1) || (A2 && B2)` or `!((A1 || B1) && (A2 || B2))`, each `A` a literal on the
+/// remainder of division 0 and each `B` on that of division 1: rewritten into residues of `x`,
+/// a disjunction of two parts of two clauses each (one per modulus), which `fold_or` declines.
+fn declined_or(rng: &mut Rng, divs: &[Div]) -> Lit {
+    let mut lit = |i: usize| {
+        let m = divs[i].m;
+        Lit::Rem(i, rng.below(3) as u8, rng.int(0, m - 1))
+    };
+    let (a1, b1, a2, b2) = (lit(0), lit(1), lit(0), lit(1));
+    if rng.coin() {
+        Lit::Or(vec![Lit::And(vec![a1, b1]), Lit::And(vec![a2, b2])])
+    } else {
+        Lit::Not(Box::new(Lit::And(vec![
+            Lit::Or(vec![a1, b1]),
+            Lit::Or(vec![a2, b2]),
+        ])))
+    }
+}
+
+/// The remainders of `divs` and `sums` at `x = v` into `rem` (division `i` at `i`, sum `j` at
+/// `divs.len() + j`); `false` when a sum with no remainder is not divisible there.
+fn remainders_at(divs: &[Div], sums: &[Sum], v: i64, quo: &mut [i64], rem: &mut [i64]) -> bool {
+    for (i, d) in divs.iter().enumerate() {
+        let e = d.a * v + d.k;
+        quo[i] = e.div_euclid(d.m);
+        rem[i] = e.rem_euclid(d.m);
+    }
+    for (j, s) in sums.iter().enumerate() {
+        let mut e = s.k;
+        for (p, c) in &s.parts {
+            e += c * match *p {
+                0 => v,
+                p if p % 2 == 1 => quo[p / 2],
+                p => rem[p / 2 - 1],
+            };
+        }
+        let i = divs.len() + j;
+        rem[i] = e.rem_euclid(s.m);
+        if !s.rem && rem[i] != 0 {
+            return false;
+        }
+    }
+    true
+}
+
+/// FAIL-scaled-rewrite-still-shadows: formulas whose rewrite into residues of `x` the fold
+/// declines and whose period is past the sweep's switchover (`sweep::PERIOD_SWEEP_SWITCHOVER`),
+/// with and without sums of quotients, against enumeration over one period. Two divisions of
+/// `x` by distinct primes from 31 to 211 whose product passes the switchover, sometimes a third
+/// by 2 to 5, up to two sums of their parts by 2 to 4, a literal [`declined_or`] on the two
+/// large remainders and random literals on all of them. `x` is unbounded. Each remainder is
+/// periodic in `x` with a period dividing `P`, the lcm of the divisions' moduli times the sums'
+/// moduli (at `x + P` each quotient `q_i` moves by `a_i P / m_i`, a multiple of every sum's
+/// modulus, and `x` by `P`), so `[0, P)` holds a point exactly when the line does. Every
+/// refusal and every wrong answer of `decide` is listed before the test fails.
+#[test]
+fn sums_past_the_period_limit_match_enumeration() {
+    let (mut rng, seed) = Rng::fresh("sums_past_the_period_limit_match_enumeration");
+    let primes = [
+        31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127,
+        131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193, 197, 199, 211,
+    ];
+    let limit = sweep::PERIOD_SWEEP_SWITCHOVER as i64;
+    let mut faults: Vec<String> = Vec::new();
+    let mut answered = [0usize; 2];
+    let mut with_sums = 0;
+    // The cases whose `decide` took each path, by `Path` index.
+    let mut cases_on = [0usize; 5];
+    // Six cases, then more until one reaches the fold's decline, at most 24 in all: on seeds 1
+    // to 100 at 20 cases a seed, 7 to 15 cases of each seed reached it (b23-band4, job d6), and
+    // at six cases seeds 8, 48, 58 and 72 reached none (job d8), so at least 0.35 of the cases
+    // reach it and 24 cases miss it with chance about 0.65^24, 3e-5.
+    for case in 0..24 {
+        if case >= 6 && cases_on[Path::FoldDeclined as usize] > 0 {
+            break;
+        }
+        let (m0, m1) = loop {
+            let (a, b) = (rng.pick(&primes), rng.pick(&primes));
+            if a != b && a * b > limit {
+                break (a, b);
+            }
+        };
+        let div = |rng: &mut Rng, m: i64| {
+            let a = rng.int(1, 14);
+            Div {
+                t: 0,
+                a: if rng.coin() { a } else { -a },
+                k: rng.int(-12, 12),
+                m,
+                fixed: None,
+            }
+        };
+        let mut divs = vec![div(&mut rng, m0), div(&mut rng, m1)];
+        if rng.below(3) == 0 {
+            let m = rng.int(2, 5);
+            divs.push(div(&mut rng, m));
+        }
+        let sums: Vec<Sum> = if rng.below(4) == 0 {
+            Vec::new()
+        } else {
+            random_sums(&mut rng, &divs)
+                .into_iter()
+                .map(|s| Sum {
+                    m: 2 + s.m % 3,
+                    ..s
+                })
+                .collect()
+        };
+        with_sums += usize::from(!sums.is_empty());
+        let mut rows: Vec<(usize, i64)> = divs.iter().enumerate().map(|(i, d)| (i, d.m)).collect();
+        for (j, s) in sums.iter().enumerate() {
+            if s.rem {
+                rows.push((divs.len() + j, s.m));
+            }
+        }
+        let lit = Lit::And(vec![
+            declined_or(&mut rng, &divs),
+            random_lit(&mut rng, &rows, 2),
+        ]);
+        let f = formula(&divs, lit.formula(), sum_formulas(&divs, &sums));
+        let period = divs.iter().fold(1, |l, d| l / num_gcd(l, d.m) * d.m)
+            * sums.iter().map(|s| s.m).product::<i64>();
+        let n = divs.len() + sums.len();
+        let (mut quo, mut rem) = (vec![0; n], vec![0; n]);
+        let want = (0..period)
+            .any(|v| remainders_at(&divs, &sums, v, &mut quo, &mut rem) && lit.holds(&rem));
+        let what = format!("seed {seed} case {case} {divs:?} {sums:?}");
+        PATHS.with(|c| c.set([0; 5]));
+        let decided = crate::presburger::decide(&f);
+        let paths = PATHS.with(std::cell::Cell::get);
+        for (k, n) in paths.into_iter().enumerate() {
+            cases_on[k] += usize::from(n > 0);
+        }
+        match decided {
+            Ok(got) if got == want => answered[usize::from(want)] += 1,
+            Ok(got) => faults.push(format!(
+                "{what}: decide gives {got}, enumeration {want}\n{f}"
+            )),
+            Err(e) => faults.push(format!("{what}: refused ({e:?}), enumeration {want}\n{f}")),
+        }
+        if let Some(found) = sweep::solve_modular_scaled_or_swept(&f, true)
+            && (found.is_some() != want || found.as_ref().is_some_and(|m| !f.holds(m)))
+        {
+            faults.push(format!(
+                "{what}: the chain gives {found:?}, enumeration {want}\n{f}"
+            ));
+        }
+    }
+    for fault in &faults {
+        eprintln!("{fault}");
+    }
+    eprintln!("seed {seed}: answered {answered:?} (empty, with a point), {with_sums} with sums");
+    eprintln!(
+        "seed {seed}: cases on each path: fold declined {}, sumset {}, rewrite whole {}, \
+         rewrite swept {}, rewrite declined {}",
+        cases_on[Path::FoldDeclined as usize],
+        cases_on[Path::Sumset as usize],
+        cases_on[Path::RewriteWhole as usize],
+        cases_on[Path::RewriteAfter as usize],
+        cases_on[Path::RewriteDeclined as usize],
+    );
+    assert!(faults.is_empty(), "seed {seed}: {} faults", faults.len());
+    // A seed none of whose cases reaches the fold's decline does not test the claim.
+    assert!(
+        cases_on[Path::FoldDeclined as usize] > 0,
+        "seed {seed}: no case reached the fold's decline"
+    );
 }

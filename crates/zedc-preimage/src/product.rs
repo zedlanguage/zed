@@ -12151,12 +12151,23 @@ impl Scope {
         // value is a value on one side, where that side's box was a fixed point of the part,
         // so some point of the part within that side's box has that value; that point lies
         // within the join's box, so the projection would keep the value. This reads the
-        // integers alone: a class the join widens is not argued here. Where the projection of
-        // a part is not exact, the join may skip a narrowing it would find.
-        // Tests: `case_wake::a_test_joined_from_cases_projects_the_whole_block` and
-        // `case_wake::tests_after_a_join_of_cases_that_recorded_one_part_differently_give_the_projection_from_scratch`
-        // (each later test against the projection from scratch); they cannot catch a narrowing
-        // skipped by an inexact projection, which gives a wider answer, not a wrong one.
+        // integers alone: a class the join widens is not argued here. The argument needs each
+        // side's box to be a fixed point of the part, which Lemma E ([`Scope::record`]) gives
+        // only for a projection that recorded no refusal; a side holding a refusal may have
+        // written the entry at bounds the box stage left wider than the part's projection
+        // ([`Scope::record`] (b)), so where either side, or both, holds a refusal no entry
+        // that differs between the sides is kept, and the part is projected again in the
+        // join. Seed 131 of the three-name attack (FAIL-scope-three-names-seeds): the arm
+        // `3a + 2w <= x - 1` refused its whole block, the entries kept at the joined names
+        // skipped every part but the new one, and y and w stayed (-inf, 9] and [-4, 6]
+        // against [-2, 9] and [-4, 3] from scratch. Cost: one projection of each such part
+        // at the block's next projection, only after a join with a refusal on a side.
+        // A refusal is kept for the scope's life, so a side that refused anywhere before
+        // the split counts: this drops more entries than needed, never fewer.
+        // Tests, in `case_wake`: `a_test_joined_from_cases_projects_the_whole_block`,
+        // `tests_after_a_join_of_cases_that_recorded_one_part_differently_give_the_projection_from_scratch`,
+        // and `a_join_with_a_refused_case_at_seed_131_gives_y_from_minus_2_and_w_at_most_3`.
+        let exact_sides = self.refusals.is_empty() && other.refusals.is_empty();
         let mut projected = self.projected.clone();
         let mut seen = self.seen.clone();
         for d in self.projected.diff(&other.projected) {
@@ -12169,7 +12180,7 @@ impl Scope {
                     old: (k, (with, v)),
                     new: (_, (theirs, _)),
                 } => {
-                    if with != theirs {
+                    if with != theirs || !exact_sides {
                         projected.remove(k);
                         seen.drop_part(k);
                         continue;
@@ -17772,8 +17783,13 @@ impl Scope {
                     && self.refusals.ptr_eq(&refusals_before)
                     && distinct_conjuncts(&all) == distinct_conjuncts(&projected_now);
                 if !repeat {
+                    let (before, names_before) = (self.refusals.clone(), self.names.view().clone());
                     self.project_part(&all);
+                    let refused = !self.refusals.ptr_eq(&before);
                     self.cover(&mut b, covered.is_some());
+                    if refused && !self.bottom {
+                        self.project_users_once(&mut b, &names_before, covered.is_some());
+                    }
                 }
                 break;
             }
@@ -17793,12 +17809,62 @@ impl Scope {
             let all = compact_abs(&Formula::and(
                 b.parts.values().map(|p| b.formula(p)).collect(),
             ));
+            let (before, names_before) = (self.refusals.clone(), self.names.view().clone());
             self.project_part(&all);
+            let refused = !self.refusals.ptr_eq(&before);
             self.cover(&mut b, covered.is_some());
+            if refused && !self.bottom {
+                self.project_users_once(&mut b, &names_before, covered.is_some());
+            }
             entry_hole = false;
         }
         b.hole_pending = entry_hole;
         self.record(b, &start, &due, &ran, &released_loop);
+    }
+
+    /// After a projection of the whole block that recorded a refusal: projects once each part
+    /// that reads a name that projection moved (since `before`), then covers the block.
+    ///
+    /// Why (FAIL-scope-three-names-seeds, seed 45): a refused name keeps the box stage's
+    /// bounds, computed from the names as they were before the projection, so a part whose
+    /// other names the projection narrowed is not at its own projection. Seed 45: the refused
+    /// projection onto `a` moved `x` and `y` to [-6, -2] and left `a` (-inf, +inf), where
+    /// `a >= x + y` alone gives `a >= -12`, as the projection from scratch does. Each part's
+    /// own projection is sound (it keeps every point of the part and the names), so this only
+    /// narrows toward the points of the block. Cost: one projection per part using a moved
+    /// name, O(p) projections for a block of p parts, and no part is queued again, so the
+    /// loop of [`Scope::project_block`] keeps its bound on the number of steps; a part this
+    /// narrows that would narrow another is not projected again, so the names here are not
+    /// claimed to be a fixed point (precision only, [`Scope::record`] (b)), and the answer
+    /// carries the refusal. Test:
+    /// `case_wake::a_star_leaf_is_projected_again_when_a_join_of_cases_narrows_its_hubs`.
+    fn project_users_once(&mut self, b: &mut Block, before: &Products, covered: bool) {
+        let mut users: BTreeSet<PartAt> = BTreeSet::new();
+        for d in before.diff(&self.names) {
+            if let DiffItem::Update {
+                old: (_, a),
+                new: (_, nb),
+            } = &d
+                && same_framed(a, nb)
+            {
+                continue;
+            }
+            let (DiffItem::Add(n, _)
+            | DiffItem::Remove(n, _)
+            | DiffItem::Update { new: (n, _), .. }) = d;
+            users.extend(b.due_users(n).cloned());
+        }
+        for at in users {
+            let part = b.parts[&at].clone();
+            if b.managed(&part) {
+                continue;
+            }
+            self.project_part(&b.formula(&part));
+            if self.bottom {
+                return;
+            }
+        }
+        self.cover(b, covered);
     }
 
     /// Whether the half-line certificate ([`Scope::part_halfline_idle`]) holds, at the current
@@ -18125,7 +18191,13 @@ impl Scope {
             // of every part: with no refusal, by Lemma E, `B' = B ∩ Π_n proj_n(all ∧ B)`, and
             // for a part `P` and `v` in `B'_n` a point `s` of `all ∧ B` with `s_n = v` lies in
             // `B'` (as in (a)) and satisfies `P`, a conjunct of `all`; so re-projecting `P`
-            // moves nothing, and the `cover` after it, by (a)'s step, keeps `s`. Again-repeat
+            // moves nothing, and the `cover` after it, by (a)'s step, keeps `s`. Where that
+            // projection records a refusal, the parts reading a name it moved are projected
+            // once more ([`Scope::project_users_once`]), and (3) can fail for the others; their
+            // entries are precision only, by (1), as for a part whose projection refused in
+            // (a), and the block's answer carries the refusal. Skipping `record` there changed
+            // no answer at the seeds of FAIL-scope-three-names-seeds once
+            // `project_users_once` ran (2026-11-25), so it was dropped. Again-repeat
             // skips that projection only when no aggregate moved a name, the part just
             // projected refused nothing, and `all` has the same conjuncts as it: the same
             // formula projected exactly, the again-all case. Empty and bottom: an entry
@@ -26796,8 +26868,10 @@ impl Block {
     /// `l01_39_reduced_product::pendants::seed_12035647242373093243_part_52_is_exact_both_ways`).
     /// So where it records none, it is at least as narrow as `P`'s own projection, and not
     /// releasing loses nothing. Where it records a refusal, the refused names keep the box
-    /// stage's bounds and can be wider than `P`'s own projection; that is a loss of
-    /// precision only, and the answer carries the refusal, so it is not reported as exact.
+    /// stage's bounds and can be wider than `P`'s own projection; every part reading a name
+    /// that projection moved, released ones included, is then projected by itself once
+    /// ([`Scope::project_users_once`]), and what is left is a loss of precision only: the
+    /// answer carries the refusal, so it is not reported as exact.
     /// (b) In (3), where [`Scope::record_threshold`]'s test holds (proof there), each due
     /// part it records is at its own fixed point: its own projection would move no name, so
     /// not releasing it loses nothing. Where the test fails, a part alone can leave a hole
@@ -26811,9 +26885,10 @@ impl Block {
     /// `x <= 0 || y >= 5` and `y <= 4 || x >= 2` gives `x` in `{0, 2}` together, where the
     /// threshold answer is `[0..=2]`, but each part alone leaves `x` whole, so it is no case
     /// of this. Tests: `families::upper_release_against_the_oracle` (y [..=-1] where main
-    /// gave [..=5]), which checks one release in the loop, not an exit, and
+    /// gave [..=5]), which checks one release in the loop, not an exit,
     /// `tests::a_threshold_solve_records_the_parts_its_test_shows_at_their_fixed_point` for
-    /// (b). Neither catches a refused joint projection that a part alone would narrow.
+    /// (b), and for a refused joint projection that a part alone narrows,
+    /// `case_wake::a_star_leaf_is_projected_again_when_a_join_of_cases_narrows_its_hubs`.
     fn released(&self, stair: bool, ray: bool) -> impl Iterator<Item = &PartAt> {
         let (stair, ray) = (stair && !self.stair_managed, ray && !self.ray_managed);
         (self.roles.iter())

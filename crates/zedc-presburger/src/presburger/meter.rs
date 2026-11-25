@@ -331,6 +331,20 @@ pub(super) fn running() -> bool {
     METER.get().is_some()
 }
 
+/// `run` under a meter of its own with `limit` units, for a step asked where no question's
+/// meter runs (`modular::scaled`'s last try of the sumset path, after the rewrite declines):
+/// `None` when `run` passed the limit, whatever it returned, since a step that reads a spent
+/// meter as no point could have changed its answer. Must be called with no meter running;
+/// the meter is cleared again after `run`.
+pub(super) fn metered_alone<T>(limit: u64, run: impl FnOnce() -> T) -> Option<T> {
+    debug_assert!(!running(), "metered_alone under a running meter");
+    METER.set(Some(Meter { used: 0, limit }));
+    let out = run();
+    let Meter { used, limit } = METER.get().expect("the meter set above");
+    METER.set(None);
+    (used <= limit).then_some(out)
+}
+
 /// Whether the question running is past its limit: a search that reads a refusal as no point
 /// stops at once, since the question's answer is then refused whatever it finds.
 pub(super) fn spent() -> bool {

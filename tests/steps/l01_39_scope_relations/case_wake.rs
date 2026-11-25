@@ -456,11 +456,15 @@ fn run(aim: Aim, what: &str) {
 }
 
 /// The attack on `aim` at the one seed `seed`: for the seeds that met a fault, and for the
-/// three-name attack, whose fresh seeds still meet one. It fails on 7 of seeds 2 to 1001 (45,
+/// three-name attack, whose fresh seeds still meet one. It failed on 7 of seeds 2 to 1001 (45,
 /// 131, 228, 644, 656, 729, 905; b22-mainfail1, origin/main 0b5ab70d9, 2026-11-24), each held
-/// wider than from scratch (FAIL-scope-three-names-seeds), so with a fresh seed each run that
-/// test would fail about one run in 140; it runs at a seed that passes until that row is fixed,
-/// then goes back to `run`. The holes attack, which failed on 23 of seeds 2 to 1001 until the
+/// wider than from scratch. Seeds 45, 131 and 644 pass since FAIL-scope-three-names-seeds (a
+/// join keeps no entry that differs between the cases when a case holds a refusal, and the parts
+/// reading a name that a refused projection of the whole block moved are projected once more);
+/// 228, 656, 729 and 905 still fail (FAIL-scope-join-stale-kept-905,
+/// FAIL-scope-and-false-coarse), so with a fresh seed that test would fail about one run in
+/// 250. It runs at a seed that passes until those rows are fixed, then goes back to `run`.
+/// The holes attack, which failed on 23 of seeds 2 to 1001 until the
 /// exact cover was on the checker's projection path (FAIL-scope-equation-odd-points, closed by
 /// PRES-cover-wire), passes on all 1000 and runs on a fresh seed again.
 fn run_at(aim: Aim, seed: u64) {
@@ -1228,4 +1232,145 @@ fn three_names_after_two_case_histories_give_the_projection_from_scratch() {
     let left = ge(lin(&[(3, "y"), (-1, "w")]), 3);
     let right = ge(lin(&[(-2, "x"), (-3, "w"), (3, "a")]), 5);
     held_equals_scratch(&["a", "w", "x", "y"], &history, left, right);
+}
+
+/// The history of seed 45 of the three-name attack up to case 13, step 5
+/// (FAIL-scope-three-names-seeds).
+fn seed45_history() -> Vec<Term> {
+    vec![
+        prim(Prim::Le, var("x"), int(0)),
+        prim(Prim::Le, var("y"), int(2)),
+        ge(var("w"), -6),
+        prim(Prim::Ge, var("a"), prim(Prim::Add, var("x"), var("y"))),
+        or(
+            ge(lin(&[(3, "x"), (1, "y"), (-2, "w")]), -2),
+            ge(lin(&[(-2, "x"), (-1, "y"), (-1, "w")]), 4),
+        ),
+        or(
+            ge(lin(&[(2, "w"), (-1, "a")]), 1),
+            ge(lin(&[(3, "x"), (2, "a")]), 5),
+        ),
+        or(
+            ge(lin(&[(2, "x"), (-1, "y"), (-1, "w")]), -1),
+            ge(lin(&[(2, "x"), (-2, "y")]), -1),
+        ),
+        or(
+            ge(lin(&[(-3, "y"), (3, "w"), (1, "a")]), 5),
+            ge(lin(&[(1, "x"), (-3, "w"), (-1, "a")]), -4),
+        ),
+        or(
+            ge(lin(&[(-3, "x"), (-3, "y"), (-1, "w")]), 4),
+            ge(lin(&[(2, "x"), (-3, "y")]), 1),
+        ),
+        or(
+            ge(lin(&[(2, "x"), (2, "y"), (3, "w"), (2, "a")]), -1),
+            ge(lin(&[(-1, "a"), (-1, "x")]), 2),
+        ),
+        or(
+            ge(lin(&[(-1, "x"), (2, "y"), (1, "w")]), 3),
+            ge(lin(&[(-2, "x"), (3, "y"), (2, "w")]), 0),
+        ),
+        or(
+            ge(lin(&[(-2, "x"), (-3, "y"), (-1, "a")]), 2),
+            ge(lin(&[(3, "x"), (-1, "a")]), -3),
+        ),
+    ]
+}
+
+/// Seed 45 of the three-name attack, case 13, step 5 (FAIL-scope-three-names-seeds): after
+/// `w != 3 && w != 1` is false, each case alone (`w = 3`, `w = 1`) matches the projection from
+/// scratch, and after the join the reduction narrows the hubs `x` and `y` to [-6, -2], but the
+/// leaf `a` of the star `a >= x + y` held the join of the arms, (-inf, +inf), against `a >= -12`
+/// from scratch.
+#[test]
+fn a_star_leaf_is_projected_again_when_a_join_of_cases_narrows_its_hubs() {
+    let p = Premises::new();
+    let ns: Vec<Arc<str>> = ["a", "x", "y", "w"].iter().map(|&n| n.into()).collect();
+    let mut s = ints(&ns);
+    for t in seed45_history() {
+        s = s.assume(&t, true, &p);
+    }
+    let ne = |c| prim(Prim::Ne, var("w"), int(c));
+    let t = prim(Prim::And, ne(3), ne(1));
+    let mut fresh = s.clone();
+    fresh.forget_projections();
+    let mut want = fresh.assume(&t, false, &p);
+    want.forget_projections();
+    want.reduce();
+    assert_eq!(
+        intervals(&s.assume(&t, false, &p), &ns),
+        intervals(&want, &ns)
+    );
+}
+
+/// Seed 131 of the three-name attack, case 1, step 4 (FAIL-scope-three-names-seeds): after the
+/// twelve assumptions the attack made, `w != 2 && -x + 2w + 3a >= 0` false splits into the
+/// cases `w = 2` and `-x + 2w + 3a < 0`, and one of them holds a refusal. The join kept the
+/// entries that case recorded at its own bounds, so y stayed at most 9 with no lower bound and
+/// w in [-4, 6], where from scratch y is in [-2, 9] and w in [-4, 3]. A join keeps no entry
+/// that differs between the cases when a case holds a refusal (`Scope::join_settled`).
+#[test]
+fn a_join_with_a_refused_case_at_seed_131_gives_y_from_minus_2_and_w_at_most_3() {
+    let p = Premises::new();
+    let ns: Vec<Arc<str>> = ["a", "x", "y", "w"].iter().map(|&n| n.into()).collect();
+    let mut s = ints(&ns);
+    for t in [
+        ge(var("x"), -1),
+        prim(Prim::Le, var("y"), int(9)),
+        ge(var("w"), -4),
+        prim(Prim::Ge, var("a"), prim(Prim::Add, var("x"), var("y"))),
+        or(
+            ge(lin(&[(2, "y"), (1, "w")]), 3),
+            ge(lin(&[(-2, "x"), (1, "y")]), 0),
+        ),
+        or(
+            ge(lin(&[(3, "x"), (3, "y"), (2, "w")]), 1),
+            ge(lin(&[(3, "x"), (1, "w")]), 0),
+        ),
+        or(
+            ge(lin(&[(2, "x"), (-1, "w")]), 2),
+            ge(lin(&[(2, "x"), (-3, "y")]), 0),
+        ),
+        or(
+            ge(lin(&[(-2, "x"), (2, "w")]), 4),
+            ge(lin(&[(3, "y"), (2, "w")]), -1),
+        ),
+        or(prim(Prim::Ne, var("y"), int(2)), ge(lin(&[(-2, "x")]), -2)),
+        or(
+            ge(lin(&[(1, "a"), (3, "x")]), 3),
+            prim(Prim::Ne, var("w"), int(-1)),
+        ),
+        or(
+            ge(lin(&[(1, "x"), (1, "y"), (-1, "w")]), -3),
+            ge(lin(&[(2, "x"), (-1, "w")]), 0),
+        ),
+        or(
+            ge(lin(&[(-3, "x"), (-1, "y"), (-2, "w"), (3, "a")]), 0),
+            ge(lin(&[(2, "a")]), 5),
+        ),
+    ] {
+        s = s.assume(&t, true, &p);
+        assert!(!s.bottom, "{t:?} leaves points");
+    }
+    let t = prim(
+        Prim::And,
+        prim(Prim::Ne, var("w"), int(2)),
+        ge(lin(&[(-1, "x"), (2, "w"), (3, "a")]), 0),
+    );
+    let got = s.assume(&t, false, &p);
+    let mut fresh = s.clone();
+    fresh.forget_projections();
+    let mut want = fresh.assume(&t, false, &p);
+    want.forget_projections();
+    want.reduce();
+    assert_eq!(intervals(&got, &ns), intervals(&want, &ns));
+    assert_eq!(
+        intervals(&got, &ns),
+        Some(vec![
+            "a: IntervalSet { pieces: [(Fin(Num(Small(-3))), PosInf)] }".to_string(),
+            "x: IntervalSet { pieces: [(Fin(Num(Small(-1))), PosInf)] }".to_string(),
+            "y: IntervalSet { pieces: [(Fin(Num(Small(-2))), Fin(Num(Small(9))))] }".to_string(),
+            "w: IntervalSet { pieces: [(Fin(Num(Small(-4))), Fin(Num(Small(3))))] }".to_string(),
+        ])
+    );
 }

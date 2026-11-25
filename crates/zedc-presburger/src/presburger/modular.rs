@@ -2303,6 +2303,40 @@ fn fold_and(
     })
 }
 
+#[cfg(test)]
+thread_local! {
+    /// For tests: the number of times each path of the scaled chain was taken on this thread,
+    /// by [`Path`] index, so a random test can show which paths its formulas reach
+    /// (FAIL-scaled-rewrite-still-shadows).
+    pub(crate) static PATHS: std::cell::Cell<[usize; 5]> = const { std::cell::Cell::new([0; 5]) };
+}
+
+/// The paths counted in [`PATHS`].
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(crate) enum Path {
+    /// `fold_or` declined a disjunction (it would multiply out).
+    FoldDeclined = 0,
+    /// `scaled::solve_then` answered by the sums' remainders (`sumset`).
+    Sumset = 1,
+    /// `solve_modular_whole` answered the formula rewritten into residues of `x`.
+    RewriteWhole = 2,
+    /// It declined the rewrite and the fallback (the period sweep) answered it.
+    RewriteAfter = 3,
+    /// Both declined the rewrite, which leaves the formula to the general path.
+    RewriteDeclined = 4,
+}
+
+/// Counts one use of `p` in [`PATHS`].
+#[cfg(test)]
+pub(crate) fn count_path(p: Path) {
+    PATHS.with(|c| {
+        let mut v = c.get();
+        v[p as usize] += 1;
+        c.set(v);
+    });
+}
+
 fn fold_or(nodes: Vec<FoldNode>) -> Result<FoldNode, ()> {
     let mut local_quots: BTreeSet<Atom> = BTreeSet::new();
     let mut current: Vec<FlatClause> = vec![FlatClause::falsum()];
@@ -2315,6 +2349,8 @@ fn fold_or(nodes: Vec<FoldNode>) -> Result<FoldNode, ()> {
     if nodes.iter().filter(|n| live(n)).count() > 1
         && nodes.iter().any(|n| live(n) && n.clauses.len() > 1)
     {
+        #[cfg(test)]
+        count_path(Path::FoldDeclined);
         return Err(());
     }
 

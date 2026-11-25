@@ -839,11 +839,31 @@ pub(super) fn solve_then(
     // Sums over coprime moduli: decided over the sums' remainders ([`sumset`]), which does not
     // write the residues of `x` whose number is the product of the moduli.
     let skip: TextSet<&Con> = def_cons.union(&sum_cons).copied().collect();
-    if let Some(answer) =
-        sumset::solve_by_sums(f, &x, &top, &rows, &sums, &r_of, &sum_r, &skip, want_model)
-    {
+    let sums_path = |last: bool| {
+        sumset::solve_by_sums(
+            f, &x, &top, &rows, &sums, &r_of, &sum_r, &skip, want_model, last,
+        )
+    };
+    if let Some(answer) = sums_path(false) {
+        #[cfg(test)]
+        super::count_path(super::Path::Sumset);
         return Some(answer);
     }
+    // The last try (FAIL-scaled-rewrite-still-shadows): where the rewrite below declines, the
+    // sums path runs again without its comparison of costs, since no other path of this module
+    // is left to keep `f` for; the meter alone bounds it. Under the question's meter when one
+    // runs; otherwise (a step asked outside a question, such as the sweep of a period) under a
+    // meter of its own with the question's limit, a run past it declining as the rewrite did,
+    // since a step that read the spent meter as no point could have changed its answer.
+    let last_try = || -> Option<Option<Model>> {
+        if super::super::meter::running() {
+            sums_path(true)
+        } else {
+            let meter = &super::super::meter::EXACT_LIMIT_SET;
+            let limit = meter.get().unwrap_or(super::super::meter::EXACT_LIMIT);
+            super::super::meter::metered_alone(limit, || sums_path(true)).flatten()
+        }
+    };
 
     // The new remainders of `x`, one per modulus, numbered past every auxiliary atom of `f`.
     let mut next_aux = 0u32;
@@ -904,17 +924,21 @@ pub(super) fn solve_then(
     let mut zero_remainders = Vec::new();
     for (i, row) in rows.iter().enumerate() {
         if row.r.is_none() {
-            let (n, t) = pull_back(&rows, i, vec![(Int::ZERO, Int::ZERO)])?;
+            let Some((n, t)) = pull_back(&rows, i, vec![(Int::ZERO, Int::ZERO)]) else {
+                return last_try();
+            };
             zero_remainders.push(residue_literal(n, t));
         }
     }
     // A sum with no remainder says `E mod m = 0` ([`SumRow`]).
     for sum in sums.iter().filter(|sum| sum.r.is_none()) {
-        let (n, t) = sum_residues(sum, &rows, &x, &vec![(Int::ZERO, Int::ZERO)])?;
+        let Some((n, t)) = sum_residues(sum, &rows, &x, &vec![(Int::ZERO, Int::ZERO)]) else {
+            return last_try();
+        };
         zero_remainders.push(residue_literal(n, t));
     }
     if failed {
-        return None;
+        return last_try();
     }
     let body = f.map_cons(&|c| {
         if def_cons.contains(c) || sum_cons.contains(c) {
@@ -946,8 +970,24 @@ pub(super) fn solve_then(
         parts.push(Formula::Con(Con::ge(&Lin::constant(n - &Int::ONE), &s)));
     }
     let rewritten = Formula::and(parts);
-    let found =
-        solve_modular_whole(&rewritten, want_model).or_else(|| after(&rewritten, want_model))?;
+    let whole = solve_modular_whole(&rewritten, want_model);
+    #[cfg(test)]
+    if whole.is_some() {
+        super::count_path(super::Path::RewriteWhole);
+    }
+    let found = whole.or_else(|| {
+        let swept = after(&rewritten, want_model);
+        #[cfg(test)]
+        super::count_path(if swept.is_some() {
+            super::Path::RewriteAfter
+        } else {
+            super::Path::RewriteDeclined
+        });
+        swept
+    });
+    let Some(found) = found else {
+        return last_try();
+    };
     let Some(point) = found else {
         return Some(None);
     };
