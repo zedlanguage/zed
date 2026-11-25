@@ -526,6 +526,9 @@ struct WideBuild {
     /// The operands' spans, whose derivation the rejection prints.
     args: Vec<Span>,
     bits: Num,
+    /// The operand the text does not fix, whose type bounds the build
+    /// ([`Ck::too_large_sum_beside`]); `None` where the text fixes both.
+    bounded: Option<Span>,
 }
 
 /// A product or quotient `a * b` or `a / b` at `span` whose least size the text proves

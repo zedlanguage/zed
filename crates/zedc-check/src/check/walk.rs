@@ -9104,6 +9104,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 if !over_space && let (Some(a), Some(p)) = (x.expr, p) {
                     self.too_large_build(p, &[a, b], span);
+                    if matches!(op, BinaryOp::Add | BinaryOp::Sub) {
+                        self.too_large_sum_beside(p, [a, b], [&x.ty, &y.ty], span);
+                    }
                 }
                 let zero = if divides {
                     self.zero_divisor(op, &x, &y, b)
@@ -18936,7 +18939,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// without running the operation again. A size within the address space is kept
     /// and judged against the memory limit of `main` once it is read
     /// ([`Self::powers_over_main_limit`]). An operation the text does not fix, as
-    /// `2^(2^70) + n` with `n` read from the input, is left to the run.
+    /// `2^(2^70) + n` with `n` read from the input, is left to the run, but for a sum whose
+    /// other operand its type and tests bound away from 0 ([`Self::too_large_sum_beside`]).
     ///
     /// Left open: a comparison or a rounding the kernel decides by bounds of growing precision
     /// is refused at its first step past the fold bound, whose size is that step's, so one that
@@ -18991,12 +18995,72 @@ impl<'t, 'a> Ck<'t, 'a> {
         let Some(bits) = bits else {
             return;
         };
-        let w = WideBuild {
+        self.judge_build(WideBuild {
             p,
             span,
             args: args.iter().map(|a| a.span).collect(),
             bits: Num::from(num_bigint::BigInt::from(bits)),
-        };
+            bounded: None,
+        });
+    }
+
+    /// `a + b` or `a - b` at `span` where the text fixes one operand, an integer, and the
+    /// other is an `int` its type and the tests above bound away from 0 and within `2^64`
+    /// (plan row CONST-build-typed-operands; DESIGN.md, the numbers section, "the operands
+    /// prove"): `2^(2^70) + n` with `n` in `1..=5`, read from the input, builds at least
+    /// `2^70 - 21` bits whatever `n` is, and is judged as [`Self::too_large_build`] judges one
+    /// on fixed operands. The size is the kernel's bound over every such operand
+    /// ([`Rat::sum_least_beside`], its proof there). An operand whose type holds an atom, or
+    /// 0, or values past `2^64`, proves nothing: the atom passes through the sum, 0 leaves the
+    /// fixed operand as it stands, and a wide one may share a kept power. A `rat` operand is
+    /// left to the run too.
+    ///
+    /// Complexity tradeoff: the naive method sizes the sum at each value of the bounded
+    /// operand, one [`Rat::sum_least`] per member, `2^63` of them for an `i64`. Used: one
+    /// bound over all of them, O(primes kept), and one read of the operand's ints under the
+    /// tests in force ([`Self::ints_here`]), which the division beside it reads already.
+    fn too_large_sum_beside(&mut self, p: Prim, args: [&'a Expr; 2], tys: [&Ty; 2], span: Span) {
+        for i in 0..2 {
+            let (f, o) = (args[i], args[1 - i]);
+            let ty = tys[1 - i];
+            if !ty.atoms().is_empty() || !ty.subtype(&Ty::carrier(Carrier::Int)) {
+                continue;
+            }
+            let Some(Value::Big(r)) = self.fixed_value(f) else {
+                continue;
+            };
+            if self.fixed_value(o).is_some() {
+                return;
+            }
+            let ints = self.ints_here(o).0;
+            let Some((lo, hi)) = ints.bounds() else {
+                return;
+            };
+            let (Some(lo), Some(hi)) = (lo.to_i64(), hi.to_i64()) else {
+                return;
+            };
+            if ints.contains(0) {
+                return;
+            }
+            let m = 64 - lo.unsigned_abs().max(hi.unsigned_abs()).leading_zeros();
+            let Some(bits) = r.sum_least_beside(m) else {
+                return;
+            };
+            self.judge_build(WideBuild {
+                p,
+                span,
+                args: args.iter().map(|a| a.span).collect(),
+                bits: Num::from(num_bigint::BigInt::from(bits)),
+                bounded: Some(o.span),
+            });
+            return;
+        }
+    }
+
+    /// The build `w`: rejected where it passes the target's address space, else kept to be
+    /// judged against the memory limit of `main` ([`Self::powers_over_main_limit`]).
+    fn judge_build(&mut self, w: WideBuild) {
+        let span = w.span;
         let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
         if w.bits > room {
             self.build_too_large(&w, None);
@@ -19053,19 +19117,24 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let Some(m) = main_limit {
             notes.push(self.main_limit_note(m));
         }
+        // An operand the types bound already comes from the input: its range, under its type
+        // and the tests in force, is what proves.
+        let repair = match w.bounded {
+            Some(o) => format!(
+                "or let `{}` be 0 here",
+                self.code(Some(o)).unwrap_or("the other operand")
+            ),
+            None => "or read an operand from the input".to_string(),
+        };
         notes.push(Note {
             span: w.span,
             text: match main_limit {
-                Some(MainMemory::Declared(..)) => {
-                    "or read an operand from the input: the run then stops at the memory limit \
-                     of `main` if the result passes it"
-                }
-                _ => {
-                    "or read an operand from the input: the run then stops if no memory holds \
-                     what it writes out"
-                }
+                Some(MainMemory::Declared(..)) => format!(
+                    "{repair}: the run then stops at the memory limit of `main` if the result \
+                     passes it"
+                ),
+                _ => format!("{repair}: the run then stops if no memory holds what it writes out"),
             }
-            .to_string()
             .into(),
         });
         notes.push(Note {
