@@ -248,11 +248,19 @@ fn another_child_process_names_the_shared_path() {
 /// Whether `test` of this binary passed, run alone in a process of its own with `CLAIM` set,
 /// and its standard output.
 fn alone(test: &str) -> (bool, String) {
-    let run = Command::new(std::env::current_exe().expect("this test binary"))
+    alone_as(test, None)
+}
+
+/// As [`alone`], as of the build `build` of the binary ([`BUILD_VAR`]) where one is given.
+fn alone_as(test: &str, build: Option<&str>) -> (bool, String) {
+    let mut command = Command::new(std::env::current_exe().expect("this test binary"));
+    command
         .args(["--exact", test, "--test-threads=1"])
-        .env(CLAIM, "1")
-        .output()
-        .expect("running this test binary");
+        .env(CLAIM, "1");
+    if let Some(build) = build {
+        command.env(BUILD_VAR, build);
+    }
+    let run = command.output().expect("running this test binary");
     (
         run.status.success(),
         String::from_utf8_lossy(&run.stdout).into_owned(),
@@ -275,7 +283,7 @@ fn two_tests_naming_a_path_in_processes_of_their_own_fail() {
         let (passed, out) = alone(first);
         assert!(passed, "the first test names the path:\n{out}");
     }
-    let record = process_tmpdir().parent().unwrap().join("scratch-owners");
+    let record = claims_record();
     let lines = std::fs::read_to_string(&record).unwrap();
     let line = format!("{first}\t{SHARED}");
     assert_eq!(
@@ -291,4 +299,87 @@ fn two_tests_naming_a_path_in_processes_of_their_own_fail() {
          own"
     );
     assert!(out.contains(&expected), "no `{expected}` in:\n{out}");
+}
+
+/// Two tests that share a helper naming one directory, as the zedc tests of zed-native do,
+/// each get a directory of their own under it, named after the test, and made; neither
+/// clashes with the other (TEST-scratch-native-dirs). Before, the helper made the one
+/// directory from `process_tmpdir` for every test of the file, outside the check.
+#[test]
+fn tests_sharing_a_helper_get_a_directory_each() {
+    let base = "scratch_tests/test_dir";
+    let one = on_thread(Some("test_dir one"), move || test_dir(base)).expect("the first test");
+    let two = on_thread(Some("test_dir two"), move || test_dir(base)).expect("the second test");
+    assert_eq!(one, process_tmpdir().join(base).join("test_dir one"));
+    assert_eq!(two, process_tmpdir().join(base).join("test_dir two"));
+    assert!(one.is_dir() && two.is_dir(), "{} and {}", one.display(), two.display());
+    assert_eq!(
+        on_thread(Some("test_dir one"), move || test_dir(base)),
+        Ok(one),
+        "again by the same test"
+    );
+    // A test claiming the shared directory itself clashes with both.
+    let clash = on_thread(Some("test_dir three"), move || scratch(base)).expect_err("the base");
+    assert!(
+        clash.starts_with("two tests use the scratch path scratch_tests/test_dir and the path "),
+        "{clash}"
+    );
+    let refused = on_thread(None, move || test_dir(base)).expect_err("a thread with no name");
+    assert!(refused.contains("on a thread with no name"), "{refused}");
+}
+
+/// The path the two tests of [`two_builds_keep_the_claims_of_each`] name.
+const SHARED_BUILDS: &str = "scratch_tests/two_builds";
+
+/// In a child process of [`two_builds_keep_the_claims_of_each`], with `CLAIM` set: names
+/// [`SHARED_BUILDS`]. Otherwise does nothing.
+#[test]
+fn a_child_process_of_a_build_names_a_path() {
+    if std::env::var_os(CLAIM).is_some() {
+        scratch(SHARED_BUILDS);
+    }
+}
+
+/// As [`a_child_process_of_a_build_names_a_path`], as another test.
+#[test]
+fn another_child_process_names_the_path_of_a_build() {
+    if std::env::var_os(CLAIM).is_some() {
+        scratch(SHARED_BUILDS);
+    }
+}
+
+/// A process of another build of the binary sharing the target directory keeps its claims
+/// apart and leaves this build's claims in place: a second test of this build naming a path
+/// the first claimed still fails after a process of another build ran between the two
+/// (TEST-scratch-native-dirs). Before, the process of the other build emptied the one record
+/// all builds shared, and the second test passed.
+#[test]
+fn two_builds_keep_the_claims_of_each() {
+    let first = "scratch_tests::a_child_process_of_a_build_names_a_path";
+    let second = "scratch_tests::another_child_process_names_the_path_of_a_build";
+    let (passed, out) = alone(first);
+    assert!(passed, "the first test names the path:\n{out}");
+    // In the other build the second test is the only one naming the path, so it passes, and
+    // its claim goes to that build's record alone.
+    let (passed, out) = alone_as(second, Some("another-build"));
+    assert!(passed, "the second test names the path in another build:\n{out}");
+    let other = claims_record().with_file_name("another-build");
+    let lines = std::fs::read_to_string(&other).unwrap();
+    assert!(
+        lines.lines().all(|l| l != format!("{first}\t{SHARED_BUILDS}")),
+        "the lines of {}:\n{lines}",
+        other.display()
+    );
+    let (passed, out) = alone(second);
+    assert!(!passed, "the second test names the path in this build too:\n{out}");
+    let expected = format!(
+        "two tests use the scratch path {SHARED_BUILDS}: {first} and {second}; give each a \
+         name of its own"
+    );
+    assert!(out.contains(&expected), "no `{expected}` in:\n{out}");
+    let (passed, out) = alone_as(first, Some("a/b"));
+    assert!(
+        !passed && out.contains("ZED_SCRATCH_BUILD is not a plain file name: \"a/b\""),
+        "a build that is not a plain file name:\n{out}"
+    );
 }

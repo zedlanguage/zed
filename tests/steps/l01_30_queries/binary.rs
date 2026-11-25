@@ -13,12 +13,10 @@ mod scratch;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// A directory of its own for this test, under the test target's scratch directory; files in
-/// it are overwritten by each run, never deleted.
+/// A directory of its own for the calling test, under the test target's scratch directory,
+/// claimed by `scratch`; files in it are overwritten by each run, never deleted.
 fn dir() -> PathBuf {
-    let d = scratch::process_tmpdir().join("time_report_binary");
-    std::fs::create_dir_all(&d).unwrap();
-    d
+    scratch::test_dir("time_report_binary")
 }
 
 fn zedc(args: &[&Path]) -> Output {

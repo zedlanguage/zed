@@ -22,12 +22,10 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-/// A directory of its own for this test, under the test target's scratch directory; files in
-/// it are overwritten by each run, never deleted.
+/// A directory of its own for the calling test, under the test target's scratch directory,
+/// claimed by `scratch`; files in it are overwritten by each run, never deleted.
 fn dir() -> PathBuf {
-    let d = scratch::process_tmpdir().join("close_binary");
-    std::fs::create_dir_all(&d).unwrap();
-    d
+    scratch::test_dir("close_binary")
 }
 
 /// The runtime library built with `zedc`: of the `libzed_native-<hash>.a` Cargo keeps beside
