@@ -534,10 +534,9 @@ fn zedc_run_prints_the_rejection_of_a_chain_of_names_each_holding_a_union() {
     // The sentence, read first, uses `1 | 2` four times, so it names the union `Part1` and every
     // step after it writes `Part1`, `a0`'s steps and `g`'s result too (DESIGN sec:diagnostics,
     // "Types in a message"); `a0`'s tuple `(Part1, 0)`, written in its steps and inside `Part3`, is
-    // `Part2`. `g`, a function of one positional parameter, prints as `bool -> Part1`:
-    // `(bool) -> Part1` reads the same, `(bool)` a `GroupType` key, and a printed type has
-    // parentheses only where the grammar needs them (DESIGN sec:diagnostics, "a function of one
-    // positional parameter prints as `int -> bool`").
+    // `Part2`. The derivation spans six lines, so A111's five-line rule (DESIGN
+    // sec:diagnostics) keeps line 6 and the four lines before it and leaves out line 1, the
+    // declaration of `g`, with one note `... (additional lines not shown: 1)`.
     let f = file("unions.zed", UNIONS);
     assert_eq!(
         rejection("run", &f),
@@ -558,37 +557,35 @@ fn zedc_run_prints_the_rejection_of_a_chain_of_names_each_holding_a_union() {
        5 | a3 = (a2, g(false));
          |      ^^^^^^^^^^^^^^ [2, 3]
          |       ^^ [4]
-         |           ^^^^^^^^ [18]
+         |           ^^^^^^^^ [17, 18]
   [3]  5:6: this expression gives (Part4, Part1)
   [4]  5:7: `a2` is Part4 here
   [5]  4:6: `a2` is defined as this expression, Part4
        4 | a2 = (a1, g(false));
          |      ^^^^^^^^^^^^^^ [5, 6]
          |       ^^ [7]
-         |           ^^^^^^^^ [17]
+         |           ^^^^^^^^ [16]
   [6]  4:6: this expression gives Part4
   [7]  4:7: `a1` is Part3 here
   [8]  3:6: `a1` is defined as this expression, Part3
        3 | a1 = (a0, g(false));
          |      ^^^^^^^^^^^^^^ [8, 9]
          |       ^^ [10]
-         |           ^^^^^^^^ [16]
+         |           ^^^^^^^^ [15]
   [9]  3:6: this expression gives Part3
   [10] 3:7: `a0` is Part2 here
   [11] 2:6: `a0` is defined as this expression, Part2
        2 | a0 = (g(true), 0);
          |      ^^^^^^^^^^^^ [11, 12]
          |       ^^^^^^^ [13]
-         |                ^ [15]
+         |                ^ [14]
   [12] 2:6: this expression gives Part2
   [13] 2:7: this call of `g` gives Part1
-  [14] 1:1: `g` is declared here with no type written for its result; the type the checker found for `g` is `bool -> Part1`
-       1 | g(positional c: bool) = if c { 1 } else { 2 };
-         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  [15] 2:16: this literal, 0, is 0
-  [16] 3:11: this call of `g` gives Part1
-  [17] 4:11: this call of `g` gives Part1
-  [18] 5:11: this call of `g` gives Part1
+  [14] 2:16: this literal, 0, is 0
+  [15] 3:11: this call of `g` gives Part1
+  [16] 4:11: this call of `g` gives Part1
+  [17] 5:11: this call of `g` gives Part1
+  [18] 5:11: ... (additional lines not shown: 1)
   [19] 6:5: `<` compares a tuple only with a tuple, not `1`
   [20] 6:5: repair: change the type of `a3` or the right operand so that the two compare
 "#
