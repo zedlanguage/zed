@@ -1,8 +1,9 @@
 //! `plan [--fix] [PLAN_DAG.md]` checks the table "Items by level" of `docs/plan_dag.md` (this
 //! repository's, when no file is named): no id has two rows, every id in a `needs` column has a
 //! row, each row's level is one more than the highest level among its needs (0 with no
-//! needs), and no row has more than [`MAX_NEEDS`] distinct needs. It prints one line per problem, then the table's counts of items, edges and levels,
-//! and fails if there is any problem.
+//! needs), and no row has more than [`MAX_NEEDS`] distinct needs. It prints one line per
+//! problem, then the table's counts of items, edges and levels, and fails if there is any
+//! problem.
 //!
 //! The counts and the file-conflict lists of the `conflicts` tool are not kept in the file
 //! (TOOL-plan-counts-after-rebase, 2026-11-19). They were: the sentence "It has N items, E edges

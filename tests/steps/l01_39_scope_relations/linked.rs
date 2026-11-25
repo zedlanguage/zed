@@ -2383,8 +2383,9 @@ fn satellite_built_in_a_random_order(d: usize, bounds: bool) {
 /// ([`Conjuncts::needs_held`]; with no anchor, near `d` at each hub); at `d` 12 the stars are
 /// those of the definition after each step of the first eight seeds. Building in a random order
 /// is linear (`a_satellite_of_every_hub_built_in_a_random_order_is_linear` in `bench`); with
-/// the bounds, and taking apart, see `stars_formed_in_the_block_of_a_satellite_take_time_near_the_block`
-/// and `a_satellite_of_every_hub_taken_apart_takes_time_near_the_block_per_conjunct` there.
+/// the bounds, and taking apart, see
+/// `stars_formed_in_the_block_of_a_satellite_take_time_near_the_block` and
+/// `a_satellite_of_every_hub_taken_apart_takes_time_near_the_block_per_conjunct` there.
 /// COMPLEXITY.md C37.
 #[test]
 fn a_satellite_of_every_hub_costs_its_related_names_once_in_any_order() {
