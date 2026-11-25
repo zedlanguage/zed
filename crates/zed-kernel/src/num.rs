@@ -3379,8 +3379,13 @@ impl Rat {
         // are equal only when both are 1, and two single powers meet Laurent's bound
         // ([`bound::laurent_bits`]). Complexity tradeoff: the quotient costs a coprime base of
         // the coefficients and atoms, O(M(n) log^2 n) in their bits (`num::coprime`), where
-        // aligning listed primes costs a valuation; both are below the bounds' rounds.
+        // aligning listed primes costs a valuation; both are below the bounds' rounds. Before
+        // it, [`Rat::order_without_base`] orders the pairs that need no base (two coefficients
+        // of 1, no shared atom), as the quotient's base is the larger cost there.
         if self.has_wide() || other.has_wide() {
+            if let Some(o) = self.order_without_base(other) {
+                return o;
+            }
             // Unreachable: `other` is not zero here.
             let q = self.div(other)?.expect("the divisor is not zero");
             let (n, d) = q.split();
@@ -3418,6 +3423,79 @@ impl Rat {
                 bound::cmp(&up, &down)?
             }
         })
+    }
+
+    /// The order of `|self|` and `|other|` by [`bound::cmp_without_base`] on the two sides of
+    /// `|self| / |other|` with no coprime base: each atom, a listed prime or a wide atom, at its
+    /// exponent in `self` less its exponent in `other`, those above 0 on one side and those
+    /// below on the other; when both coefficients are 1 (`num` and `den` of magnitude 1), else
+    /// `None`, as when that does not tell (plan row FAIL-wide-product-order-ratio). Two numbers
+    /// of one atom each, `(a b)^e` against `(b c)^e`, are then the roots `a b` and `b c`
+    /// compared, with no coprime base of the two.
+    ///
+    /// Proof that the two sides order as `|self|` and `|other|`: with coefficients 1, `|self| /
+    /// |other| = prod t^(e_t - f_t)` over the atoms `t` of either, `e_t` and `f_t` their
+    /// exponents (0 where absent), which is `n / d` for the two sides built here, so `|self| <
+    /// |other|` exactly when `n < d`, and likewise for `=` and `>`. The atoms of `n` and `d` are
+    /// distinct, as [`bound::cmp_without_base`] asks: each atom is placed once, on the side of
+    /// the sign of `e_t - f_t`.
+    ///
+    /// Complexity tradeoff: one merge of the sorted `pows` and of the sorted `wide`, O(terms)
+    /// comparisons and subtractions of exponents, the wide atoms borrowed, not copied.
+    fn order_without_base(&self, other: &Rat) -> Option<Result<Ordering, TooLarge>> {
+        let unit = |r: &Rat| r.num.magnitude().is_one() && r.den.magnitude().is_one();
+        if !unit(self) || !unit(other) {
+            return None;
+        }
+        let one = BigUint::one();
+        let mut n = Product {
+            coef: Cow::Borrowed(&one),
+            pows: Vec::new(),
+            wide: Vec::new(),
+        };
+        let mut d = Product {
+            coef: Cow::Borrowed(&one),
+            pows: Vec::new(),
+            wide: Vec::new(),
+        };
+        for (p, e, f) in zip_pows(&self.pows, &other.pows) {
+            match (e - f).into_parts() {
+                (Sign::Plus, k) => n.pows.push((p, k)),
+                (Sign::Minus, k) => d.pows.push((p, k)),
+                (Sign::NoSign, _) => {}
+            }
+        }
+        // Both `wide` lists are sorted by atom (`Rat`), so one merge pairs the shared atoms.
+        let zero = BigInt::zero();
+        let (a, b) = (&self.wide, &other.wide);
+        let (mut i, mut j) = (0, 0);
+        while i < a.len() || j < b.len() {
+            let order = match (a.get(i), b.get(j)) {
+                (Some((q, _)), Some((r, _))) => q.cmp(r),
+                (Some(_), None) => Ordering::Less,
+                _ => Ordering::Greater,
+            };
+            let (q, e, f) = match order {
+                Ordering::Less => (&a[i].0, &a[i].1, &zero),
+                Ordering::Greater => (&b[j].0, &zero, &b[j].1),
+                Ordering::Equal => (&a[i].0, &a[i].1, &b[j].1),
+            };
+            i += usize::from(order != Ordering::Greater);
+            j += usize::from(order != Ordering::Less);
+            match (e - f).into_parts() {
+                (Sign::Plus, k) => n.wide.push((Cow::Borrowed(q), k)),
+                (Sign::Minus, k) => d.wide.push((Cow::Borrowed(q), k)),
+                (Sign::NoSign, _) => {}
+            }
+        }
+        // Every exponent cancelled: both sides are 1.
+        if [&n, &d]
+            .iter()
+            .all(|x| x.pows.is_empty() && x.wide.is_empty())
+        {
+            return Some(Ok(Ordering::Equal));
+        }
+        bound::cmp_without_base(&n, &d)
     }
 
     /// An order on the normal forms, for a pair whose order by value was refused: total, and
@@ -4412,6 +4490,131 @@ mod tests {
         assert_eq!(m61::pow(3, &BigUint::from(m - 1)), 1);
         assert_eq!(m61::pow(3, &(BigUint::from(m - 1) << 70u32)), 1);
         assert_eq!(m61::pow(m, &BigUint::from(5u8)), 0);
+    }
+
+    /// FAIL-wide-product-order-ratio: [`Rat::order_without_base`] gives the order of the built
+    /// numbers wherever it answers, and it answers the pairs it is for. Products of the wide
+    /// atoms `a`, `b`, `c`, `d` (four odd numbers near `2^80` checked pairwise coprime and
+    /// coprime to 15) and the listed prime 3, at random exponents `e` times a common factor
+    /// `g` from 1 to 4, each side's atoms in one product (so one `Rat`, its atoms merged by its
+    /// coprime base) and some in the denominator. Each `Rat` holds the `K`-th power, `K =
+    /// 2^40`, of the value built at the small exponents, so `x^K` and `y^K` order as `x` and
+    /// `y` (`t -> t^K` is increasing on the positive reals), and no part is held plain
+    /// (`Rat::pow` keeps a part plain at exponent 1). Then the bench's shape; equal values with
+    /// distinct atoms, `(a b)(c d)` against `(a c)(b d)`, which no bounds tell apart and the
+    /// build does; an atom on both sides, which cancels; and the declined pair, a coefficient
+    /// other than 1.
+    #[test]
+    fn the_order_without_a_coprime_base_is_the_order_of_the_built_numbers() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("order_without_a_coprime_base");
+        let atoms: Vec<BigInt> = loop {
+            let xs: Vec<BigInt> = (0..4)
+                .map(|_| (BigInt::one() << 80u32) + 2 * (rng.next_u64() >> 20) + 1)
+                .collect();
+            let coprime = (0..4).all(|i| {
+                (i + 1..4).all(|j| xs[i].gcd(&xs[j]).is_one())
+                    && xs[i].gcd(&BigInt::from(15)).is_one()
+            });
+            if coprime {
+                break xs;
+            }
+        };
+        let (a, b, c, d) = (&atoms[0], &atoms[1], &atoms[2], &atoms[3]);
+        // A value as a `Rat` from wide factors and their exponents (a negative one divides),
+        // and the same value as a fraction of built integers.
+        let k = BigUint::one() << 40u32;
+        let make = |parts: &[(BigInt, i64)]| {
+            let mut r = Rat::int(BigInt::one());
+            let (mut n, mut m) = (BigInt::one(), BigInt::one());
+            for (x, e) in parts {
+                let p = Rat::int(x.clone())
+                    .pow(&(BigUint::from(e.unsigned_abs()) * &k))
+                    .unwrap();
+                let built = x.pow(u32::try_from(e.unsigned_abs()).unwrap());
+                match *e >= 0 {
+                    true => (r, n) = (r.mul(&p).unwrap(), n * built),
+                    false => (r, m) = (r.div(&p).unwrap().unwrap(), m * built),
+                }
+            }
+            (r, n, m)
+        };
+        let truth = |x: &(Rat, BigInt, BigInt), y: &(Rat, BigInt, BigInt)| {
+            (&x.1 * &y.2).cmp(&(&y.1 * &x.2))
+        };
+        let mut answered = 0;
+        for round in 0..400 {
+            let g = 1 + (rng.next_u64() % 4) as i64;
+            let mut side = |pool: &[&BigInt]| -> Vec<(BigInt, i64)> {
+                (pool.iter())
+                    .map(|x| ((*x).clone(), g * ((rng.next_u64() % 5) as i64 - 1)))
+                    .filter(|(_, e)| *e != 0)
+                    .collect()
+            };
+            // `a b` and `c` on one side, `b c`, `d` and 3 on the other: shared primes, no
+            // shared atom.
+            let mut xs = side(&[&(a * b), c]);
+            let mut ys = side(&[&(b * c), d]);
+            if rng.next_u64() % 2 == 0 {
+                ys.push((BigInt::from(3), g * (1 + (rng.next_u64() % 3) as i64)));
+            }
+            if xs.is_empty() {
+                xs.push((a * b, g));
+            }
+            if ys.is_empty() {
+                ys.push((b * c, g));
+            }
+            let (x, y) = (make(&xs), make(&ys));
+            let want = truth(&x, &y);
+            if let Some(o) = x.0.order_without_base(&y.0) {
+                answered += 1;
+                assert_eq!(
+                    o.unwrap(),
+                    want,
+                    "round {round}: {xs:?} {ys:?}, seed {seed}"
+                );
+            }
+            assert_eq!(
+                x.0.cmp(&y.0),
+                want,
+                "round {round}: {xs:?} {ys:?}, seed {seed}"
+            );
+        }
+        // Each answer was checked above; most pairs are answered (by bit length, logs, or
+        // roots with `g K` as common exponent), so the path is tried, not only declined.
+        assert!(answered > 300, "{answered} of 400 answered, seed {seed}");
+        // The bench's shape, `(a b)^e` against `(b c)^e`, is answered, with `e = 2^64`.
+        let e = BigUint::one() << 64u32;
+        let x = Rat::int(a * b).pow(&e).unwrap();
+        let y = Rat::int(b * c).pow(&e).unwrap();
+        let o = x.order_without_base(&y).expect("one root on each side");
+        assert_eq!(o.unwrap(), (a * b).cmp(&(b * c)), "seed {seed}");
+        // Equal values, distinct atoms: the roots are built and found equal.
+        let (ab, cd, ac, bd) = (a * b, c * d, a * c, b * d);
+        let x = make(&[(ab.clone(), 2), (cd.clone(), 2)]);
+        let y = make(&[(ac.clone(), 2), (bd.clone(), 2)]);
+        assert_eq!(
+            x.0.order_without_base(&y.0).map(Result::unwrap),
+            Some(Ordering::Equal)
+        );
+        // An atom on both sides cancels to its difference of exponents: `(a b)^e` against
+        // `(a b)^(e + 1)` is 1 against `a b`.
+        let x = Rat::int(ab.clone()).pow(&e).unwrap();
+        let y = Rat::int(ab.clone()).pow(&(&e + 1u32)).unwrap();
+        let o = x.order_without_base(&y).map(Result::unwrap);
+        assert_eq!(o, Some(Ordering::Less), "seed {seed}");
+        assert_eq!(
+            y.order_without_base(&x).map(Result::unwrap),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            x.order_without_base(&x).map(Result::unwrap),
+            Some(Ordering::Equal)
+        );
+        // Declined: a coefficient other than 1. `Rat::int` keeps a plain integer in `num`.
+        let plain = Rat::int(cd.clone());
+        assert!(x.order_without_base(&plain).is_none(), "seed {seed}");
+        let y = Rat::int(cd).pow(&e).unwrap();
+        assert!(x.order_without_base(&y).is_some(), "seed {seed}");
     }
 }
 

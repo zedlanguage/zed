@@ -111,8 +111,9 @@ pub struct CoprimeExponents {
 ///
 /// At most `WORD_INPUTS` inputs, each of one word, take the word path (`words`); one input
 /// much wider than all the others together (the condition at `one_wide`) takes
-/// `with_one_wide`, O(M(n)) for `n` bits at a fixed width of the others; all other inputs take
-/// `by_halves`, Bernstein's algorithms.
+/// `with_one_wide`, O(M(n)) for `n` bits at a fixed width of the others; two inputs whose gcd is
+/// coprime to both quotients take `two_inputs`, three gcds; all other inputs take `by_halves`,
+/// Bernstein's algorithms.
 pub fn coprime_base<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
     // At most `WORD_INPUTS` word inputs, the measured switchover documented there; then, from
     // `PRIME_INPUTS` inputs, inputs that are all prime words; then word inputs of at most
@@ -136,6 +137,17 @@ pub fn coprime_base<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
         return CoprimeBase { elements, factors };
     }
     let Some(w) = one_wide(xs) else {
+        if let Some((elements, owns)) = two_inputs(xs) {
+            // Each multiplicity is 1, so each factor is its element.
+            let factors = (owns.iter())
+                .map(|es| {
+                    (es.iter())
+                        .map(|&e| (e, elements[e as usize].clone()))
+                        .collect()
+                })
+                .collect();
+            return CoprimeBase { elements, factors };
+        }
         return by_halves(xs);
     };
     let (mut out, ks) = with_one_wide(xs, w);
@@ -171,7 +183,18 @@ pub fn coprime_base_exponents<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeExponents 
             let (base, ks) = with_one_wide(xs, w);
             (base, Some((w, ks)))
         }
-        None => (by_halves(xs), None),
+        None => {
+            if let Some((elements, owns)) = two_inputs(xs) {
+                let exponents = (owns.into_iter())
+                    .map(|es| es.into_iter().map(|e| (e, 1)).collect())
+                    .collect();
+                return CoprimeExponents {
+                    elements,
+                    exponents,
+                };
+            }
+            (by_halves(xs), None)
+        }
     };
     let mut exponents: Vec<Vec<(u32, u64)>> = (base.factors.into_iter())
         .map(|f| {
@@ -187,6 +210,56 @@ pub fn coprime_base_exponents<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeExponents 
         elements: base.elements,
         exponents,
     }
+}
+
+/// `cb{x, y}` of exactly two inputs, both above 0, when `g = gcd(x, y)` is coprime to `x / g`
+/// and to `y / g`: the elements above 1 of `g`, `x / g` and `y / g` in that order, and for each
+/// input the indices of the elements it is the product of (`g` and its own quotient), each to
+/// the power 1, by increasing index. `None` for another count of inputs, a zero input, or
+/// either gcd above 1; `by_halves` then takes them, as before (plan row
+/// FAIL-wide-product-order-ratio).
+///
+/// Proof that it is `cb{x, y}`: the three are pairwise coprime: `g` to each quotient by the
+/// test, and `gcd(x / g, y / g) = 1` as `g` is the greatest common divisor. `x = g (x / g)` and
+/// `y = g (y / g)`, so each input is a product of powers of them. Each is a gcd or an exact
+/// quotient of the inputs, so in their closure `T` (module comment, section 7). Theorem 7.3
+/// then gives `cb{x, y}` once the ones are dropped. Each multiplicity is 1: for `g > 1`, `g^2`
+/// does not divide `x`, as `g` is coprime to `x / g`; likewise each quotient in its input,
+/// being coprime to `g`. `x = y` gives the one element `x`; `g = 1` gives the two inputs; an
+/// input 1 gives the other input alone.
+///
+/// Complexity tradeoff: three gcds and two exact divisions, O(M(n) log n) for `n` bits.
+/// `by_halves` on the same two wide inputs takes about 22 gcds (`shares_by_table_or_tree`,
+/// `pair_base`, `split` and the strips of `multiplicity`): on the two atoms of `(a b)^(2^64)`
+/// and `(b c)^(2^64)`, `a`, `b`, `c` within 64 of `2^(m - 1)`, its base grew 10.3 times from
+/// `m = 2^15` to `2^18` (b22-kept3, Colab l43). The inputs this refuses (a prime of `g` also in a
+/// quotient, such as 4 and 8, or `p^2 q` and `p q`) pay the three gcds and the divisions before
+/// `by_halves`, about a seventh of its count of gcds.
+fn two_inputs<L: Borrow<BigUint>>(xs: &[L]) -> Option<(Vec<BigUint>, Vec<Vec<u32>>)> {
+    let [x, y] = xs else {
+        return None;
+    };
+    let (x, y) = (x.borrow(), y.borrow());
+    if x.is_zero() || y.is_zero() {
+        return None;
+    }
+    let g = gcd_uint(x, y);
+    let u = div_rem_uint(x, &g).0;
+    let v = div_rem_uint(y, &g).0;
+    if !gcd_uint(&g, &u).is_one() || !gcd_uint(&g, &v).is_one() {
+        return None;
+    }
+    let mut elements: Vec<BigUint> = Vec::with_capacity(3);
+    let mut index = |z: BigUint| {
+        (!z.is_one()).then(|| {
+            elements.push(z);
+            u32::try_from(elements.len() - 1).expect("at most three elements")
+        })
+    };
+    let (ig, iu, iv) = (index(g), index(u), index(v));
+    let of = |own: Option<u32>| [ig, own].into_iter().flatten().collect();
+    let owns = vec![of(iu), of(iv)];
+    Some((elements, owns))
 }
 
 /// The most inputs, each of one word, that the word path takes: `zed_numtheory::
@@ -2146,5 +2219,104 @@ mod tests {
                 "x of {w} of {n} bits, seed {seed}"
             );
         }
+    }
+
+    /// FAIL-wide-product-order-ratio: `two_inputs` takes exactly the pairs whose gcd is coprime
+    /// to both quotients, and on every pair `coprime_base` and `coprime_base_exponents` (which
+    /// take it) give what `by_halves` gives, by value, with valid factors. Corners: coprime
+    /// inputs, equal inputs, an input 1, one input dividing the other, the shape of the bench
+    /// (`a b` and `b c`), and the refused shapes `p^2 q` with `p q` and a power against a higher
+    /// power; then random pairs of wide numbers built from a few wide parts at small exponents,
+    /// past one word so the word paths and `one_wide` leave them to this path.
+    #[test]
+    fn two_wide_inputs_take_the_gcd_path_when_it_is_the_natural_base() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("two_wide_inputs_gcd_path");
+        let mut wide = |words: usize| -> BigUint {
+            let digits: Vec<u32> = (0..2 * words).map(|_| rng.next_u64() as u32).collect();
+            BigUint::new(digits) | BigUint::one() | (BigUint::one() << (64 * words - 1))
+        };
+        // Three pairwise coprime wide odd numbers (distinct primes of 127 bits and up would
+        // do; random ones are checked coprime instead).
+        let (a, b, c) = loop {
+            let (a, b, c) = (wide(3), wide(3), wide(3));
+            let ok =
+                gcd_uint(&a, &b).is_one() && gcd_uint(&a, &c).is_one() && gcd_uint(&b, &c).is_one();
+            if ok {
+                break (a, b, c);
+            }
+        };
+        let one = big(1);
+        let taken: Vec<(BigUint, BigUint)> = vec![
+            (a.clone(), b.clone()),
+            (a.clone(), a.clone()),
+            (a.clone(), one.clone()),
+            (one.clone(), b.clone()),
+            (&a * &b, b.clone()),
+            (&a * &b, &b * &c),
+            (&a * &a * &b, &a * &a * &c),
+        ];
+        let refused: Vec<(BigUint, BigUint)> = vec![
+            (&a * &a * &b, &b * &b * &c),
+            (&a * &a * &b, &a * &b),
+            (a.pow(2), a.pow(3)),
+            (&a * &a * &b, &a * &c),
+        ];
+        let check_pair = |x: &BigUint, y: &BigUint, want: bool, what: &str| {
+            let xs = [x.clone(), y.clone()];
+            assert_eq!(two_inputs(&xs).is_some(), want, "{what}, seed {seed}");
+            assert!(
+                one_wide(&xs).is_none() || !want,
+                "{what}: one_wide, seed {seed}"
+            );
+            let cb = valid(&xs, None);
+            assert_eq!(
+                by_value(&cb),
+                by_value(&by_halves(&xs)),
+                "{what}, seed {seed}"
+            );
+            exponents_are_the_factors(&xs);
+        };
+        for (i, (x, y)) in taken.iter().enumerate() {
+            // An input 1 has bits 1, so `one_wide` may take that pair; the gcd path is only
+            // checked against the definition there.
+            if x.is_one() || y.is_one() {
+                let xs = [x.clone(), y.clone()];
+                assert!(two_inputs(&xs).is_some(), "taken {i}, seed {seed}");
+                continue;
+            }
+            check_pair(x, y, true, &format!("taken {i}"));
+        }
+        for (i, (x, y)) in refused.iter().enumerate() {
+            check_pair(x, y, false, &format!("refused {i}"));
+        }
+        // Random products of `a`, `b`, `c` at exponents 0 to 3, each side at least one wide
+        // part, against `by_halves` and the gcd rule computed here.
+        let parts = [a, b, c];
+        let mut seen = [0usize; 2];
+        for round in 0..300 {
+            let mut side = || loop {
+                let es: Vec<u32> = (0..3).map(|_| (rng.next_u64() % 4) as u32).collect();
+                if es.iter().any(|&e| e > 0) {
+                    break es;
+                }
+            };
+            let (ex, ey) = (side(), side());
+            let build = |es: &[u32]| -> BigUint {
+                (parts.iter().zip(es)).map(|(p, &e)| p.pow(e)).product()
+            };
+            let (x, y) = (build(&ex), build(&ey));
+            // The gcd path holds exactly when each part is in both at one exponent or in
+            // only one: then `g` is the product of the shared parts and coprime to each
+            // quotient. A part in both at unequal exponents leaves a prime of `g` in a
+            // quotient.
+            let want = (0..3).all(|k| ex[k] == 0 || ey[k] == 0 || ex[k] == ey[k]);
+            seen[usize::from(want)] += 1;
+            let xs = [x.clone(), y.clone()];
+            if one_wide(&xs).is_some() {
+                continue;
+            }
+            check_pair(&x, &y, want, &format!("round {round} {ex:?} {ey:?}"));
+        }
+        assert!(seen[0] > 20 && seen[1] > 20, "{seen:?}, seed {seed}");
     }
 }

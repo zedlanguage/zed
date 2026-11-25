@@ -404,7 +404,8 @@ fn ln_up(x: &BigUint) -> f64 {
 /// pair with one goes through the quotient of the two, one `Rat`; so with one `a` listed the
 /// two `a` are coprime; then `a_1^x = a_2^y`
 /// with `x, y` not both 0 is impossible, since `x, y > 0` puts a prime of `a_1` into `a_2`, and
-/// one of them 0 makes a number above 1 equal 1. The height of an integer `a > 1` is `ln a`,
+/// one of them 0 makes a number above 1 equal 1. The other caller, [`cmp_without_base`], passes
+/// distinct atoms that may share primes, independent by the proof there. The height of an integer `a > 1` is `ln a`,
 /// so any `ln A_i >= max(ln a_i, 1)` meets the condition, and the bound holds for every such
 /// choice; this takes `ln A_i` as the upper bound [`ln_up`] of `ln a_i`, at least 1. A larger
 /// `b0` only weakens the bound (it is increasing in `log b0`), so `ln b0` is bounded above by
@@ -520,6 +521,52 @@ fn common_root<'a>(n: &Product<'a>, d: &Product<'a>) -> Option<(Product<'a>, Pro
 /// no ask aborted the process (NUM-huge-div).
 pub(super) fn cmp(n: &Product<'_>, d: &Product<'_>) -> Result<Ordering, TooLarge> {
     cmp_at(n, d).map(|(o, _)| o)
+}
+
+/// The order of two positive products with coefficient 1 whose atoms (listed primes and wide
+/// atoms) are distinct but may share primes across the two sides, when it is cheap to tell
+/// without a coprime base: from the bit lengths or the logarithms ([`by_bit_length`],
+/// [`by_logs`]), or when the exponents have a common factor `g > 1` ([`common_root`]) and the
+/// two roots cost at most `h ceil(log2 h)` bits to build, `h` the bits of the distinct atoms
+/// of both sides; then [`cmp`] of the roots. `None` otherwise: the caller takes the quotient in
+/// normal form (`Rat::magnitude_order`). Plan row FAIL-wide-product-order-ratio.
+///
+/// Proof that the order is the order of `n` and `d`: the first two read sound bounds (their
+/// proofs are at each); [`common_root`] keeps the order (proof there); [`cmp`] of the roots is
+/// exact, as its rounds read sound bounds and it builds the two when its precision reaches
+/// their cost, which the test below holds to `h ceil(log2 h)`. [`cap`] of two atoms is sound
+/// here too: it asks only that the two be multiplicatively independent (Laurent's Corollary
+/// 1, quoted at [`laurent_bits`]), and two distinct atoms are: each is a prime or a wide atom
+/// of a `Rat`, which is not a perfect power (its least root, `Rat::wide`), and `a^x = b^y`
+/// with `x, y > 0` makes `a` and `b` powers of one `r` (`r = a^(1/s)` for `s = y / gcd(x,
+/// y)`), so both are `r` and equal; one exponent 0 makes a number above 1 equal 1.
+///
+/// Complexity tradeoff: the quotient builds the coprime base of all the atoms,
+/// O(M(h) log^2 h) at most (`num::coprime`), before [`cmp`]; this path costs O(terms) for the
+/// first two tests and the gcd of the exponents, and the roots' rounds and build at most
+/// O(M(b)) for `b <= h log2 h` built bits, so it is never of a higher order than the quotient,
+/// and on `(a b)^e` against `(b c)^e` it costs the `O(M(m))` of comparing `a b` and `b c`
+/// where the base cost three gcds and the splits of `a`, `b` and `c`.
+pub(super) fn cmp_without_base(
+    n: &Product<'_>,
+    d: &Product<'_>,
+) -> Option<Result<Ordering, TooLarge>> {
+    if let Some(o) = by_bit_length(n, d).or_else(|| by_logs(n, d, 1.0)) {
+        return Some(Ok(o));
+    }
+    let (rn, rd) = common_root(n, d)?;
+    let h: u64 = [n, d]
+        .iter()
+        .flat_map(|x| {
+            let pows = x.pows.iter().map(|(p, _)| u64::from(p.bit_len()));
+            pows.chain(x.wide.iter().map(|(q, _)| q.bits()))
+        })
+        .sum();
+    let limit = BigUint::from(h) * (u64::from(h.max(2).next_power_of_two().ilog2()));
+    if rn.bits() + rd.bits() > limit {
+        return None;
+    }
+    Some(cmp(&rn, &rd))
 }
 
 /// [`cmp`], with the last precision a round of bounds tried, 0 when none ran.

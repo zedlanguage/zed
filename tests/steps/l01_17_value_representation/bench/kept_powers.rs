@@ -54,3 +54,39 @@ fn the_text_of_a_prime_word_times_a_power_held_as_digits_scales() {
         assert_eq!(text, format!("2305843009213693951*3^{m}"));
     });
 }
+
+/// FAIL-wide-product-order-ratio: the order of `x = (a b)^(2^64)` and `y = (b c)^(2^64)`, `a`,
+/// `b`, `c` = `2^(m - 1)` plus 15, 33 and 57, each of `x` and `y` held as one wide atom (with
+/// the primes below 2^8 of `a b` or `b c` listed), timed at `m` = 2^15 and 2^18 bits, the
+/// inputs built before the timing. The two share the prime factor `b` but no wide atom, and
+/// their exponents share `2^64`, so `Rat::order_without_base` cancels the shared listed primes
+/// and compares the roots `a b` and `b c` by `bound.rs` `cmp`, O(M(m)), with no quotient and
+/// so no coprime base of `a b` and `b c` (a half gcd, O(M(m) log m), and the least roots of
+/// `a`, `b` and `c`). Measured 3.50 by instructions (432,209 and 1,511,010) on Colab l41,
+/// 2026-11-25; 15.30 (18.9 and 289.8 million) through the quotient. The product `x y` itself
+/// still takes the coprime base, 13.61 at these sizes: XR-wide-product-coprime-base.
+#[test]
+fn the_order_of_two_wide_powers_sharing_a_prime_scales() {
+    let e = BigUint::from(1u32) << 64u32;
+    let make = |m: usize| {
+        let top = BigInt::from(1) << (m - 1);
+        let (a, b, c) = (&top + 15, &top + 33, &top + 57);
+        let x = Rat::int(&a * &b)
+            .pow(&e)
+            .expect("a kept power is not built");
+        let y = Rat::int(&b * &c)
+            .pow(&e)
+            .expect("a kept power is not built");
+        (x, y)
+    };
+    let pairs = inputs(1 << 15, make);
+    check_order(
+        "the order of (a b)^(2^64) and (b c)^(2^64) at 2^15 and 2^18 bits",
+        1 << 15,
+        1,
+        |m| {
+            let (x, y) = &pairs[&m];
+            assert!(x < y, "m {m}");
+        },
+    );
+}
