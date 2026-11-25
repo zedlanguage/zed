@@ -84,7 +84,7 @@ pub trait Elem: Ord + Clone {
     fn class(&self) -> u32;
     /// The key's seeded weight, for [`HashConsTable`]: equal for equal keys, and for two given
     /// unequal keys unequal except with probability near `2^-64` over this process's key,
-    /// whatever the keys. The default, [`seeded`] of the weight, has that only when unequal
+    /// whatever the keys. The default, `seeded` of the weight, has that only when unequal
     /// keys weigh differently; a kind whose unequal keys can share a weight gives its own
     /// (`Value`'s big integers and `rat`s, whose weights are residues modulo the fixed
     /// `2^61 - 1`).
@@ -1136,7 +1136,7 @@ impl<T: Elem> Eq for TreapSet<T> {}
 /// keys"), which is what makes equality a walk of two shapes (`==`) and lets one tree stand for
 /// all equal sets. Sundar and Tarjan, "Unique binary search tree representations and
 /// equality-testing of sets and sequences", STOC '90, 18-25, doi:10.1145/100216.100219, p. 19:
-/// "Aragon and Seidel [2] give a randomized binary search tree representation of a dictionary
+/// "Aragon and Seidel \[2\] give a randomized binary search tree representation of a dictionary
 /// that has the unique representability property and allows dictionary operations to be
 /// performed in O(log n) randomized time"; their Theorem 1 (p. 21) is why no deterministic
 /// shape would do: "If the n-subsets of U are represented by binary search trees of height at

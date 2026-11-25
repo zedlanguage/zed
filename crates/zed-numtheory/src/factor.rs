@@ -425,8 +425,8 @@ impl<W: Word> Montgomery<W> {
     }
 }
 
-/// Residues modulo an odd 64-bit `n > 1` in Montgomery form ([`Montgomery`], P. L. Montgomery
-/// 1985, cited there), for a crate that reduces many numbers modulo one `n` known only at run
+/// Residues modulo an odd 64-bit `n > 1` in Montgomery form (struct `Montgomery`, P. L.
+/// Montgomery 1985, cited there), for a crate that reduces many numbers modulo one `n` known only at run
 /// time (zed-kernel `Rat::fingerprint`, modulo two primes drawn per run). A residue `x` is held
 /// as `x R mod n`, `R = 2^64`: two equal numbers have equal held residues and, `R` being a unit
 /// modulo the odd `n`, two numbers unequal modulo `n` have unequal ones, so a held residue tells
