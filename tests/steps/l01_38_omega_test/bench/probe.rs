@@ -36,18 +36,20 @@ fn guards_beyond_the_inputs_scale() {
 /// 65.3 M and 2,679.6 M bytes, 41.0 times (limit 15.4 of 2026-11-12, ledger PROBE-guards). Now the
 /// first search that fails alone hands its disjunct to `learn`, whose bound every later search of
 /// the round takes and which excludes the other dead disjuncts unsearched: 47.3 M and 440.6 M
-/// bytes, 9.3 times, and 9.3 times the instructions.
+/// bytes, 9.3 times, and 9.3 times the instructions. At 88 and 704 (row PRES-growth-probe-guards,
+/// 2026-11-25, v5e1 at 1363cd36e): 884.3 M and 9,273.6 M instructions, 10.49 times, and 192.4 M
+/// and 1,925.8 M bytes, 10.0 times, in 9.4 s; the sizes moved from 16 to 88.
 #[test]
 fn projecting_guards_beyond_the_inputs_scales() {
     let make = |n: usize| guards(n, 3 * n as i64 / 4, false);
-    let (small, large) = (make(16), make(16 * scaling::FACTOR));
+    let (small, large) = (make(88), make(88 * scaling::FACTOR));
     let i = [Atom::Sym(Arc::from("i"))];
     scaling::check(
         "projection onto i of a chain of k guards beyond inputs 3k/4 wide",
-        16,
+        88,
         |n| {
             let (each, skipped) =
-                project_each(if n == 16 { &small } else { &large }, &i).expect("projected");
+                project_each(if n == 88 { &small } else { &large }, &i).expect("projected");
             assert!(skipped.is_empty(), "{n}: {skipped:?}");
             let (lo, hi) = (n as i64 / 4 + 1, 3 * n as i64 / 4);
             let at =
