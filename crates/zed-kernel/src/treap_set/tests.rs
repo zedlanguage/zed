@@ -400,3 +400,57 @@ fn distinct_sets_of_one_sum_keep_buckets_of_their_own() {
         checked(s);
     }
 }
+
+/// The deterministic-checking rule against the per-process key of [`seeded`]: the same sets,
+/// put in a table in the same order under two keys (each in a thread of its own, with
+/// [`TEST_SALT`] set apart), give the same trees, the same sums and the same sharing (which
+/// earlier set each set's tree is), though their seeded sums differ. The sets are the 400
+/// pairs `{i, -i}` of one sum, each made again in the other order, and 400 random sets with
+/// repeats. Negative control: the seeded sums of the two runs differ, so the two runs really
+/// hash under two keys.
+#[test]
+fn the_trees_are_the_same_under_two_keys() {
+    type Run = (Vec<Vec<i64>>, Vec<u64>, Vec<usize>, Vec<u64>);
+    let run = |salt: u64| -> Run {
+        std::thread::spawn(move || {
+            TEST_SALT.set(Some(salt));
+            let mut g = Rng::new(25);
+            let mut sets: Vec<TreapSet<i64>> = Vec::new();
+            for i in 1..=400 {
+                sets.push([i, -i].into_iter().collect());
+                sets.push([-i, i].into_iter().collect());
+            }
+            let randoms: Vec<BTreeSet<i64>> = (0..200).map(|_| random(&mut g, 30, 40)).collect();
+            for keys in randoms.iter().chain(&randoms) {
+                sets.push(of(keys));
+            }
+            let mut table = HashConsTable::default();
+            for s in &mut sets {
+                table.share(s);
+            }
+            let first = |s: &TreapSet<i64>| sets.iter().position(|t| t.ptr_eq(s)).unwrap();
+            (
+                sets.iter()
+                    .map(|s| {
+                        checked(s);
+                        shape(s)
+                    })
+                    .collect(),
+                sets.iter().map(TreapSet::sum).collect(),
+                sets.iter().map(first).collect(),
+                sets.iter().map(|s| keyed(&s.root)).collect(),
+            )
+        })
+        .join()
+        .unwrap()
+    };
+    let (a, b) = (run(1), run(2));
+    assert_eq!(a.0, b.0, "shapes");
+    assert_eq!(a.1, b.1, "sums");
+    assert_eq!(a.2, b.2, "sharing");
+    assert!(
+        a.2.iter().enumerate().any(|(i, &f)| f < i),
+        "some set shared"
+    );
+    assert_ne!(a.3, b.3, "the control: two keys");
+}

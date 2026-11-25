@@ -248,12 +248,27 @@ fn own_keyed<T>(n: &Node<T>) -> u64 {
 /// uses against the same attack on its maps. Cost: 8 bytes a node and one hash per key put in
 /// ([`TreapSet::insert`]); a node made again takes its own seeded weight from its old counts
 /// ([`own_keyed`]). Results do not depend on the key: the table only ever gives a set an equal
-/// set's tree.
+/// set's tree, equal sets have one seeded sum under any key, and nothing else reads the seeded
+/// sums. The table is only swept (`retain`) and counted, never listed in order; `Hash` and
+/// `cmp` of a set, and the digests of types, read the unseeded sum (checked by
+/// `the_trees_are_the_same_under_two_keys` in `tests.rs`, which sets `TEST_SALT`).
 fn seeded(weight: u64) -> u64 {
     use std::hash::BuildHasher;
     static KEY: std::sync::OnceLock<std::hash::RandomState> = std::sync::OnceLock::new();
-    KEY.get_or_init(std::hash::RandomState::new)
-        .hash_one(weight)
+    let key = KEY.get_or_init(std::hash::RandomState::new);
+    #[cfg(test)]
+    if let Some(salt) = TEST_SALT.get() {
+        return key.hash_one((salt, weight));
+    }
+    key.hash_one(weight)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A second key for this thread's seeded weights in tests: a thread that sets it before it
+    /// makes any set hashes each weight with the salt, another function of the weight than
+    /// with no salt or another salt.
+    static TEST_SALT: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
 
 fn classes<T>(t: &Tree<T>) -> u32 {

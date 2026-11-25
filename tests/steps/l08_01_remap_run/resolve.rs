@@ -35,7 +35,11 @@ fn the_binders_name_the_levels_in_the_keys() {
     );
     assert_eq!(
         resolved("m = 1;\nx = m as (k -> v) into (c -> v);\n"),
-        ["`c` is not defined. [c]"]
+        [
+            "`c` is not defined. [c]; `c` was looked for in the block around its use, then the \
+             unit's top level, its imports and the prelude [c]; repair: `x = m as (k -> v) into \
+             (k -> v);` [c]; repair: define `c` above its use, as `c = …;` [c]"
+        ]
     );
 }
 

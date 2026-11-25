@@ -64,7 +64,11 @@ fn a_parameters_type_and_default_see_the_parameters_but_not_the_body() {
     assert_eq!(at(text, "lo", 1), ["param lo: int = 0"]);
     assert_eq!(
         errors("f(a: int = m) { m = 1; return a; }"),
-        ["`m` is not defined. [m]"]
+        [
+            "`m` is not defined. [m]; `m` was looked for in the block around its use, then the \
+             unit's top level, its imports and the prelude [m]; repair: write `a` [m]; repair: \
+             define `m` above its use, as `m = …;` [m]"
+        ]
     );
 }
 
@@ -74,7 +78,10 @@ fn test_cases_are_read_in_the_scope_around_the_function() {
     assert_eq!(at(text, "two", 2), ["binding two = 2;"]);
     assert_eq!(
         errors("double(x) = 2 * x test { x -> 2 }"),
-        ["`x` is not defined. [x]"]
+        [
+            "`x` is not defined. [x]; `x` was looked for in the unit's top level, its imports \
+             and the prelude [x]; repair: define `x` above its use, as `x = …;` [x]"
+        ]
     );
 }
 
@@ -92,7 +99,11 @@ fn a_push_names_an_output_port_of_its_function() {
     assert_eq!(at(text, "m.stdout", 0), ["port m.stdout"]);
     assert_eq!(
         errors("main() { stdout <- \"hi\"; }"),
-        ["`stdout` is not defined. [stdout <- \"hi\";]"]
+        [
+            "`stdout` is not defined. [stdout <- \"hi\";]; `stdout` was looked for in the block \
+             around its use, then the unit's top level, its imports and the prelude [stdout <- \
+             \"hi\";]; repair: define `stdout` above its use, as `stdout = …;` [stdout <- \"hi\";]"
+        ]
     );
 }
 

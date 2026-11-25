@@ -101,6 +101,51 @@ use ty::{
     carriers_text, class_id, errs, fresh_name, mask_text, rename_apart, single_carrier,
 };
 
+/// The variables one step of a lowering walks ([`Ck::lower`]): those of a need, or of the
+/// uses of a class, less those inside functions [`Ck::lowered`] lets it pass over.
+struct Lowering {
+    /// The [`Ck::lowered_epoch`] at the walk.
+    epoch: u64,
+    /// The level lowered to.
+    level: usize,
+    /// The variables met.
+    out: Vars,
+    /// The functions walked, whose bound the lowering may keep.
+    entered: Vec<Arc<Sig>>,
+    /// The functions passed over.
+    skipped: Vec<Arc<Sig>>,
+}
+
+impl Lowering {
+    fn new(epoch: u64, level: usize) -> Self {
+        Lowering {
+            epoch,
+            level,
+            out: Vars::default(),
+            entered: Vec::new(),
+            skipped: Vec::new(),
+        }
+    }
+
+    /// Adds the variables of `n`, passing over each function `lowered` bounds at or below
+    /// the level in the same epoch.
+    fn need(&mut self, lowered: &HashMap<usize, (Arc<Sig>, usize, u64)>, n: &Need) {
+        let (epoch, level) = (self.epoch, self.level);
+        let (entered, skipped) = (&mut self.entered, &mut self.skipped);
+        let mut skip = |s: &Arc<Sig>| match lowered.get(&(Arc::as_ptr(s) as usize)) {
+            Some(&(_, b, e)) if e == epoch && b <= level => {
+                skipped.push(s.clone());
+                true
+            }
+            _ => {
+                entered.push(s.clone());
+                false
+            }
+        };
+        n.vars_in_skipping(&mut self.out, &mut skip);
+    }
+}
+
 /// How a function argument fits the function type its slot expects.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fit {
@@ -3001,6 +3046,18 @@ struct Ck<'t, 'a> {
     /// the need it repeated, so a use refused after the fact ([`Ck::refuse_taken`]) refuses
     /// its repeats of that kind too (row CHECK-destructure-order-repeats).
     same_use: HashMap<Span, Vec<(Span, std::mem::Discriminant<NeedKind>)>>,
+    /// For each function a lowering entered ([`Ck::lower`]), by the address of its `Arc`,
+    /// which the entry keeps so that no other function takes the address: the function, a
+    /// level that no class its variables name is above, and the [`Ck::lowered_epoch`] the
+    /// bound holds in. A lowering to a level at or above the bound skips the function
+    /// ([`Ck::lower`]).
+    lowered: HashMap<usize, (Arc<Sig>, usize, u64)>,
+    /// Raised by each change after which a class a function's variable names may be above
+    /// the bound [`Ck::lowered`] keeps for the function, which ends every bound kept: a merge
+    /// of a class with a type ([`Class::resolved`]) into one without, a join of results that
+    /// puts a class under a root with no type and a higher level, and a class made at an id
+    /// the walk had passed over as closed ([`Ck::r10_is_closed_internal`]).
+    lowered_epoch: u64,
     /// Each call in the text whose call need met one its class had recorded for another call
     /// with arguments alike, with that call (`Ck::need`): `g(x: v)` twice in one body, or once
     /// in a body and once in a function it calls with `g`. The need is checked once, and its
@@ -3698,6 +3755,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             passing_on: Vec::new(),
             fold_uses: HashSet::new(),
             same_use: HashMap::new(),
+            lowered: HashMap::new(),
+            lowered_epoch: 0,
             alike_calls: Vec::new(),
             alike_sites: HashMap::new(),
             alike_log: Vec::new(),
@@ -6685,10 +6744,62 @@ impl<'t, 'a> Ck<'t, 'a> {
         true
     }
 
-    /// Lowers the classes the variables `vars` name, and those their uses mention, to
-    /// `level` at most, so that none becomes a type variable of a function that ends before
-    /// the one of `level`. A class is lowered at most once per level.
-    fn lower(&mut self, mut vars: Vec<Arc<str>>, level: usize) {
+    /// Lowers the classes the variables of `need` name, and those their uses mention, to
+    /// `level` at most ([`Ck::lower`]).
+    fn lower_need(&mut self, need: &Need, level: usize) {
+        let mut batch = Lowering::new(self.lowered_epoch, level);
+        batch.need(&self.lowered, need);
+        self.lower(batch);
+    }
+
+    /// Lowers the classes the variables of the uses of the class `r` name, and those their
+    /// uses mention, to `level` at most ([`Ck::lower`]).
+    fn lower_uses(&mut self, r: usize, level: usize) {
+        let mut batch = Lowering::new(self.lowered_epoch, level);
+        for (_, n) in &self.classes[r].uses {
+            batch.need(&self.lowered, n);
+        }
+        self.lower(batch);
+    }
+
+    /// Lowers the classes the variables of `first` name, and those their uses mention, to
+    /// `batch.level` at most, so that none becomes a type variable of a function that ends
+    /// before the one of `level`. A class is lowered at most once per level.
+    ///
+    /// A function a lowering met is kept in [`Ck::lowered`] with a bound on the levels of
+    /// the classes its variables name, and a later lowering to a level at or above the bound
+    /// passes over it: that is the level-based generalization of Rémy, where "generalization
+    /// only applies to freshest variables" (D. Rémy, *Extension of ML type system with a
+    /// sorted equational theory on types*, INRIA research report 1766, 1992, introduction,
+    /// inria.hal.science/inria-00077006), with the
+    /// lazy level updates of Kiselyov (O. Kiselyov, *Efficient and insightful
+    /// generalization*, okmij.org/ftp/ML/generalization.html, February 2013): "The level of
+    /// a composite type ... is an upper, not necessarily exact, bound on the levels of its
+    /// components", and "only of those types whose level_old > current_level" need the
+    /// update forced; "Otherwise, a type contains no variables generalizable at the present
+    /// point". Without it each lowering walked every function a need holds, nested ones
+    /// included, though their own variables were solved by then: `n` lambdas nested in one
+    /// another cost `O(n^2)` (need_vars, 15 times the instructions at 4 times the size).
+    ///
+    /// Why passing over a function changes nothing: a variable met only inside a function
+    /// whose bound `b <= level` holds names a class that is closed, solved, or at a level at
+    /// most `b`, so the loop below would `continue` on it before any write. The bound holds
+    /// while [`Ck::lowered_epoch`] stays, since levels only fall (a merge keeps the lower,
+    /// and this sets a lower one), a solved class is solved for good outside a trial, and
+    /// the two changes that can put a variable back in play raise the epoch. A bound is
+    /// kept only outside a trial, so no trial's undone writes stand behind one. If the epoch
+    /// rises during the lowering (a class forced here may merge), the functions passed over
+    /// are walked again whole and their variables lowered, as the walk without the bounds
+    /// would have lowered them.
+    ///
+    /// Cost: each function is walked once per bound it falls below, and a bound is the
+    /// highest level of a class it names, so a function whose own variables are solved is
+    /// walked once.
+    fn lower(&mut self, first: Lowering) {
+        let level = first.level;
+        let epoch = first.epoch;
+        let mut vars = first.out.order.clone();
+        let mut batches = vec![first];
         while let Some(v) = vars.pop() {
             let Some(k) = class_id(&v).filter(|&k| k < self.classes.len()) else {
                 continue;
@@ -6703,11 +6814,91 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.r10_force_root(r, "f5");
             self.touch(r);
             self.classes[r].level = level;
-            let mut more = Vars::default();
+            let mut more = Lowering::new(self.lowered_epoch, level);
             for (_, n) in &self.classes[r].uses {
-                n.vars_in(&mut more);
+                more.need(&self.lowered, n);
             }
-            vars.extend(more.order);
+            vars.extend(more.out.order.iter().cloned());
+            batches.push(more);
+        }
+        if self.lowered_epoch != epoch {
+            // Walked again with no function passed over; each variable already lowered
+            // stops at the first test.
+            let mut whole = Lowering::new(self.lowered_epoch, level);
+            for b in &batches {
+                for s in &b.skipped {
+                    whole.out.order.extend(s.vars_order().iter().cloned());
+                }
+            }
+            if !whole.out.order.is_empty() {
+                self.lower(whole);
+            }
+            return;
+        }
+        if self.trying || self.classes.layer_depth() != 0 {
+            return;
+        }
+        for b in batches {
+            for s in b.entered {
+                self.bound_levels(s, epoch);
+            }
+        }
+    }
+
+    /// Keeps in [`Ck::lowered`] a bound on the levels of the classes the variables of `s`
+    /// name, and of each function inside it with none kept in `epoch`: the highest level of
+    /// a class with no type that its own variables name ([`Sig::own_vars_in`]), or that of a
+    /// function it holds, children first. A variable of a class not made yet bounds nothing,
+    /// so its function gets no bound below `usize::MAX`. Without a stack of its own, since
+    /// functions nest as deep as the program's lambdas. Cost: one walk of each function's
+    /// own parts.
+    fn bound_levels(&mut self, s: Arc<Sig>, epoch: u64) {
+        let key = |s: &Arc<Sig>| Arc::as_ptr(s) as usize;
+        let known = |ck: &Self, s: &Arc<Sig>| {
+            (ck.lowered.get(&key(s))).and_then(|&(_, b, e)| (e == epoch).then_some(b))
+        };
+        if known(self, &s).is_some() {
+            return;
+        }
+        // A function to bound, and once its parts are read, its own variables and the
+        // functions it holds.
+        type Step = (Arc<Sig>, Option<(Vars, Vec<Arc<Sig>>)>);
+        let mut stack: Vec<Step> = vec![(s, None)];
+        while let Some((s, parts)) = stack.pop() {
+            if known(self, &s).is_some() {
+                continue;
+            }
+            let Some((own, inner)) = parts else {
+                let mut own = Vars::default();
+                let mut inner = Vec::new();
+                s.own_vars_in(&mut own, &mut inner);
+                let open: Vec<_> = (inner.iter())
+                    .filter(|c| known(self, c).is_none())
+                    .cloned()
+                    .collect();
+                stack.push((s, Some((own, inner))));
+                stack.extend(open.into_iter().map(|c| (c, None)));
+                continue;
+            };
+            let mut bound = 0;
+            for c in &inner {
+                bound = bound.max(known(self, c).unwrap_or(usize::MAX));
+            }
+            for v in &own.order {
+                let Some(k) = class_id(v) else { continue };
+                if k >= self.classes.len() {
+                    bound = usize::MAX;
+                    break;
+                }
+                if self.r10_is_closed_internal(k) {
+                    continue;
+                }
+                let r = self.find(k);
+                if self.classes[r].resolved.is_none() {
+                    bound = bound.max(self.classes[r].level);
+                }
+            }
+            self.lowered.insert(key(&s), (s, bound, epoch));
         }
     }
 
@@ -9714,6 +9905,8 @@ impl<'t, 'a> Ck<'t, 'a> {
 
         for id in f.lo..f.hi {
             if !self.classes.is_materialized(id) {
+                // A closed id passed over by a lowering is in play from here.
+                self.lowered_epoch += 1;
                 self.classes
                     .materialize_at(id, Self::make_fresh_class(id, f.level, true));
             }
@@ -11343,6 +11536,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         at: Option<(usize, &Piece, &Ty)>,
         why: &str,
     ) -> String {
+        // Complexity tradeoff (MSG-many-args-shared-var-square): a trial's errors are undone
+        // when it ends ([`Ck::trial`] and every other [`Ck::start_trial`]), and each reads
+        // only their number and spans, so a message written inside one is never read. Each
+        // of the n carried fixes of a call of n arguments is checked in a trial that rejects
+        // the call again, and writing those messages, O(n) each, was 44% of the check at 100
+        // arguments (diag2, callgrind: `Ck::message_of` under `apply_one` under
+        // `carried_check`). Inside a trial the message is empty; the one written is that of
+        // the error the check keeps. The quadratic count of trials itself is
+        // XR-many-args-shared-trial.
+        if self.trying {
+            return String::new();
+        }
         // The arguments' literals are printed as written there: in the text from the first
         // argument's start to the last's end.
         let spans = || args.iter().filter_map(|a| a.as_ref()?.at);

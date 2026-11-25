@@ -19,10 +19,8 @@ fn rebound(name: &str, again: &str, first: &str, nested: bool) -> String {
     s
 }
 
-/// The error for a use of `name` that no scope binds.
-fn undefined(name: &str) -> String {
-    format!("`{name}` is not defined. [{name}]")
-}
+// The error for a use of `name` that no scope binds, with its notes.
+use zed_tests::undefined_noted as undefined;
 
 #[test]
 fn each_prelude_word_of_l1_resolves_to_the_prelude_and_count_waits_for_l3() {
@@ -121,20 +119,28 @@ fn rebinding_is_rejected_in_every_scope_with_the_repairs_that_scope_allows() {
 #[test]
 fn a_name_bound_in_an_inner_scope_is_not_seen_outside_it() {
     // A nested block, the branches of an `if`, a lambda's parameter and an `else` pattern
-    // each bind for their own scope only.
+    // each bind for their own scope only. With each: the blocks around the use, and the
+    // visible name one slip away that comes first in name order.
     let cases = [
-        ("f(x) { y = { z = x; z }; return z; }", "z"),
-        ("y = if 1 < 2 { a = 1; a } else { a };", "a"),
-        ("v = if true { a = 1; a } else { a = 2; a }; w = a;", "a"),
-        ("f = x -> x; y = x;", "x"),
+        ("f(x) { y = { z = x; z }; return z; }", "z", 1, Some("f")),
+        ("y = if 1 < 2 { a = 1; a } else { a };", "a", 1, Some("y")),
+        (
+            "v = if true { a = 1; a } else { a = 2; a }; w = a;",
+            "a",
+            0,
+            Some("v"),
+        ),
+        ("f = x -> x; y = x;", "x", 0, Some("f")),
         (
             "v = parse(\"1\") else #e(pos:) -> pos; w = pos; parse(t) = t;",
             "pos",
+            0,
+            None,
         ),
-        ("v = \"${y}\";", "y"),
+        ("v = \"${y}\";", "y", 0, Some("v")),
     ];
-    for (text, name) in cases {
-        assert_eq!(errors(text), [undefined(name)], "{text}");
+    for (text, name, blocks, near) in cases {
+        assert_eq!(errors(text), [undefined(name, blocks, near)], "{text}");
     }
     // Each branch of an `if` is its own block, so each binds `a` once.
     let text = "y = if 1 < 2 { a = 1; a } else { a = 2; a };";
@@ -319,9 +325,12 @@ fn test_cases_see_the_scope_around_the_function_and_not_inside_it() {
     // a parameter nor a function declared in its body is in scope there.
     assert_eq!(
         errors("g(x) = { h(y) = y; h(1) } test { 1 -> h(1) }"),
-        [undefined("h")]
+        [undefined("h", 0, Some("g"))]
     );
-    assert_eq!(errors("f(x) = x test { y -> 1 }"), [undefined("y")]);
+    assert_eq!(
+        errors("f(x) = x test { y -> 1 }"),
+        [undefined("y", 0, Some("f"))]
+    );
     // A block-bodied function's table, and a table of a function with a default.
     assert!(run("f(x) { return x; } test { 1 -> 1 }").is_ok());
     assert_eq!(
@@ -359,7 +368,7 @@ fn a_type_in_each_type_form_resolves_to_the_prelude() {
 fn main_is_in_scope_but_neither_a_value_nor_called() {
     // QUESTIONS A68: `main` is in scope and runs once, when the program starts; no function
     // calls it.
-    assert_eq!(errors("z = main;"), [undefined("main")]);
+    assert_eq!(errors("z = main;"), [undefined("main", 0, Some("min"))]);
     let main = "main(m: MainArgs) { m.stdout <- \"a\"; } ";
     assert_eq!(
         errors(&format!("{main}x = main;")),

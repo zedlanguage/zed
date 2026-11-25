@@ -192,3 +192,32 @@ fn the_start_reads_the_plan_in_less_work_than_planning() {
         after.units
     );
 }
+
+/// The object file of an executable with its DWARF (plan row DEBUG-dwarf-clif, COMPLEXITY.md
+/// row Z37): the line table's rows, the subprograms and the sections are each linear in the
+/// code, and each node's line one binary search. The measure is the whole object file, the
+/// code generator's work with it. Small instance:
+/// `dwarf::the_code_is_the_same_with_and_without_debug_information`.
+#[test]
+fn the_dwarf_of_n_statements_scales() {
+    let n = 500;
+    let programs = scaling::inputs(n, |m| zedc::run::load(chain(m, "    ").as_bytes()).unwrap());
+    let lowered = scaling::inputs(n, |m| {
+        lower_sited(&programs[&m].term(), Some(programs[&m].sites())).unwrap()
+    });
+    scaling::check("the object file of n statements, with DWARF", n, |m| {
+        let (p, (g, sites)) = (&programs[&m], &lowered[&m]);
+        let object = zed_native::executable_object(
+            g.clone(),
+            true,
+            p.ports(),
+            &p.limits(),
+            p.address().unwrap(),
+            (p.file(), p.text()),
+            sites,
+            true,
+        )
+        .unwrap();
+        std::hint::black_box(object);
+    });
+}

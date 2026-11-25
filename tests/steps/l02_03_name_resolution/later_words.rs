@@ -79,7 +79,7 @@ fn a_facet_word_is_reported_as_not_compiled_yet() {
     // A facet a program defines is its own name: not defined until the program binds it.
     assert_eq!(
         errors("f() = parity;\n"),
-        ["`parity` is not defined. [parity]"]
+        [zed_tests::undefined_noted("parity", 1, None)]
     );
     // A parameter or a binding shadows a facet word at any layer.
     assert_eq!(
@@ -121,7 +121,7 @@ fn a_later_type_is_reported_as_not_compiled_yet() {
     );
     assert_eq!(
         errors("f() = Facett(1);\n"),
-        ["`Facett` is not defined. [Facett]"]
+        [zed_tests::undefined_noted("Facett", 1, None)]
     );
 }
 

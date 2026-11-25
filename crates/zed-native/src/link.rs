@@ -302,6 +302,8 @@ pub fn build(
             address,
             (program.file(), program.text()),
             &sites,
+            // DWARF in every build, debug and optimized (zed/DEBUGGING.md section 4).
+            true,
         )
     })
     .map_err(|e| (1, format!("{file}: {e}")))?;

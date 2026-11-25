@@ -37,11 +37,19 @@ expression: without_addresses(&out)
 08-utf8-percent.zed:13:24: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 08-utf8-percent.zed:25:31: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 08-utf8-percent.zed:25:37: `char32` is not defined.
+  [1] 25:37: `char32` was looked for in the block around its use, then the unit's top level, its imports and the prelude
+      25 | codePointText(positional n) = match char32(n) { #invalid -> "", c -> "${c}" };
+         |                                     ^^^^^^
+  [2] 25:37: repair: define `char32` above its use, as `char32 = …;`
 08-utf8-percent.zed:27:36: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 08-utf8-percent.zed:44:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 08-utf8-percent.zed:46:10: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 08-utf8-percent.zed:46:25: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 08-utf8-percent.zed:47:13: `char32` is not defined.
+  [1] 47:13: `char32` was looked for in the 3 blocks around its use, innermost first, then the unit's top level, its imports and the prelude
+      47 |     if c == char32("%") { #byte(b: hexVal(s::codepoints[i + 1]) * 16 + hexVal(s::codepoints[i + 2])) } else { #char(c:) }
+         |             ^^^^^^
+  [2] 47:13: repair: define `char32` above its use, as `char32 = …;`
 08-utf8-percent.zed:47:43: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 08-utf8-percent.zed:47:79: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 08-utf8-percent.zed:49:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
@@ -55,17 +63,59 @@ expression: without_addresses(&out)
       line 7 is shown above
   [2] 7:23 to 7:73: repair: write `s.lower.split("-").concat("").split(" ").concat(sep: "")`
 10-regex-matcher/main.zed (L19): does not load: 10-regex-matcher/main.zed:11:43: `char32` is not defined.
+  [1] 11:43: `char32` was looked for in the unit's top level, its imports and the prelude
+      11 | hhmm = #seq(a: #alt(a: #seq(a: #range(lo: char32("0"), hi: char32("1")),
+         |                                           ^^^^^^
+  [2] 11:43: repair: define `char32` above its use, as `char32 = …;`
 10-regex-matcher/main.zed:11:60: `char32` is not defined.
+  [1] 11:60 to 11:65: `char32` was looked for in the unit's top level, its imports and the prelude
+      line 11 is shown above
+  [2] 11:60 to 11:65: repair: define `char32` above its use, as `char32 = …;`
 10-regex-matcher/main.zed:12:43: `char32` is not defined.
+  [1] 12:43: `char32` was looked for in the unit's top level, its imports and the prelude
+      12 |                             b: #range(lo: char32("0"), hi: char32("9"))),
+         |                                           ^^^^^^
+  [2] 12:43: repair: define `char32` above its use, as `char32 = …;`
 10-regex-matcher/main.zed:12:60: `char32` is not defined.
+  [1] 12:60 to 12:65: `char32` was looked for in the unit's top level, its imports and the prelude
+      line 12 is shown above
+  [2] 12:60 to 12:65: repair: define `char32` above its use, as `char32 = …;`
 10-regex-matcher/main.zed:13:40: `char32` is not defined.
+  [1] 13:40: `char32` was looked for in the unit's top level, its imports and the prelude
+      13 |                     b: #seq(a: #lit(c: char32("2")), b: #range(lo: char32("0"), hi: char32("3")))),
+         |                                        ^^^^^^
+  [2] 13:40: repair: define `char32` above its use, as `char32 = …;`
 10-regex-matcher/main.zed:13:68: `char32` is not defined.
+  [1] 13:68 to 13:73: `char32` was looked for in the unit's top level, its imports and the prelude
+      line 13 is shown above
+  [2] 13:68 to 13:73: repair: define `char32` above its use, as `char32 = …;`
 10-regex-matcher/main.zed:13:85: `char32` is not defined.
+  [1] 13:85 to 13:90: `char32` was looked for in the unit's top level, its imports and the prelude
+      line 13 is shown above
+  [2] 13:85 to 13:90: repair: define `char32` above its use, as `char32 = …;`
 10-regex-matcher/main.zed:14:32: `char32` is not defined.
+  [1] 14:32: `char32` was looked for in the unit's top level, its imports and the prelude
+      14 |             b: #seq(a: #lit(c: char32(":")),
+         |                                ^^^^^^
+  [2] 14:32: repair: define `char32` above its use, as `char32 = …;`
 10-regex-matcher/main.zed:15:43: `char32` is not defined.
+  [1] 15:43: `char32` was looked for in the unit's top level, its imports and the prelude
+      15 |                     b: #seq(a: #range(lo: char32("0"), hi: char32("5")),
+         |                                           ^^^^^^
+  [2] 15:43: repair: define `char32` above its use, as `char32 = …;`
 10-regex-matcher/main.zed:15:60: `char32` is not defined.
+  [1] 15:60 to 15:65: `char32` was looked for in the unit's top level, its imports and the prelude
+      line 15 is shown above
+  [2] 15:60 to 15:65: repair: define `char32` above its use, as `char32 = …;`
 10-regex-matcher/main.zed:16:43: `char32` is not defined.
+  [1] 16:43: `char32` was looked for in the unit's top level, its imports and the prelude
+      16 |                             b: #range(lo: char32("0"), hi: char32("9")))));
+         |                                           ^^^^^^
+  [2] 16:43: repair: define `char32` above its use, as `char32 = …;`
 10-regex-matcher/main.zed:16:60: `char32` is not defined.
+  [1] 16:60 to 16:65: `char32` was looked for in the unit's top level, its imports and the prelude
+      line 16 is shown above
+  [2] 16:60 to 16:65: repair: define `char32` above its use, as `char32 = …;`
 10-regex-matcher/main.zed:18:10: the prelude word `mix` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 10-regex-matcher/main.zed:9:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
 10-regex-matcher/regex.zed:4:1: a type declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
@@ -82,8 +132,16 @@ expression: without_addresses(&out)
 10-regex-matcher/regex.zed:28:49: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 11-csv-split.zed (L5): does not load: 11-csv-split.zed:9:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 11-csv-split.zed:19:30: `char32` is not defined.
+  [1] 19:30: `char32` was looked for in the 2 blocks around its use, innermost first, then the unit's top level, its imports and the prelude
+      19 |   after = l.map(c -> if c == char32("\"") { quote } else { other }).scan(compose).map(t -> t.a);
+         |                              ^^^^^^
+  [2] 19:30: repair: define `char32` above its use, as `char32 = …;`
 11-csv-split.zed:20:11: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 11-csv-split.zed:20:34: `char32` is not defined.
+  [1] 20:34: `char32` was looked for in the 3 blocks around its use, innermost first, then the unit's top level, its imports and the prelude
+      20 |   sep   = for i -> c in l { c == char32(",") && (after[i - 1] else (#ioError | #outOfBounds) -> 0) != 1 };   // the state before i
+         |                                  ^^^^^^
+  [2] 20:34: repair: define `char32` above its use, as `char32 = …;`
 11-csv-split.zed:20:68: an or-pattern is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 11-csv-split.zed:21:19: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 11-csv-split.zed:21:71: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
@@ -94,7 +152,14 @@ expression: without_addresses(&out)
 11-csv-split.zed:28:8: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 12-cyk-table.zed (L6): does not load: 12-cyk-table.zed:10:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 12-cyk-table.zed:13:55: `char32` is not defined.
+  [1] 13:55: `char32` was looked for in the block around its use, then the unit's top level, its imports and the prelude
+      13 | leaf(positional c) = Cell(s: false, t: false, l: c == char32("("), r: c == char32(")"));
+         |                                                       ^^^^^^
+  [2] 13:55: repair: define `char32` above its use, as `char32 = …;`
 12-cyk-table.zed:13:76: `char32` is not defined.
+  [1] 13:76 to 13:81: `char32` was looked for in the block around its use, then the unit's top level, its imports and the prelude
+      line 13 is shown above
+  [2] 13:76 to 13:81: repair: define `char32` above its use, as `char32 = …;`
 12-cyk-table.zed:20:7: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 12-cyk-table.zed:21:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 12-cyk-table.zed:30:16: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.

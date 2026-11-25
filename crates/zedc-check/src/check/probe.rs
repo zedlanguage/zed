@@ -569,8 +569,7 @@ mod store {
             self.layers.push(Vec::new());
         }
 
-        /// The number of open layers (read by tests only).
-        #[cfg(test)]
+        /// The number of open layers (tests, and `Ck::lower`, which keeps no bound under one).
         pub fn layer_depth(&self) -> usize {
             self.layers.len()
         }

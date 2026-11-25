@@ -235,7 +235,10 @@ fn two_variants_are_rejected_for_a_reason_other_than_their_documented_error() {
     let rejected = |n: &str| super::rejected(&texts[n]);
     assert_eq!(
         rejected("constructor-called-by-position"),
-        "6:5: `Point` is not defined."
+        "6:5: `Point` is not defined.\n  [1] 6:5: `Point` was looked for in the unit's top level, \
+         its imports and the prelude\n      6 | q = Point(3, 4);                   // ✗ Positional \
+         constructor call or pattern: a constructor is called by name, Point(x: 3, y: 4)\n        \
+         |     ^^^^^\n  [2] 6:5: repair: define `Point` above its use, as `Point = …;`"
     );
     let e = rejected("taint-reaches-clean-sink");
     // The syntax error at line 52 (the line after `exec`'s signature, which lacks its `;`) is

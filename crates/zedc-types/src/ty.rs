@@ -2734,7 +2734,7 @@ fn fns_outside_tys<'a>(
 fn vars_of<'a>(tys: impl Iterator<Item = &'a Ty>, out: &mut Vars) {
     let mut stack: Vec<VarWalk<'a>> = tys.map(VarWalk::Ty).collect();
     stack.reverse();
-    walk_vars(stack, out);
+    walk_vars(stack, out, None);
 }
 
 /// One step of [`walk_vars`].
@@ -2833,8 +2833,13 @@ fn sig_walk<'a>(s: &'a Sig, key: usize, stack: &mut Vec<VarWalk<'a>>) {
     stack[from..].reverse();
 }
 
-/// [`vars_of`] from the steps on `stack`, last first.
-fn walk_vars<'a>(mut stack: Vec<VarWalk<'a>>, out: &mut Vars) {
+/// The test [`Ty::vars_in_skipping`] asks of each held function: true to leave it out.
+type SkipSig<'s> = &'s mut dyn FnMut(&Arc<Sig>) -> bool;
+
+/// [`vars_of`] from the steps on `stack`, last first. With `skip`, each function held is
+/// entered by its parts, never by its kept order, so that `skip` is asked of each function
+/// inside it as well; one `skip` says yes of adds nothing ([`Ty::vars_in_skipping`]).
+fn walk_vars<'a>(mut stack: Vec<VarWalk<'a>>, out: &mut Vars, mut skip: Option<SkipSig<'_>>) {
     let add = |out: &mut Vars, v: &Arc<str>| {
         if out.seen.insert(v.clone()) {
             out.order.push(v.clone());
@@ -2882,6 +2887,12 @@ fn walk_vars<'a>(mut stack: Vec<VarWalk<'a>>, out: &mut Vars) {
             VarWalk::Held(h) => {
                 let key = Arc::as_ptr(h) as usize;
                 if held.insert(key) {
+                    if let Some(skip) = &mut skip {
+                        if !skip(h) {
+                            sig_walk(h, key, &mut stack);
+                        }
+                        continue;
+                    }
                     match h.facts.4.get() {
                         // Its marks are placed among its names as its own walk placed them,
                         // its own forwards' marks keyed by its address.
@@ -4655,6 +4666,19 @@ pub struct VarFacts {
     /// for each variable a signature lists, beside the insert `add_to` makes for it.
     /// `Ck::shown_tops` (zedc-check) reads it (GENERIC-nested-quadratic).
     pub unwritten_class: bool,
+    /// The bits of the variables of `classes` and `names` ([`VarBits`], with `free` 0 and
+    /// `internal` false), ORed in as `add_to` adds a variable and as `held` merges a held
+    /// function's facts, so [`VarBits::of_facts`] reads them in O(1).
+    // Complexity tradeoff (PERF-check-need-vars-nested-lambdas): naive version,
+    // `VarBits::of_facts` walking `classes` and `names`, which hold the variables of every
+    // level below, once per signature: O(n^2) over a nest of n lambdas (2.38 times the
+    // instructions per doubling of the `need_vars` bench, 328.7M at 200 levels and 1.864G at
+    // 800, callgrind; `class_id`, the treap iterator and `of_facts` itself were 18% of those
+    // at 800). Used: the OR kept beside the sets, O(1) per insertion and per merge. It equals
+    // the walk: each variable of the two sets was put there by an `add_to`, here or in the
+    // facts of a function below that `held` merged, each such call ORs its bit in, and OR is
+    // idempotent, so a variable met twice changes nothing.
+    bits: VarBits,
 }
 
 impl VarFacts {
@@ -4837,6 +4861,7 @@ impl VarFacts {
         self.internal |= f.internal;
         self.fwd_unfinished |= f.fwd_unfinished;
         self.unwritten_class |= f.unwritten_class;
+        self.bits.add(f.bits);
     }
 
     /// Adds the variable `v` to its classes (`class`) or to its names, unless this walk has
@@ -4862,6 +4887,7 @@ impl VarFacts {
             true => add(&mut self.classes, v),
             false => add(&mut self.names, v),
         }
+        self.bits.add(VarBits::of_var(v));
         true
     }
 }
@@ -4946,15 +4972,14 @@ impl VarBits {
         }
     }
 
-    /// The bits of the facts `f` of a function.
+    /// The bits of the facts `f` of a function, in O(1): their variables' bits are kept as
+    /// they are added ([`VarFacts::bits`]).
     fn of_facts(f: &VarFacts) -> VarBits {
-        let mut b = VarBits {
+        VarBits {
             free: f.free,
             internal: f.internal,
-            ..VarBits::default()
-        };
-        (f.classes.iter().chain(&f.names)).for_each(|v| b.add(VarBits::of_var(v)));
-        b
+            ..f.bits
+        }
     }
 
     /// Adds `other`.
@@ -7718,6 +7743,19 @@ impl Need {
     /// at their places (landing round 7, Codex L7.Codex-held-read-order).
     pub fn vars_in(&self, out: &mut Vars) {
         self.tys().for_each(|t| t.vars_in(out));
+        self.held_vars_in(out);
+    }
+
+    /// [`Need::vars_in`] by [`Ty::vars_in_skipping`]: less the variables met only inside a
+    /// function held of which `skip` says yes.
+    pub fn vars_in_skipping(&self, out: &mut Vars, skip: &mut dyn FnMut(&Arc<Sig>) -> bool) {
+        self.tys().for_each(|t| t.vars_in_skipping(out, skip));
+        self.held_vars_in(out);
+    }
+
+    /// The variables a forward's held functions read from around it, the tail of
+    /// [`Need::vars_in`].
+    fn held_vars_in(&self, out: &mut Vars) {
         if let NeedKind::Fwd(fwd) = &self.kind {
             for v in fwd.held_outer.iter().chain(&fwd.held_classes) {
                 if out.seen.insert(v.clone()) {
@@ -16758,6 +16796,19 @@ impl Ty {
         vars_of(std::iter::once(self), out);
     }
 
+    /// The variables of [`Ty::vars_in`], into `out`, less those met only inside a function it
+    /// holds of which `skip` says yes. Each function held is entered by its parts, not by its
+    /// kept order ([`Sig::vars_order`]), so `skip` is asked of every function inside it too,
+    /// once per walk, and gets each one's `Arc`. With a `skip` that always says no, the
+    /// variables added are those [`Ty::vars_in`] adds, since a kept order is made by the same
+    /// walk by parts ([`Sig::vars_order`]); the order they come in is not relied on. The checker
+    /// lowers levels with it (`Ck::lower` in zedc-check), skipping each function it
+    /// knows holds no class above the level. Cost: that of the walk, less the functions
+    /// skipped, each of which costs O(1).
+    pub fn vars_in_skipping(&self, out: &mut Vars, skip: &mut dyn FnMut(&Arc<Sig>) -> bool) {
+        walk_vars(vec![VarWalk::Ty(self)], out, Some(skip));
+    }
+
     /// It with each scalar it holds, at every depth outside the functions it holds, widened to
     /// every value of its carrier: `1 | 2.5` is `int | f64`, and `(1, "a")` is `(int, String)`.
     /// Atoms, payloads, functions, variables and the kind-wide part stay as they are. Two
@@ -23181,9 +23232,27 @@ impl Sig {
             let mut out = Vars::default();
             let mut stack = Vec::new();
             sig_walk(self, RunMark::ROOT, &mut stack);
-            walk_vars(stack, &mut out);
+            walk_vars(stack, &mut out, None);
             (out.order.into(), out.marks.into())
         })
+    }
+
+    /// Its own variables, into `out`, and the functions it holds, into `inner`, each once,
+    /// none entered: [`Sig::vars_order`] is these variables and those of each function in
+    /// `inner`. The checker bounds each function's levels from its own and those of the
+    /// functions it holds (`Ck::lower` in zedc-check). Cost: the walk of its parts, less
+    /// the functions it holds.
+    pub fn own_vars_in(&self, out: &mut Vars, inner: &mut Vec<Arc<Sig>>) {
+        let mut stack = Vec::new();
+        sig_walk(self, RunMark::ROOT, &mut stack);
+        walk_vars(
+            stack,
+            out,
+            Some(&mut |s: &Arc<Sig>| {
+                inner.push(s.clone());
+                true
+            }),
+        );
     }
 
     /// The marks of [`Sig::vars_marks`] as they were made before TYPES-run-marks-move-safe:
@@ -23195,7 +23264,7 @@ impl Sig {
         let mut out = Vars::default();
         let mut stack = Vec::new();
         sig_walk(self, self as *const Sig as usize, &mut stack);
-        walk_vars(stack, &mut out);
+        walk_vars(stack, &mut out, None);
         out.marks
     }
 

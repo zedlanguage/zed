@@ -21,6 +21,7 @@ use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F64, I64};
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, FuncRef, InstBuilder, MemFlagsData};
 use cranelift_codegen::ir::{Signature, SourceLoc, StackSlotData, StackSlotKind, Value as V};
+use cranelift_codegen::isa::unwind::UnwindInfo;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
 use cranelift_module::{FuncId, Linkage, Module};
 
@@ -92,6 +93,10 @@ pub(crate) struct Code {
     /// start, sorted by start: Cranelift's ranges of each source location (`MachSrcLoc`),
     /// where the location is the node's number ([`Gen::at`]).
     pub nodes: Vec<(u32, u32, u32)>,
+    /// Its call frame information, which [`crate::dwarf::eh_frame`] writes as `.eh_frame`,
+    /// when [`define`] is asked for it; otherwise `None`, as for a function Cranelift gives
+    /// none.
+    pub unwind: Option<UnwindInfo>,
 }
 
 struct Gen<'a, M: Module> {
@@ -115,6 +120,8 @@ struct Gen<'a, M: Module> {
     ir: Option<&'a mut String>,
     /// The code of each function defined so far.
     code: Vec<Code>,
+    /// Whether each function's call frame information is kept ([`Code::unwind`]).
+    unwind: bool,
     /// In the test build, the printed name of a primitive whose every node first reads
     /// address 0, a fault no rule of the language explains, from `ZED_TEST_FAULT` (plan row
     /// RT-internal-fault: an injected fault is reported as a bug in zedc).
@@ -191,12 +198,14 @@ struct Open {
 }
 
 /// Declares and defines every function of the graph in `t`, with `plans` by region, in `m`;
-/// appends each function's IR text to `ir` when given.
+/// appends each function's IR text to `ir` when given, and keeps each function's call frame
+/// information when `unwind`.
 pub(crate) fn define<'a, M: Module>(
     m: &'a mut M,
     t: &'a Tables,
     plans: &'a [&'a RegionPlan],
     ir: Option<&'a mut String>,
+    unwind: bool,
 ) -> Result<Funcs, String> {
     let mut hooks = HashMap::new();
     for (name, p, r) in HOOKS {
@@ -253,6 +262,7 @@ pub(crate) fn define<'a, M: Module>(
         direct,
         ir,
         code: Vec::new(),
+        unwind,
         #[cfg(feature = "counts")]
         fault: std::env::var("ZED_TEST_FAULT").ok(),
     };
@@ -336,7 +346,17 @@ impl<M: Module> Gen<'_, M> {
                 .map(|s| (s.start, s.end, s.loc.as_abs().bits()))
                 .collect();
             let len = c.code_info().total_size;
-            self.code.push(Code { id, len, nodes });
+            // O(code), from the frame layout the compile recorded.
+            let unwind = match self.unwind {
+                true => c.create_unwind_info(self.m.isa()).map_err(err)?,
+                false => None,
+            };
+            self.code.push(Code {
+                id,
+                len,
+                nodes,
+                unwind,
+            });
         }
         self.m.clear_context(&mut ctx);
         Ok(())

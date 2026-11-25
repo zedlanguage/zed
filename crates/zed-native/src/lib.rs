@@ -10,6 +10,8 @@
 mod bug;
 mod codegen;
 #[cfg(unix)]
+mod dwarf;
+#[cfg(unix)]
 mod exe;
 // `zedc check-exe` (plan row EXE-plan-carried-recheck). The module stays private: its entry
 // point `zed_main` takes C's raw `argv`, which a public path would offer to safe code.
@@ -161,7 +163,7 @@ fn run_in(
         b.symbol(*name, a);
     }
     let mut m = Jit(ManuallyDrop::new(JITModule::new(b)));
-    let f = codegen::define(&mut *m.0, &t, &plans, None)?;
+    let f = codegen::define(&mut *m.0, &t, &plans, None, false)?;
     m.0.finalize_definitions().map_err(bug)?;
     let code = m.0.get_finalized_function(f.root);
     // SAFETY: `code` is `zed_root`, which the generator defines with no parameters and two
@@ -181,7 +183,7 @@ fn run_in(
 pub fn object(g: &Legalized, plan: &Plan) -> Result<Vec<u8>, String> {
     let (t, plans) = Tables::new(g, plan)?;
     let mut m = object_module()?;
-    codegen::define(&mut m, &t, &plans, None)?;
+    codegen::define(&mut m, &t, &plans, None, false)?;
     m.finish().emit().map_err(bug)
 }
 
@@ -191,7 +193,7 @@ pub fn ir(g: &Legalized, plan: &Plan) -> Result<String, String> {
     let (t, plans) = Tables::new(g, plan)?;
     let mut m = object_module()?;
     let mut s = String::new();
-    codegen::define(&mut m, &t, &plans, Some(&mut s))?;
+    codegen::define(&mut m, &t, &plans, Some(&mut s), false)?;
     Ok(s)
 }
 
@@ -204,8 +206,14 @@ pub fn ir(g: &Legalized, plan: &Plan) -> Result<String, String> {
 /// plan this made, which the data holds too (plan row EXE-plan-carried). The data
 /// holds too `source`, the name of the program's file and its text, and `sites`, the site of
 /// each node of `g` (plan row RT-sites), so that a run-time error prints its site as `zedc run`
-/// prints it.
+/// prints it. With `debug`, the object holds the program's DWARF too (`dwarf::add`, plan row
+/// DEBUG-dwarf-clif), added after the code is made, so the code is the same without it, and
+/// the thread-local variables a debugger conditions on (`dwarf::define_debug_vars`).
 #[cfg(unix)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each is a separate input of the executable, passed once by `link::build`"
+)]
 pub fn executable_object(
     g: Region,
     fuse: bool,
@@ -214,20 +222,68 @@ pub fn executable_object(
     address: zedc::address::ContentAddress,
     source: (Option<&str>, &str),
     sites: &[Option<zed_kernel::sites::Span>],
+    debug: bool,
 ) -> Result<Vec<u8>, String> {
     // The data holds `g` as lowered and the plan of `g` legalized, which the code is made from.
     let legal = legalize(g.clone());
     let plan = plan(legal.graph(), fuse);
     let data = exe::data(&plan, address, ports, limits, source, sites, &g)?;
+    // The code's node numbers are those of `g` legalized, as at the executable's start.
+    let legal_sites = debug.then(|| zedc::zir::legalize::legalized_sites(&g, EXPANSIONS, sites));
     let g = legal;
     let (t, plans) = Tables::new(&g, &plan)?;
     let mut m = object_module()?;
-    let f = codegen::define(&mut m, &t, &plans, None)?;
-    exe::define_main(&mut m, f.root, &data, &f.code)?;
-    m.finish().emit().map_err(bug)
+    let f = codegen::define(&mut m, &t, &plans, None, true)?;
+    let main = exe::define_main(&mut m, f.root, &data, &f.code, true)?;
+    let cie = cranelift_module::Module::isa(&m).create_systemv_cie();
+    let decls = cranelift_module::Module::declarations(&m);
+    let names: Vec<String> = (f.code.iter())
+        .map(|c| {
+            decls
+                .get_function_decl(c.id)
+                .linkage_name(c.id)
+                .into_owned()
+        })
+        .collect();
+    let vars = match debug {
+        true => dwarf::define_debug_vars(&mut m)?,
+        false => None,
+    };
+    let mut product = m.finish();
+    // Before the debug sections, so that with and without them `.eh_frame` and the symbols
+    // before theirs are the same.
+    dwarf::eh_frame(&mut product, cie, f.code.iter().chain([&main]))?;
+    if let Some(sites) = legal_sites {
+        let file = source.0.unwrap_or_default();
+        // The directory of an absolute file name is its own, so the object's bytes do not
+        // depend on where `zedc build` runs; a relative name is read from the working
+        // directory, as gdb reads it against `DW_AT_comp_dir`.
+        let path = std::path::Path::new(file);
+        let dir = if path.is_absolute() {
+            path.parent().map(std::path::Path::to_path_buf)
+        } else {
+            std::env::current_dir().ok()
+        };
+        let dir = dir
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        dwarf::add(
+            &mut product,
+            &f.code,
+            &names,
+            file,
+            &dir,
+            source.1,
+            &sites,
+            vars,
+        )?;
+    }
+    product.emit().map_err(bug)
 }
 
-/// An empty object module for the host, its code position-independent.
+/// An empty object module for the host, its code position-independent. Its `.eh_frame` is
+/// not Cranelift's (`ObjectBuilder::unwind_info`), whose absolute addresses a position-
+/// independent executable cannot link, but [`dwarf::eh_frame`]'s.
 fn object_module() -> Result<ObjectModule, String> {
     let b = ObjectBuilder::new(isa(true, OptLevel::None)?, "zed", default_libcall_names())
         .map_err(bug)?;

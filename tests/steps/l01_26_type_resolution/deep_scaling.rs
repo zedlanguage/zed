@@ -68,6 +68,29 @@ pub(super) fn nested_around(n: usize) -> String {
     )
 }
 
+/// `n` lambdas nested in one another, each passing its parameter and the next lambda in to
+/// `dup`, which calls the one on the other: `y1 -> dup(y1, (y2 -> dup(y2, (… x, x)), x))`.
+/// Each lambda's call of its parameter is a need its signature holds, and each holds the
+/// signatures of the lambdas inside it, whose own variables are solved by then; only `x`, at
+/// the function's level, is in play.
+pub(super) fn lambdas_needing_lambdas(n: usize) -> String {
+    let mut body = String::from("x");
+    for i in (1..=n).rev() {
+        body = format!("y{i} -> dup(y{i}, ({body}, x))");
+    }
+    format!("dup(positional g, positional t) = (g(t), t);\nn(positional x) = {body};\n")
+}
+
+#[test]
+fn lambdas_needing_lambdas_a_few_deep_check() {
+    // A small instance of the benchmark
+    // `bench::deep_scaling::lambdas_needing_lambdas_check_in_linear_time`.
+    for n in 1..=SMALL {
+        let info = super::info(&lambdas_needing_lambdas(n)).0;
+        assert!(info.errors.is_empty(), "{n} deep: {:?}", info.errors);
+    }
+}
+
 #[test]
 fn a_variable_nested_in_tuples_is_kept_in_its_result() {
     // A small instance of the benchmark

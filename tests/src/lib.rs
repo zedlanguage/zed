@@ -93,6 +93,26 @@ pub fn undefined(name: &str) -> String {
     format!("`{name}` is not defined.")
 }
 
+/// [`undefined`] with its notes, each followed by the text of its span, as the step helpers'
+/// `errors` print an error: `message [span]; note [span]`, for a use of `name` whose span is
+/// the name. The notes are the row "Name that resolves to nothing" (step L1.14a): the scopes
+/// searched, `blocks` blocks around the use and then the unit's own; `near`, the visible name
+/// one slip away that comes first in name order, if any; and a definition of the name.
+pub fn undefined_noted(name: &str, blocks: usize, near: Option<&str>) -> String {
+    let blocks = match blocks {
+        0 => String::new(),
+        1 => "the block around its use, then ".to_string(),
+        k => format!("the {k} blocks around its use, innermost first, then "),
+    };
+    let near = near.map_or(String::new(), |c| format!("; repair: write `{c}` [{name}]"));
+    format!(
+        "{} [{name}]; `{name}` was looked for in {blocks}the unit's top level, its imports and \
+         the prelude [{name}]{near}; repair: define `{name}` above its use, as `{name} = …;` \
+         [{name}]",
+        undefined(name)
+    )
+}
+
 /// The message for the type `name`, which no type in scope and no prelude type has as its name.
 pub fn undefined_type(name: &str) -> String {
     format!("The type `{name}` is not defined.")

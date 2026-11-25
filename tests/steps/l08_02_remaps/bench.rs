@@ -1382,3 +1382,52 @@ fn a_remap_reading_n_free_names_is_checked_in_linear_time() {
         run,
     );
 }
+
+// The bench of `xs.tag(#a)` over n entries, folded through `x[#a]`, is parked in
+// wt/failing-tests/KERNEL-atom-key-read.rs with the tests that read by an atom key.
+
+/// A chain of n tags, `[1].tag(#a).tag(#a)…`, n levels deep (plan row TAG-run): each tag's type
+/// holds the one before it shared, so the check is linear in n, not quadratic. Whole path.
+#[test]
+fn a_chain_of_n_tags_runs_in_linear_time() {
+    let srcs = scaling::inputs(N_LEVELS, |n| {
+        format!("x = [1]{};\nt = x.count;\n", ".tag(#a)".repeat(n))
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "t"), "1");
+    };
+    scaling::check(
+        "a chain of n `.tag(#a)` calls on `[1]`, whole path",
+        N_LEVELS,
+        run,
+    );
+}
+
+#[test]
+fn n_maps_by_a_function_whose_held_name_clashes_check_in_linear_time() {
+    // Plan row FAIL-map-chain-clashing-held-name-quadratic: each link has a parameter `f`, the
+    // name of `id`'s own parameter, so the held name of the forward of `.map(id)` clashes with
+    // a name met earlier and is renamed apart in each link. Measured on main before this test
+    // (diag1, 2026-11-25): the check stage's bytes allocated doubled with each doubling of n
+    // (3.0M at 10 links to 48.6M at 160; the `zedc --report run` table, which shows bytes on
+    // the VMs, where the instruction count is refused).
+    let n_links = 40;
+    let srcs = scaling::inputs(n_links, |n| {
+        let mut src =
+            String::from("id(positional f) = f;\nh0(positional f, positional m) = m.map(id);\n");
+        for i in 1..n {
+            src.push_str(&format!(
+                "h{i}(positional f, positional m) = h{}(f, m).map(id);\n",
+                i - 1
+            ));
+        }
+        src.push_str(&format!("a = h{}(1, {{\"k\" -> 0}})[\"k\"];\n", n - 1));
+        src
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), "0");
+    scaling::check(
+        "n functions chained, each mapping by `id` beside a parameter named as `id`'s, whole path",
+        n_links,
+        run,
+    );
+}

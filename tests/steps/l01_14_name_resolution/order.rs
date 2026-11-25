@@ -53,7 +53,11 @@ fn statement_order_does_not_matter() {
 fn a_name_bound_nowhere_is_an_error() {
     assert_eq!(
         errors("total = price + 1; shown = total.price;"),
-        ["`price` is not defined. [price]"]
+        [
+            "`price` is not defined. [price]; `price` was looked for in the unit's top level, \
+             its imports and the prelude [price]; repair: define `price` above its use, as \
+             `price = …;` [price]"
+        ]
     );
 }
 

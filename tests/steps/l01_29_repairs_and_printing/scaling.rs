@@ -15,17 +15,21 @@ pub(super) fn unresolved(n: usize) -> String {
     (0..n).map(|i| format!("h{i} = missing{i};\n")).collect()
 }
 
-/// One diagnostic per line, the last at the last line, after `h{n-1} = `.
+/// One diagnostic per line, the last at the last line, after `h{n-1} = `. Each prints five lines:
+/// its headline, unindented, then the scopes searched with the source line and its carets, and
+/// the repair that defines the name (the row "Name that resolves to nothing", step L1.14a).
 pub(super) fn a_diagnostic_on_every_line(src: &str, n: usize) {
     let out = rejected(src);
     let last = n - 1;
     let col = format!("h{last} = ").len() + 1;
-    assert_eq!(out.lines().count(), n);
+    assert_eq!(out.lines().count(), 5 * n, "{out}");
+    let heads: Vec<&str> = out.lines().filter(|l| !l.starts_with(' ')).collect();
+    assert_eq!(heads.len(), n, "{out}");
     let want = format!(
         "{n}:{col}: {}",
         zed_tests::undefined(&format!("missing{last}"))
     );
-    assert_eq!(out.lines().last(), Some(want.as_str()));
+    assert_eq!(heads.last(), Some(&want.as_str()));
 }
 
 #[test]

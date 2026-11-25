@@ -228,7 +228,22 @@ constructor-called-by-position
         line: 6,
         col: 5,
         message: "`Point` is not defined.",
-        steps: [],
+        steps: [
+            Step {
+                line: 6,
+                col: 5,
+                text: "`Point` was looked for in the unit's top level, its imports and the prelude",
+                source: "q = Point(3, 4);                   // ✗ Positional constructor call or pattern: a constructor is called by name, Point(x: 3, y: 4)",
+                width: 5,
+            },
+            Step {
+                line: 6,
+                col: 5,
+                text: "repair: define `Point` above its use, as `Point = …;`",
+                source: "q = Point(3, 4);                   // ✗ Positional constructor call or pattern: a constructor is called by name, Point(x: 3, y: 4)",
+                width: 5,
+            },
+        ],
         menu: "",
         row: None,
     },

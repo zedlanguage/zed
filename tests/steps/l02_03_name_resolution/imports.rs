@@ -207,7 +207,16 @@ fn an_import_in_a_block_is_seen_in_that_block_only() {
              disk(r) = area(r);\n",
         ),
     ]);
-    assert_eq!(mistakes(&p), ["main.zed:5:11: `area` is not defined."]);
+    // The menu has no import entry yet: step L2.12c adds `import geometry.shapes.{area};`.
+    assert_eq!(
+        mistakes(&p),
+        [
+            "main.zed:5:11: `area` is not defined.\n  [1] 5:11: `area` was looked for in the block \
+             around its use, then the unit's top level, its imports and the prelude\n      5 | \
+             disk(r) = area(r);\n        |           ^^^^\n  [2] 5:11: repair: define `area` above \
+             its use, as `area = …;`"
+        ]
+    );
     assert_eq!(
         use_of(&p, "main", "area", 1),
         ["function import geometry.shapes.{area}; from geometry.shapes"]

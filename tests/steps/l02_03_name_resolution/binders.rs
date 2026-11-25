@@ -2,6 +2,7 @@
 //! methods and their receiver `this`, and the names `match` arms and patterns bind.
 
 use super::{alone, describe, errors, str_types_pending};
+use zed_tests::undefined_noted;
 
 #[test]
 fn a_struct_name_is_a_type_and_its_fields_are_binders_no_scope_holds() {
@@ -95,7 +96,7 @@ fn a_match_arm_binds_its_names_in_its_guard_and_value_only() {
     assert_eq!(describe(text, &r, "n", 1), ["pattern n"]);
     assert_eq!(describe(text, &r, "n", 2), ["pattern n"]);
     assert_eq!(describe(text, &r, "e", 1), ["pattern #err(e:)"]);
-    assert_eq!(errors(text), ["`n` is not defined. [n]"]);
+    assert_eq!(errors(text), [undefined_noted("n", 0, None)]);
     assert_eq!(r.res.patterns.len(), 3);
 }
 
@@ -150,7 +151,10 @@ fn a_tuple_destructuring_parameter_binds_its_names_in_the_body() {
     assert_eq!(describe(text, &r, "max", 0), ["prelude max"]);
     assert_eq!(
         errors(text),
-        ["`total` is not defined. [total]", "`s` is not defined. [s]"]
+        [
+            undefined_noted("total", 1, None),
+            undefined_noted("s", 0, Some("f"))
+        ]
     );
     assert_eq!(
         errors("f = ((a, a)) -> a;\n"),

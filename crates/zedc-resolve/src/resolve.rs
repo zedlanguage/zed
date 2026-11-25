@@ -996,9 +996,39 @@ pub fn resolve_kept(
     units: &dyn Units,
     text: Option<&str>,
 ) -> Resolved {
+    // A name that resolves to nothing offers the value name nearest in spelling among those
+    // visible at its use (step L1.14a), which needs the value names in scope kept in a
+    // spelling index as the walk binds and closes them.
+    // Complexity tradeoff: the index costs O(L²) per name bound (`SpellingIndex::add`), on
+    // every binding of every unit; a unit that resolves is walked without it, and only a unit
+    // with a name that resolves to nothing is walked again with it, so a correct program pays
+    // nothing and a wrong one pays one more O(n) walk plus the index.
+    let mut r = resolver(unit, keep, units, text, false);
+    if r.unresolved {
+        r = resolver(unit, keep, units, text, true);
+    }
+    r.errors.sort_by_key(|e| e.span);
+    r.later.sort_by_key(|e| e.span);
+    Resolved {
+        res: r.out,
+        errors: r.errors,
+        later: r.later,
+    }
+}
+
+/// The resolver after its walk of `unit` ([`resolve_kept`]), keeping the value names in scope
+/// in a spelling index when `spell`.
+fn resolver<'u>(
+    unit: &[Stmt],
+    keep: Option<&[bool]>,
+    units: &'u dyn Units,
+    text: Option<&'u str>,
+    spell: bool,
+) -> Resolver<'u> {
     let mut r = Resolver {
         units: Some(units),
         text,
+        value_names: spell.then(SpellingIndex::default),
         ..Resolver::default()
     };
     // The top level is two scopes: the outer holds what its imports bring in (tier 3), the
@@ -1007,13 +1037,7 @@ pub fn resolve_kept(
     r.scopes.push(Vec::new());
     r.walk(Task::Unit(unit, keep));
     r.above_errors();
-    r.errors.sort_by_key(|e| e.span);
-    r.later.sort_by_key(|e| e.span);
-    Resolved {
-        res: r.out,
-        errors: r.errors,
-        later: r.later,
-    }
+    r
 }
 
 /// The errors name resolution finds in the type `t`, read as a type the checker printed
@@ -1127,6 +1151,16 @@ struct Resolver<'u> {
     free_at: HashMap<String, Vec<usize>>,
     /// The names of the types in scope, indexed by spelling for [`Resolver::nearest`].
     type_names: SpellingIndex,
+    /// The value names in scope, indexed by spelling for [`Resolver::nearest_value`] (step
+    /// L1.14a), kept only on the pass that reports a name that resolves to nothing
+    /// ([`resolve_kept`]); `None` on the first pass, which keeps no index.
+    value_names: Option<SpellingIndex>,
+    /// The prelude's value names, its words of this layer and its unit's definitions, indexed
+    /// by spelling once, at the first name that resolves to nothing on the spelling pass.
+    prelude_names: Option<SpellingIndex>,
+    /// Whether a name resolved to nothing on a pass that keeps no `value_names`: the unit is
+    /// resolved again with the index, for the menu of step L1.14a.
+    unresolved: bool,
     /// The or-patterns being walked, innermost last ([`OrPat`]).
     ors: Vec<OrPat>,
     /// The text of the `match` arm whose pattern is being walked, which the repair of an
@@ -1364,13 +1398,14 @@ impl Resolver<'_> {
                 return;
             }
         }
-        let v = self.visible.entry(name.into()).or_default();
-        if v.last().is_none_or(|b| b.level != level) {
-            v.push(Bound::new(level, kind, false));
+        let new = (self.visible.get(name).and_then(|v| v.last())).is_none_or(|b| b.level != level);
+        if new {
             self.scopes.last_mut().expect("a scope").push(name.into());
-            if kind.is_type() && !type_var_form(name) {
-                self.type_names.add(name, 1);
-            }
+            self.index_name(name, kind, 1);
+        }
+        let v = self.visible.entry(name.into()).or_default();
+        if new {
+            v.push(Bound::new(level, kind, false));
         }
         // Cannot fire: either `v.last()` was `Some` with this level, or a `Bound` was just
         // pushed. The `expect("a scope")` above: see [`Resolver::close`], at least two scopes
@@ -1448,9 +1483,7 @@ impl Resolver<'_> {
                 b.ids.push_back(id);
                 v.insert(pos, b);
                 self.scopes[level - 1].push(name.into());
-                if kind.is_type() && !type_var_form(name) {
-                    self.type_names.add(name, 1);
-                }
+                self.index_name(name, kind, 1);
             }
         }
         if level == IMPORTS {
@@ -1492,12 +1525,87 @@ impl Resolver<'_> {
         for name in self.scopes.pop().expect("an open scope") {
             let v = self.visible.get_mut(&name).expect("bound in the scope");
             let b = v.pop().expect("bound in the scope");
-            if self.out.binders[b.ids[0]].kind.is_type() && !type_var_form(&name) {
-                self.type_names.add(&name, -1);
-            }
             if v.is_empty() {
                 self.visible.remove(&name);
             }
+            self.index_name(&name, self.out.binders[b.ids[0]].kind, -1);
+        }
+    }
+
+    /// Adds `by` to the count of `name`, bound by a binder of kind `kind` as a scope opens or
+    /// closes, in the spelling index of its names: the type names', or, on the pass that keeps
+    /// one, the value names' ([`spelled_value`]).
+    fn index_name(&mut self, name: &str, kind: Kind, by: isize) {
+        if kind.is_type() {
+            if !type_var_form(name) {
+                self.type_names.add(name, by);
+            }
+        } else if let Some(ix) = &mut self.value_names
+            && spelled_value(kind, name)
+        {
+            ix.add(name, by);
+        }
+    }
+
+    /// The value name visible at `span` nearest in spelling to `n`, which resolves to nothing
+    /// there (step L1.14a; DESIGN.md sec:diagnostics, "Nearest in spelling"): of the value
+    /// names in scope and the prelude's that are one slip from `n` or equal to it once case
+    /// and underscores are folded, the first in name order that the use would then resolve to
+    /// ([`Resolver::resolves_at`]); none when no name is near, or on the pass that keeps no
+    /// index.
+    // Complexity tradeoff (as `Resolver::nearest`): a test of each of the K names in scope
+    // would cost O(K·L) a use and O(n²) for n unresolved uses among n names; the two indexes
+    // answer in O(L³) whatever K (`SpellingIndex::near_all`), and each name they return is
+    // then found in scope in O(1) expected. The prelude's index is built once, O(P·L²) for its
+    // P fixed names.
+    fn nearest_value(&mut self, n: &str, span: Span) -> Option<String> {
+        self.value_names.as_ref()?;
+        if self.prelude_names.is_none() {
+            let mut ix = SpellingIndex::default();
+            for &(w, layer) in WORDS {
+                if layer == 1 || w == "build" {
+                    ix.add(w, 1);
+                }
+            }
+            if let Some((_, exports)) = self.units.and_then(|u| u.prelude()) {
+                for name in exports.names() {
+                    ix.add(name, 1);
+                }
+            }
+            self.prelude_names = Some(ix);
+        }
+        let (Some(scope), Some(prelude)) = (&self.value_names, &self.prelude_names) else {
+            return None;
+        };
+        let mut near = scope.near_all(n);
+        near.extend(prelude.near_all(n));
+        // A `BTreeSet` iterates in name order, so the first that resolves is the one offered.
+        (near.into_iter())
+            .find(|c| self.resolves_at(c, span))
+            .map(str::to_string)
+    }
+
+    /// Whether `c`, written in place of the name at `span`, would resolve there to a value: a
+    /// binder in scope that is not declared below the use in its block, field list or
+    /// parameter list (which has the row "Name used above its definition"), and not a type, a
+    /// qualifier or a method; a definition of the prelude's unit that is not a type; or a
+    /// prelude word of this layer. These are the cases [`Resolver::name`] records as a use.
+    fn resolves_at(&self, c: &str, span: Span) -> bool {
+        match self.find(c) {
+            Some(Found::Bound(ids)) => {
+                let id = ids[0];
+                let b = &self.out.binders[id];
+                let inner = (self.visible.get(c))
+                    .and_then(|v| v.last())
+                    .is_some_and(|v| v.level > TOP && !v.imported);
+                let below = inner && b.span.start > span.start;
+                spelled_value(b.kind, c) && !self.dead.contains(&id) && !below
+            }
+            Some(Found::Unit(_)) => (self.units.and_then(|u| u.prelude()))
+                .and_then(|(_, exports)| exports.get(c))
+                .is_some_and(|e| !e.local && !e.kind.is_type() && e.kind != Kind::Unit),
+            Some(Found::Word(layer)) => layer == 1 || c == "build",
+            Some(Found::Ambiguous(..)) | None => false,
         }
     }
 
@@ -1884,7 +1992,7 @@ impl Resolver<'_> {
                     }) {
                         true => return self.errors.push(main_param_alone(name, span)),
                         false if self.prelude_broken(name, span) => return,
-                        false => undefined(name),
+                        false => return self.unresolved_name(name, span),
                     },
                 },
             };
@@ -1894,6 +2002,55 @@ impl Resolver<'_> {
             span,
             message,
             notes: Vec::new(),
+        });
+    }
+
+    /// The row "Name that resolves to nothing" (DESIGN.md sec:diagnostics, step L1.14a) for the
+    /// use of `name` at `span`: the scopes searched, in the order of resolution, at the
+    /// definition the use lies in; then, as its menu, the value name visible there nearest in
+    /// spelling ([`Resolver::nearest_value`]), as the line rewritten with it, and a definition
+    /// of the name. Each entry resolves the name: the nearest name is offered only when the use
+    /// would resolve to it, and a definition above the use resolves any name. The import entry
+    /// is step L2.12c. On the pass that keeps no spelling index the error has no notes, and the
+    /// unit is walked again with one ([`resolve_kept`]).
+    fn unresolved_name(&mut self, name: &str, span: Span) {
+        let mut notes = Vec::new();
+        if self.value_names.is_none() {
+            self.unresolved = true;
+        } else {
+            let note = |text: String| Note {
+                span,
+                text: text.into(),
+            };
+            let blocks = match self.scopes.len().saturating_sub(TOP) {
+                0 => String::new(),
+                1 => "the block around its use, then ".to_string(),
+                k => format!("the {k} blocks around its use, innermost first, then "),
+            };
+            notes.push(note(format!(
+                "`{name}` was looked for in {blocks}the unit's top level, its imports and the \
+                 prelude"
+            )));
+            if let Some(c) = self.nearest_value(name, span) {
+                notes.push(note(match self.text {
+                    Some(t) => {
+                        let (start, end) = zedc_base::source::line_bounds(t, span.start, span.end);
+                        let line = format!("{}{c}{}", &t[start..span.start], &t[span.end..end]);
+                        format!("repair: `{}`", line.trim())
+                    }
+                    None => format!("repair: write `{c}`"),
+                }));
+            }
+            notes.push(note(format!(
+                "repair: define `{name}` above its use, as `{name} = …;`"
+            )));
+        }
+        self.errors.push(Error {
+            row: None,
+            menu: String::new(),
+            span,
+            message: undefined(name),
+            notes,
         });
     }
 
@@ -5195,6 +5352,12 @@ fn ordinals(at: &[usize]) -> String {
 // collects every word is O(text), and each name is then one O(1) expected lookup.
 fn words(text: &str) -> HashSet<&str> {
     ident::names(text).map(|(_, w)| w).collect()
+}
+
+/// Whether a binder of kind `kind` named `name` is a value a use could be repaired to name
+/// (step L1.14a): not a type, a unit qualifier or a method, and a plain name, not a path.
+fn spelled_value(kind: Kind, name: &str) -> bool {
+    !kind.is_type() && !matches!(kind, Kind::Unit | Kind::Method) && !name.contains(['.', ':'])
 }
 
 /// The message for the use of `name`, which nothing in scope and nothing in the prelude defines.

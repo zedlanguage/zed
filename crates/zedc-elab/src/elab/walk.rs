@@ -2628,6 +2628,25 @@ impl<'a> Elab<'a> {
         Term::Let(g, Shared::new(f), Shared::new(t))
     }
 
+    /// `x.tag(#a)` (step L4.1, sec:order: "`tag` adjoins the atom as an outer key level"): the
+    /// family of the one entry `#a -> x`, whose keypaths are `(#a, k)` for the keypaths `k` of
+    /// `x`. A loose atom `x` passes through, as through every member call.
+    // Complexity tradeoff: O(1), one entry over `x` shared. The plan row's `reindex` sending
+    // each leaf `k` to `(#a, k)` gives the same family in O(n log n) for n leaves, and its key
+    // map, a tuple with a constant component, would need the tupling witness of the catalog.
+    fn tag_term(&mut self, x: Term, atom: Value) -> Term {
+        let xs = self.temp();
+        let tagged = Term::Prim(Prim::Entries, vec![Term::Lit(atom), Term::Var(xs.clone())]);
+        let body = Term::Match(
+            Shared::new(Term::Var(xs.clone())),
+            vec![
+                (KPattern::AnyAtom, Term::Var(xs.clone())),
+                (KPattern::Wild, tagged),
+            ],
+        );
+        Term::Let(xs, Shared::new(x), Shared::new(body))
+    }
+
     fn member_call(&mut self, m: &mut M<'a>, mb: Member<'a>, x: Term) {
         let Member {
             name,
@@ -2814,6 +2833,24 @@ impl<'a> Elab<'a> {
                         m.k(Frame::MemberEnd(wrap));
                         m.k(Frame::Zip(receiver));
                         m.stack.push(Job::Expr(y));
+                        return;
+                    }
+                    _ => {
+                        m.give(None);
+                        return;
+                    }
+                },
+                // `x.tag(#a)` (step L4.1, plan row TAG-run): the family `{#a -> x}`; the
+                // checker took only an atom written as the one argument.
+                Some(_) if name == "tag" => match call.positional {
+                    [a] if call.named.is_empty() && !call.curry => {
+                        let ExprKind::Atom(atom) = &a.kind else {
+                            m.give(None);
+                            return;
+                        };
+                        let t = self.tag_term(receiver, Value::atom(atom));
+                        m.k(Frame::MemberEnd(wrap));
+                        m.give(Some(t));
                         return;
                     }
                     _ => {

@@ -12041,6 +12041,52 @@ impl<'t, 'a> Ck<'t, 'a> {
                         m.ty(Ty::empty());
                     }
                 },
+                // `x.tag(#a)` (step L4.1, plan row TAG-run): `x` under the one outer key `#a`
+                // (sec:order, "`tag` adjoins the atom as an outer key level"), the family
+                // `{#a -> x}`, so its keypaths are `(#a, k)` for x's keypaths `k`. The atom is
+                // read from the text, where it is written: an atom passed as a value would
+                // bubble out of the call as a loose atom (sec:failure), so `tag` takes no
+                // other expression. A loose atom `x` passes through, as at every member call;
+                // any other value, an atom of a named family among them, is data and is
+                // tagged, so `tag` refuses no receiver. O(1) beyond the receiver's own check:
+                // the result's type holds `x`'s type shared, not copied.
+                Some(_) if name == "tag" => match (positional, named, curry) {
+                    ([a], [], false) if matches!(a.kind, ExprKind::Atom(_)) => {
+                        let ExprKind::Atom(atom) = &a.kind else {
+                            unreachable!("the guard matched an atom")
+                        };
+                        let (loose, data) = (x.ty.loose_ty(), x.ty.without_loose());
+                        m.ty(match data.is_empty() {
+                            // Only a loose atom reaches the call: nothing is tagged.
+                            true => loose,
+                            false => {
+                                let key = Ty::set(KType::atom(atom));
+                                loose.union(&display_ty(Display::Map, &[key, data]))
+                            }
+                        });
+                    }
+                    // A name written for the atom, `x.tag(k)`, is offered as the atom of its
+                    // spelling, `x.tag(#k)`; any other argument list has the headline's form only,
+                    // as no atom can be read from it. A name with a `'` spells no atom.
+                    _ => {
+                        let s = self.subject_text(Some(of.span));
+                        let repair = match (positional, named) {
+                            ([a], []) => match &a.kind {
+                                ExprKind::Name(k) if !k.contains('\'') => {
+                                    Some(format!("repair: write `{s}.tag(#{k})`"))
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        self.error_offering(
+                            span,
+                            format!("`tag` takes one atom, written by position, as `{s}.tag(#a)`"),
+                            repair,
+                        );
+                        m.ty(Ty::empty());
+                    }
+                },
                 // `.count`, `.first` and `.last` (plan row FP-ops-run), built in as `map` is.
                 Some(_) if matches!(name, "count" | "first" | "last") => {
                     match (positional, named, curry) {
@@ -16248,6 +16294,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.classes[a].rank == self.classes[b].rank {
             self.classes[root].rank += 1;
         }
+        // The child's variables now read the root's type and level, which no bound of
+        // [`Ck::lowered`] counted if the root has no type and the child had one or a lower
+        // level.
+        if self.classes[root].resolved.is_none()
+            && (self.classes[child].resolved.is_some()
+                || self.classes[root].level > self.classes[child].level)
+        {
+            self.lowered_epoch += 1;
+        }
         self.classes[child].parent = root;
         self.log_class(child, root);
         self.classes[root].size += self.classes[child].size;
@@ -16600,6 +16655,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let narrowed_to = std::mem::take(&mut self.classes[child].narrowed_to);
         let narrows = self.classes[child].narrows;
         let size = self.classes[child].size;
+        // A variable of a solved class under a root with no type is in play again, at a
+        // level no bound of [`Ck::lowered`] counted.
+        if self.classes[child].resolved.is_some() && self.classes[root].resolved.is_none() {
+            self.lowered_epoch += 1;
+        }
         self.classes[child].parent = root;
         self.log_class(child, root);
         let c = &mut self.classes[root];
@@ -16676,12 +16736,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         c.mask = m;
         c.level = c.level.min(level);
         if lowered {
-            let mut vars = Vars::default();
-            for (_, n) in &self.classes[root].uses {
-                n.vars_in(&mut vars);
-            }
             let level = self.classes[root].level;
-            self.lower(vars.order, level);
+            self.lower_uses(root, level);
         }
         for (n, v) in &cross {
             self.check_on(n, &v.ty, v.at, Some(v));
@@ -16874,9 +16930,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 })
                 .collect();
         }
-        let mut vars = Vars::default();
-        need.vars_in(&mut vars);
-        self.lower(vars.order, level);
+        self.lower_need(&need, level);
         let flowed = self.classes[r].flowed.clone();
         self.touch(r);
         self.needs += 1;
@@ -16929,10 +16983,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             alike: Arc::from([]),
             via: self.passed_on(),
         };
-        let mut vars = Vars::default();
-        need.vars_in(&mut vars);
         let level = self.classes[r].level;
-        self.lower(vars.order, level);
+        self.lower_need(&need, level);
         self.touch(r);
         let class = &mut self.classes[r];
         if let NeedKind::Order { other: old, .. } = &mut class.uses[i].1.kind {
@@ -30782,6 +30834,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut out = Ty::empty();
         for (alive, dyn_, at, path) in &states {
             let shown = |ck: &Self| {
+                // A trial's message is never read ([`Ck::message_of`]).
+                if ck.trying {
+                    return String::new();
+                }
                 // Two carriers held whole beside a read argument: the message shows the
                 // carriers ([`Self::shown_whole`]).
                 if let Some(whole) = ck.shown_whole(sig, args) {

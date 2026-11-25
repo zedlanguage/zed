@@ -422,13 +422,15 @@ unsafe fn code_functions(code: *const u8) -> Vec<zed_rt::code::Function> {
 
 /// Defines, in `m`, the data `data`, the table of the program's code `code` ([`define_code`])
 /// and a C `main(argc, argv)` that returns `zed_main(argc, argv, data, its length, root,
-/// the table)`.
+/// the table)`, and gives `main`'s code: its length and, when `unwind`, its call frame
+/// information, for [`crate::dwarf::eh_frame`].
 pub(crate) fn define_main<M: Module>(
     m: &mut M,
     root: FuncId,
     data: &[u8],
     code: &[Code],
-) -> Result<(), String> {
+    unwind: bool,
+) -> Result<Code, String> {
     let err = |e: cranelift_module::ModuleError| crate::bug::bug(e);
     let at = m
         .declare_data("zed_program", Linkage::Local, false, false)
@@ -475,8 +477,19 @@ pub(crate) fn define_main<M: Module>(
         b.finalize(m.isa().frontend_config());
     }
     m.define_function(main, &mut ctx).map_err(err)?;
+    let c = (ctx.compiled_code()).ok_or_else(|| crate::bug::bug("`main` compiled to no code"))?;
+    let unwind = match unwind {
+        true => c.create_unwind_info(m.isa()).map_err(crate::bug::bug)?,
+        false => None,
+    };
+    let main = Code {
+        id: main,
+        len: c.code_info().total_size,
+        nodes: Vec::new(),
+        unwind,
+    };
     m.clear_context(&mut ctx);
-    Ok(())
+    Ok(main)
 }
 
 /// The runtime's start: runs the program in the `len` bytes at `data` on the command line

@@ -21,5 +21,6 @@ mod moves;
 mod recursion;
 mod rules;
 mod source;
+mod tag;
 #[cfg(target_os = "linux")]
 mod three_way;

@@ -3,6 +3,7 @@
 //! `where` and its body, and a name nothing binds is reported there as anywhere else.
 
 use super::{alone, describe, errors};
+use zed_tests::undefined_noted;
 
 #[test]
 fn the_operator_of_a_reduction_is_resolved() {
@@ -11,26 +12,27 @@ fn the_operator_of_a_reduction_is_resolved() {
     assert_eq!(describe(text, &alone(text), "max", 0), ["prelude max"]);
     assert_eq!(
         errors("f(xs) = xs >< maks;\n"),
-        ["`maks` is not defined. [maks]"]
+        [undefined_noted("maks", 1, None)]
     );
 }
 
 #[test]
 fn a_name_inside_a_display_range_or_test_is_resolved() {
-    for (text, name) in [
-        ("f(a) = [a, b];\n", "b"),
-        ("f(a) = {a, b};\n", "b"),
-        ("f(a) = {a -> b};\n", "b"),
-        ("f(a) = {b -> a};\n", "b"),
-        ("f(n) = 0..<m;\n", "m"),
-        ("f(n) = m..=n;\n", "m"),
-        ("f(x) = x in s;\n", "s"),
-        ("f(x) = s not in x;\n", "s"),
-        ("f(x) = s::len;\n", "s"),
+    // Each with the visible name one slip away that comes first in name order.
+    for (text, name, near) in [
+        ("f(a) = [a, b];\n", "b", "a"),
+        ("f(a) = {a, b};\n", "b", "a"),
+        ("f(a) = {a -> b};\n", "b", "a"),
+        ("f(a) = {b -> a};\n", "b", "a"),
+        ("f(n) = 0..<m;\n", "m", "f"),
+        ("f(n) = m..=n;\n", "m", "f"),
+        ("f(x) = x in s;\n", "s", "f"),
+        ("f(x) = s not in x;\n", "s", "f"),
+        ("f(x) = s::len;\n", "s", "f"),
     ] {
         assert_eq!(
             errors(text),
-            [format!("{} [{name}]", zed_tests::undefined(name))],
+            [undefined_noted(name, 1, Some(near))],
             "{text}"
         );
     }
@@ -47,7 +49,7 @@ fn a_sort_key_is_resolved() {
     assert_eq!(describe(text, &alone(text), "x", 1), ["param x"]);
     assert_eq!(
         errors("g(k) = k;\nf(x) = g(asc y);\n"),
-        ["`y` is not defined. [y]"]
+        [undefined_noted("y", 1, Some("f"))]
     );
 }
 
@@ -62,14 +64,15 @@ fn a_for_binds_its_pattern_in_its_where_and_body_only() {
     // The source is read outside the pattern's scope, and the pattern binds nothing after it.
     assert_eq!(
         errors("f() = for v in v { v };\n"),
-        ["`v` is not defined. [v]"]
+        [undefined_noted("v", 1, Some("f"))]
     );
     assert_eq!(
         errors("f(m) = for k -> _ in m { k };\ng() = k;\n"),
-        ["`k` is not defined. [k]"]
+        [undefined_noted("k", 1, Some("f"))]
     );
+    // Three blocks: the brace of the body, the pattern's scope and the parameters'.
     assert_eq!(
         errors("f(m) = for v in m { w };\n"),
-        ["`w` is not defined. [w]"]
+        [undefined_noted("w", 3, Some("f"))]
     );
 }

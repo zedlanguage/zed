@@ -329,7 +329,13 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
     (
         "README.md [Grouping] 1",
         3,
-        "line 2: `users` is not defined.",
+        concat!(
+            "line 2: `users` is not defined.\n",
+            "  [1] 2:10: `users` was looked for in the unit's top level, its imports and the prelude\n",
+            "      2 | byCity = users.group(u -> u.city);      // City ->? (UserId -> User)\n",
+            "        |          ^^^^^\n",
+            "  [2] 2:10: repair: define `users` above its use, as `users = …;`"
+        ),
     ),
     (
         "README.md [Remapping] 1",
@@ -339,7 +345,13 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
     (
         "README.md [Remapping] 2",
         6,
-        "line 2: `revenue` is not defined.",
+        concat!(
+            "line 2: `revenue` is not defined.\n",
+            "  [1] 2:9: `revenue` was looked for in the unit's top level, its imports and the prelude\n",
+            "      2 | bySku = revenue as (region -> year -> sku -> amount) into (sku -> region -> year -> amount);\n",
+            "        |         ^^^^^^^\n",
+            "  [2] 2:9: repair: define `revenue` above its use, as `revenue = …;`"
+        ),
     ),
     (
         "README.md [Vectors and matrices] 1",
@@ -479,7 +491,14 @@ fn the_variant_pins_hold_when_lines_are_added_above_and_change_when_a_fence_does
         .iter_mut()
         .find(|(key, n, _)| key == "README.md [Grouping] 1" && *n == 3)
         .expect("README.md [Grouping] 1 has a pinned variant at line 3");
-    assert_eq!(grouping.2, "line 2: `users` is not defined.");
-    grouping.2 = "line 2: `members` is not defined.".to_string();
+    assert!(grouping.2.starts_with("line 2: `users` is not defined.\n"));
+    grouping.2 = concat!(
+        "line 2: `members` is not defined.\n",
+        "  [1] 2:10: `members` was looked for in the unit's top level, its imports and the prelude\n",
+        "      2 | byCity = members.group(u -> u.city);      // City ->? (UserId -> User)\n",
+        "        |          ^^^^^^^\n",
+        "  [2] 2:10: repair: define `members` above its use, as `members = …;`"
+    )
+    .to_string();
     assert_eq!(variant_outcomes(&changed, &table), want);
 }

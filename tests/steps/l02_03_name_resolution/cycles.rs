@@ -644,7 +644,13 @@ fn names_brought_in_on_a_cycle_are_bound_and_other_imports_are_still_checked() {
         m[1].starts_with("report.zed:1:1: the unit `stock` defines no `refund`"),
         "{m:?}"
     );
-    assert_eq!(m[2], "report.zed:2:22: `missing` is not defined.");
+    assert_eq!(
+        m[2],
+        "report.zed:2:22: `missing` is not defined.\n  [1] 2:22: `missing` was looked for in the \
+         unit's top level, its imports and the prelude\n      2 | shown = reserve(1) + \
+         missing;\n        |                      ^^^^^^^\n  [2] 2:22: repair: define `missing` \
+         above its use, as `missing = …;`"
+    );
     assert!(
         m[3].starts_with("stock.zed:2:1: the unit `tax` defines no `levy`"),
         "{m:?}"

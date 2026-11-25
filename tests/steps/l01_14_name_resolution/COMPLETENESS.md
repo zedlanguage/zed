@@ -42,6 +42,11 @@ is listed below with the group that covers it or the reason none is needed.
 | `main` in scope, neither a value nor called (A68) | complete.rs `main_is_in_scope_but_neither_a_value_nor_called` | |
 | Corpus fences, one or several programs | fences.rs (6 tests) | |
 | Depth and width at small sizes | scaling.rs `nested_blocks_and_overloads_resolve_at_small_sizes`, `each_deep_shape_resolves_at_small_depths` | |
+| Name that resolves to nothing (step L1.14a): the scopes searched; the nearest visible value name as the line rewritten; a definition; none near offers only the definition | spelling.rs `a_misspelled_parameter_offers_the_parameter`, `a_name_with_none_near_offers_only_a_definition`, `a_name_in_an_inner_block_names_the_blocks_searched` | |
+| ... folded case and underscores; first of two in name order; a prelude word | spelling.rs `a_name_equal_once_case_and_underscores_are_folded_is_offered`, `of_two_names_one_slip_away_the_first_in_name_order_is_offered`, `a_prelude_word_is_offered` | |
+| ... a name below the use, or bound only in a caller, is not offered; each repair resolves; batch and single file agree | spelling.rs `a_name_defined_below_its_use_in_a_block_is_not_offered`, `a_name_bound_only_in_a_caller_is_not_offered`, `batch_and_single_file_output_agree` | |
+| ... n misspelled uses among n names, linear | spelling.rs `misspelled_uses_among_many_names_offer_each_its_name`; bench/spelling.rs `misspelled_uses_scale` | |
+| ... the import entry | none | Step L2.12c |
 | Imports, qualified names, aliases, ambiguity | l02_03_name_resolution imports.rs, complete.rs | Layer L2.3 |
 | Ambiguous qualifier or alias: repair names a member the unit lacks | l02_03_name_resolution ambiguous_qualifier.rs | Row FAIL-ambiguous-qualifier-repair, fixed |
 | Structs, methods, type parameters, match arms | l02_03_name_resolution binders.rs | Layer L2 |

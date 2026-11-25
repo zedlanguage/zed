@@ -91,7 +91,12 @@ fn every_unit_but_the_prelude_and_what_it_reaches_sees_the_prelude_unit() {
     assert_eq!(use_of(&p, "main", "double", 0), ["std.prelude.double"]);
     assert_eq!(
         mistakes(&p),
-        ["std/math.zed:2:11: `double` is not defined."]
+        [
+            "std/math.zed:2:11: `double` is not defined.\n  [1] 2:11: `double` was looked for in \
+             the block around its use, then the unit's top level, its imports and the prelude\n      \
+             2 | half(x) = double(x) / 4;\n        |           ^^^^^^\n  [2] 2:11: repair: \
+             define `double` above its use, as `double = …;`"
+        ]
     );
 }
 

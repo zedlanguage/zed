@@ -9,6 +9,7 @@ mod fences;
 mod order;
 pub(crate) mod scaling;
 mod scopes;
+mod spelling;
 
 use zedc::ast::{Stmt, unit};
 use zedc::lex::lex_fence;

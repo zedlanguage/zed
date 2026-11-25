@@ -6,3 +6,4 @@ mod above;
 mod deep;
 mod fences;
 mod scaling;
+mod spelling;

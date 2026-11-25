@@ -4,7 +4,9 @@
 
 use zed_tests::scaling;
 
-use super::super::deep_scaling::{bit_words, checks_written, curried_type, nested_around};
+use super::super::deep_scaling::{
+    bit_words, checks_written, curried_type, lambdas_needing_lambdas, nested_around,
+};
 use super::super::scaling::resolved;
 
 /// Checks each program of `shapes` on a 2 MiB stack, `n` deep and `8n` deep, and checks the
@@ -112,6 +114,25 @@ fn tuples_nested_8000_deep_check_in_linear_time() {
     // a walk of the components at each level, so the time grew as n^2 and more (CHK-tuple). A
     // tuple shape now keeps those facts (`ty::Row`).
     checks_linear("nested tuples", 1_000);
+}
+
+/// Besides its ratio: no type error. Small instance:
+/// `deep_scaling::lambdas_needing_lambdas_a_few_deep_check`.
+#[test]
+fn lambdas_needing_lambdas_check_in_linear_time() {
+    // Each need made in a lambda lowered the classes of the variables it holds to the lambda's
+    // level by a walk of every signature it holds, the signatures of the lambdas nested inside
+    // included, though their own variables were solved by then: `O(n^2)` in all, `Ck::need`
+    // 15 times the instructions at 4 times the depth (11.2M at 40 deep, 168M at 160, callgrind,
+    // 2026-11-25). A lowering now passes over each signature whose classes are at or below the
+    // level (`Ck::lowered`; Rémy 1992, Kiselyov 2013).
+    zed_tests::deep::on_small_stack(|| {
+        let units = resolved(100, lambdas_needing_lambdas);
+        scaling::check_order("n lambdas each needing the one inside it", 100, 1, |n| {
+            let info = units[&n].check();
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        });
+    });
 }
 
 #[test]
