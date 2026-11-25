@@ -598,7 +598,17 @@ fn pull_back(rows: &[DefRow<'_>], i: usize, v: ResidueSet) -> Option<(Int, Resid
 /// of this file and the two files form no import cycle (test `s_01f_import_graph`). The period
 /// sweep (`sweep.rs`) is the next fallback, written there for the same reason.
 pub(crate) fn solve_modular_or_scaled(f: &Formula, want_model: bool) -> Option<Option<Model>> {
-    solve_modular(f, want_model).or_else(|| solve(f, want_model))
+    solve_modular_or_scaled_then(f, want_model, &|_, _| None)
+}
+
+/// [`solve_modular_or_scaled`], with `after` asked for the rewritten formula where
+/// [`solve_modular_whole`] declines it ([`solve_then`]).
+pub(super) fn solve_modular_or_scaled_then(
+    f: &Formula,
+    want_model: bool,
+    after: &dyn Fn(&Formula, bool) -> Option<Option<Model>>,
+) -> Option<Option<Model>> {
+    solve_modular(f, want_model).or_else(|| solve_then(f, want_model, after))
 }
 
 /// A point of `f` found by [`solve_modular_or_scaled`], or `None` when `f` has no point or lies
@@ -651,6 +661,32 @@ pub(crate) fn point_by_structure(f: &Formula) -> Option<Model> {
 // rewrite grew 48.6 times (35,215 to 1,712,893 characters at depth 200 and 1,600). Chains need
 // a method that does not go through residues of `x` (row PRES-nested-quotient-residues).
 pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
+    solve_then(f, want_model, &|_, _| None)
+}
+
+/// [`solve`], with `after` asked for the rewritten formula where [`solve_modular_whole`]
+/// declines it; `after`'s answer stands for the rewritten formula's, so it must be exact
+/// (`Some(None)` only when that formula has no point). The period sweep passes itself here
+/// (`sweep::solve_modular_scaled_or_swept`), so that this file names nothing of `sweep.rs`
+/// (test `s_01f_import_graph`).
+// Why (FAIL-scaled-sums-shadows-17188562069844507270, traced by probes on job k4 of
+// b22-band4): `solve_modular_whole` folds the formula into clauses of residues of `x`, and
+// `fold_or` declines a disjunction of two or more parts of which one folds to two or more
+// clauses (its comment: they would multiply out, 2^k clauses for k parts). Seed case 48 rewrites
+// to `!(A && B) && ...`, with `A` and `B` disjunctions of literals on the remainders of `x` by 12
+// and 24, so `!A || !B` has two parts of two clauses each (one per modulus), and the fold
+// declines. The rewritten formula's rows are all on `x` and its other constraints name only
+// remainders, the shape of the period sweep (Lemma C of `sweep.rs`), which decides it over one
+// period, 24, of the moduli. The sweep was asked before only for `f` itself, whose sums of
+// quotients are outside its shape.
+// Complexity tradeoff: `after` runs only where the fold declines, so every formula decided
+// before is decided by the same steps; the sweep's own cost and limit (its switchover) are
+// stated in `sweep.rs`. Test: `tests::seed_17188562069844507270_case_48_is_decided`.
+pub(super) fn solve_then(
+    f: &Formula,
+    want_model: bool,
+    after: &dyn Fn(&Formula, bool) -> Option<Option<Model>>,
+) -> Option<Option<Model>> {
     let mut top: Vec<&Con> = Vec::new();
     let mut clauses: Vec<&Formula> = Vec::new();
     for g in f.conjunct_list().iter() {
@@ -910,7 +946,8 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         parts.push(Formula::Con(Con::ge(&Lin::constant(n - &Int::ONE), &s)));
     }
     let rewritten = Formula::and(parts);
-    let found = solve_modular_whole(&rewritten, want_model)?;
+    let found =
+        solve_modular_whole(&rewritten, want_model).or_else(|| after(&rewritten, want_model))?;
     let Some(point) = found else {
         return Some(None);
     };

@@ -749,6 +749,92 @@ fn seed_3730609663341733710_case_223_is_decided() {
     check_answered(&f, true, "seed 3730609663341733710 case 223");
 }
 
+/// Seed 17188562069844507270 case 48 of [`sums_of_quotients_match_enumeration`] (row
+/// FAIL-scaled-sums-shadows-17188562069844507270). It has no point: its literals force
+/// `r3` in `{1, 2}`, `r2` in `{1, ..., 5}` and `r0 != 2`, and its rows then leave `r0` in
+/// `{0, 3}` with `r3 = 1`, where each makes `r2` a multiple of 6.
+fn case_48() -> Formula {
+    let c = Lin::constant;
+    let eq = |a: &Lin, b: &Lin| Formula::Con(Con::eq(a, b));
+    let ge = |a: &Lin, b: &Lin| Formula::Con(Con::ge(a, b));
+    let d = |a, k, m| Div {
+        t: 0,
+        a,
+        k,
+        m,
+        fixed: None,
+    };
+    let divs = vec![d(9, 10, 4), d(-3, 1, 2)];
+    let sums = vec![
+        Sum {
+            parts: vec![(1, -4), (3, -3)],
+            k: 1,
+            m: 6,
+            rem: true,
+        },
+        Sum {
+            parts: vec![(2, -4), (1, -3)],
+            k: 1,
+            m: 3,
+            rem: true,
+        },
+    ];
+    let lits = vec![
+        Formula::negate(Formula::and(vec![eq(&r(0), &c(2)), ge(&r(1), &c(0))])),
+        Formula::negate(Formula::and(vec![
+            Formula::or(vec![ge(&c(0), &r(3)), ge(&c(0), &r(2))]),
+            Formula::or(vec![ge(&c(1), &r(3)), eq(&r(2), &c(0))]),
+        ])),
+    ];
+    formula(&divs, Formula::and(lits), sum_formulas(&divs, &sums))
+}
+
+/// Red before [`solve_then`] took a fallback: `decide` refused with `Shadows`. The formula
+/// rewritten into residues of `x` is `!(A && B)` with `A` and `B` disjunctions over the
+/// remainders of `x` by 12 and 24, which `solve_modular_whole` declines (`fold_or`), and the
+/// sums of quotients keep `f` itself outside the period sweep's shape; the sweep of the
+/// rewritten formula answers.
+#[test]
+fn seed_17188562069844507270_case_48_is_decided() {
+    check_answered(&case_48(), false, "seed 17188562069844507270 case 48");
+}
+
+/// The shape of case 48 with a point: `!((r0 >= 6 || r1 >= 12) && (r0 <= 5 || r1 <= 11))` over
+/// `5 x mod 12` and `5 x mod 24`, whose rewrite `solve_modular_whole` declines as it does case
+/// 48's (each negated disjunction folds to one clause per modulus). [`solve_then`] with the
+/// period sweep as its fallback must answer, with a point of `f` rebuilt from `x`, and agree
+/// with enumeration over one period, 24.
+#[test]
+fn a_rewrite_the_fold_declines_is_swept() {
+    let c = Lin::constant;
+    let ge = |a: &Lin, b: &Lin| Formula::Con(Con::ge(a, b));
+    let d = |m| Div {
+        t: 0,
+        a: 5,
+        k: 0,
+        m,
+        fixed: None,
+    };
+    let divs = vec![d(12), d(24)];
+    let lits = Formula::negate(Formula::and(vec![
+        Formula::or(vec![ge(&r(0), &c(6)), ge(&r(1), &c(12))]),
+        Formula::or(vec![ge(&c(5), &r(0)), ge(&c(11), &r(1))]),
+    ]));
+    let f = formula(&divs, lits, Vec::new());
+    assert!(
+        has_point(&f, &divs, 0..24),
+        "no point in one period of\n{f}"
+    );
+    match solve_then(&f, true, &sweep::solve) {
+        Some(Some(m)) => assert!(f.holds(&m), "point {m:?} of\n{f}"),
+        other => panic!("answered {other:?} for\n{f}"),
+    }
+    assert_eq!(
+        solve_then(&f, false, &sweep::solve).map(|m| m.is_some()),
+        Some(true)
+    );
+}
+
 /// Seed 12744803785466090665 case 189 of [`sums_of_quotients_match_enumeration`] (row
 /// PRES-sum-of-quotients-shadows-random; found by b22-checkrest2 on main 090973b27). The
 /// general path asks again with its atoms renamed to `Sym`s, where `4 y + r == 5 x + 11`

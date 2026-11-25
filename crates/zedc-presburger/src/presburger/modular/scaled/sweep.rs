@@ -141,14 +141,16 @@ type TSet = Vec<(Option<Int>, Option<Int>)>;
 
 /// [`solve_modular_or_scaled`]'s answer to `f`, or, when it declines, the period sweep's
 /// ([`solve`]). The sweep runs only where both earlier solvers decline, so every formula they
-/// accept is answered as before. This fallback is written here, not in `scaled.rs`, so that
+/// accept is answered as before. It is asked first for the formula `scaled.rs` rewrote into
+/// residues of `x`, where `solve_modular_whole` declines that ([`super::solve_then`]), and then
+/// for `f`. This fallback is written here, not in `scaled.rs`, so that
 /// `scaled.rs` names nothing of this file and the two files form no import cycle (test
 /// `s_01f_import_graph`).
 pub(crate) fn solve_modular_scaled_or_swept(
     f: &Formula,
     want_model: bool,
 ) -> Option<Option<Model>> {
-    solve_modular_or_scaled(f, want_model).or_else(|| solve(f, want_model))
+    solve_modular_or_scaled_then(f, want_model, &solve).or_else(|| solve(f, want_model))
 }
 
 /// [`solve_by`] up to [`PERIOD_SWEEP_AFTER_REFUSAL_UNITS`] units, for a formula the general path
