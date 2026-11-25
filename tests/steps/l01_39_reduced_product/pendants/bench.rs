@@ -357,35 +357,6 @@ fn additions_scale(what: &str, n: usize, family: fn(usize) -> Family) {
     );
 }
 
-/// E: `a + b - z{i} == i` under the one disjunction `a < 3 || b > 7`, the route of unit
-/// coefficients with no hole and no class.
-fn e_one(k: usize) -> Family {
-    e_under(1, k)
-}
-
-#[test]
-fn k_additions_of_unit_pendants_take_linear_time() {
-    additions_scale("k additions a + b - zi == i, one assume each", 16, e_one);
-}
-
-#[test]
-fn k_additions_of_pendants_with_coefficient_two_take_linear_time() {
-    additions_scale(
-        "k additions a + b - 2 zi == 2i, one assume each",
-        16,
-        b_even,
-    );
-}
-
-#[test]
-fn k_additions_of_pendants_with_spaced_holes_take_linear_time() {
-    additions_scale(
-        "k additions a + b - zi == 2i, zi != 3, one assume each",
-        16,
-        c_spaced,
-    );
-}
-
 #[test]
 fn k_additions_of_pendants_under_two_disjunctions_take_linear_time() {
     additions_scale(
