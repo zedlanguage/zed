@@ -250,3 +250,94 @@ fn is_subset_of_joined_cuts_scales_with_the_gaps() {
         },
     );
 }
+
+/// The sets `{i, -i}` for `i` in `1..=n`, each built twice, its keys put in in both orders:
+/// `2n` sets in `n` classes of equal sets, every set of one sum of weights, as the weight of an
+/// `i64` is linear in it ([`Elem::weight`]): any two keys of one sum weigh alike.
+fn opposite_pairs(n: usize) -> Vec<TreapSet<i64>> {
+    (1..=n as i64)
+        .flat_map(|i| [[i, -i], [-i, i]])
+        .map(|keys| keys.into_iter().collect())
+        .collect()
+}
+
+/// FREE2-tables-hashcons-bench: [`HashConsTable::share`] of `2n` two-key sets of one sum, `n`
+/// distinct, each met twice. A table keyed by the sum alone keeps them in one bucket and scans
+/// it on each set put in, `O(n^2)`; keyed by a seeded sum, `O(n)` expected. The second set of
+/// each class is given the first's tree, which is checked after the run.
+#[test]
+fn sharing_sets_of_one_sum_scales() {
+    crate::scaling::check_order_fresh(
+        "HashConsTable::share of 2n sets {i, -i}, all of one sum",
+        20_000,
+        1,
+        |n, _| opposite_pairs(n),
+        |_, mut sets| {
+            let mut table = HashConsTable::default();
+            for s in &mut sets {
+                table.share(s);
+            }
+            for pair in sets.chunks(2) {
+                assert!(pair[0].ptr_eq(&pair[1]));
+            }
+            (table, sets)
+        },
+    );
+}
+
+/// The `x` whose [`crate::digest::step`]`(h, x)` is `z`: each step of the finalizer undone in
+/// turn, a xor with a right shift by `s` by `64 / s` more xors (each fixes `s` more high bits),
+/// a multiplication by an odd constant by its inverse modulo `2^64` (Newton's iteration, the
+/// correct low bits doubling from 3 at each of 5 steps).
+fn unstep(h: u64, z: u64) -> u64 {
+    let unshift = |y: u64, s: u32| (0..64 / s).fold(y, |x, _| y ^ (x >> s));
+    let inverse = |c: u64| {
+        (0..5).fold(c, |x: u64, _| {
+            x.wrapping_mul(2u64.wrapping_sub(c.wrapping_mul(x)))
+        })
+    };
+    let mut x = unshift(z, 31);
+    x = unshift(x.wrapping_mul(inverse(0x94d0_49bb_1331_11eb)), 27);
+    x = unshift(x.wrapping_mul(inverse(0xbf58_476d_1ce4_e5b9)), 30);
+    x.wrapping_sub(0x9e37_79b9_7f4a_7c15) ^ h.rotate_left(29)
+}
+
+/// `n` sets of two integer literals `{a, b}`, `a` in `1..=n`, all of one sum of weights: the
+/// weight of `Int(a)` is a public bijection of `a` (`types::scalar`, `mix(1, a)`), so `b` is
+/// the integer whose weight is the sum less `a`'s, found by [`unstep`]. Each `b` is checked
+/// against its weight, and the sets are checked distinct.
+fn literal_pairs_of_one_sum(n: usize) -> Vec<TreapSet<crate::value::Value>> {
+    use crate::value::Value;
+    const SUM: u64 = 0x5eed_f00d_cafe_0001;
+    let sets: Vec<TreapSet<Value>> = (1..=n as i64)
+        .map(|a| {
+            let want = SUM.wrapping_sub(Value::Int(a).weight());
+            let b = unstep(1, want) as i64;
+            assert_eq!(Value::Int(b).weight(), want, "the weight of {b} inverted");
+            [Value::Int(a), Value::Int(b)].into_iter().collect()
+        })
+        .collect();
+    let distinct: std::collections::BTreeSet<Vec<Value>> =
+        sets.iter().map(|s| s.iter().cloned().collect()).collect();
+    assert_eq!(distinct.len(), n);
+    sets
+}
+
+/// FREE2-tables-hashcons-bench at the types: `n` types of two integer literals each, distinct
+/// and all of one sum of weights, made by [`crate::types::Type::ints_of`], whose `Type::new`
+/// puts each literal set in the thread's [`HashConsTable`] (TYPE-hashcons). With the table keyed
+/// by the sum alone, each type scans the types before it, `O(n^2)`.
+#[test]
+fn literal_types_of_one_sum_scale() {
+    crate::scaling::check_order_fresh(
+        "Type::ints_of of n distinct two-literal sets, all of one sum",
+        5_000,
+        1,
+        |n, _| literal_pairs_of_one_sum(n),
+        |_, sets| {
+            sets.into_iter()
+                .map(crate::types::Type::ints_of)
+                .collect::<Vec<_>>()
+        },
+    );
+}
