@@ -167,13 +167,18 @@ fn x_type(printed: &str) -> &str {
 /// accepted by a function whose parameter is written with the printed type of `x`. The printed
 /// type is syntax (it parses and checks as a written type), and it is the set of values calls
 /// accept. A `g` whose uses no value fits is rejected at its own body and prints no type for
-/// a call, so it is left out. Each run takes a new seed and prints it; `ZED_TEST_SEED=<seed>`
+/// a call, so it is left out, and functions are drawn until 40 are compared: a fixed 40 draws
+/// with at least 10 compared failed at seed 11005775722037183794, which drew only 9 accepted
+/// (FREE2-batch-b23). About one draw in five is accepted, so 1000 draws, about 9 s at most,
+/// hold 40 at any seed met. Each run takes a new seed and prints it; `ZED_TEST_SEED=<seed>`
 /// repeats it.
 #[test]
 fn random_printed_parameter_types_are_what_calls_accept() {
     let mut rng = Rng::new(seed("random_printed_parameter_types_are_what_calls_accept"));
     let mut compared = 0;
-    for _ in 0..40 {
+    let mut drawn = 0;
+    while compared < 40 && drawn < 1000 {
+        drawn += 1;
         let uses = 1 + rng.below(3);
         let mut defs = String::new();
         let mut body = Vec::new();
@@ -214,5 +219,5 @@ fn random_printed_parameter_types_are_what_calls_accept() {
         }
         compared += 1;
     }
-    assert!(compared >= 10, "only {compared} of 40 functions compared");
+    assert_eq!(compared, 40, "only {compared} functions compared in {drawn} draws");
 }
