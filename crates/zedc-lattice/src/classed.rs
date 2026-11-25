@@ -225,8 +225,38 @@ impl Classed {
     /// range of its own: the set zedc-presburger `project_each` gave before the class was
     /// kept. O(v) for v values.
     pub fn met(&self) -> IntervalSet {
+        match self.strided() {
+            Some(_) => IntervalSet::from_pieces(self.listed()),
+            None => self.ranges.clone(),
+        }
+    }
+
+    /// The pieces of the plain set ([`Classed::met`]), in order: the ranges where the class is
+    /// every integer, O(p), and otherwise each value, listed, O(v) for v values. For a reader
+    /// that needs the pieces themselves, as a test comparing two answers piece by piece.
+    // Complexity tradeoff: naive version, the pieces of `met()`, which builds the set's tree
+    // from the listed values and takes it apart again, O(v log v) with an allocation per
+    // node; it was 95% of the instructions of
+    // `s22::remainder_splits_at_their_corners_keep_their_preimages`, 15.8 s of its 20 s
+    // (plan row FAIL-s22-remainder-corners-under-load, callgrind on a VM, 2026-11-25). Used:
+    // the listed values themselves, O(v), since they are the tree's pieces already (proof at
+    // `listed`).
+    pub fn pieces(&self) -> std::vec::IntoIter<(End, End)> {
+        match self.strided() {
+            Some(_) => self.listed().into_iter(),
+            None => self.ranges.clone().into_pieces().into_iter(),
+        }
+    }
+
+    /// Each value of a strided set, as a piece of its own, in increasing order. O(v) for v
+    /// values. Proof that these are the pieces of the set they make
+    /// (`IntervalSet::from_pieces`), unmerged: the ranges are in order and disjoint, and the
+    /// values of one range rise by the modulus `m`, so the list is strictly increasing; any
+    /// two members lie in one class modulo `m > 1`, so two consecutive ones differ by `m` or
+    /// more, at least 2, and no two pieces touch.
+    fn listed(&self) -> Vec<(End, End)> {
         let Some((m, _)) = self.strided() else {
-            return self.ranges.clone();
+            unreachable!("only a strided set is listed")
         };
         let mut pieces = Vec::new();
         for (lo, hi) in self.ranges.pieces() {
@@ -239,14 +269,7 @@ impl Classed {
                 v = &v + m;
             }
         }
-        IntervalSet::from_pieces(pieces)
-    }
-
-    /// The pieces of the plain set ([`Classed::met`]), in order: the ranges where the class is
-    /// every integer, O(p), and otherwise each value, listed, O(v) for v values. For a reader
-    /// that needs the pieces themselves, as a test comparing two answers piece by piece.
-    pub fn pieces(&self) -> std::vec::IntoIter<(End, End)> {
-        self.met().into_pieces().into_iter()
+        pieces
     }
 
     /// The union. With one class, the union of the ranges in it; else the two sets listed

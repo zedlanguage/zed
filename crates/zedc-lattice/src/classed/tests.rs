@@ -194,3 +194,35 @@ fn the_one_form_is_the_same_with_and_without_the_shortcut() {
         "seed {seed}: {took} of {cases} took the shortcut"
     );
 }
+
+/// `Classed::pieces` lists exactly the pieces of `Classed::met`, in order, for strided and
+/// plain sets alike: the strided values it lists without building a set are already that
+/// set's pieces (proof at `Classed::listed`), 4 000 random cases, half of them with a class
+/// other than every integer (FAIL-s22-remainder-corners-under-load).
+#[test]
+fn the_pieces_are_those_of_the_set_listed() {
+    let (mut rng, seed) = Rng::fresh("the_pieces_are_those_of_the_set_listed");
+    let mut strided = 0;
+    for case in 0..4000 {
+        let c = match case % 2 {
+            0 => Classed::new(
+                random_set(&mut rng, true),
+                Congruence::new(rng.int(2, 5), rng.int(0, 4)),
+            ),
+            _ => Classed::plain(random_set(&mut rng, false)),
+        };
+        if c.strided().is_some() {
+            strided += 1;
+        }
+        let pieces: Vec<(End, End)> = c.pieces().collect();
+        assert_eq!(
+            pieces,
+            c.met().into_pieces(),
+            "seed {seed}, case {case}: {c:?}"
+        );
+    }
+    assert!(
+        strided >= 500,
+        "seed {seed}: {strided} of 4000 cases strided"
+    );
+}

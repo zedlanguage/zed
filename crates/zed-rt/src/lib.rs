@@ -12,6 +12,7 @@
 
 mod bug;
 pub mod close;
+pub mod code;
 pub mod heap;
 pub mod limits;
 mod line;

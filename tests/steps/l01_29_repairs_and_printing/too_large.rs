@@ -113,6 +113,46 @@ fn a_sum_that_writes_out_a_power_of_a_wide_base_is_rejected_with_its_least_size(
     }
 }
 
+/// `main` reading `k` from the input and, under `test`, writing whether `sum` is positive.
+fn k_sum(test: &str, sum: &str) -> String {
+    format!(
+        "main(m: MainArgs) {{\n    k = int(m.args[0] else #outOfBounds -> \"\") else \
+         #invalid -> 0;\n    m.stdout <- if {test} {{ String({sum} > 0) }} else {{ \"\" }};\n}}\n"
+    )
+}
+
+#[test]
+fn a_sum_beside_an_int_bounded_away_from_0_is_rejected() {
+    // Plan row CONST-build-typed-operands: `k` comes from the input, but in `1..=5` (or
+    // `-5..=-1`) it shares at most `2^2` with `2^(2^70)`, so the sum writes out at least
+    // `2^70 - 21` bits whatever `k` is (`Rat::sum_least_beside`). Before, it compiled and the
+    // run stopped with "Number too large for memory".
+    for (test, sum) in [
+        ("k >= 1 && k <= 5", "2^(2^70) + k"),
+        ("k >= 1 && k <= 5", "k + 2^(2^70)"),
+        ("k >= -5 && k <= -1", "2^(2^70) - k"),
+        ("k >= 1 && k <= 5", "3^(2^70) + k"),
+    ] {
+        let out = rejected(&k_sum(test, sum));
+        assert!(
+            out.contains(&format!(
+                "Number too large for any memory of the target: `{sum}` needs at least"
+            )) && out.contains("or let `k` be 0 here"),
+            "{sum}:\n{out}"
+        );
+    }
+    // Where `k` may be 0 the sum may be `2^(2^70)` itself, which builds nothing; where `k`
+    // has no bound it may share any power of 2; a fixed power of `2^60` bits is within the
+    // address space: all are left to the run.
+    for (test, sum) in [
+        ("k >= 0 && k <= 5", "2^(2^70) + k"),
+        ("k >= 1", "2^(2^70) + k"),
+        ("k >= 1 && k <= 5", "2^(2^60) + k"),
+    ] {
+        assert_eq!(built(&k_sum(test, sum)), None, "{test}: {sum}");
+    }
+}
+
 #[test]
 fn a_power_in_a_branch_not_taken_is_rejected() {
     // A100's third program, printed and summed: the bound holds whether or not the branch
@@ -1098,5 +1138,23 @@ fn chains_and_lists_past_the_address_space() {
         rejected_times(&product_chain(n), n);
         rejected_times(&rat_product_chain(n), 2 * n);
         rejected_times(&kept_sums(n), n);
+        rejected_times(&bounded_sums(n), n);
     }
+}
+
+/// `n` bindings, each a kept power and, under a test that bounds `k` from the input to
+/// `1..=5`, its sum with `k`, past the address space (plan row CONST-build-typed-operands).
+pub(super) fn bounded_sums(n: usize) -> String {
+    let body: String = (0..n)
+        .map(|i| {
+            format!(
+                "  x{i} = 2^(2^70 + {i});\n  \
+                 y{i} = if k >= 1 && k <= 5 {{ x{i} + k }} else {{ 0 }};\n"
+            )
+        })
+        .collect();
+    format!(
+        "main(m: MainArgs) {{\n  k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> \
+         0;\n{body}}}\n"
+    )
 }

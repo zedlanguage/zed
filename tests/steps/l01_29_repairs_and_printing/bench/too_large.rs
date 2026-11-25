@@ -4,8 +4,8 @@
 use zed_tests::scaling;
 
 use crate::too_large::{
-    built, chain, coprime_fourth_powers, even_chain, exponent, kept_sums, powers, product_chain,
-    rat_product_chain, rejected_times,
+    bounded_sums, built, chain, coprime_fourth_powers, even_chain, exponent, kept_sums, powers,
+    product_chain, rat_product_chain, rejected_times,
 };
 
 /// Checks that rejecting `make(n)`, with `per * n` rejections, scales as a pass of order n.
@@ -60,6 +60,18 @@ fn bounding_a_chain_of_rat_products_scales() {
         200,
         2,
         rat_product_chain,
+    );
+}
+
+#[test]
+fn judging_many_sums_beside_a_bounded_int_scales() {
+    // Plan row CONST-build-typed-operands: one bound per sum, O(primes kept), and one read of
+    // `k` under each arm's test: O(n) in all, and `n` rejections.
+    rejecting(
+        "n kept powers and n sums with an int bounded away from 0, each sum rejected",
+        800,
+        1,
+        bounded_sums,
     );
 }
 

@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Value, World};
+use zed_rt::code::CodeMap;
 use zed_rt::{Stack, Stats, Word};
 
 use crate::hooks;
@@ -32,10 +33,14 @@ pub struct Outcome {
 /// Runs the generated code entered at `root`, made from the tables `t`, the kernel in `ev`
 /// running the nodes the runtime does not: the JIT's way and a linked executable's. An error
 /// comes with the number of the node that raised it, when a node did (plan row RT-sites).
+/// With `code`, the map of the code, a fault in it that no rule of the language explains
+/// stops the process as a bug in zedc (plan row RT-internal-fault): an executable's way. The
+/// JIT runs inside a test's process, whose own faults that handler must not take.
 pub(crate) fn call(
     t: Arc<Tables>,
     root: extern "C" fn() -> Word,
     ev: &mut Evaluator,
+    code: Option<&CodeMap<'_>>,
 ) -> Result<Outcome, (String, Option<usize>)> {
     // Generated code recurses on the machine stack once per Zed call and keeps a function's
     // words in its frame, so it runs on a stack as large as memory (COMPLEXITY.md R10), mapped
@@ -43,7 +48,18 @@ pub(crate) fn call(
     let stack = Stack::new().map_err(|e| (e, None))?;
     let taken = std::mem::replace(ev, Evaluator::new(World::new()));
     hooks::install(hooks::State::new(t, taken));
-    let w = stack.run(root);
+    let w = match code {
+        Some(map) => stack.run_mapped(map, root),
+        None => Ok(stack.run(root)),
+    };
+    let w = match w {
+        Ok(w) => w,
+        // The system refused a handler: nothing ran, and the evaluator goes back to `ev`.
+        Err(e) => {
+            *ev = hooks::remove().run.ev;
+            return Err((e, None));
+        }
+    };
     drop(stack);
     let mut s = hooks::remove();
     let r = hooks::finish(&s.t, &mut s.run, w);

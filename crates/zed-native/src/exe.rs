@@ -23,7 +23,7 @@ use std::sync::Arc;
 use cranelift_codegen::ir::types::I32;
 use cranelift_codegen::ir::{AbiParam, InstBuilder};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_module::{DataDescription, FuncId, Linkage, Module};
+use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 
 use zedc::address::ContentAddress;
 use zedc::run::Ports;
@@ -35,6 +35,7 @@ use zed_kernel::limits::MainLimits;
 use zed_kernel::sites::Span;
 use zed_rt::Word;
 
+use crate::codegen::Code;
 use crate::tables::Tables;
 
 /// The program an executable runs: what its data holds, decoded and legalized.
@@ -333,9 +334,101 @@ pub fn check_command(args: &[String], stderr: &mut dyn std::io::Write) -> u8 {
     }
 }
 
-/// Defines, in `m`, the data `data` and a C `main(argc, argv)` that returns
-/// `zed_main(argc, argv, data, its length, root)`.
-pub(crate) fn define_main<M: Module>(m: &mut M, root: FuncId, data: &[u8]) -> Result<(), String> {
+/// The bytes of one function's entry in the table of the program's code ([`define_code`]).
+const FUNCTION_BYTES: usize = 32;
+
+/// The bytes of one range of a node's code in that table.
+const RANGE_BYTES: usize = 12;
+
+/// Defines, in `m`, the table `zed_code` of the program's code, for the map of a fault to the
+/// node whose code it is in (plan row RT-internal-fault): the number of functions in 8 bytes,
+/// then for each its address (relocated by the linker), its length, the index of its first
+/// range and its number of ranges, 8 bytes each; then each range as its start and end, offsets
+/// in the function, and the node's number, 4 bytes each. All numbers little end first, as
+/// the hosts zedc builds for are (x86_64 and AArch64 Linux). Read by [`code_functions`].
+// Complexity tradeoff: O(f + r) bytes for f functions and r ranges, a table beside the code
+// as DWARF's line table is (DWARF 5, section 6.2), not delta coded, since the graph's data
+// already costs O(n) bytes; the ranges only, not the lines and columns, which the handler
+// finds at a fault from the sites the data holds. Test:
+// `l01_36a_executables::internal_fault`.
+fn define_code<M: Module>(m: &mut M, code: &[Code]) -> Result<DataId, String> {
+    let err = |e: cranelift_module::ModuleError| crate::bug::bug(e);
+    let ranges: usize = code.iter().map(|c| c.nodes.len()).sum();
+    let mut bytes = Vec::with_capacity(8 + FUNCTION_BYTES * code.len() + RANGE_BYTES * ranges);
+    bytes.extend_from_slice(&(code.len() as u64).to_le_bytes());
+    let mut first = 0u64;
+    for c in code {
+        let n = c.nodes.len() as u64;
+        for x in [0, u64::from(c.len), first, n] {
+            bytes.extend_from_slice(&x.to_le_bytes());
+        }
+        first += n;
+    }
+    for &(s, e, k) in code.iter().flat_map(|c| &c.nodes) {
+        for x in [s, e, k] {
+            bytes.extend_from_slice(&x.to_le_bytes());
+        }
+    }
+    let at = m
+        .declare_data("zed_code", Linkage::Local, false, false)
+        .map_err(err)?;
+    let mut d = DataDescription::new();
+    d.define(bytes.into());
+    d.set_align(8);
+    for (i, c) in code.iter().enumerate() {
+        let f = m.declare_func_in_data(c.id, &mut d);
+        d.write_function_addr((8 + FUNCTION_BYTES * i) as u32, f);
+    }
+    m.define_data(at, &d).map_err(err)?;
+    Ok(at)
+}
+
+/// The functions of the table [`define_code`] wrote at `code`.
+///
+/// # Safety
+///
+/// `code` is the address of `zed_code` in this executable, as its `main` passes it.
+#[expect(
+    unsafe_code,
+    reason = "the table is read through the address the linker gave it"
+)]
+unsafe fn code_functions(code: *const u8) -> Vec<zed_rt::code::Function> {
+    // SAFETY: the caller's contract: the table is as `define_code` wrote it, its functions'
+    // addresses relocated, and every read below is within it. Read unaligned, so that no
+    // claim on the linker's placement is made past the table's own alignment.
+    unsafe {
+        let word = |at: usize| u64::from_le(code.add(at).cast::<u64>().read_unaligned()) as usize;
+        let half = |at: usize| u32::from_le(code.add(at).cast::<u32>().read_unaligned());
+        let n = word(0);
+        let ranges = 8 + FUNCTION_BYTES * n;
+        (0..n)
+            .map(|i| {
+                let f = 8 + FUNCTION_BYTES * i;
+                let (first, count) = (word(f + 16), word(f + 24));
+                zed_rt::code::Function {
+                    start: word(f),
+                    len: word(f + 8),
+                    nodes: (first..first + count)
+                        .map(|j| {
+                            let r = ranges + RANGE_BYTES * j;
+                            (half(r), half(r + 4), half(r + 8))
+                        })
+                        .collect(),
+                }
+            })
+            .collect()
+    }
+}
+
+/// Defines, in `m`, the data `data`, the table of the program's code `code` ([`define_code`])
+/// and a C `main(argc, argv)` that returns `zed_main(argc, argv, data, its length, root,
+/// the table)`.
+pub(crate) fn define_main<M: Module>(
+    m: &mut M,
+    root: FuncId,
+    data: &[u8],
+    code: &[Code],
+) -> Result<(), String> {
     let err = |e: cranelift_module::ModuleError| crate::bug::bug(e);
     let at = m
         .declare_data("zed_program", Linkage::Local, false, false)
@@ -344,9 +437,10 @@ pub(crate) fn define_main<M: Module>(m: &mut M, root: FuncId, data: &[u8]) -> Re
     d.define(data.into());
     d.set_custom_section(PROGRAM_SECTION);
     m.define_data(at, &d).map_err(err)?;
+    let table = define_code(m, code)?;
     let ptr = m.target_config().pointer_type();
     let mut start = m.make_signature();
-    start.params = [I32, ptr, ptr, ptr, ptr].map(AbiParam::new).to_vec();
+    start.params = [I32, ptr, ptr, ptr, ptr, ptr].map(AbiParam::new).to_vec();
     start.returns.push(AbiParam::new(I32));
     let zed_main = m
         .declare_function("zed_main", Linkage::Import, &start)
@@ -370,8 +464,12 @@ pub(crate) fn define_main<M: Module>(m: &mut M, root: FuncId, data: &[u8]) -> Re
         let len = b.ins().iconst(ptr, data.len() as i64);
         let root = m.declare_func_in_func(root, b.func);
         let root = b.ins().func_addr(ptr, root);
+        let gv = m.declare_data_in_func(table, b.func);
+        let table = b.ins().symbol_value(ptr, gv);
         let callee = m.declare_func_in_func(zed_main, b.func);
-        let call = b.ins().call(callee, &[argc, argv, data_at, len, root]);
+        let call = b
+            .ins()
+            .call(callee, &[argc, argv, data_at, len, root, table]);
         let status = b.inst_results(call)[0];
         b.ins().return_(&[status]);
         b.finalize(m.isa().frontend_config());
@@ -382,7 +480,8 @@ pub(crate) fn define_main<M: Module>(m: &mut M, root: FuncId, data: &[u8]) -> Re
 }
 
 /// The runtime's start: runs the program in the `len` bytes at `data` on the command line
-/// `argv`, its code entered at `root`, and returns the exit status `zedc run` gives.
+/// `argv`, its code entered at `root` and described by the table at `code`
+/// ([`define_code`]), and returns the exit status `zedc run` gives.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -394,16 +493,21 @@ pub extern "C" fn zed_main(
     data: *const u8,
     len: usize,
     root: extern "C" fn() -> Word,
+    code: *const u8,
 ) -> c_int {
     let argc = usize::try_from(argc).unwrap_or(0);
     // SAFETY: the C runtime passes `argc` pointers to NUL-ended strings in `argv`, and the
-    // generated `main` passes its own data with that data's length.
+    // generated `main` passes its own data with that data's length, and its table of code.
     #[expect(unsafe_code, reason = "C's `main` gives its arguments as pointers")]
-    let (words, data) = unsafe {
+    let (words, data, code) = unsafe {
         let words: Vec<OsString> = (0..argc)
             .map(|i| OsString::from_vec(CStr::from_ptr(*argv.add(i)).to_bytes().to_vec()))
             .collect();
-        (words, std::slice::from_raw_parts(data, len))
+        (
+            words,
+            std::slice::from_raw_parts(data, len),
+            code_functions(code),
+        )
     };
     // A write to a pipe whose reader has closed it is a failed write of the port, which the
     // run reports with status 1 as `zedc run` does (DESIGN.md sec:ports: the first `#ioError`
@@ -415,7 +519,7 @@ pub extern "C" fn zed_main(
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
-    let status = start(&words, data, root);
+    let status = start(&words, data, root, code);
     // Rust flushes standard output when its own `main` returns; this `main` is C's. Flushed
     // before the runtime closes descriptors 1 and 2, whose failure turns a status of 0 into 1
     // (step L7.3p).
@@ -424,8 +528,13 @@ pub extern "C" fn zed_main(
 }
 
 /// Runs the program in `data` on the command line `words`, the first word the executable's
-/// name, and gives the exit status.
-fn start(words: &[OsString], data: &[u8], root: extern "C" fn() -> Word) -> u8 {
+/// name, its code the functions `code`, and gives the exit status.
+fn start(
+    words: &[OsString],
+    data: &[u8],
+    root: extern "C" fn() -> Word,
+    code: Vec<zed_rt::code::Function>,
+) -> u8 {
     // A panic is a broken check of zedc's own code: reported as `zedc run` reports one in a
     // run, and the process ends with status 3 from the hook, before the panic unwinds into a
     // runtime hook or `zed_main`, where it would abort (plan row EXE-panic-status).
@@ -449,6 +558,16 @@ fn start(words: &[OsString], data: &[u8], root: extern "C" fn() -> Word) -> u8 {
     let name = words
         .first()
         .map_or_else(|| "program".into(), |w| w.to_string_lossy().into_owned());
+    // A fault in the code that no rule explains is reported as a bug in zedc, with the
+    // program's address and the site of the node whose code faulted (plan row
+    // RT-internal-fault).
+    let map = zed_rt::code::CodeMap::new(
+        &program.address.to_string(),
+        program.file.as_deref(),
+        &program.text,
+        program.sites.iter().map(|s| s.map(|s| s.start)).collect(),
+        code,
+    );
     zedc::run::executable(
         &name,
         &program.ports,
@@ -459,7 +578,7 @@ fn start(words: &[OsString], data: &[u8], root: extern "C" fn() -> Word) -> u8 {
         &mut stderr,
         |ev| {
             let (t, _) = Tables::new(&program.graph, &program.plan)?;
-            crate::outcome::call(Arc::new(t), root, ev)
+            crate::outcome::call(Arc::new(t), root, ev, Some(&map))
                 .map(|o| o.value)
                 // The error printed as `zedc run` prints it, at the site of the node that
                 // raised it (plan row RT-sites).

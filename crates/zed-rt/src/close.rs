@@ -266,8 +266,9 @@ fn message(e: c_int, file: Option<&str>) {
 }
 
 /// Writes `bytes` to descriptor 2, as much as it takes; a failed write ends it, since there is
-/// nowhere else to report it.
-fn write_all(mut bytes: &[u8]) {
+/// nowhere else to report it. Only `write` and a read of `errno`: fit for a handler of signals
+/// (signal-safety(7)).
+pub(crate) fn write_all(mut bytes: &[u8]) {
     while !bytes.is_empty() {
         #[expect(unsafe_code, reason = "write is a libc call")]
         // SAFETY: `write` reads `bytes`, which is borrowed for the call.

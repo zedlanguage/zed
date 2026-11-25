@@ -1497,6 +1497,53 @@ impl Rat {
         Ok(x.max(y))
     }
 
+    /// At most what [`Rat::sum_least`] gives for `self + x` and `self - x`, in either order,
+    /// for every integer `x` with `0 < |x| < 2^m`: where the text fixes `self` and the types
+    /// only bound `x` (plan row CONST-build-typed-operands, `2^(2^70) + n` with `n` in
+    /// `1..=5`). `None` where `self` is not an integer, `m > 64`, or the bound is 0.
+    ///
+    /// Proof, for `f = self.bin()`, which `sum_least` reads beside a `Ten` and which is
+    /// `self` without one, and `x` read as `sum_least` reads it (`x.bin()` beside a `Ten`, an
+    /// integer in lowest terms either way: den 1, each `e >= 0`; [`Rat`]'s invariants):
+    ///
+    /// (a) `x` holds no wide atom: an atom with `f > 0` makes `|x| >= q > 2^64`, and one with
+    /// `f < 0` puts `q` in the denominator of a form in lowest terms, so `x` is no integer.
+    /// So where `f` holds wide atoms, `sum_least` shares none (`Rat::shared_wide`) and gives
+    /// at least `f.least_size()`, which is returned.
+    ///
+    /// (b) Both plain: `max(bits(f.num), bits(x.num)) > least_log2(f.num) >= B` below.
+    ///
+    /// (c) Otherwise `sum_least` aligns both (an alignment it refuses stops the run's sum too,
+    /// before it builds) and gives at least `T = least_log2(a.num, rest)`, `a` being `f` with
+    /// the primes `x` lists moved out of its numerator, and `rest_p = ea_p - min(ea_p, eb_p)`.
+    /// The value `V = |a.num| prod p^rest_p` is `|f| / prod p^min(ea_p, eb_p) >= |f| / prod
+    /// p^eb_p`, and `prod p^eb_p` divides `|x|`, so `log2 V > log2 |f| - m`. `least_log2`
+    /// loses less than 1 to the floor of `bits(a.num) - 1`, and at each `p` with `rest_p > 0`
+    /// less than `1 + rest_p * 2^-26` (its `log2 p` is at most 34 units of `2^-32` low, under
+    /// 64 of them), and less than 1 at `p = 2`, whose `log2` it takes exactly. Those `p` are
+    /// `f`'s listed primes and at most 15 that `x` lists (the first 16 primes multiply past
+    /// `2^64`), and `sum rest_p` over the odd ones is at most `E = sum e_p + bits(f.num)`,
+    /// `e_p` over `f`'s odd listed primes (a moved prime's exponent is at most
+    /// `log2 |f.num|`). With `log2 |f| >= least_log2(f.num, f.pows)`,
+    /// `T > least_log2(f.num, f.pows) - m - 16 - |f.pows| - E / 2^26 >= B`, the integer
+    /// returned; for `2^(2^70)` and `m = 3`, `2^70 - 21`.
+    ///
+    /// Complexity: O(primes kept), as [`Rat::sum_least`].
+    pub fn sum_least_beside(&self, m: u32) -> Option<BigUint> {
+        let f = self.bin();
+        if m > 64 || !f.is_integer() || f.is_zero() {
+            return None;
+        }
+        if f.has_wide() {
+            return Some(f.least_size());
+        }
+        let lf = least_log2(&f.num, f.pows.iter().map(|(p, e)| (*p, e.magnitude())));
+        let odd = f.pows.iter().filter(|(p, _)| *p != 2);
+        let e: BigUint = odd.map(|(_, e)| e.magnitude()).sum::<BigUint>() + f.num.bits();
+        let loss = BigUint::from(m) + 16u32 + f.pows.len() + ((e + ((1u32 << 26) - 1)) >> 26u32);
+        (lf > loss).then(|| lf - loss)
+    }
+
     /// The atoms both `self` and `b` list ([`Rat::wide`]), each at the lesser of its two
     /// exponents, as a `Rat` of those atoms alone; `None` where they share none. One merge of
     /// the two sorted lists, O(atoms) comparisons.
@@ -3805,6 +3852,65 @@ mod tests {
     /// `b^k` for a small base, kept as exponents.
     pub(super) fn power(b: u64, k: u64) -> Rat {
         Rat::int(BigInt::from(b)).pow(&BigUint::from(k)).unwrap()
+    }
+
+    /// [`Rat::sum_least_beside`] is at most [`Rat::sum_least`] of the integer with every `x`
+    /// tried, `0 < |x| < 2^m`, in both orders: kept powers of one and several primes beside a
+    /// coefficient, a plain built integer, a wide atom's power, and `x` plain, kept as a power
+    /// that shares a prime, and the product of the first 15 primes; within `m + 17 + |pows| +
+    /// 1` of the integer's own `least_log2` where it keeps no wide atom; `None` for a
+    /// non-integer, zero and `m > 64`.
+    #[test]
+    fn a_sum_beside_a_bounded_int_is_bounded_from_below() {
+        let mul = |a: Rat, b: Rat| a.mul(&b).unwrap();
+        let q = (BigInt::one() << 64u32) + 13;
+        let fs = [
+            power(2, 1 << 20),
+            mul(
+                mul(power(3, 5000), power(2, 3000)),
+                Rat::int(BigInt::from(7)),
+            ),
+            Rat::int((BigInt::one() << 5000u32) + 1),
+            Rat::int(q).pow(&BigUint::from(1u32 << 10)).unwrap(),
+            mul(power(2, 1 << 20), Rat::int((BigInt::one() << 200u32) + 1)),
+        ];
+        let primes15: i128 = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47]
+            .iter()
+            .product();
+        for f in &fs {
+            for m in [1u32, 3, 8, 20, 61, 64] {
+                let bound = f.sum_least_beside(m).expect("an integer far past 2^m");
+                let top = (1i128 << m) - 1;
+                let mut xs: Vec<Rat> = [1, top, 1i128 << (m - 1), primes15]
+                    .into_iter()
+                    .filter(|&v| v <= top)
+                    .flat_map(|v| [v, -v])
+                    .map(|v| Rat::int(BigInt::from(v)))
+                    .collect();
+                xs.push(power(2, u64::from(m - 1)));
+                xs.push(power(3, u64::from(m * 5 / 8)));
+                for x in &xs {
+                    for got in [f.sum_least(x).unwrap(), x.sum_least(f).unwrap()] {
+                        assert!(bound <= got, "{bound} > {got} at m = {m}");
+                    }
+                }
+                if !f.has_wide() {
+                    let lf = least_log2(&f.num, f.pows.iter().map(|(p, e)| (*p, e.magnitude())));
+                    let close = BigUint::from(m) + 18u32 + f.pows.len();
+                    assert!(bound + close >= lf, "bound far below {lf} at m = {m}");
+                }
+            }
+        }
+        assert!(
+            power(2, 100)
+                .div(&power(3, 1))
+                .unwrap()
+                .unwrap()
+                .sum_least_beside(8)
+                .is_none()
+        );
+        assert!(Rat::int(BigInt::zero()).sum_least_beside(8).is_none());
+        assert!(power(2, 1 << 20).sum_least_beside(65).is_none());
     }
 
     /// [`Rat::merged`], the product and quotient with no coprime base, gives the form that

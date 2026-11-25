@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F64, I64};
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, FuncRef, InstBuilder, MemFlagsData};
-use cranelift_codegen::ir::{Signature, StackSlotData, StackSlotKind, Value as V};
+use cranelift_codegen::ir::{Signature, SourceLoc, StackSlotData, StackSlotKind, Value as V};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
 use cranelift_module::{FuncId, Linkage, Module};
 
@@ -78,6 +78,20 @@ fn sig<M: Module>(m: &M, params: usize, rets: usize) -> Signature {
 pub(crate) struct Funcs {
     /// `zed_root`.
     pub root: FuncId,
+    /// The code of each function defined, in the order defined.
+    pub code: Vec<Code>,
+}
+
+/// The machine code of one function, for the map of a fault to the node whose code it is in
+/// (plan row RT-internal-fault, `zed_rt::code`).
+pub(crate) struct Code {
+    pub id: FuncId,
+    /// Its bytes.
+    pub len: u32,
+    /// The code made for each node, as `(start, end, node)`, offsets from the function's
+    /// start, sorted by start: Cranelift's ranges of each source location (`MachSrcLoc`),
+    /// where the location is the node's number ([`Gen::at`]).
+    pub nodes: Vec<(u32, u32, u32)>,
 }
 
 struct Gen<'a, M: Module> {
@@ -99,6 +113,13 @@ struct Gen<'a, M: Module> {
     /// Where each function's IR text goes, as emitted and before Cranelift's passes, when
     /// asked for.
     ir: Option<&'a mut String>,
+    /// The code of each function defined so far.
+    code: Vec<Code>,
+    /// In the test build, the printed name of a primitive whose every node first reads
+    /// address 0, a fault no rule of the language explains, from `ZED_TEST_FAULT` (plan row
+    /// RT-internal-fault: an injected fault is reported as a bug in zedc).
+    #[cfg(feature = "counts")]
+    fault: Option<String>,
 }
 
 /// One function being built.
@@ -231,6 +252,9 @@ pub(crate) fn define<'a, M: Module>(
         placed,
         direct,
         ir,
+        code: Vec::new(),
+        #[cfg(feature = "counts")]
+        fault: std::env::var("ZED_TEST_FAULT").ok(),
     };
     cg.root(root)?;
     for i in 0..t.lambdas.len() {
@@ -243,7 +267,10 @@ pub(crate) fn define<'a, M: Module>(
     for i in 0..cg.trampolines.len() {
         cg.trampoline(i)?;
     }
-    Ok(Funcs { root })
+    Ok(Funcs {
+        root,
+        code: cg.code,
+    })
 }
 
 impl<M: Module> Gen<'_, M> {
@@ -300,8 +327,41 @@ impl<M: Module> Gen<'_, M> {
             s.push_str(&ctx.func.display().to_string());
         }
         self.m.define_function(id, &mut ctx).map_err(err)?;
+        // The ranges of each node's code, O(code). Cranelift makes each location absolute
+        // when the compile ends (`CompiledCodeStencil::apply_params`, cranelift-codegen
+        // 0.137.1 `machinst/mod.rs`:613); code under no node has the default location.
+        if let Some(c) = ctx.compiled_code() {
+            let nodes = (c.buffer.get_srclocs_sorted().iter())
+                .filter(|s| s.loc.is_abs() && !s.loc.as_abs().is_default())
+                .map(|s| (s.start, s.end, s.loc.as_abs().bits()))
+                .collect();
+            let len = c.code_info().total_size;
+            self.code.push(Code { id, len, nodes });
+        }
         self.m.clear_context(&mut ctx);
         Ok(())
+    }
+
+    /// The source location of node `id`'s code: its number, or the default, which marks code
+    /// of no node, for a number past Cranelift's 31 bits (`MaybeRelSourceLoc`).
+    fn at(id: usize) -> SourceLoc {
+        u32::try_from(id)
+            .ok()
+            .filter(|&k| k < SourceLoc::default().bits())
+            .map_or_else(SourceLoc::default, SourceLoc::new)
+    }
+
+    /// In the test build, a read of address 0 before node `op`'s code when it is the primitive
+    /// `ZED_TEST_FAULT` names ([`Gen::fault`]). The load may trap, so Cranelift keeps it
+    /// though its value is unused (`inst_predicates::has_side_effect`).
+    #[cfg(feature = "counts")]
+    fn inject(&self, fx: &mut Fx<'_>, op: &Op) {
+        if let (Some(f), Op::Prim(p)) = (&self.fault, op)
+            && p.printed() == f
+        {
+            let zero = fx.b.ins().iconst(I64, 0);
+            fx.b.ins().load(I64, MemFlagsData::new(), zero, 0);
+        }
     }
 
     fn root(&mut self, id: FuncId) -> Result<(), String> {
@@ -602,6 +662,9 @@ impl<M: Module> Gen<'_, M> {
                     let w = self.get(fx, top.ins[j]);
                     self.inc(fx, w);
                 }
+                // The node's code, up to the next node's, is marked with its number, which a
+                // fault in it is reported at (plan row RT-internal-fault).
+                fx.b.set_srcloc(Self::at(id));
                 match &node.op {
                     Op::If => {
                         // An `if` reads its condition only to choose an arm, so an owned
@@ -615,6 +678,8 @@ impl<M: Module> Gen<'_, M> {
                         top.open = Some(self.matched(fx, id, binders, &top.ins));
                     }
                     _ => {
+                        #[cfg(feature = "counts")]
+                        self.inject(fx, &node.op);
                         let ws = self.node(fx, id, &top.ins)?;
                         self.finish(fx, top, ws);
                     }

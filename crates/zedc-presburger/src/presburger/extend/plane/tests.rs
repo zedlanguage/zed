@@ -182,9 +182,17 @@ fn check_sequence(rng: &mut Rng, bounded: bool, w: i64) -> Result<(), String> {
 }
 
 fn failures(seed: u64, runs: usize) -> Vec<String> {
+    failures_up_to(seed, runs, usize::MAX)
+}
+
+/// The failures of the first `runs` random sequences from `seed`, stopping at the `most`-th.
+fn failures_up_to(seed: u64, runs: usize, most: usize) -> Vec<String> {
     let mut rng = Rng(seed);
     let mut out = vec![];
     for i in 0..runs {
+        if out.len() == most {
+            break;
+        }
         let bounded = i % 2 == 0;
         if let Err(e) = check_sequence(&mut rng, bounded, if bounded { 9 } else { 24 }) {
             out.push(e);
@@ -209,9 +217,12 @@ fn random_rows_give_the_integer_hull() {
 #[test]
 fn each_step_mutant_is_caught() {
     // Design G5 / D12: each step disabled makes the random rows fail. Ties out of the run
-    // (META3 H3) is caught by the tie test below as well.
+    // (META3 H3) is caught by the tie test below as well. A mutant is caught by its first
+    // failure, so the sequences stop there: the same 1500 sequences, and the same verdict, as
+    // running all of them (it took 16.4 s of the zedc_presburger piece's 20 s, 2026-11-24,
+    // FAIL-zedc-presburger-lib-piece-20s-hm5).
     for m in [mutant::NO_CUTS, mutant::CASE1_IN_CASE2, mutant::NO_COLLAPSE] {
-        let f = with_mutant(m, || failures(0x9e37_79b9_7f4a_7c15, 1500));
+        let f = with_mutant(m, || failures_up_to(0x9e37_79b9_7f4a_7c15, 1500, 1));
         let fixed = with_mutant(m, || hull_of(&case2_rows()));
         let caught = !f.is_empty() || fixed.as_ref().is_none_or(|h| invariants(h).is_err());
         assert!(caught, "mutant {m} not caught");

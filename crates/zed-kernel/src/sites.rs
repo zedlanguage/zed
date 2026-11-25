@@ -55,6 +55,25 @@ pub fn end<T>(xs: &[T]) -> usize {
     crate::term::parts_end(xs)
 }
 
+/// The 1-based line and column of byte `offset` of `bytes` (at most its length), the column
+/// counted in Unicode scalars: `\r\n`, `\r` and `\n` each end a line. The bytes before
+/// `offset` are UTF-8, so a scalar is a byte that does not continue one (`10xxxxxx`; RFC 3629,
+/// section 3). One pass over the bytes before `offset`, O(offset), with no allocation, so a
+/// handler of signals can place a fault (`zed_rt::code`); `zedc_base::source::line_col` is
+/// this function, and its `Lines` places many offsets of one text faster.
+pub fn line_col(bytes: &[u8], offset: usize) -> (usize, usize) {
+    let (mut line, mut col) = (1, 1);
+    for (i, &b) in bytes[..offset].iter().enumerate() {
+        match b {
+            b'\n' if i > 0 && bytes[i - 1] == b'\r' => {}
+            b'\r' | b'\n' => (line, col) = (line + 1, 1),
+            _ if b & 0xC0 != 0x80 => col += 1,
+            _ => {}
+        }
+    }
+    (line, col)
+}
+
 /// The sites of the nodes of a program, frozen: read while it runs, never changed.
 #[derive(Default, Debug)]
 pub struct Sites {
