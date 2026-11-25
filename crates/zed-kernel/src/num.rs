@@ -1508,7 +1508,7 @@ impl Rat {
     ///
     /// (a) `x` holds no wide atom: an atom with `f > 0` makes `|x| >= q > 2^64`, and one with
     /// `f < 0` puts `q` in the denominator of a form in lowest terms, so `x` is no integer.
-    /// So where `f` holds wide atoms, `sum_least` shares none ([`Rat::shared_wide`]) and gives
+    /// So where `f` holds wide atoms, `sum_least` shares none (`Rat::shared_wide`) and gives
     /// at least `f.least_size()`, which is returned.
     ///
     /// (b) Both plain: `max(bits(f.num), bits(x.num)) > least_log2(f.num) >= B` below.
@@ -1517,7 +1517,7 @@ impl Rat {
     /// before it builds) and gives at least `T = least_log2(a.num, rest)`, `a` being `f` with
     /// the primes `x` lists moved out of its numerator, and `rest_p = ea_p - min(ea_p, eb_p)`.
     /// The value `V = |a.num| prod p^rest_p` is `|f| / prod p^min(ea_p, eb_p) >= |f| / prod
-    /// p^eb_p`, and `prod p^eb_p` divides `|x|`, so `log2 V > log2 |f| - m`. [`least_log2`]
+    /// p^eb_p`, and `prod p^eb_p` divides `|x|`, so `log2 V > log2 |f| - m`. `least_log2`
     /// loses less than 1 to the floor of `bits(a.num) - 1`, and at each `p` with `rest_p > 0`
     /// less than `1 + rest_p * 2^-26` (its `log2 p` is at most 34 units of `2^-32` low, under
     /// 64 of them), and less than 1 at `p = 2`, whose `log2` it takes exactly. Those `p` are
