@@ -100,12 +100,14 @@ fn a_rate_table_of_many_tiers_scales() {
     });
 }
 
-/// The ratio grows with n: 8.49 at n = 125, 10.05 at 500 and 12.02 at 1,000 (2026-11-14), most
-/// of the growth in the register allocator's dominator tree (plan row
-/// CRANELIFT-nested-if-domtree); n stays at 500 until that is fixed.
+/// The ratio grew with n while every checked call branched to one shared error exit, whose
+/// dominator the register allocator found in O(sum of its predecessors' depths): 10.00 at
+/// n = 500, 11.85 at 1,000 and 15.18 at 2,000 (VM hm2, 2026-11-25). With one exit per branch
+/// (`Fx::exit` in zed-native's codegen.rs, plan row CRANELIFT-nested-if-domtree) it is 8.02,
+/// 8.02 and 8.04 at the same sizes, so n is 1,000, where the shared exit fails.
 #[test]
 fn ifs_nested_through_the_first_arm_scale() {
-    check_depth("n nested `if`s, to an object file", 500, nest);
+    check_depth("n nested `if`s, to an object file", 1_000, nest);
 }
 
 #[test]

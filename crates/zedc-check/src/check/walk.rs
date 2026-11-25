@@ -1175,8 +1175,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of it ([`Item::Bound`]). So no scope holds two parameters of one name. A function some
     /// use names keeps [`arms::var`]'s names: a caller's scope holds its lambda
     /// ([`Ck::bind_called`]), where a parameter of the caller with the callee's name would be
-    /// captured unless every step that reads a lambda renames its parameters apart, which is
-    /// not proved. A parameter that is a tuple `(a, b)` keeps them too.
+    /// captured unless every step that reads a lambda renames its parameters apart. That
+    /// renaming is not proved, so this function names no parameter of a function some use
+    /// names (the `self.t.used(id)` test below), and nothing here rests on it: naming by
+    /// place only makes equal terms of tests that would otherwise be checked twice, so a
+    /// parameter left with its own name costs a second check and changes no verdict (plan
+    /// row PROOF-sweep-zedc-check, b22-free1, 2026-11-24). A parameter that is a tuple
+    /// `(a, b)` keeps its names too.
     fn name_by_place(&mut self, unit: &'a [Stmt]) {
         for s in unit {
             let s = s.bare();
@@ -3215,7 +3220,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// code, PROOF-params-own-apart-fresh). So a range is taken only where it still lies
     /// within the errors and each of its errors lies inside its argument; any other argument
     /// is left out of the group and keeps its own errors, as before
-    /// MSG-call-division-args-grouping.
+    /// MSG-call-division-args-grouping. Nothing but the message rests on the unproved part:
+    /// the group only joins errors already written into one message, and drops or adds none,
+    /// so a range that came to name other errors inside the same argument changes how they
+    /// are grouped and never whether the program is accepted (plan row
+    /// PROOF-sweep-zedc-check, b22-free1, 2026-11-24).
     fn call_arg_ops(&self, value: &Expr) -> Option<(String, ArgOps)> {
         let ExprKind::Call {
             callee,

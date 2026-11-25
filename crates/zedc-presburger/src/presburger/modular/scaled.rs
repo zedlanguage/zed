@@ -698,7 +698,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         return None;
     }
     // The atoms of the tree that a constraint other than a row names; at most one may be `x`.
-    let shape_cons: TextSet<&Con> =shapes.iter().map(|s| s.con).collect();
+    let shape_cons: TextSet<&Con> = shapes.iter().map(|s| s.con).collect();
     // The top-level equations of three or more terms over the rows' parts: each must read as a
     // [`SumRow`] once `x` is known, or the formula is declined (as it was before
     // PRES-one-variable-sum-of-quotients, so no earlier answer changes).
@@ -716,7 +716,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                     .any(|a| ends.contains(a) || r_of.contains_key(a))
         })
         .collect();
-    let sum_cons: TextSet<&Con> =sum_list.iter().copied().collect();
+    let sum_cons: TextSet<&Con> = sum_list.iter().copied().collect();
     let mut named: Option<&Atom> = None;
     let mut two_named = false;
     f.walk(&mut |c| {
@@ -766,7 +766,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             sum_r.insert(r.clone(), j);
         }
     }
-    let def_cons: TextSet<&Con> =rows.iter().map(|row| row.con).collect();
+    let def_cons: TextSet<&Con> = rows.iter().map(|row| row.con).collect();
     let allowed = |c: &Con, at_top: bool| -> bool {
         if at_top && (def_cons.contains(c) || sum_cons.contains(c)) {
             return true;
@@ -802,7 +802,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     }
     // Sums over coprime moduli: decided over the sums' remainders ([`sumset`]), which does not
     // write the residues of `x` whose number is the product of the moduli.
-    let skip: TextSet<&Con> =def_cons.union(&sum_cons).copied().collect();
+    let skip: TextSet<&Con> = def_cons.union(&sum_cons).copied().collect();
     if let Some(answer) =
         sumset::solve_by_sums(f, &x, &top, &rows, &sums, &r_of, &sum_r, &skip, want_model)
     {
