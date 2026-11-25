@@ -172,19 +172,18 @@ impl MinAdd {
         if from >= self.n {
             return None;
         }
-        self.first_at(1, 0, self.n - 1, from, bound)
+        self.first_at(1, 0, self.n - 1, from, i128::from(bound))
     }
 
-    fn first_at(&self, v: usize, nl: usize, nr: usize, from: usize, bound: i64) -> Option<usize> {
-        if nr < from || self.min[v] > bound {
+    fn first_at(&self, v: usize, nl: usize, nr: usize, from: usize, bound: i128) -> Option<usize> {
+        if nr < from || i128::from(self.min[v]) > bound {
             return None;
         }
         if nl == nr {
             return Some(nl);
         }
-        // Saturated, a bound past `i64`'s range stays past every value an item can hold, so
-        // no comparison changes, and an extreme `bound` does not overflow.
-        let below = bound.saturating_sub(self.add[v]);
+        // A later addition can bring a bound outside the i64 range back into it.
+        let below = bound - i128::from(self.add[v]);
         let mid = nl + (nr - nl) / 2;
         self.first_at(2 * v, nl, mid, from, below)
             .or_else(|| self.first_at(2 * v + 1, mid + 1, nr, from, below))
@@ -298,6 +297,17 @@ mod tests {
             }
             assert_eq!(tree.first_at_most(0, i64::MAX), (n > 0).then_some(0));
         }
+    }
+
+    #[test]
+    fn opposite_additions_keep_an_extreme_bound_exact() {
+        let mut tree = MinAdd::new(4);
+        tree.add(0, 3, -1);
+        tree.add(1, 1, i64::MAX);
+        tree.add(0, 1, 1);
+
+        assert_eq!(tree.first_at_most(1, i64::MAX), Some(1));
+        assert_eq!(tree.first_at_most(1, i64::MAX - 1), Some(2));
     }
 
     /// An empty range adds nothing, and a range past the end is refused with its message.
