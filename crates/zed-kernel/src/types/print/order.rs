@@ -9,7 +9,9 @@
 //! 2. the number types: `int`, then `bf16`, `f16`, `f32`, `f64`, `rat`;
 //! 3. `false`, `true`, `bool`;
 //! 4. string literals, by their code points;
-//! 5. named types (`String`, structs, aliases) and type variables, by name;
+//! 5. named types (`String`, structs, aliases, recursive types) and type variables, by name
+//!    ([`name_cmp`]); two recursive types of one name by their arguments, which no printer
+//!    meets yet, since the union of two recursive types is their unfolding;
 //! 6. tuples; then every struct, `{..}`;
 //! 7. functions;
 //! 8. atoms: every atom `#_` first, then by name, the bare atom before the one with a payload;
