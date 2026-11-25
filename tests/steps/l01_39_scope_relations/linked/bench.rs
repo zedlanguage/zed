@@ -388,8 +388,8 @@ fn a_satellite_of_every_hub_costs_its_related_names_once() {
 /// 22.5 and 16.6 times (2026-11-09). At 64 and 512 it measured 11.3 times, over the limit of 10.5,
 /// so it is built at 512 and 4096: 10.4 times the instructions and 8.3 times the bytes
 /// (2026-11-13). Without the bounds no leaf becomes a star
-/// (`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`, deferred to plan row
-/// RP-scaling-10_5 in wt/scratch/deferred-tests/RP-scaling-10_5.rs). COMPLEXITY.md C37. On
+/// (`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order` in `linked`).
+/// COMPLEXITY.md C37. On
 /// 2026-11-19, 10.03 times (663.3M and 6,650.9M instructions, load 35); what grows fastest is the
 /// merge of blocks (`Blocks::merge`, 11.4 times at 512 to 4096): a conjunct is moved O(log d)
 /// times, each move O(log d) in the persistent maps, O(d log² d) in all, as `Blocks` states
@@ -397,6 +397,44 @@ fn a_satellite_of_every_hub_costs_its_related_names_once() {
 #[test]
 fn stars_formed_in_the_block_of_a_satellite_take_time_near_the_block() {
     satellite_built_in_a_random_order(512, true);
+}
+
+/// The satellite of every hub without bounds on the hubs built in a seeded random order: no
+/// leaf becomes a star, and the build is linear. Deferred by TESTS-scaling-limit-10_5 at 64 and
+/// 512 (11.0 times the instructions on cdf07ac4f); back with row RP-scaling-10_5 at the sizes
+/// of the test above, 512 and 4096.
+#[test]
+fn a_satellite_of_every_hub_built_in_a_random_order_is_linear() {
+    satellite_built_in_a_random_order(512, false);
+}
+
+/// The conjuncts of [`satellite_conjuncts`] without bounds, built and then taken away one at a
+/// time in a random order. All of them are one block. Each is a constraint on two names, which
+/// `Blocks::remove` takes out alone (`Blocks::cut`): the block splits along a path of pieces
+/// found by searches from both ends of the constraint run in turn (`Blocks::peel`), in time near
+/// the pieces split off rather than the block. Splitting the block by placing its other
+/// conjuncts again (`Blocks::split`), as before, cost O(d) for each conjunct taken away, so
+/// O(d^2) in all. Built and taken apart at 64 and 512: 148 M and 1,582 M instructions, 10.7
+/// times, and 8.8 times the bytes, limit 13.2; before, 374 M and 16,472 M, 44.0 times, and 34.0
+/// times the bytes (2026-11-09). Deferred by TESTS-scaling-limit-10_5 (11.2 times at 64 and 512
+/// on cdf07ac4f); back with row RP-scaling-10_5 at 512 and 4096. The star index is not the
+/// cost: the needs stay within three per hub
+/// (`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order` in `linked`).
+/// COMPLEXITY.md C37.
+#[test]
+fn a_satellite_of_every_hub_taken_apart_takes_time_near_the_block_per_conjunct() {
+    let orders = satellite_orders(512, false);
+    scaling::check(
+        "a satellite of every hub built and taken apart in random orders",
+        512,
+        |d| {
+            let mut c = built(&orders, d);
+            for &i in &orders[&d].2 {
+                take_out(&mut c, &orders[&d].0[i]);
+            }
+            assert!(c.set().is_empty(), "{c}");
+        },
+    );
 }
 
 /// Holes that pile up in the names of one chain stay on shortest paths, and each name keeps its

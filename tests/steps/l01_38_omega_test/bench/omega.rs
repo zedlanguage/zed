@@ -403,3 +403,29 @@ fn lossless_bands_scale() {
         drop(decide(if m == n { &small } else { &large }));
     });
 }
+
+/// Projecting every symbol of the holes family `fam` at 16 and 128.
+fn holes_family_scales(fam: &str) {
+    let inputs = scaling::inputs(16, |n| holes_family(fam, n));
+    scaling::check_order(&format!("every symbol of the family {fam}"), 16, 1, |n| {
+        let (f, s) = &inputs[&n];
+        let _ = std::hint::black_box(project_each(f, s));
+    });
+}
+
+/// Projecting every symbol of a family of `n` holes (each a disjunction) on a chain of
+/// difference rows costs O(n log n): each component of difference rows and disjunctions over
+/// one or two tie classes that is a forest gets every atom's values by two passes of arc
+/// revision, where each disjunction was asked about every symbol of its group before, Θ(n²)
+/// in all (item PROJECT-each-chain-xr; 16.5 to 41.5 times the instructions from 64 to 128
+/// before, 2.2 times from 128 to 256 after). Deferred by TESTS-scaling-limit-10_5 (10.7 times
+/// the instructions at 16 and 128 on cdf07ac4f); back with row PRES-scaling-10_5.
+#[test]
+fn holes_on_difference_chains_scale() {
+    for fam in [
+        "chain", "both", "twoway", "pair", "mono", "mono1", "eqchain", "band", "wide", "slope",
+        "pinned", "pinlast",
+    ] {
+        holes_family_scales(fam);
+    }
+}

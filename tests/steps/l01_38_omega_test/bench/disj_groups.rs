@@ -47,9 +47,7 @@ fn a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_decided_in_n_log_n(
 /// At 256 stages, not fewer: the limit for work of order n log n is 12.1 times from 256 to
 /// 2048, and work of order n^1.2 gives 8^1.2 = 12.13 times there, but at 32 stages the limit is
 /// 14.1 and n log n itself gives 12.8 times, so n^1.2 passed unseen (plan item
-/// THREE-atom-exponent; COMPLEXITY.md row THREE-atom-exponent). The same test of the chain whose
-/// disjuncts hold is deferred to plan row PRES-scaling-10_5 in
-/// wt/scratch/deferred-tests/PRES-scaling-10_5.rs.
+/// THREE-atom-exponent; COMPLEXITY.md row THREE-atom-exponent).
 #[test]
 fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_projected_in_n_log_n() {
     projects(
@@ -57,6 +55,18 @@ fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_do_not_hold_is_proje
         190,
         general_chain,
         Holds::None,
+    );
+}
+
+/// The chain of the test above, a disjunct holding. Deferred by TESTS-scaling-limit-10_5 (10.7
+/// times the instructions at 256 and 2048 on 64e07a4f1); back with row PRES-scaling-10_5.
+#[test]
+fn the_middle_of_a_chain_of_three_atom_rows_whose_disjuncts_hold_is_projected_in_n_log_n() {
+    projects(
+        "a chain of three-atom rows projected, a disjunct holding",
+        256,
+        general_chain,
+        Holds::First,
     );
 }
 

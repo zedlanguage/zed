@@ -1,7 +1,7 @@
 //! `plan [--fix] [PLAN_DAG.md]` checks the table "Items by level" of `docs/plan_dag.md` (this
 //! repository's, when no file is named): no id has two rows, every id in a `needs` column has a
-//! row, and each row's level is one more than the highest level among its needs (0 with no
-//! needs). It prints one line per problem, then the table's counts of items, edges and levels,
+//! row, each row's level is one more than the highest level among its needs (0 with no
+//! needs), and no row has more than [`MAX_NEEDS`] distinct needs. It prints one line per problem, then the table's counts of items, edges and levels,
 //! and fails if there is any problem.
 //!
 //! The counts and the file-conflict lists of the `conflicts` tool are not kept in the file
@@ -51,6 +51,16 @@ pub(crate) const SAME: &str = "## File conflicts at the same level";
 /// The heading of the list of paths across levels; in the file, its section ended at the next
 /// `## ` heading.
 pub(crate) const CROSS: &str = "## File conflicts across levels";
+
+/// The most distinct needs a row may have: the fan-in of the largest join row after the
+/// restructure of author P381 (2026-11-17). A row with more is split into join rows of at most
+/// this many needs each, by crate or area. Until DAG-fanin-split-2026-11-25 the limit was kept
+/// only by `wt/board-check-fanin.mjs` (outside this repository), which read dagview's state when
+/// someone ran `wt/board-check.sh`; no landing ran it, so L1.41-join-tools-tests reached 47 needs
+/// and L1.41-join-zedc-preimage-perf 41. This check replaces it: the test
+/// `m0_03_grammar_tools::plan::this_repository_s_plan_passes` runs it on the plan, and
+/// tools/merge_check.sh selects that test for every landing that changes the plan or this tool.
+pub const MAX_NEEDS: usize = 32;
 
 /// The table's header line and delimiter row, as they must be written.
 const HEADER: &str = "| Level | Id | Title | Size | Hard | Needs | Paths |";
@@ -317,6 +327,21 @@ fn check_counts(text: &str, out: &mut String) -> Result<(bool, [usize; 4]), Stri
         };
         top = top.max(own);
         edges += row.needs.len();
+        // Distinct needs, as the join rows count them: O(k log k) for a row of k needs.
+        let mut distinct = row.needs.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        if distinct.len() > MAX_NEEDS {
+            say!(
+                out,
+                "line {}: {} has {} needs, more than {MAX_NEEDS}; split it into join rows of at \
+                 most {MAX_NEEDS} needs each, by crate or area",
+                row.line,
+                row.id,
+                distinct.len()
+            );
+            bad += 1;
+        }
         let mut want = 0;
         for need in &row.needs {
             match by_id.get(need) {

@@ -1049,7 +1049,7 @@ fn joint_stage_hulls_are_exact() {
 /// `z[k] <= 5`; `pair`: `y[k+1] >= y[k] - 2`, `(y[k], y[k+1])` in `{(0, 0), (2, 2)}` for even `k`;
 /// `steps`: `x[k+1] - x[k]` in `{0, 10}`, `x0 == 0`; `pinned`: also `x[n] == 0`; `pinlast`: also
 /// `x[n] <= 10`.
-fn holes_family(fam: &str, n: usize) -> (Formula, Vec<Atom>) {
+pub(super) fn holes_family(fam: &str, n: usize) -> (Formula, Vec<Atom>) {
     let y = |k: usize| format!("y{k}");
     let x = |k: usize| format!("x{k}");
     match fam {

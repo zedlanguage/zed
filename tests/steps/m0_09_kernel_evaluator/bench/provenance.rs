@@ -10,8 +10,8 @@ use zed_kernel::{Provenance, Term, Value};
 use zed_tests::scaling;
 
 use crate::provenance::{
-    deep_replacements, growing_entries, has_origins, late_beside_table, missing_chain,
-    shared_branches, shared_levels, trace,
+    deep_replacements, growing_entries, has_origins, late_beside_table, missing_chain, missing_row,
+    rows_sharing_one_set, shared_branches, shared_levels, trace,
 };
 
 /// The provenance of the run of `make(m)` at `n` and at `FACTOR·n`, recorded before timing.
@@ -144,6 +144,47 @@ fn the_origins_of_a_table_of_growing_entries_scale() {
         n,
         1,
         |m| has_origins(at(&runs, m), m),
+    );
+}
+
+#[test]
+fn the_origins_of_a_failure_read_through_a_wide_tuple_scale() {
+    // The runs are recorded before the timing, which covers the walk alone. A search per
+    // member tested each of the tuple's `n` inputs once per member: `O(n²)`. The pass reads
+    // every value of the run graph once, each node with a search of the members, `O(W log n)`;
+    // here the products' `#errs` sets make `W` itself `n log n` (COMPLEXITY.md K25). Deferred
+    // by TESTS-scaling-limit-10_5 (10.9 times the instructions at 500 and 4000 on cdf07ac4f);
+    // back with row PROV-scaling-10_5.
+    let n = 500;
+    let runs = recorded(n, missing_row);
+    scaling::check_order(
+        "the origins of a row of n missing readings, by n",
+        n,
+        1,
+        |m| {
+            let p = at(&runs, m);
+            assert_eq!(p.origins(p.result()).len(), m);
+        },
+    );
+}
+
+#[test]
+fn the_origins_of_a_set_every_row_holds_scale() {
+    // `n` rows hold one `#errs` set of `n` members. Each row's set was counted member by
+    // member, `O(n·m)`. Entries that hold a set with one id are counted once, so the work is
+    // `O((n + m) log n)` (COMPLEXITY.md K25). The runs are recorded before timing. Deferred by
+    // TESTS-scaling-limit-10_5 (10.6 times the bytes at 200 and 1600 on cdf07ac4f); back with
+    // row PROV-scaling-10_5.
+    let n = 200;
+    let runs = recorded(n, |m| rows_sharing_one_set(m, m));
+    scaling::check_order(
+        "the origins of n rows sharing one set of n failures, by n",
+        n,
+        1,
+        |m| {
+            let p = at(&runs, m);
+            assert_eq!(p.origins(p.result()).len(), m);
+        },
     );
 }
 

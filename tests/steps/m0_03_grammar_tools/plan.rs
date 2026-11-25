@@ -103,6 +103,34 @@ fn an_item_above_the_level_its_needs_give_is_reported() {
     );
 }
 
+/// The rows of a join `J` that needs the roots `N0` .. `N{k-1}`, each written `copies` times in
+/// its needs.
+fn join(k: usize, copies: usize) -> String {
+    let ids: Vec<String> = (0..k).map(|i| format!("N{i}")).collect();
+    let mut rows: Vec<(&str, &str, String)> = ids.iter().map(|id| ("0", &**id, "none".into())).collect();
+    let needs: Vec<&str> = (0..copies).flat_map(|_| ids.iter().map(|s| &**s)).collect();
+    rows.push(("1", "J", needs.join(", ")));
+    let rows: Vec<(&str, &str, &str)> = rows.iter().map(|(l, id, n)| (*l, *id, &**n)).collect();
+    plan(&rows)
+}
+
+#[test]
+fn a_row_with_more_than_32_needs_is_reported() {
+    // DAG-fanin-split-2026-11-25: L1.41-join-tools-tests reached 47 needs and
+    // L1.41-join-zedc-preimage-perf 41, with no landing failing; the limit is author P381's.
+    assert_eq!(zed_tools::plan::MAX_NEEDS, 32);
+    let (ok, out) = checked(&join(33, 1));
+    assert!(!ok);
+    assert_eq!(
+        out,
+        "line 42: J has 33 needs, more than 32; split it into join rows of at most 32 needs \
+         each, by crate or area\n"
+    );
+    // The control: 32 needs pass, and a need written twice counts once.
+    assert_eq!(checked(&join(32, 1)), (true, String::new()));
+    assert_eq!(checked(&join(32, 2)), (true, String::new()));
+}
+
 #[test]
 fn a_cycle_cannot_pass_the_level_check() {
     // Levels must rise along each edge, which no cycle allows.

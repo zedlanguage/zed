@@ -65,6 +65,31 @@ fn tree(lo: usize, hi: usize, op: fn(Term, Term) -> Term, leaf: &dyn Fn(usize) -
     }
 }
 
+/// The balanced product of `n` distinct loose atoms `e0, …, e(n-1)`: its `#errs` has `n` members.
+pub(super) fn product_of_atoms(n: usize) -> Term {
+    tree(0, n, mul, &|i| lit(Value::atom(&format!("e{i}"))))
+}
+
+/// The product of `n` atoms fails with `n` members, and the origins of its result are the `n`
+/// literals, each where its member first appears.
+pub(super) fn finds_the_origins_of_each_member(term: &Term, n: usize) {
+    let (v, p) = trace(term);
+    assert_eq!(v.errs().map(|e| e.len()), Some(n), "{v}");
+    let o = p.origins(p.result());
+    assert_eq!(o.len(), n);
+    let terms = p.fact_terms();
+    assert!(o.iter().all(|&j| matches!(terms[j], Term::Lit(_))));
+}
+
+#[test]
+fn the_origins_of_a_failure_with_many_members_are_its_literals() {
+    // From 2: one atom alone is the literal `#e0`, a value read back as written, not a failure
+    // (`errs()` is `None`), so the deferred copy's case n = 1 failed on 62bc84bd8.
+    for n in [2, 5, 16] {
+        finds_the_origins_of_each_member(&product_of_atoms(n), n);
+    }
+}
+
 /// A balanced sum of `n` ones.
 pub(super) fn sum_of_ones(n: usize) -> Term {
     tree(0, n, add, &|_| lit(Value::Int(1)))

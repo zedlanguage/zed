@@ -283,3 +283,28 @@ fn pncx_fibonacci_scale() {
         || run(large),
     );
 }
+
+/// The preferred residue values of n boolean bases under n clauses of three bases each, by a
+/// sweep of the clauses' endpoints. Deferred by TESTS-scaling-limit-10_5 (10.5 times the
+/// instructions at 64 and 512 on cdf07ac4f); back with row PRES-scaling-10_5.
+/// `pncx_score_witness_oracle` checks the answers.
+#[test]
+fn pncx_score_witness_scale() {
+    let inputs = scaling::inputs(64, |n| {
+        let info = boolean_info(n);
+        let allowed = vec![vec![(Int::ZERO, Int::ONE)]; n];
+        let clauses: Vec<BTreeMap<usize, ResidueSet>> = (0..n)
+            .map(|i| {
+                [i, (i + 1) % n, (i + 2) % n]
+                    .into_iter()
+                    .map(|j| (j, vec![(Int::ZERO, Int::ZERO)]))
+                    .collect()
+            })
+            .collect();
+        (info, allowed, clauses)
+    });
+    scaling::check_order("preferred residue values by endpoint sweep", 64, 1, |n| {
+        let (info, allowed, clauses) = &inputs[&n];
+        assert!(score_witness(info, allowed, clauses).is_some());
+    });
+}

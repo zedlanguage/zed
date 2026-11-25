@@ -2,7 +2,7 @@
 
 use crate::ladder::*;
 use zed_tests::scaling;
-use zedc::store::presburger::{Entailment, entails};
+use zedc::store::presburger::{self, Entailment, entails};
 
 #[test]
 fn the_condition_that_no_operation_fails_scales() {
@@ -111,9 +111,93 @@ fn products_of_premises_in_pairs_scale() {
     scaling::on_a_stack(8 << 20, measure);
 }
 
+// The three benchmarks below and `products_whose_factor_bounds_pass_through_two_general_rows_scale`
+// were deferred by TESTS-scaling-limit-10_5 (10.7 to 12.4 times the instructions at 16 and 128
+// on cdf07ac4f) and are back with row PRES-ladder-10_5.
+
+#[test]
+fn products_whose_factors_one_chain_connects_scale() {
+    // Every factor lies in one part, the chain; its atoms are bounded in one pass over the
+    // part, not each by its own questions over the whole part (C2-chain): no side of a hull is
+    // asked of the solver.
+    let n = 16;
+    let built = scaling::inputs(n, product_chain);
+    let measure = move || {
+        scaling::check("a sum of products along one chain entailed", n, |k| {
+            let (p, g) = &built[&k];
+            presburger::hull_sides_asked();
+            let e = entails(p, g);
+            assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            assert_eq!(presburger::hull_sides_asked(), 0, "{k}");
+        });
+    };
+    scaling::on_a_thread(8 << 20, measure);
+}
+
+#[test]
+fn products_along_a_chain_with_a_general_row_scale() {
+    // The chain of `product_chain` and one row of three atoms, which is not a difference
+    // constraint (C2-chain-general); no side of a hull is asked of the solver.
+    let n = 16;
+    let built = scaling::inputs(n, |k| {
+        product_chain_with(k, &["z0 + z1 + x0 >= 0".to_string()])
+    });
+    let measure = move || {
+        scaling::check(
+            "a sum of products along a chain with a general row",
+            n,
+            |k| {
+                let (p, g) = &built[&k];
+                presburger::hull_sides_asked();
+                let e = entails(p, g);
+                assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+                assert_eq!(presburger::hull_sides_asked(), 0, "{k}");
+            },
+        );
+    };
+    scaling::on_a_thread(8 << 20, measure);
+}
+
+#[test]
+fn products_along_a_chain_with_a_general_row_on_each_link_scale() {
+    // The chain of `product_chain` with one general row on each link, a coefficient 2 and
+    // three atoms: k general rows in the one part (C2-chain-general).
+    let n = 16;
+    let built = scaling::inputs(n, |k| {
+        let extra: Vec<String> = (0..k).map(|i| format!("2 * x{i} + y{i} >= z{i}")).collect();
+        product_chain_with(k, &extra)
+    });
+    let measure = move || {
+        scaling::check(
+            "a sum of products along a chain with k general rows",
+            n,
+            |k| {
+                let (p, g) = &built[&k];
+                let e = entails(p, g);
+                assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            },
+        );
+    };
+    scaling::on_a_thread(8 << 20, measure);
+}
+
+#[test]
+fn products_whose_factor_bounds_pass_through_two_general_rows_scale() {
+    // The bound `x{i} >= 7 + 2 * i` needs `x{i} + b{i} >= 10` and `b{i} + 2 * c{i} <= 3` at
+    // once; `b{i}` and `c{i}` are not factors, so they are eliminated before the factors are
+    // bounded (`shadow` in `part_bounds`), and no side of a hull is asked of the solver
+    // (C2-chain-general).
+    open_side_chain_scales(
+        "a sum of products whose factor bounds pass through two general rows",
+        16,
+        |i| format!("b{i} + 2 * c{i} <= 3 && c{i} >= z{i}"),
+        true,
+    );
+}
+
 #[test]
 fn products_along_a_chain_with_a_disjunction_on_each_link_scale() {
-    // The chain of `product_chain` (deferred, see [`product_chain_with`]) with
+    // The chain of [`product_chain`] with
     // `abs(x{i} - y{i}) <= z{i} + 1` on each link: the definition of each `abs` is a disjunction
     // over the link's atoms, so k disjunctions lie in the one part (C2-chain-general). Each
     // link fixed in turn rewrote the long row of the Omega test, Θ(k²) terms (21.2 times the

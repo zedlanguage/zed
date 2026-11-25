@@ -26,6 +26,9 @@ macro_rules! costs {
 costs!(shared_nest_decide, shared_nest, "z", 'd', 3200, 1);
 costs!(shared_nest_satisfiable, shared_nest, "z", 's', 2300, 1);
 costs!(shared_nest_answers, shared_nest, "z", 'a', 1700, 1);
+// Deferred by TESTS-scaling-limit-10_5 (10.57 times at k = 16 on cdf07ac4f); back with row
+// PRES-scaling-10_5.
+costs!(shared_nest_project_each, shared_nest, "z", 'p', 16, 1);
 costs!(shared_sums_decide, shared_sums, "x0", 'd', 110, 1);
 costs!(shared_sums_satisfiable, shared_sums, "x0", 's', 140, 1);
 costs!(shared_sums_project_each, shared_sums, "x0", 'p', 16, 1);
@@ -83,6 +86,9 @@ costs!(skew_block_answers, skew_block, "a0", 'a', 180, 1);
 costs!(nest_point_decide, nest_point, "x0", 'd', 2500, 1);
 costs!(nest_point_satisfiable, nest_point, "x0", 's', 2600, 1);
 costs!(nest_point_answers, nest_point, "x0", 'a', 1900, 1);
+// Deferred by TESTS-scaling-limit-10_5 (10.56 times at k = 16 on cdf07ac4f); back with row
+// PRES-scaling-10_5.
+costs!(nest_point_project_each, nest_point, "x0", 'p', 16, 1);
 costs!(nest_empty_decide, nest_empty, "x0", 'd', 2800, 1);
 costs!(nest_empty_satisfiable, nest_empty, "x0", 's', 3400, 1);
 costs!(nest_empty_project_each, nest_empty, "x0", 'p', 16, 1);

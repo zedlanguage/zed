@@ -116,6 +116,13 @@ fn chain_cross_scales() {
     scales("cross", 256);
 }
 
+/// Deferred by TESTS-scaling-limit-10_5 (10.7 times the bytes at 32 and 256 on cdf07ac4f); back
+/// with row S22-scaling-10_5.
+#[test]
+fn chain_cross_live_scales() {
+    scales("cross_live", 32);
+}
+
 #[test]
 fn chain_abs_guard_scales() {
     scales("abs_guard", 256);
@@ -477,6 +484,32 @@ fn forward_sets_of_a_chain_share_the_holes_scale() {
             small,
             large,
             1,
+        );
+    });
+}
+
+/// COMPLEXITY.md S22-split-holes: the split of the levels of [`spread_remainder_chain`] by
+/// their `2k + 1` ranges of classes, with `64k` holes in the domain of `x`, in the second
+/// program of [`counted_shapes`], does work and allocates bytes of order `k log k` from `k` to
+/// `8k`: the classes' runs share the domain of `x`, and their sets of `x` are compared and
+/// joined without listing the holes once for each class. Copying the domain into each run,
+/// meeting each class's set with it and comparing the sets piece by piece made `O(k * H)`.
+/// Deferred by TESTS-scaling-limit-10_5 (11.4 times the bytes at 8 and 64 on cdf07ac4f); back
+/// with row S22-scaling-10_5.
+#[test]
+fn split_classes_share_the_holes_scale() {
+    on_big_stack(|| {
+        let d = Demand::Bool(true);
+        let n = 8;
+        let t = scaling::inputs(n, |k| counted_shapes(spread_remainder_chain(k))[1].clone());
+        let ds = scaling::inputs(n, |k| x_with_holes(64 * k));
+        scaling::check(
+            "split of a spread remainder chain over a domain with holes",
+            n,
+            |k| {
+                let p = preimage(&t[&k], &ds[&k], &d);
+                assert!(p.exact, "the preimage at k = {k} is exact");
+            },
         );
     });
 }

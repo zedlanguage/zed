@@ -50,7 +50,7 @@ fn product(xs: &[Term]) -> Term {
 /// `let row = (#missing0, …, #missing{n-1}) in row.0 * row.1 * … * row.{n-1}`: a row of `n`
 /// sensor readings, each missing with an atom of its own, and the product of the row. The
 /// tuple's fact reads `n` literals, and each reading's search for its origin passes through it.
-fn missing_row(n: usize) -> Term {
+pub(super) fn missing_row(n: usize) -> Term {
     let row = prim(
         Prim::Tuple,
         (0..n)
@@ -358,7 +358,7 @@ fn a_term_shared_by_both_parts_of_the_root_runs_once_at_each_position() {
 
 /// `let e = #m0 * … * #m{m-1} in fam({0, …, n-1}, k -> (k, e))[0].1`: a table of `n` rows, each
 /// holding one `#errs` set of `m` failures.
-fn rows_sharing_one_set(n: usize, m: usize) -> Term {
+pub(super) fn rows_sharing_one_set(n: usize, m: usize) -> Term {
     let members: Vec<Term> = (0..m).map(|j| lit(Value::atom(&format!("m{j}")))).collect();
     let keys = lit(Family::set((0..n as i64).map(Value::Int)));
     let row = prim(Prim::Tuple, vec![var("k"), var("e")]);

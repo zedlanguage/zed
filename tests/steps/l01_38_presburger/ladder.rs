@@ -694,8 +694,16 @@ pub(super) fn product_sum(k: usize) -> (Relation, Relation) {
     (rs.pop().expect("two relations"), g)
 }
 
-/// `product_chain` (deferred to plan row PRES-ladder-10_5 in
-/// wt/scratch/deferred-tests/PRES-ladder-10_5.rs) with the rows `extra` added to the premise.
+/// The chain `z0 >= 0 && z1 >= z0 + 1 && ... && z{k-1} >= z{k-2} + 1 && z{k-1} <= 2 * k`, the
+/// links `x{i} >= z{i} && y{i} >= z{i}`, and the goal `x0 * y0 + ... >= 0`, translated: `k`
+/// products whose factors one chain of premises connects, so that every factor lies in one part
+/// of the premise rows, and each is bounded below by its own constant `i`, which only the chain
+/// gives.
+pub(super) fn product_chain(k: usize) -> (Relation, Relation) {
+    product_chain_with(k, &[])
+}
+
+/// [`product_chain`] with the rows `extra` added to the premise.
 pub(super) fn product_chain_with(k: usize, extra: &[String]) -> (Relation, Relation) {
     let (premise, goal) = product_chain_source(k, extra);
     let (ps, p) = function(&premise);
