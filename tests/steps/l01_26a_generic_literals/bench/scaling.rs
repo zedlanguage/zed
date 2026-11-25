@@ -16,11 +16,11 @@ use zed_tests::step_helpers::l01_26_type_resolution::Resolved;
 
 use super::super::scaling::{
     calls, calls_of_divisions, calls_with_divisor, decimals, deep_exponent, divisor_chain,
-    flat_exponent, half_of_a_power, if_of_a_power, if_of_a_wide_power, int_pair_of_a_power, long,
-    main_of_an_if_of_a_power, main_of_an_if_of_a_sum, nested_argument, nested_argument_two_sides,
-    nested_divisions, nested_quotients, pair_of_a_power, pairs, power_divisor, powers_at_the_top,
-    powers_in_a_body, powers_of_two, product, quotients, squares_divisor, sum, sum_of_divisions,
-    tuple_of_a_power,
+    flat_exponent, half_of_a_power, if_of_a_power, if_of_a_wide_power, int_pair_of_a_power,
+    int_tower_on_a_base, long, main_of_an_if_of_a_power, main_of_an_if_of_a_sum, nested_argument,
+    nested_argument_two_sides, nested_divisions, nested_quotients, pair_of_a_power, pairs,
+    power_divisor, powers_at_the_top, powers_in_a_body, powers_of_two, product, quotients,
+    squares_divisor, sum, sum_of_divisions, tuple_of_a_power,
 };
 
 /// Besides its ratio: `n` follows for `n` literals, and the elaboration of the checked unit
@@ -776,4 +776,26 @@ fn a_power_at_rat_with_a_long_or_deep_exponent_checks_in_linear_time_deep_reject
 #[test]
 fn a_power_at_rat_with_a_long_or_deep_exponent_checks_in_linear_time_deep_accepted() {
     exponent_scales("deep", deep_exponent, "2", true);
+}
+
+/// A rejected call on `1e40^(1^(1^(… ^ 1)))`, an exponent of `n` powers of `int` literals:
+/// the step for the `^` folds its exponent at `int` once, not once per power it holds
+/// (`fold_noting`'s proof). Besides its ratio: rejected, where the
+/// base `1.0` checks. Small instance: `scaling::an_int_tower_on_a_decimal_base_checks`.
+#[test]
+fn an_int_tower_on_a_decimal_base_is_rejected_in_linear_time() {
+    scaling::on_a_thread(1 << 29, || {
+        let n = 1400;
+        let units = scaling::inputs(n, |m| Resolved::new(&int_tower_on_a_base(m, "1e40")));
+        for u in units.values() {
+            assert!(!u.type_errors().is_empty());
+        }
+        scaling::check(
+            "checking add(x: 1e40^(1^(…1)), y: 1.0f32), an exponent of n powers, rejected",
+            n,
+            |m| {
+                std::hint::black_box(units[&m].type_errors());
+            },
+        );
+    });
 }

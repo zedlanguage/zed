@@ -913,8 +913,65 @@ struct DerivedLines {
 /// ([`DerivedLines`]).
 struct StepLines {
     lines: Vec<usize>,
+    /// The lines of the literals that narrow the carriers of an operation on literals alone
+    /// ([`OpenSteps::masks`]), a set shared with the operations it holds.
+    narrowing: Option<Lines>,
     next: Vec<Span>,
     kept: bool,
+}
+
+/// What [`Ck::derive_work`] and [`Ck::step_lines`] read of each operation on literals alone
+/// they show, found once per expression from what its operands give, by the expression's
+/// address. An address names one expression while the memo lives: every key is taken from a
+/// `&'a Expr`, which the checker's tables borrow for as long as it lives, so no expression is
+/// freed and its address given to another while the memo lives (the reason
+/// `zed_collections::by_address` exists does not arise). Each fact is a function of the
+/// expression alone, so no write clears it.
+///
+/// Complexity tradeoff (FAIL-l01-26a-exponent-benches-on-main): naive version, each step of a
+/// derivation that is an operation on literals alone read its whole expression again, to
+/// find what it holds ([`open_lits`]), the carriers each literal may take ([`lit_mask`]) and
+/// whether it folds at `f64` and at `rat` ([`folded`]): O(|e|) per step, so a nest of `n`
+/// such operations, every one a step, cost Theta(n^2) (job 20's profile of
+/// `long_rejected`, `deep_rejected` and `nested_powers_by_an_inexact_divisor`: 80% to 89% of
+/// the cycles in those reads; ratios 34.3, 56.1 and 16.2 at 8 times n). Used: each fact of an
+/// expression from its operands' facts, kept here, so each expression is read once per kind
+/// of fact, O(1) per step for the first two and O(log n) for its narrowing lines.
+///
+/// The exponent of a `^` at `rat` is read apart from the fold ([`int_exponent_value`]), so its
+/// operations are not among those the fold keeps: in `2^(1^(1^(…0.5)))` each `^` is a step,
+/// and each read its exponent's text to the `0.5` again, Theta(n^2) for `n` powers (job 23:
+/// `deep_rejected` stopped past the 20 s limit of its first phase, while `long_rejected` and
+/// the nested powers passed at 7.96 and 7.81). Used: whether each exponent's text is an
+/// `int`'s ([`int_exponent`]) is kept too, found from its operands', and each exponent's value
+/// at `int` with the other values ([`OpenSteps::folds`]), so that no walk enters an expression
+/// twice at a carrier, whatever the order of the steps ([`fold_noting`]'s proof).
+#[derive(Default)]
+struct OpenSteps {
+    /// [`open_lits`] of each expression met.
+    lits: HashMap<*const Expr, Option<OpenLits>>,
+    /// The carriers the literals of each operation on bare literals alone met may take
+    /// ([`LitMasks`]).
+    masks: HashMap<*const Expr, Rc<LitMasks>>,
+    /// The value [`folded`] gives each expression met at each carrier, `None` where it gives
+    /// none ([`fold_noting`]).
+    folds: HashMap<(*const Expr, Carrier), Option<Value>>,
+    /// Whether the text of each expression met in an exponent at `rat` is an `int`'s
+    /// ([`int_exponent`]).
+    int_exponents: HashMap<*const Expr, bool>,
+}
+
+/// The carriers the literals of an operation on bare literals alone may take, each literal's
+/// [`lit_mask`] with `exact`: their meet `and` (`u8::MAX` with no literal), their join `or`,
+/// and the lines of the literals of each mask, so that the literals that narrow an operation,
+/// those whose mask is `and` where `and != or`, are found without reading them all. In a
+/// function body the literals are generic and their class ([`Ck::lits_take`]) meets the same
+/// masks, so a step built from these names the carriers the body's class names
+/// (MSG-f32-body-top-agree): `1e40`, which no `f32` holds, takes `f64 | rat` in both.
+struct LitMasks {
+    and: u8,
+    or: u8,
+    lines: Vec<(u8, Lines)>,
 }
 
 /// A set of lines of a derivation ([`Ck::derivation_lines`]), each line as an `i64` key, the
@@ -3215,6 +3272,8 @@ struct Ck<'t, 'a> {
     /// the span the step derives, for the cut of [`Ck::derive_work`] (DESIGN.md
     /// sec:diagnostics, QUESTIONS A111; row DERIV-too-large-chain-quadratic).
     derived_lines: std::cell::RefCell<DerivedLines>,
+    /// What each operation on literals alone a derivation shows holds ([`OpenSteps`]).
+    open_steps: std::cell::RefCell<OpenSteps>,
     /// Where the lines of the unit's text start, found at the first derivation that needs
     /// them; `None` where the tables hold no text.
     text_lines: std::cell::OnceCell<Option<zedc_base::source::Lines>>,
@@ -3791,6 +3850,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             taken_from: HashMap::new(),
             places: std::cell::RefCell::new(HashMap::new()),
             derived_lines: Default::default(),
+            open_steps: Default::default(),
             text_lines: std::cell::OnceCell::new(),
             bit_curries: HashMap::new(),
             leaving: Vec::new(),
@@ -4814,6 +4874,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The reasons of literals that narrow an operation on literals alone, given after the
         // other steps, where a body gives its classes' reasons (MSG-f32-body-top-agree).
         let mut late: Vec<Note> = Vec::new();
+        // Each expression whose literals of a mask the walk pushed to `late`, with the mask.
+        let mut narrowed_by: HashSet<(*const Expr, u8)> = HashSet::new();
         // A derivation whose notes lie on more than five lines shows the line reported, that of
         // its first expression, and the four others nearest before it, then one note with the
         // count of the lines left out (DESIGN.md sec:diagnostics, QUESTIONS A111; spec
@@ -5061,8 +5123,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // meets, and gave no reason). One that took a carrier after the refusal
                     // these steps explain is shown as it was then ([`Ck::lit_settled`]).
                     let open = self.lit_open.contains(&span) || self.lit_settled.contains(&span);
+                    // What the operation holds, found from its operands ([`OpenSteps`]).
                     let decimal = match open {
-                        true => open_decimal_carriers(e, self.t.text),
+                        true => self.open_masks(e),
                         false => None,
                     };
                     // The carriers are the ones the headline prints for it
@@ -5071,23 +5134,47 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let open_ty = decimal.as_ref().and_then(|_| {
                         let open: Vec<Ty> = [Carrier::F64, Carrier::Rat]
                             .into_iter()
-                            .filter(|&c| folded(e, c).is_some())
+                            .filter(|&c| self.folds_at(e, c))
                             .map(Ty::carrier)
                             .collect();
                         (!open.is_empty()).then(|| Ty::union_all(&open))
                     });
-                    if let Some((m, lits)) = &decimal {
-                        let any = lits.iter().fold(0, |p, l| p | lit_mask(l, true));
-                        for l in lits.iter().filter(|l| lit_mask(l, true) == *m && *m != any) {
-                            let why = format_args!(
-                                "the literal {} takes {}",
-                                l.written(),
-                                ty::mask_text(*m)
-                            );
-                            late.push(Note {
-                                span: l.span,
-                                text: quoting(&why, || "this literal narrows it".into()).into(),
-                            });
+                    if let Some(ms) = decimal.filter(|ms| ms.and != ms.or) {
+                        let m = ms.and;
+                        // The literals of mask `m` in `e`, in the order of the text. An
+                        // expression whose literals of mask `m` were pushed before in this
+                        // derivation, by an operation that holds it, is not read again, nor
+                        // one that holds none: each expression is read at most once per mask,
+                        // and the masks of the operations a literal lies in shrink as they
+                        // grow, so at most five per expression (`Carrier::ALL` has four).
+                        // The notes are the ones the walk of every literal pushed, as each
+                        // literal not read here was pushed before and is shown once.
+                        let masks = &self.open_steps.borrow().masks;
+                        let mut todo: Vec<&'a Expr> = vec![*e];
+                        while let Some(x) = todo.pop() {
+                            let mx = &masks[&(x as *const Expr)];
+                            if !mx.lines.iter().any(|(n, _)| *n == m)
+                                || !narrowed_by.insert((x as *const Expr, m))
+                            {
+                                continue;
+                            }
+                            if let Some(l) = literal(x, self.t.text) {
+                                let why = format_args!(
+                                    "the literal {} takes {}",
+                                    l.written(),
+                                    ty::mask_text(m)
+                                );
+                                late.push(Note {
+                                    span: l.span,
+                                    text: quoting(&why, || "this literal narrows it".into()).into(),
+                                });
+                                continue;
+                            }
+                            match &x.kind {
+                                ExprKind::Binary(_, a, b) => todo.extend([&**b, &**a]),
+                                ExprKind::Unary(_, a) => todo.push(&**a),
+                                _ => {}
+                            }
                         }
                     }
                     let text = match (&e.kind, self.lit_open.contains(&span)) {
@@ -5102,7 +5189,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // holds a decimal, as `1e40 / 1e10`, never takes `int`, so that
                         // reason is not its own (MSG-f32-body-top-agree).
                         (ExprKind::Binary(BinaryOp::Div, ..), true)
-                            if open_lits(e).is_some_and(|o| !o.decimal) =>
+                            if self.open_of(e).is_some_and(|o| !o.decimal) =>
                         {
                             format!(
                                 "{what} is an operation on literals alone, so it is a literal too \
@@ -5280,6 +5367,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                         lines = lines.union(x);
                     }
                 }
+                if let Some(x) = &step.narrowing {
+                    lines = lines.union(x);
+                }
                 for l in step.lines {
                     lines.insert(line_key(l));
                 }
@@ -5308,6 +5398,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn step_lines(&self, span: Span, root: bool, d: &mut DerivedLines) -> StepLines {
         let mut step = StepLines {
             lines: Vec::new(),
+            narrowing: None,
             next: Vec::new(),
             kept: true,
         };
@@ -5327,10 +5418,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let open = self.lit_open.contains(&span) || self.lit_settled.contains(&span);
                 if open {
                     step.kept = false;
-                    if let Some((m, lits)) = open_decimal_carriers(e, self.t.text) {
-                        let any = lits.iter().fold(0, |p, l| p | lit_mask(l, true));
-                        let narrowing = lits.iter().filter(|l| lit_mask(l, true) == m && m != any);
-                        step.lines.extend(narrowing.map(|l| self.line_of(l.span)));
+                    // The lines of the literals whose mask is the operation's meet, where they
+                    // narrow it ([`LitMasks`]): a set shared with its operands', O(1) here.
+                    if let Some(ms) = self.open_masks(e).filter(|ms| ms.and != ms.or) {
+                        step.narrowing = (ms.lines.iter())
+                            .find(|(n, _)| *n == ms.and)
+                            .map(|(_, ls)| ls.clone());
                     }
                 }
                 step.lines.push(self.line_of(span));
@@ -5362,6 +5455,134 @@ impl<'t, 'a> Ck<'t, 'a> {
             o = origin.then.as_deref();
         }
         step
+    }
+
+    /// [`open_lits`] of `e`, found from its operands' and kept ([`OpenSteps`]). One walk of
+    /// the operations not met before, children before parents, on its own stack since they
+    /// nest as deep as the text: O(1) amortized per expression met, and each literal read once.
+    fn open_of(&self, e: &'a Expr) -> Option<OpenLits> {
+        let memo = &mut self.open_steps.borrow_mut().lits;
+        let mut todo: Vec<(&'a Expr, bool)> = vec![(e, false)];
+        while let Some((x, up)) = todo.pop() {
+            let key = x as *const Expr;
+            if memo.contains_key(&key) {
+                continue;
+            }
+            let o = if let Some(l) = literal(x, None) {
+                l.bare.then(|| OpenLits {
+                    decimal: is_decimal(&l.value),
+                    div: false,
+                })
+            } else {
+                let (div, kids): (bool, [Option<&'a Expr>; 2]) = match &x.kind {
+                    ExprKind::Binary(
+                        op @ (BinaryOp::Add
+                        | BinaryOp::Sub
+                        | BinaryOp::Mul
+                        | BinaryOp::Div
+                        | BinaryOp::Pow),
+                        a,
+                        b,
+                    ) => (*op == BinaryOp::Div, [Some(&**a), Some(&**b)]),
+                    ExprKind::Unary(UnaryOp::Neg, a) => (false, [Some(&**a), None]),
+                    _ => (false, [None, None]),
+                };
+                match (kids, up) {
+                    ([None, None], _) => None,
+                    (_, false) => {
+                        todo.push((x, true));
+                        todo.extend(kids.into_iter().flatten().rev().map(|k| (k, false)));
+                        continue;
+                    }
+                    (_, true) => kids.into_iter().flatten().try_fold(
+                        OpenLits {
+                            decimal: false,
+                            div,
+                        },
+                        |o, k| Some(o.or(memo[&(k as *const Expr)]?)),
+                    ),
+                }
+            };
+            memo.insert(key, o);
+        }
+        memo[&(e as *const Expr)]
+    }
+
+    /// The carriers the literals of `e` may take ([`LitMasks`]) where it is an operation on bare
+    /// literals alone that holds a decimal ([`Self::open_of`]), found from its operands' and
+    /// kept ([`OpenSteps`]); `None` for another expression. Each literal's [`lit_mask`] is
+    /// found once, and an operation's lines of each mask are the union of its operands', which
+    /// share the subtrees of the operand sets they come from ([`Lines`]): O(log n) for a
+    /// nest of `n` operations on one line or a few, O(m log(n/m + 1)) for operand sets of
+    /// sizes `m <= n` that share nothing, which sums to O(n log n) over the expression as in
+    /// [`Ck::derivation_lines`].
+    fn open_masks(&self, e: &'a Expr) -> Option<Rc<LitMasks>> {
+        if !self.open_of(e)?.decimal {
+            return None;
+        }
+        let memo = &mut self.open_steps.borrow_mut().masks;
+        let mut todo: Vec<(&'a Expr, bool)> = vec![(e, false)];
+        while let Some((x, up)) = todo.pop() {
+            let key = x as *const Expr;
+            if memo.contains_key(&key) {
+                continue;
+            }
+            let masks = if let Some(l) = literal(x, None) {
+                let m = lit_mask(&l, true);
+                let mut lines = Lines::new();
+                lines.insert(line_key(self.line_of(l.span)));
+                LitMasks {
+                    and: m,
+                    or: m,
+                    lines: vec![(m, lines)],
+                }
+            } else {
+                let kids: [Option<&'a Expr>; 2] = match &x.kind {
+                    ExprKind::Binary(_, a, b) => [Some(&**a), Some(&**b)],
+                    ExprKind::Unary(_, a) => [Some(&**a), None],
+                    _ => [None, None],
+                };
+                if !up && kids.iter().any(Option::is_some) {
+                    todo.push((x, true));
+                    todo.extend(kids.into_iter().flatten().rev().map(|k| (k, false)));
+                    continue;
+                }
+                let mut masks = LitMasks {
+                    and: u8::MAX,
+                    or: 0,
+                    lines: Vec::new(),
+                };
+                for k in kids.into_iter().flatten() {
+                    let km = &memo[&(k as *const Expr)];
+                    masks.and &= km.and;
+                    masks.or |= km.or;
+                    for (m, ls) in &km.lines {
+                        match masks.lines.iter_mut().find(|(n, _)| n == m) {
+                            Some((_, have)) => *have = have.union(ls),
+                            None => masks.lines.push((*m, ls.clone())),
+                        }
+                    }
+                }
+                masks
+            };
+            memo.insert(key, Rc::new(masks));
+        }
+        Some(memo[&(e as *const Expr)].clone())
+    }
+
+    /// Whether [`folded`] gives `e` a value at `c`, kept for `e` and every expression the fold
+    /// meets ([`OpenSteps`]). An expression whose fold failed before fails at once; one that
+    /// folded is folded again where an expression it lies in is asked later, since only
+    /// whether it folds is kept, not its value, which at `rat` may hold up to
+    /// [`FOLD_ASK_BITS`] bits and would make the memo of a nest of `n` growing products
+    /// Theta(n^2) words. A derivation asks an operation before the ones it holds, so a nest
+    /// is folded once per derivation that starts at its top.
+    fn folds_at(&self, e: &'a Expr, c: Carrier) -> bool {
+        let steps = &mut *self.open_steps.borrow_mut();
+        match steps.folds.get(&(e as *const Expr, c)) {
+            Some(v) => v.is_some(),
+            None => fold_noting(e, c, Some(steps)).is_some(),
+        }
     }
 
     /// Clears the lines kept for derivations ([`DerivedLines`]) where a write of the origin of
@@ -13265,34 +13486,6 @@ fn lit_mask(l: &Lit, exact: bool) -> u8 {
         .fold(0, |m, c| m | c.bit())
 }
 
-/// The carriers an operation on bare literals alone that holds a decimal may take, as a mask,
-/// the meet of the carriers that hold each of its literals exactly ([`lit_mask`] with
-/// `exact`), with those literals, read with the program's text `src`; `None` for another
-/// expression or one of integer literals alone. In a function body the literals are generic
-/// and their class ([`Ck::lits_take`]) meets the same masks, so a step built from this names
-/// the carriers the body's class names (MSG-f32-body-top-agree): `1e40`, which no `f32` holds,
-/// takes `f64 | rat` in both. O(|e|).
-fn open_decimal_carriers(e: &Expr, src: Option<&str>) -> Option<(u8, Vec<Lit>)> {
-    if !open_lits(e)?.decimal {
-        return None;
-    }
-    let mut lits = Vec::new();
-    let mut todo = vec![e];
-    while let Some(x) = todo.pop() {
-        if let Some(l) = literal(x, src) {
-            lits.push(l);
-            continue;
-        }
-        match &x.kind {
-            ExprKind::Binary(_, a, b) => todo.extend([&**b, &**a]),
-            ExprKind::Unary(_, a) => todo.push(a),
-            _ => {}
-        }
-    }
-    let m = lits.iter().fold(u8::MAX, |m, l| m & lit_mask(l, true));
-    Some((m, lits))
-}
-
 /// The literal `l` where a value of one of the types `want` is expected: the carrier it
 /// takes there, `None` when it keeps its own, or the rejection. Of the numeric carriers the
 /// types hold, it takes the ones it can be exactly: with none it is rejected with the forms
@@ -14317,47 +14510,125 @@ fn written_alone(src: &str, at: Span, edits: &[(Span, &dyn fmt::Display)]) -> Op
 /// 0.48 e digits for `3^e`, which the text writes in O(log e) characters, and multiply numbers
 /// of that size.
 fn folded(e: &Expr, c: Carrier) -> Option<Value> {
+    fold_noting(e, c, None)
+}
+
+/// [`folded`], keeping in `known`, where given, the value at `c` of each expression the walk
+/// enters, `None` where it has none, and entering no expression kept before: its kept value,
+/// or its failure, stands for it ([`Ck::folds_at`]). Where one fails, so does every operation
+/// it lies in, which are those whose `Apply` the stack still holds: each is kept as failing
+/// too. The exponents of `^` at `rat` are read through `known` as well, at `int`
+/// ([`int_exponent_noting`]).
+///
+/// Two facts the proof and the keeping of failures rest on, each read from the arms below.
+/// (a) An operation folds only where every operand folds: no form folds while a part of it
+/// fails. An operation the walk applies, `+`, `-`, `*`, `/`, `^`, a comparison or a `-`, takes
+/// the values of all its operands (`Apply` pops all `n`, and a failed operand stops the walk
+/// at `got?`). Every form that could read one operand and not another, `&&` and `||` (which
+/// elaboration writes as `if`s), an `if`, a `match`, a call with lazy arguments, has no fold
+/// here: `&&`, `||`, `++`, `div` and `mod` have no [`binary_prim`], and an `if`, a call, a
+/// name and every other form fall to `_`; each is kept as failing without its parts being
+/// entered. So where an expression fails, every operation whose `Apply` the stack holds
+/// fails too, and keeping each as failing is exact. (b) The value of an expression at `c`
+/// depends on that expression alone, not on the path that reached it: the walk reads only
+/// literals and the operators above, and gives a name, which alone could stand for a value
+/// that differs by where it is read, no value (the `_` arm); no environment is read. So the
+/// key, the expression's address and the carrier, names one value while `known` lives (an
+/// address names one expression while the [`OpenSteps`] that holds it lives).
+///
+/// Proof that, with one `known`, each expression is entered at most once at each carrier,
+/// whatever the order of the calls: (1) the walk enters an expression, past the lookup at
+/// `Visit`, only where `known` holds nothing for it at `c`. (2) Every expression entered is
+/// kept by the end of that walk: one that finishes is kept with its value; one that does not
+/// finish has its `Apply` on the stack when an expression inside it fails (an expression
+/// with no `Apply` finishes in the step that enters it), so it is kept as failing. (3) So a
+/// later walk does not enter it again, by (1). A kept value is copied when a walk meets it,
+/// and a walk meets it only where it enters the operation that holds it, which (1) and (2)
+/// allow once: each value is copied at most twice, once when kept and once when met, which
+/// costs no more than the operation that made it. Complexity tradeoff: naive version, only
+/// failures kept: a walk entered an expression a walk before had folded, and the steps of a
+/// derivation, which [`Ck::derive_work`] does not take from the outer operation in where
+/// several of its roots or a chain of names share an expression, could walk a nest again per
+/// step, Theta(n^2); used: every value kept, O(1) entries per expression and carrier.
+fn fold_noting(e: &Expr, c: Carrier, mut known: Option<&mut OpenSteps>) -> Option<Value> {
     enum Step<'e> {
         Visit(&'e Expr),
         Push(Value),
-        Apply(Prim, usize),
+        Apply(Prim, usize, &'e Expr),
     }
     let mut todo = vec![Step::Visit(e)];
     let mut values: Vec<Value> = Vec::new();
     while let Some(step) = todo.pop() {
-        match step {
+        // The expression finished and its value, `None` where it does not fold.
+        let (at, got) = match step {
             Step::Visit(x) => {
-                if let Some(l) = literal(x, None) {
-                    values.push(lit_value(&l, c)?);
-                    continue;
-                }
-                match &x.kind {
-                    // The exponent is read at `int` apart from this walk, which does not
-                    // enter it: each node is folded once, at `rat` or at `int`.
-                    ExprKind::Binary(BinaryOp::Pow, a, b) if c == Carrier::Rat => {
-                        let k = int_exponent_value(b)?;
-                        todo.extend([Step::Apply(Prim::Pow, 2), Step::Push(k), Step::Visit(a)]);
+                let kept = (known.as_deref()).and_then(|k| k.folds.get(&(x as *const Expr, c)));
+                if let Some(v) = kept {
+                    match v.clone() {
+                        Some(v) => {
+                            values.push(v);
+                            continue;
+                        }
+                        None => (x, None),
                     }
-                    ExprKind::Binary(op, a, b) => {
-                        let p = binary_prim(*op)?;
-                        todo.extend([Step::Apply(p, 2), Step::Visit(b), Step::Visit(a)]);
+                } else if let Some(l) = literal(x, None) {
+                    (x, lit_value(&l, c))
+                } else {
+                    match &x.kind {
+                        // The exponent is read at `int` apart from this walk, which does not
+                        // enter it: each node is folded once, at `rat` or at `int`.
+                        ExprKind::Binary(BinaryOp::Pow, a, b) if c == Carrier::Rat => {
+                            match int_exponent_noting(b, known.as_deref_mut()) {
+                                Some(k) => {
+                                    todo.extend([
+                                        Step::Apply(Prim::Pow, 2, x),
+                                        Step::Push(k),
+                                        Step::Visit(a),
+                                    ]);
+                                    continue;
+                                }
+                                None => (x, None),
+                            }
+                        }
+                        ExprKind::Binary(op, a, b) => match binary_prim(*op) {
+                            Some(p) => {
+                                todo.extend([Step::Apply(p, 2, x), Step::Visit(b), Step::Visit(a)]);
+                                continue;
+                            }
+                            None => (x, None),
+                        },
+                        ExprKind::Unary(UnaryOp::Neg, a) => {
+                            todo.extend([Step::Apply(Prim::Neg, 1, x), Step::Visit(a)]);
+                            continue;
+                        }
+                        // A `rat` literal, `2r`, is a value of `rat` alone.
+                        ExprKind::Rat(d) if c == Carrier::Rat => {
+                            (x, Rat::decimal(d).ok().flatten().map(Value::rat))
+                        }
+                        _ => (x, None),
                     }
-                    ExprKind::Unary(UnaryOp::Neg, a) => {
-                        todo.extend([Step::Apply(Prim::Neg, 1), Step::Visit(a)]);
-                    }
-                    // A `rat` literal, `2r`, is a value of `rat` alone.
-                    ExprKind::Rat(d) if c == Carrier::Rat => {
-                        values.push(Value::rat(Rat::decimal(d).ok()??));
-                    }
-                    _ => return None,
                 }
             }
-            Step::Push(v) => values.push(v),
-            Step::Apply(p, n) => {
+            Step::Push(v) => {
+                values.push(v);
+                continue;
+            }
+            Step::Apply(p, n, x) => {
                 let args = values.split_off(values.len().checked_sub(n)?);
-                values.push(prim_folded(p, args)?);
+                (x, prim_folded(p, args))
+            }
+        };
+        if let Some(k) = known.as_deref_mut() {
+            k.folds.insert((at as *const Expr, c), got.clone());
+            if got.is_none() {
+                for s in &todo {
+                    if let Step::Apply(_, _, y) = s {
+                        k.folds.insert((*y as *const Expr, c), None);
+                    }
+                }
             }
         }
+        values.push(got?);
     }
     values.pop()
 }
@@ -14753,13 +15024,69 @@ fn rat_exponent(b: &Expr) -> Option<Value> {
 /// [`unfixed_binding`]) do not enter an exponent read so again, which keeps them O(size of
 /// the value) over nested powers such as `1^(1^(1^1))`.
 fn int_exponent_value(b: &Expr) -> Option<Value> {
+    int_exponent_noting(b, None)
+}
+
+/// [`int_exponent_value`], reading through `known`, where given, both whether the text of
+/// each expression in `b` is an `int`'s ([`int_exponent_kept`]) and the value of each at `int`
+/// ([`fold_noting`]). Each is entered at most once over all the calls that share `known`
+/// ([`int_exponent_kept`]; [`fold_noting`]'s proof, which holds at `int` as at any carrier),
+/// so over every `^` of a nest, as `1^(1^(…0.5))` or `2^(1^(…1))`, the exponents cost O(n) in
+/// all, where reading each again cost Theta(n^2) ([`OpenSteps`]).
+fn int_exponent_noting(b: &Expr, mut known: Option<&mut OpenSteps>) -> Option<Value> {
     if let Some(v) = rat_exponent(b) {
         return Some(v);
     }
-    if !int_exponent(b) {
+    let int = match known.as_deref_mut() {
+        Some(k) => int_exponent_kept(b, &mut k.int_exponents),
+        None => int_exponent(b),
+    };
+    if !int {
         return None;
     }
-    folded(b, Carrier::Int).filter(|v| v.number_kind() == Some(0))
+    fold_noting(b, Carrier::Int, known).filter(|v| v.number_kind() == Some(0))
+}
+
+/// [`int_exponent`] of `b`, found from its operands' and kept in `kept` for `b` and every
+/// expression in it: an `int` literal is an `int`'s text, an operation `+`, `-`, `*`, `^` or a
+/// `-` is one where all its operands are, and anything else is not. This is
+/// [`int_exponent`]'s answer, which is `false` exactly where some expression in `b` is not
+/// one of these, and `true` where all are. One walk, children before parents, of the
+/// expressions not kept before: O(1) amortized per expression over every call that shares
+/// `kept`, where [`int_exponent`] alone reads all of `b` at each call, O(n^2) over the `n`
+/// exponents of `1^(1^(…0.5))` ([`OpenSteps`]).
+fn int_exponent_kept(b: &Expr, kept: &mut HashMap<*const Expr, bool>) -> bool {
+    let mut todo: Vec<(&Expr, bool)> = vec![(b, false)];
+    while let Some((x, up)) = todo.pop() {
+        let key = x as *const Expr;
+        if kept.contains_key(&key) {
+            continue;
+        }
+        let int = if let Some(l) = literal(x, None) {
+            lit_value(&l, Carrier::Int).is_some()
+        } else {
+            let kids: [Option<&Expr>; 2] = match &x.kind {
+                ExprKind::Binary(
+                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Pow,
+                    a,
+                    c,
+                ) => [Some(&**a), Some(&**c)],
+                ExprKind::Unary(UnaryOp::Neg, a) => [Some(&**a), None],
+                _ => [None, None],
+            };
+            if kids.iter().all(Option::is_none) {
+                false
+            } else if !up {
+                todo.push((x, true));
+                todo.extend(kids.into_iter().flatten().map(|k| (k, false)));
+                continue;
+            } else {
+                (kids.into_iter().flatten()).all(|k| kept[&(k as *const Expr)])
+            }
+        };
+        kept.insert(key, int);
+    }
+    kept[&(b as *const Expr)]
 }
 
 /// Whether the text of `b`, the exponent of a `^` at `rat`, is that of an `int`, which `^`
@@ -20676,5 +21003,207 @@ mod tests {
             read.written()
         );
         assert!(ck.errors.is_empty());
+    }
+
+    /// The expression `text`.
+    fn expression(text: &str) -> Expr {
+        let tokens = zedc_syntax::lex::lex(text).expect("lexing an expression");
+        let tree = zedc_syntax::parse::parse(text, &tokens, "Expr", zedc_syntax::parse::TOP)
+            .expect("parsing an expression");
+        zedc_syntax::ast::build(text, &tokens, &tree).expect("reading an expression")
+    }
+
+    /// The two operands of the operation `e`.
+    fn operands(e: &Expr) -> (&Expr, &Expr) {
+        match &e.kind {
+            ExprKind::Binary(_, a, b) => (&**a, &**b),
+            _ => panic!("not an operation"),
+        }
+    }
+
+    /// `e` and every expression under `+`, `-`, `*`, `/`, `^` and a `-` in it.
+    fn parts(e: &Expr) -> Vec<&Expr> {
+        let mut out = vec![e];
+        let mut i = 0;
+        while i < out.len() {
+            let x = out[i];
+            match &x.kind {
+                ExprKind::Binary(_, a, b) => out.extend([&**a, &**b]),
+                ExprKind::Unary(_, a) => out.push(a),
+                _ => {}
+            }
+            i += 1;
+        }
+        out
+    }
+
+    /// A failure `fold_noting` keeps is kept for the operations the failing one lies in, never
+    /// for one beside it (FAIL-l01-26a-exponent-benches-on-main): in `(1.0 / 0) * (0.5 + 1)`
+    /// at `rat` the `/` and the `*` that holds it fold to no value, and the `+` is `3/2`, both
+    /// when the memo is read and when it is not.
+    #[test]
+    fn a_kept_fold_failure_is_kept_for_the_operations_it_lies_in_alone() {
+        let e = expression("(1.0 / 0) * (0.5 + 1)");
+        let (div, add) = operands(&e);
+        let key = |x: &Expr| (x as *const Expr, Carrier::Rat);
+        let mut steps = OpenSteps::default();
+        assert_eq!(fold_noting(&e, Carrier::Rat, Some(&mut steps)), None);
+        assert_eq!(steps.folds.get(&key(&e)), Some(&None));
+        assert_eq!(steps.folds.get(&key(div)), Some(&None));
+        assert_ne!(steps.folds.get(&key(add)), Some(&None));
+        let sum = folded(add, Carrier::Rat).expect("the `+` folds at `rat`");
+        assert_eq!(
+            fold_noting(add, Carrier::Rat, Some(&mut steps)),
+            Some(sum.clone())
+        );
+        assert_eq!(steps.folds.get(&key(add)), Some(&Some(sum)));
+    }
+
+    /// A walk of `fold_noting` does not enter an expression kept before, whatever the order of
+    /// the calls, at `rat` and at `int` in an exponent alike: what is kept stands for it
+    /// (FAIL-l01-26a-exponent-benches-on-main, `fold_noting`'s proof). Each kept value here is
+    /// one the expression does not have, so a walk that entered it would give another answer,
+    /// as the negative controls, the same walks with no memo, do: the `+` of `(0.5 + 1) * 2`
+    /// kept as failing makes the `*` fail, where it is `3`; kept as `10` it makes the `*` `20`;
+    /// and in `2^(1 + 1)` at `rat`, the exponent kept at `int` as `3` makes the power `8`,
+    /// where it is `4`.
+    #[test]
+    fn a_walk_does_not_enter_an_expression_kept_before() {
+        let value = |text: &str, c| folded(&expression(text), c).expect("a literal folds");
+        let twice = expression("(0.5 + 1) * 2");
+        let (inner, _) = operands(&twice);
+        let key = |x: &Expr, c| (x as *const Expr, c);
+        let mut failed = OpenSteps::default();
+        failed.folds.insert(key(inner, Carrier::Rat), None);
+        assert_eq!(fold_noting(&twice, Carrier::Rat, Some(&mut failed)), None);
+        let mut ten = OpenSteps::default();
+        let rat = |text| value(text, Carrier::Rat);
+        ten.folds.insert(key(inner, Carrier::Rat), Some(rat("10")));
+        assert_eq!(
+            fold_noting(&twice, Carrier::Rat, Some(&mut ten)),
+            Some(rat("10 * 2"))
+        );
+        assert_eq!(
+            fold_noting(&twice, Carrier::Rat, None),
+            Some(rat("1.5 * 2"))
+        );
+        assert_ne!(rat("10 * 2"), rat("1.5 * 2"));
+
+        let power = expression("2^(1 + 1)");
+        let (_, exponent) = operands(&power);
+        let mut three = OpenSteps::default();
+        let three_int = Some(value("3", Carrier::Int));
+        three.folds.insert(key(exponent, Carrier::Int), three_int);
+        assert_eq!(
+            fold_noting(&power, Carrier::Rat, Some(&mut three)),
+            Some(rat("2^3"))
+        );
+        assert_eq!(fold_noting(&power, Carrier::Rat, None), Some(rat("2^2")));
+        assert_ne!(rat("2^3"), rat("2^2"));
+    }
+
+    /// `int_exponent_kept` gives `int_exponent`'s answer for every expression in an exponent,
+    /// keeps one for each, and reads none again: after the outer exponent of a tower is read,
+    /// reading each inner one adds nothing to what is kept (FAIL-l01-26a-exponent-benches-on-
+    /// main, the O(n) of `deep_rejected`). The negative control: a decimal at the top of the
+    /// tower, a `/` and a `rat` literal each make the text no `int`'s, where the same text
+    /// without them is.
+    #[test]
+    fn an_exponents_int_text_is_kept_once_for_each_expression() {
+        for text in [
+            "1^(1^(1^(1^0.5)))",
+            "1^(1^(1^(1^2)))",
+            "0.5^(1^(1^2))",
+            "-(2 + 3) * 4 - 1",
+            "2 * (1 / 2)",
+            "2^2r",
+            "x + 1",
+        ] {
+            let b = expression(text);
+            let mut kept = HashMap::new();
+            assert_eq!(int_exponent_kept(&b, &mut kept), int_exponent(&b), "{text}");
+            // The walk, as `int_exponent`, reads no operand of a form it does not descend
+            // through, as the `1` and `2` of `1 / 2`, so it keeps every part only where the
+            // answer is `int`; each part it keeps has `int_exponent`'s answer.
+            let all = parts(&b);
+            for x in &all {
+                if let Some(k) = kept.get(&(*x as *const Expr)) {
+                    assert_eq!(*k, int_exponent(x), "{text}");
+                }
+            }
+            if int_exponent(&b) {
+                assert_eq!(kept.len(), all.len(), "{text}");
+            }
+            for x in &all {
+                int_exponent_kept(x, &mut kept);
+            }
+            let read = kept.len();
+            assert_eq!(read, all.len(), "{text}");
+            for x in &all {
+                assert_eq!(int_exponent_kept(x, &mut kept), int_exponent(x), "{text}");
+                assert_eq!(kept.len(), read, "{text}");
+            }
+        }
+        let no = |t: &str| !int_exponent_kept(&expression(t), &mut HashMap::new());
+        assert!(no("1^(1^(1^(1^0.5)))") && no("2 * (1 / 2)") && no("2^2r"));
+        assert!(!no("1^(1^(1^(1^2)))") && !no("-(2 + 3) * 4 - 1"));
+    }
+
+    /// `fold_noting`'s fact (a): a form that could read one operand and not another has no
+    /// fold, so none folds while a part of it fails, and its parts are not entered. A reading
+    /// that skipped the failing part would give `true` for the `||`, `false` for the `&&` and
+    /// `1/2` for the `if`; here each is kept as failing, and it alone is kept. The negative
+    /// control: a `==`, which takes both operands, enters them, and keeps the failing `/`.
+    #[test]
+    fn a_form_that_could_skip_a_failing_part_does_not_fold() {
+        let key = |x: &Expr| (x as *const Expr, Carrier::Rat);
+        for text in [
+            "(1 == 1) || (1.0 / 0 == 1)",
+            "(1 == 2) && (1.0 / 0 == 1)",
+            "if 1 == 1 { 0.5 } else { 1.0 / 0 }",
+        ] {
+            let e = expression(text);
+            let mut steps = OpenSteps::default();
+            assert_eq!(
+                fold_noting(&e, Carrier::Rat, Some(&mut steps)),
+                None,
+                "{text}"
+            );
+            assert_eq!(steps.folds.get(&key(&e)), Some(&None), "{text}");
+            assert_eq!(steps.folds.len(), 1, "{text}");
+        }
+        let both = expression("(1 == 1) == (1.0 / 0 == 1)");
+        let (_, right) = operands(&both);
+        let (div, _) = operands(right);
+        let mut steps = OpenSteps::default();
+        assert_eq!(fold_noting(&both, Carrier::Rat, Some(&mut steps)), None);
+        assert_eq!(steps.folds.get(&key(div)), Some(&None));
+        assert_eq!(steps.folds.get(&key(right)), Some(&None));
+        assert!(steps.folds.len() > 1);
+    }
+
+    /// `fold_noting`'s fact (b): an expression that holds a name, whose value could differ by
+    /// where it is read, has no value at any carrier, read through a memo or not, so a kept
+    /// value never depends on the path that reached it. The negative control: the same
+    /// expressions with a literal for the name fold.
+    #[test]
+    fn an_expression_with_a_name_folds_to_no_value_on_any_path() {
+        for (text, literal_text) in [("x + 1", "2 + 1"), ("2 * (3 - x)", "2 * (3 - 2)")] {
+            for c in [Carrier::Int, Carrier::Rat] {
+                let e = expression(text);
+                assert_eq!(fold_noting(&e, c, None), None, "{text}");
+                let mut steps = OpenSteps::default();
+                assert_eq!(fold_noting(&e, c, Some(&mut steps)), None, "{text}");
+                assert_eq!(
+                    steps.folds.get(&(&e as *const Expr, c)),
+                    Some(&None),
+                    "{text}"
+                );
+                assert!(
+                    folded(&expression(literal_text), c).is_some(),
+                    "{literal_text}"
+                );
+            }
+        }
     }
 }

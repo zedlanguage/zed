@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use zed_native::link::{Identity, Toolchain};
 
-use super::{Link, dir, executable, link, sign, toolchain};
+use super::{Link, dir, executable, link, sign, symlink_to, toolchain};
 
 /// The system's toolchain with its runtime library reached through a symbolic link in `lib`,
 /// so the prelinked object and its lock are made there, in a directory of this test's.
@@ -22,13 +22,53 @@ fn linked_from(lib: &Path) -> Toolchain {
             .expect("a runtime library's name"),
     );
     std::fs::create_dir_all(lib).unwrap();
-    match std::os::unix::fs::symlink(&system.runtime, &runtime) {
-        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
-            panic!("{}: {e}", runtime.display())
-        }
-        _ => {}
-    }
+    symlink_to(&system.runtime, &runtime);
     Toolchain { runtime, ..system }
+}
+
+/// A link a run before left to a path that is gone is replaced by one to the target, and one
+/// to the target is kept as it is (`symlink_to`, FAIL-main-l01_36b-dangling-runtime-link). The
+/// negative control is the code before it, which made the link and took `AlreadyExists` as
+/// done: it leaves the link dangling.
+#[test]
+fn a_link_left_to_a_path_that_is_gone_is_replaced() {
+    use std::os::unix::fs::MetadataExt as _;
+    let d = dir("dangling");
+    let lib = d.join("lib");
+    std::fs::create_dir_all(&lib).unwrap();
+    let target = d.join("library");
+    std::fs::write(&target, "the runtime").unwrap();
+    let gone = d.join("gone").join("library");
+    assert!(
+        gone.symlink_metadata().is_err(),
+        "{} is absent",
+        gone.display()
+    );
+    let at = lib.join("libzed_native.a");
+    symlink_to(&gone, &at);
+    assert_eq!(std::fs::read_link(&at).unwrap(), gone);
+    assert!(std::fs::metadata(&at).is_err(), "the planted link dangles");
+
+    let before = std::os::unix::fs::symlink(&target, &at);
+    assert_eq!(
+        before.map_err(|e| e.kind()),
+        Err(std::io::ErrorKind::AlreadyExists)
+    );
+    assert!(
+        std::fs::metadata(&at).is_err(),
+        "the code before keeps the dangling link"
+    );
+
+    symlink_to(&target, &at);
+    assert_eq!(std::fs::read_link(&at).unwrap(), target);
+    assert_eq!(std::fs::read(&at).unwrap(), b"the runtime");
+    let made = at.symlink_metadata().unwrap().ino();
+    symlink_to(&target, &at);
+    assert_eq!(
+        at.symlink_metadata().unwrap().ino(),
+        made,
+        "a link to the target is kept"
+    );
 }
 
 /// The path of the prelinked object of `tools` in `dir`.

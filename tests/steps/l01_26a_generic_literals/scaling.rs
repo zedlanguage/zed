@@ -534,6 +534,28 @@ pub(super) fn deep_exponent(n: usize, e: &str) -> String {
     format!("y = 2r * 2^({}{e}{});\n", "1^(".repeat(n), ")".repeat(n))
 }
 
+/// `y = add(x: b^(1^(1^(… ^ 1))), y: 1.0f32)`, a base `b` raised to an exponent of `n` powers
+/// of `int` literals nested: the one shape in which a derivation's step at `rat` folds a long
+/// exponent at `int` (`int_exponent_noting`: the exponent holds no decimal, so the `^` that
+/// does holds it in its base).
+pub(super) fn int_tower_on_a_base(n: usize, b: &str) -> String {
+    format!(
+        "add(x, y) = x + y;\ny = add(x: {b}^({}1{}), y: 1.0f32);\n",
+        "1^(".repeat(n),
+        ")".repeat(n)
+    )
+}
+
+/// With the base `1e40`, which no `f32` holds, the call is rejected; with `1.0` it checks.
+#[test]
+fn an_int_tower_on_a_decimal_base_checks() {
+    assert!(!type_errors(&int_tower_on_a_base(3, "1e40")).is_empty());
+    assert_eq!(
+        type_errors(&int_tower_on_a_base(3, "1.0")),
+        Vec::<String>::new()
+    );
+}
+
 /// With `e` a decimal, `0.5`, the power is no `rat` and the line is rejected; with `e = 2` it
 /// is a `rat`. At `rat` the text of each exponent is read once and the exponent folded once at
 /// `int` (`int_exponent`, `Ck::lit_fit`; plan row LIT-rat-decimal-exponent).

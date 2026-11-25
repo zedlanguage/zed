@@ -32,6 +32,33 @@ pub(crate) fn dir(name: &str) -> PathBuf {
     zed_tests::step_helpers::scratch_dir(format!("l01_36b/{name}"))
 }
 
+/// A symbolic link at `at` to `target`: the one there is kept where it names `target`, and
+/// replaced where it names another path. A link left by a run before may name a library that
+/// is not here: one made where the build directory was another, as on another machine, named
+/// a path absent on this one, and every build through it failed
+/// (FAIL-main-l01_36b-dangling-runtime-link). The new link is made under a name of its own in
+/// the same directory and renamed over the old one; rename(2) replaces it in one step, so no
+/// file is removed and a reader of `at` sees the old link or the new. A name of a run that
+/// was killed between the two steps is passed over and left. O(1) system calls, and one per
+/// such name.
+pub(crate) fn symlink_to(target: &Path, at: &Path) {
+    if std::fs::read_link(at).is_ok_and(|t| t == target) {
+        return;
+    }
+    let mut n = 0u32;
+    let fresh = loop {
+        let mut name = at.as_os_str().to_owned();
+        name.push(format!(".new-{}-{n}", std::process::id()));
+        let name = PathBuf::from(name);
+        match std::os::unix::fs::symlink(target, &name) {
+            Ok(()) => break name,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => panic!("{}: {e}", name.display()),
+        }
+    };
+    std::fs::rename(&fresh, at).unwrap_or_else(|e| panic!("{}: {e}", at.display()));
+}
+
 /// What a build did at its link.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Link {

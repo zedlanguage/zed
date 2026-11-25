@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use zed_native::link::{Toolchain, recorded};
 
-use super::{Link, at_once, copied, dir, driver, executable, link, sign, toolchain};
+use super::{Link, at_once, copied, dir, driver, executable, link, sign, symlink_to, toolchain};
 
 /// The line the executable `exe` writes when run with no words.
 fn says(exe: &Path) -> String {
@@ -115,7 +115,8 @@ fn the_same_toolchain_on_other_paths_keeps_the_executable() {
     let before = std::fs::metadata(&out).unwrap();
     // The runtime library in another directory, through a symbolic link: the same bytes at no
     // copying cost. Its name is the library's, which Cargo makes from the build's hash, so a
-    // link left by a run before names this library.
+    // link left by a run before has this name, but may name the library where another build
+    // directory held it (`symlink_to`).
     let elsewhere = d.join("lib").join(
         system
             .runtime
@@ -123,12 +124,7 @@ fn the_same_toolchain_on_other_paths_keeps_the_executable() {
             .expect("a runtime library's name"),
     );
     std::fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
-    match std::os::unix::fs::symlink(&system.runtime, &elsewhere) {
-        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
-            panic!("{}: {e}", elsewhere.display())
-        }
-        _ => {}
-    }
+    symlink_to(&system.runtime, &elsewhere);
     let moved = Toolchain {
         linker: on_path("cc").into(),
         runtime: elsewhere,

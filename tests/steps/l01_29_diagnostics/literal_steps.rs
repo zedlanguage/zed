@@ -100,6 +100,34 @@ fn a_division_of_literals_with_a_decimal_has_the_same_steps_at_the_top_level_as_
     }
 }
 
+/// In a nest of operations on literals alone, a literal that narrows the carriers of several
+/// of them is shown once, after the steps of the operations: `1e40`, which no `f32` holds,
+/// narrows both the `/` it lies in and the `*` that holds the `/`, and its one note follows
+/// the three operations' steps, in the order of the text. Each operation's literals are found
+/// from its operands', and those shown for an operation are not read again for one inside it
+/// (FAIL-l01-26a-exponent-benches-on-main). The negative control: `1e10`, `2.5` and `0.1`,
+/// which every carrier the operations take holds, narrow nothing and get no such note.
+#[test]
+fn a_literal_that_narrows_a_nest_of_operations_is_shown_once() {
+    let out = zed_tests::step_helpers::l01_29_diagnostics::rejected_with_main(
+        "add(x, y) = x + y;\ny = add(x: (1e40 / 1e10) * (2.5 + 0.1), y: 1.0f32);\n",
+    );
+    let s = steps(&out);
+    let at = |text: &str| {
+        let found: Vec<usize> = (0..s.len()).filter(|&i| s[i] == text).collect();
+        assert_eq!(found.len(), 1, "{text}\n{out}");
+        found[0]
+    };
+    let mul = at("this `*` gives f64 | rat");
+    let div = at("this `/` gives f64 | rat");
+    let add = at("this `+` gives f64 | rat");
+    let narrows = at("the literal 1e40 takes f64 | rat");
+    assert!(mul < div && div < add && add < narrows, "{out}");
+    for l in ["1e10", "2.5", "0.1"] {
+        assert!(!out.contains(&format!("the literal {l} takes")), "{out}");
+    }
+}
+
 #[test]
 fn divisions_of_literals_nested_two_deep_name_no_type_for_any_of_them() {
     let out = rejected("y = ((1 / 2) / (3 / 4)) / (5 / 6);\n");
@@ -435,4 +463,22 @@ fn an_operation_on_literals_with_no_carrier_offers_each_carrier() {
     let out = rejected("y = (1 / 2) * \"a\";\n");
     assert!(out.contains("    y = (1r / 2) * \"a\";"), "{out}");
     assert!(out.contains("    y = (1.0f64 / 2) * \"a\";"), "{out}");
+}
+
+/// A `^` whose base is a decimal and whose exponent is a nest of powers of `int` literals is a
+/// step shown by the carriers it folds at, `f64 | rat`: at `rat` its exponent is read and
+/// folded at `int` (`int_exponent_noting`), the path the bench
+/// `an_int_tower_on_a_decimal_base_is_rejected_in_linear_time` times. The `^`s inside the
+/// exponent hold no decimal and are not such steps, the negative control: only the outer
+/// `^` gives `f64 | rat`.
+#[test]
+fn a_power_of_a_decimal_to_a_nest_of_int_powers_is_shown_by_its_carriers() {
+    let out = zed_tests::step_helpers::l01_29_diagnostics::rejected_with_main(
+        "add(x, y) = x + y;\ny = add(x: 1e40^(1^(1^(1^1))), y: 1.0f32);\n",
+    );
+    let s = steps(&out);
+    let gives = (s.iter())
+        .filter(|t| **t == "this `^` gives f64 | rat")
+        .count();
+    assert_eq!(gives, 1, "{out}");
 }
