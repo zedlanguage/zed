@@ -880,16 +880,23 @@ fn the_support_units_follow_the_support_size() {
         };
         let plan = a.plan(&a).expect("packed keys");
         let size = a.sparse_mul(&a, true).len() as f64;
-        let s = a
-            .support_setup(&a, &plan)
+        let (s, folds, estimated) = a
+            .support_estimate(&a, &plan)
             .expect("the support product runs");
-        let units = a
-            .support_units(&a, &plan)
-            .expect("the support product runs");
-        let ratio = units / s.cost(size);
+        let ratio = s.cost(estimated) / s.cost(size);
         assert!(
             (1.0 / 1.25..=1.25).contains(&ratio),
-            "k = {k}: {units} units estimated against {} at the support's {size} indices, {ratio}",
+            "k = {k}: {} units estimated at {estimated} indices against {} at the support's \
+             {size}, {ratio}",
+            s.cost(estimated),
+            s.cost(size)
+        );
+        // The folds are spent before the rounds whatever the estimate, so they are held apart:
+        // at most `32 / 27` of the first sumset round (the bound at `SupportSetup::estimate`),
+        // so below the rounds' units at the true size.
+        assert!(
+            folds <= s.cost(size),
+            "k = {k}: the folds took {folds} units against {} of the rounds",
             s.cost(size)
         );
     }

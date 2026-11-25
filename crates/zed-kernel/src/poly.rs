@@ -157,7 +157,7 @@ const SUPPORT: f64 = CHOICE_UNIT * SUPPORT_COST;
 /// squares left to the sparse product. Set inside the window, not rounded to 5.4, which would
 /// take the 1.78 case. The estimate ranks these inputs loosely (the 16-word square at
 /// `k = 304` has the highest flip, 9.4, and took 1.56 times): POLY-support-cost-ranking.
-const SUPPORT_COST: f64 = 5.43;
+const SUPPORT_COST: f64 = 4.8;
 
 /// The cost of a pair of the sparse product besides its coefficients' product, in `Poly::mul`'s
 /// choice of method, in the units of `num::mul_cost` (one word product, about 16 instructions).
@@ -2468,10 +2468,18 @@ impl<K: Key> Poly<K> {
     /// the estimated size of the support, as [`Poly::support_mul`] weighs them against its
     /// budget. `None` where the support product cannot run (its words do not fit a `usize`).
     fn support_units(&self, o: &Poly<K>, plan: &Plan) -> Option<f64> {
+        let (s, folds, size) = self.support_estimate(o, plan)?;
+        Some(folds + s.cost(size))
+    }
+
+    /// The support product's set-up, the units of its estimate's folds and the estimated size
+    /// of the support, as [`Poly::support_mul`] finds them before its rounds. `None` where the
+    /// support product cannot run.
+    fn support_estimate(&self, o: &Poly<K>, plan: &Plan) -> Option<(SupportSetup, f64, f64)> {
         let s = self.support_setup(o, plan)?;
-        let mut spent = 0.0;
-        let estimate = s.estimate(&mut s.seed(), &mut spent, f64::INFINITY)?;
-        Some(spent + s.cost(estimate))
+        let mut folds = 0.0;
+        let size = s.estimate(&mut s.seed(), &mut folds, f64::INFINITY)?;
+        Some((s, folds, size))
     }
 
     /// The indices of `self` and `o` reduced by the step and moved to 0, and the sizes the
@@ -2791,9 +2799,34 @@ impl SupportSetup {
     ///
     /// Each try draws a prime `q` and counts `Z`, the residues modulo `q` of the support
     /// ([`occupied`]): one fold product of the two sides' counts, `O(q log q)`. `Z <= s`, as each
-    /// residue is that of some index of the support. Where `Z <= q / 2` the estimate is linear
+    /// residue is that of some index of the support. Where `Z <= q / 4` the estimate is linear
     /// counting's: `s` indices dropped on `q` slots at random leave about `q e^(-s / q)` empty,
-    /// so `s` is about `-q ln(1 - Z / q)`, between `Z` and `2 ln 2 Z`, `1.39 Z`, at that load.
+    /// so `s` is about `-q ln(1 - Z / q)`, between `Z` and `-4 ln(3 / 4) Z`, `1.151 Z`, at that
+    /// load. The load is held to `1 / 4`, not linear counting's usual higher loads, and
+    /// [`ESTIMATE_TRIES`] primes near the accepted one are counted, the largest estimate taken,
+    /// because a support is not a random set. The square of `(x + y)^k + x` in one packed
+    /// index, row length `r = 2k + 1`, has the support of two progressions of step `r - 1 = 2k`:
+    /// `m + (2k - m) r = 2kr - 2k m` for `m` in `0..=2k`, and `1 + i + (k - i) r = 1 + kr - 2k i`
+    /// for `i` in `0..=k`, besides `2`. (1) Modulo a prime `q > 2k + 1` not dividing `2k`, the
+    /// residues of one progression are distinct, as `2k (m - m') = 0 (mod q)` needs
+    /// `q | m - m'`, and `|m - m'| <= 2k < q`. (2) So every collision is between the two:
+    /// `2kr - 2k m = 1 + kr - 2k i (mod q)`, i.e. `m - i = D (mod q)` for the one `D` that
+    /// solves `2k D = kr - 1 (mod q)`. (3) `m - i` ranges over `[-k, 2k]`, `3k + 1` of the `q`
+    /// residues, so for a prime drawn near `4 s`, `s = 3k + 3`, about one in four puts `D` there,
+    /// and then every pair `(m, i)` with `m - i = D` collides, up to `k + 1` of the `3k + 3`
+    /// indices; the other primes leave no collision, so `Z = s` and the estimate is `s` up to
+    /// the factor above. So one count is either near `s` or up to a third below it, not spread
+    /// as at random: a single count at load `1 / 4` estimated 0.77 of the support at `k = 331`
+    /// and `k = 347`, and at load `1 / 2` (factor `2 ln 2`, 1.39) the units at `k = 291` were
+    /// 1.27 times those at the true size (`the_support_units_follow_the_support_size` and
+    /// `crossover poly-support-units 16`, b22-kernel15, 2026-11-24). As each count is at most
+    /// `s` but for the factor above, the largest of three is below `s` only when all three
+    /// primes are bad, about one in 64 if the draws fall as at random, which the test checks
+    /// at 22 `k` and no proof bounds. A later try's prime is drawn from the same range as the
+    /// accepted one, so its load can pass `1 / 4`; such a try only raises the lower bound `Z`,
+    /// as linear counting there scales a collision-free count by up to `2 ln 2` (taking it gave
+    /// 939 for a support of 771 at `k = 256`, units 1.35 times those at the true size, j11,
+    /// 2026-11-25), so the estimate stays within `1.151 s` when no residue collides.
     /// Otherwise the next prime is drawn from `2 q` on, so the primes at least double, and `Z`
     /// bounds the support from below, so the try stops as soon as even that many indices cost
     /// the rounds past `budget`.
@@ -2818,9 +2851,10 @@ impl SupportSetup {
     /// deviation reaches `(t1 t2 / (32 s))^(1/2)`, 1.9 at the square of `(x + y)^350 + x`,
     /// whose estimated units were 3.3 times the units its rounds spent at 16 words
     /// (`crossover poly-support-units 16`, b22-kernel14, 2026-11-24; POLY-support-cost-ranking).
-    /// The folds here cost more but bounded: a fold at `q` near `2 s`, `width` words a slot, is
-    /// about `4 / 27` of the first sumset round, at a prime near `1.5 s` with `9 sub >= 9 width`
-    /// words a slot, and the folds before it at most as much again, as their primes double;
+    /// The folds here cost more but bounded: a fold at `q` near `4 s`, `width` words a slot, is
+    /// about `8 / 27` of the first sumset round, at a prime near `1.5 s` with `9 sub >= 9 width`
+    /// words a slot, so the [`ESTIMATE_TRIES`] folds at that load about `8 / 9` of it, and the
+    /// folds before them at most one such fold again, as their primes double;
     /// and the count's error falls as `s^(-1/2)` when the residues fall as at random.
     fn estimate(&self, rng: &mut u64, spent: &mut f64, budget: f64) -> Option<f64> {
         let width = self.count_width();
@@ -2837,13 +2871,40 @@ impl SupportSetup {
             }
             let z = occupied(&self.ra, &self.rb, q, width)?;
             least = least.max(z as f64);
-            if 2 * z <= q {
-                let q = q as f64;
-                return Some((-q * (1.0 - z as f64 / q).ln()).max(least));
+            if 4 * z <= q {
+                let mut best = linear_count(q, z);
+                for _ in 1..ESTIMATE_TRIES {
+                    if *spent + self.cost(least) >= budget {
+                        return None;
+                    }
+                    let q = draw_prime(lambda, rng);
+                    *spent += count_round(q as f64, width, self.terms);
+                    if *spent >= budget {
+                        return None;
+                    }
+                    let z = occupied(&self.ra, &self.rb, q, width)?;
+                    least = least.max(z as f64);
+                    if 4 * z <= q {
+                        best = best.max(linear_count(q, z));
+                    }
+                }
+                return Some(best.max(least));
             }
             lambda = 2 * q;
         }
     }
+}
+
+/// The folds [`SupportSetup::estimate`] counts at the load it accepts, each at its own prime
+/// near the first; the estimate is the largest of their counts. Three, as one bad prime in four
+/// leaves one in 64 for all three (the proof at `SupportSetup::estimate`).
+const ESTIMATE_TRIES: usize = 3;
+
+/// Linear counting's estimate of the indices on `q` slots of which `z` are occupied,
+/// `-q ln(1 - z / q)`; infinite at `z = q`, where every slot is taken.
+fn linear_count(q: u64, z: u64) -> f64 {
+    let q = q as f64;
+    -q * (1.0 - z as f64 / q).ln()
 }
 
 /// The cost of a fold of [`SupportSetup::estimate`] at a prime `q`, with `width` words a slot
@@ -3386,18 +3447,37 @@ pub mod crossover {
         a.0.support_mul(&b.0, &plan, f64::INFINITY, &mut 0.0)
     }
 
-    /// For `a * b` by the support product: the units its choice estimates
-    /// (`Poly::support_units`), the units its rounds spend with no bound on them (the estimate's
-    /// folds included, as `Poly::support_mul` counts them), and the terms of the product, against
-    /// which the estimate of the support's size can be read. `None` where it cannot run or its
-    /// rounds do not finish. For POLY-support-cost-ranking: whether the estimate misses the
-    /// rounds' units or the cost of a unit.
-    pub fn support_units(a: &Sum, b: &Sum) -> Option<(f64, f64, usize)> {
+    /// The support product's work for `a * b` against its estimate, from [`support_units`].
+    pub struct SupportUnits {
+        /// The units its choice estimates (`Poly::support_units`).
+        pub estimated: f64,
+        /// The units of the estimate's folds, a part of `estimated`.
+        pub folds: f64,
+        /// The estimated size of the support (`SupportSetup::estimate`).
+        pub size: f64,
+        /// The units its rounds spend with no bound on them, the estimate's folds included, as
+        /// `Poly::support_mul` counts them.
+        pub spent: f64,
+        /// The terms of the product: the support's size less the indices whose coefficients
+        /// cancel.
+        pub terms: usize,
+    }
+
+    /// The support product's work for `a * b` against its estimate; `None` where it cannot run
+    /// or its rounds do not finish. For POLY-support-cost-ranking: whether the estimate misses
+    /// the support's size, the rounds' units or the cost of a unit.
+    pub fn support_units(a: &Sum, b: &Sum) -> Option<SupportUnits> {
         let plan = a.0.plan(&b.0).expect("packed keys");
-        let estimated = a.0.support_units(&b.0, &plan)?;
+        let (s, folds, size) = a.0.support_estimate(&b.0, &plan)?;
         let mut spent = 0.0;
         let product = a.0.support_mul(&b.0, &plan, f64::INFINITY, &mut spent)?;
-        Some((estimated, spent, product.len()))
+        Some(SupportUnits {
+            estimated: folds + s.cost(size),
+            folds,
+            size,
+            spent,
+            terms: product.len(),
+        })
     }
 
     /// `a * b` by the method `Poly::mul` takes when the support product gives way: the dense

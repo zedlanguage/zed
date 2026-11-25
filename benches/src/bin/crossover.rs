@@ -1320,12 +1320,18 @@ fn support_run((a, b): &Sums) -> Vec<(u128, BigInt)> {
 /// The support product against the method `Poly::mul` takes when it gives way, on the square
 /// of a sum shaped as `(x + y)^k + x` in one packed index (`k + 2` terms, at `i + (k - i) r`,
 /// `r = 2k + 1`, and at 1), coefficients of `words` 64-bit words (1, 4 and 16 in `all`), `k`
-/// from 8 to 512 in halves of a doubling; and, checked only, the product of two such sums.
+/// from 8 to 512 (or the second argument) in halves of a doubling; and, checked only, the
+/// product of two such sums.
 /// The square's support has about `3k` indices against its `k^2 / 2` pairs, so the support
 /// product wins from some `k` on, sooner at wide coefficients, whose pairs cost the sparse
 /// product the more (POLY-support-bench).
 fn poly_support(args: &[String]) -> ExitCode {
     let words: usize = args.first().map_or(1, |s| s.parse().expect("words"));
+    // The largest `k`, 512 when left out; 1024 reaches the `k = 640` of
+    // `poly::tests::the_product_takes_the_support_product_where_it_is_cheaper`.
+    let top: usize = args
+        .get(1)
+        .map_or(512, |s| s.parse().expect("the largest k"));
     let note = move |k: usize| format!(" ({} terms of {words} words, squared)", k + 2);
     let inputs = move |k: usize| {
         let mut rng = Rng::new(k as u64);
@@ -1358,7 +1364,7 @@ fn poly_support(args: &[String]) -> ExitCode {
         &mut Meter::new(),
         &format!("poly-support {words}"),
         &format!("SUPPORT_COST {}", px::SUPPORT_COST),
-        &ladder(8, 512, 2),
+        &ladder(8, top, 2),
         TOLERANCE,
     );
     status(verdict.holds())
@@ -1436,28 +1442,33 @@ fn poly_support_units(args: &[String]) -> ExitCode {
     ks.dedup();
     println!("poly-support-units {words}, {}", conditions());
     println!(
-        "\n| k | terms | product terms | units estimated | units spent | spent / estimated | {} | {} / unit spent |",
+        "\n| k | terms | product terms | size estimated | size / product terms | units of folds | units estimated | units spent | spent / estimated | {} | {} / unit spent |",
         meter.unit(),
         meter.unit()
     );
-    println!("|---|---|---|---|---|---|---|---|");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|");
     for k in ks {
         let mut rng = Rng::new(k as u64);
         let kk = k as u128;
         let r = 2 * kk + 1;
         let at = (0..=kk).map(|i| i + (kk - i) * r).chain(std::iter::once(1));
         let a = sum_at(&mut rng, at, words);
-        let (estimated, spent, terms) =
-            px::support_units(&a, &a).expect("the support product runs");
+        let u = px::support_units(&a, &a).expect("the support product runs");
         let work = meter.work(|| {
             std::hint::black_box(px::support(&a, &a));
         });
         println!(
-            "| {k} | {} | {terms} | {estimated:.0} | {spent:.0} | {:.3} | {} | {:.2} |",
+            "| {k} | {} | {} | {:.0} | {:.3} | {:.0} | {:.0} | {:.0} | {:.3} | {} | {:.2} |",
             k + 2,
-            spent / estimated,
+            u.terms,
+            u.size,
+            u.size / u.terms as f64,
+            u.folds,
+            u.estimated,
+            u.spent,
+            u.spent / u.estimated,
             work.units,
-            work.units as f64 / spent
+            work.units as f64 / u.spent
         );
     }
     ExitCode::SUCCESS
