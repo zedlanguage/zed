@@ -598,7 +598,7 @@ fn pull_back(rows: &[DefRow<'_>], i: usize, v: ResidueSet) -> Option<(Int, Resid
 /// of this file and the two files form no import cycle (test `s_01f_import_graph`). The period
 /// sweep (`sweep.rs`) is the next fallback, written there for the same reason.
 pub(crate) fn solve_modular_or_scaled(f: &Formula, want_model: bool) -> Option<Option<Model>> {
-    solve_modular_or_scaled_then(f, want_model, &|_, _| None)
+    solve_modular(f, want_model).or_else(|| solve(f, want_model))
 }
 
 /// [`solve_modular_or_scaled`], with `after` asked for the rewritten formula where
