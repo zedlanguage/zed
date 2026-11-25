@@ -1887,8 +1887,19 @@ if [ "$runtimes" != "$(cat "$logbase/runtimes" 2>/dev/null)" ]; then
       echo "$name $rest"
     fi
   done <"$out/pieces" >"$out/linking"
-  if [ ! -s "$out/linking" ] ||
-    xargs -P "$jobs" --process-slot-var=slot -L 1 bash -c 'warm "$@"' _ <"$out/linking"; then
+  # The first linking piece runs alone, the others after it side by side. After a runtime change
+  # the first build makes the prelinked runtime (crates/zed-native/src/link.rs, `prelinked`)
+  # while every other build waits on its lock, a wait inside each waiting test's `timeout 60` of
+  # `zedc build`. Run side by side, about 20 pieces at load 47 to 96 on v5e6 failed there with
+  # exit 124 after 60.2 to 62.5 s (FAIL-warm-binaries-rc101-cause); the share of the lock in
+  # those 60 s was not measured. Run alone, the first piece makes the object while only its own
+  # tests wait, and the other pieces find it made.
+  if [ ! -s "$out/linking" ] || {
+    head -n 1 "$out/linking" | xargs --process-slot-var=slot -L 1 bash -c 'warm "$@"' _
+    first=$?
+    tail -n +2 "$out/linking" | xargs -P "$jobs" --process-slot-var=slot -L 1 bash -c 'warm "$@"' _ &&
+      [ "$first" = 0 ]
+  }; then
     printf '%s\n' "$runtimes" >"$out/runtimes"
     publish "$out/runtimes" runtimes
   fi
