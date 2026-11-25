@@ -495,7 +495,8 @@ impl<'a> Runs<'a> {
     // run to the next (the complete solution of `Runs`), which needs a change of both engines'
     // `Through` and of the native code's JIT modules; and a catch of a stop in the kernel,
     // which has none. The port needs neither, and the pushes leave every value as it was.
-    // Test: `l01_37_oracle::alone::the_search_for_a_stop_through_functions_binds_them_once_a_probe`.
+    // Test:
+    // `l01_37_oracle::alone::the_search_for_a_stop_through_functions_binds_them_once_a_probe`.
     fn first_stop(&mut self, ready: &[usize], ran: usize, mut error: String) -> (usize, String) {
         let (mut lo, mut hi) = (ran, ready.len());
         self.values_of(&ready[..lo]);
