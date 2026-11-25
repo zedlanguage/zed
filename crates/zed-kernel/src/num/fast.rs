@@ -264,10 +264,10 @@
 //!   CORE and dblp know only Cook and Aanderaa's 1969 paper (doi:10.2307/1995359); Harvard's
 //!   catalog (record 990038153110203941) holds the thesis on paper and microfilm only; archive.org,
 //!   LibGen, Google Scholar and Anna's Archive gave nothing. None of this code runs Toom's
-//!   method; it is num-bigint's product, modeled by [`TOOM_COST`] and [`TOOM_POWER`], whose
-//!   exponent the instruction counts there check (6.48 to 7.19 units per `l s^0.465` over 512
-//!   to 24,576 words); a wrong exponent would show as a drift of that ratio with size, a
-//!   wrong constant would not show except as a crossover moved from its measured place.
+//!   method; it is num-bigint's product, modeled by [`bigint_cost`], which follows num-bigint's
+//!   steps and counts each method's work ([`BIGINT_UNITS`]), and scaled by [`TOOM_COST`]
+//!   above [`MUL_LEAF`]; a wrong unit would show as a drift of `crossover mul-units`' fit with
+//!   size, a wrong scale only as a crossover moved from its measured place.
 //!
 //! Tests: `tests::products_agree_with_num_bigint` and
 //! `tests::factor_products_agree_with_num_bigint` check the transform, REDC, the lazy reduction
@@ -356,20 +356,35 @@ const MUL_LEAF: usize = 48;
 /// to 512 by 4 times the words, up to 1.038 times the transform's work. The product does not
 /// depend on it; the unit tests never take num-bigint's product above [`MUL_LEAF`], so that
 /// they reach the transforms.
+///
+/// Since PERF-mul-cost-below-leaf (b22-kernel15, 2026-11-24) it scales [`bigint_cost`], the
+/// work of num-bigint's steps counted by method, in place of `l s^0.465`, the formula above
+/// (Toom-3's `s^log3(5)`, R. P. Brent and P. Zimmermann, "Modern Computer Arithmetic",
+/// v0.5.1, arXiv:1004.4710, section 1.3.3, p. 8), which fitted from 512 words but was about
+/// 1.6 times too low per unit at 372 words, where num-bigint's product is our Karatsuba and
+/// rows. Fitted by `crossover mul 1`, `mul 4` and `mul 32 --exact` (instructions counted by
+/// DynamoRIO's zed_icount, Colab hm1, 2026-11-24), which alone ask for 0.7548 to 0.8560,
+/// 0.5864 or more and 0.7001 or more; at 0.75 the worst were 1.0325, 1.0844 (`mul 4`, num-
+/// bigint's product taken at 395 by 1580 words) and 1.0116. 0.80 is inside all three, and it
+/// also decides `crossover poly-wide 8 pair` at 32 words, where the packed product (516 by
+/// 581 words) is estimated by Toom-3's count and the two methods' estimates are within about
+/// 1%: at 0.75 it took the dense product there at 1.367 times the sparse one's instructions.
 #[cfg(not(test))]
-const TOOM_COST: f64 = 7.0;
+const TOOM_COST: f64 = 0.80;
 #[cfg(test)]
 const TOOM_COST: f64 = f64::INFINITY;
 
-/// `log3(5) - 1`, the exponent of the narrower factor in [`TOOM_COST`]: Toom-3 makes five
-/// products of a third the size, `T(n) = 5 T(n/3) + O(n) = O(n^log3(5))`, `log3(5) =
-/// 1.46497` (R. P. Brent and P. Zimmermann, "Modern Computer Arithmetic", v0.5.1,
-/// arXiv:1004.4710, section 1.3.3, p. 8, "O(n^ν) with ν = log(2r − 1)/ log r", `r = 3`
-/// parts; with Toom 1963 and Cook's 1966 thesis, pp. 51-53, quoted with the sources in the
-/// module doc, "Sources", all read 2026-11-20). The 0.465 is that value rounded, checked by
-/// the measured units per `l s^0.465` above, which stay within 6.48 to 7.19 from 512 to
-/// 24,576 words.
-const TOOM_POWER: f64 = 0.465;
+/// The cost of each count of [`BigintWork`], in word products of num-bigint's long
+/// multiplication: its rows, the rows at the leaf of [`karatsuba_words`], then per word of a
+/// step of num-bigint's Karatsuba, of its Toom-3 and of [`karatsuba_words`]. Measured by
+/// `crossover mul-units --exact` (PERF-mul-cost-below-leaf, b22-kernel15, 2026-11-24, Colab
+/// hm1, instructions counted by DynamoRIO's zed_icount): the least-squares fit of the relative
+/// errors over 52 shapes, balanced from 2 to 4096 words, 4 and 32 times as long, and five
+/// near the method changes, gave 13.117, 13.027, 30.991, 37.404 and 33.483 instructions per
+/// count, divided here by the first. The fit is within 0.82 to 1.24 of the measured
+/// instructions from 16 words on; below, a product's fixed cost, about 800 instructions, is
+/// not counted (0.06 of it at 2 by 2 words), as it was not in the formula this replaces.
+const BIGINT_UNITS: [f64; 5] = [1.0, 0.9931, 2.3627, 2.8516, 2.5526];
 
 /// The bits at or below which the divisor goes to num-bigint's division, which then costs at
 /// most this many bits times the dividend's, and at or below which a quotient by a wider
@@ -1356,14 +1371,19 @@ pub fn mul(a: &BigUint, b: &BigUint) -> BigUint {
         },
     );
     match method {
-        MulBy::NumBigint
-            if (NUM_BIGINT_ROWS + 1..=KARATSUBA_TOP).contains(&words(a).min(words(b))) =>
-        {
-            karatsuba_mul(a, b)
-        }
-        MulBy::NumBigint => a * b,
+        MulBy::NumBigint => num_bigint_mul(a, b),
         MulBy::Rows => sparse_mul(a, b),
         MulBy::Pieces(piece) => pieces_mul(a, b, piece),
+    }
+}
+
+/// `a * b` as [`mul`] takes num-bigint's product ([`MulBy::NumBigint`]): [`karatsuba_mul`] for
+/// a narrower factor of `NUM_BIGINT_ROWS + 1` to [`KARATSUBA_TOP`] words, num-bigint's own
+/// otherwise. Its work is counted by [`bigint_work`].
+fn num_bigint_mul(a: &BigUint, b: &BigUint) -> BigUint {
+    match (NUM_BIGINT_ROWS + 1..=KARATSUBA_TOP).contains(&words(a).min(words(b))) {
+        true => karatsuba_mul(a, b),
+        false => a * b,
     }
 }
 
@@ -1384,7 +1404,7 @@ fn mul_method(a: &BigUint, b: &BigUint) -> MulBy {
     let (short, long) = (la.min(lb), la.max(lb));
     // Complexity tradeoff: two timed crossovers of algorithms with identical results, nothing
     // given up. A product whose narrower factor has at most `MUL_LEAF` words, and one above it
-    // where `toom_cost` is the least of the three computed costs, is num-bigint's Toom-3, about
+    // where `TOOM_COST` times `bigint_cost` is the least of the three computed costs, is num-bigint's Toom-3, about
     // `n^1.465`, in place of the O(n log n) transforms, because num-bigint was measured faster
     // there (the timings, dates and loads are in the doc comments of `MUL_LEAF` and
     // `TOOM_COST`). Every method gives the same product (tests
@@ -1410,7 +1430,7 @@ fn mul_method(a: &BigUint, b: &BigUint) -> MulBy {
     // The second crossover of the tradeoff above (`TOOM_COST`): num-bigint's product where its
     // computed cost is the least, which follows the transform's steps at each power of two of
     // its points.
-    if toom_cost(short, long) <= rows.min(cost) {
+    if TOOM_COST * bigint_cost(short, long) <= rows.min(cost) {
         return MulBy::NumBigint;
     }
     if rows <= cost {
@@ -1799,34 +1819,36 @@ fn dense_cost(a: usize, b: usize) -> f64 {
     let (short, long) = (a.min(b), a.max(b));
     match short <= MUL_LEAF {
         true => 0.0,
-        false => toom_cost(short, long).min(transform_plan(short, long).0),
+        false => (TOOM_COST * bigint_cost(short, long)).min(transform_plan(short, long).0),
     }
 }
 
 /// The cost [`mul`] is estimated to take on dense factors of `a` and `b` 64-bit words, in the
-/// units of [`TRANSFORM_COST`] (one word product): num-bigint's product at or below
-/// [`MUL_LEAF`], `a b` word products or [`toom_cost`], whichever is less; above it the less of
-/// [`toom_cost`] and the transforms' [`transform_plan`], as [`mul_method`] chooses. Rows over
-/// nonzero words are not counted, so a factor with many zero words costs less than this.
-/// Infinite when the product's words do not fit in a `usize` with room to round up.
+/// units of [`TRANSFORM_COST`] (one word product): num-bigint's product, [`bigint_cost`], at
+/// or below [`MUL_LEAF`]; above it the less of [`TOOM_COST`] times that and the transforms'
+/// [`transform_plan`], as [`mul_method`] chooses. Rows over nonzero words are not counted, so
+/// a factor with many zero words costs less than this. Infinite when the product's words do
+/// not fit in a `usize` with room to round up.
 pub(crate) fn mul_cost(a: usize, b: usize) -> f64 {
-    // Complexity tradeoff: `O(log)` in the sizes, as `transform_plan`; counting the rows over
-    // nonzero words would read the factors, `O(L)`. It would not mend `crossover poly-wide 8`
-    // (POLY-mul-cost-gaps, 2026-11-22): there the dense product took up to 1.50 times the
-    // sparse one's time where it was estimated cheaper, and fewer counted words only lower its
-    // estimate. A packed integer with terms of both signs has about half its words nonzero
-    // (`poly::pack` writes `pos - neg`, so a borrow fills the gap after each term of the other
-    // sign), and rows over them cost more than `toom_cost`. The error is `toom_cost` below
-    // `MUL_LEAF`, fitted from 512 words: at 372 words num-bigint's Toom-3 took about 1.6 times
-    // the time per estimated unit of the 23-word long multiplications it was weighed against.
+    // Complexity tradeoff: `O(log^2)` comparisons in the sizes ([`mac3_work`]) and `O(log)`
+    // steps of `transform_plan`; counting the rows over nonzero words would read the factors,
+    // `O(L)`. It would not mend `crossover poly-wide 8` (POLY-mul-cost-gaps, 2026-11-22):
+    // there the dense product took up to 1.50 times the sparse one's time where it was
+    // estimated cheaper, and fewer counted words only lower its estimate. A packed integer
+    // with terms of both signs has about half its words nonzero (`poly::pack` writes `pos -
+    // neg`, so a borrow fills the gap after each term of the other sign). The error was the
+    // formula `l s^0.465` below `MUL_LEAF`, fitted from 512 words: at 372 words num-bigint's
+    // product took about 1.6 times the time per estimated unit of the 23-word long
+    // multiplications it was weighed against; `bigint_cost` counts each method's work
+    // (PERF-mul-cost-below-leaf).
     let (short, long) = (a.min(b).max(1), a.max(b).max(1));
     if long > usize::MAX / 4 {
         return f64::INFINITY;
     }
-    let toom = toom_cost(short, long);
+    let bigint = bigint_cost(short, long);
     match short <= MUL_LEAF {
-        true => (short as f64 * long as f64).min(toom),
-        false => toom.min(transform_plan(short, long).0),
+        true => bigint,
+        false => (TOOM_COST * bigint).min(transform_plan(short, long).0),
     }
 }
 
@@ -1841,13 +1863,163 @@ pub(crate) fn squares_by_transform(n: usize) -> bool {
         return false;
     }
     let (cost, piece) = transform_plan(n, n);
-    toom_cost(n, n) > cost && n as f64 * n as f64 > cost && piece >= n
+    TOOM_COST * bigint_cost(n, n) > cost && n as f64 * n as f64 > cost && piece >= n
 }
 
-/// num-bigint's cost of a product of `short <= long` words, `TOOM_COST long short^0.465`, in
-/// the units of [`TRANSFORM_COST`].
-fn toom_cost(short: usize, long: usize) -> f64 {
-    TOOM_COST * long as f64 * (short as f64).powf(TOOM_POWER)
+/// num-bigint's cost of a product of `short <= long` dense words, as [`mul`] takes it
+/// ([`bigint_work`]), each method's count at its [`BIGINT_UNITS`], in word products of
+/// num-bigint's long multiplication; not scaled by [`TOOM_COST`]. `O(log^2 long)`.
+fn bigint_cost(short: usize, long: usize) -> f64 {
+    let w = bigint_work(short, long);
+    [w.long, w.leaf, w.karatsuba, w.toom, w.ours]
+        .iter()
+        .zip(BIGINT_UNITS)
+        .map(|(n, u)| n * u)
+        .sum()
+}
+
+/// The work [`mul`] does on dense factors when it takes num-bigint's product
+/// ([`MulBy::NumBigint`]), counted by the method that does it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct BigintWork {
+    /// Word products of num-bigint's long multiplication (`mac_digit`), its leaf of up to
+    /// 32 words.
+    long: f64,
+    /// Word products of the long multiplication at the leaf of [`karatsuba_words`].
+    leaf: f64,
+    /// The words `x + y` of every step of num-bigint's Karatsuba, whose adds, subtractions and
+    /// allocations are linear in them.
+    karatsuba: f64,
+    /// The words `x + y` of every step of num-bigint's Toom-3, whose evaluation, division by
+    /// 3 and recomposition are linear in them.
+    toom: f64,
+    /// The words `x + y` of every step of [`karatsuba_words`] above its leaf.
+    ours: f64,
+}
+
+impl BigintWork {
+    fn plus(self, o: BigintWork) -> BigintWork {
+        BigintWork {
+            long: self.long + o.long,
+            leaf: self.leaf + o.leaf,
+            karatsuba: self.karatsuba + o.karatsuba,
+            toom: self.toom + o.toom,
+            ours: self.ours + o.ours,
+        }
+    }
+
+    fn times(self, k: f64) -> BigintWork {
+        BigintWork {
+            long: k * self.long,
+            leaf: k * self.leaf,
+            karatsuba: k * self.karatsuba,
+            toom: k * self.toom,
+            ours: k * self.ours,
+        }
+    }
+}
+
+/// The work of [`mul`] by num-bigint's product on dense factors of `short <= long` words: rows
+/// to [`NUM_BIGINT_ROWS`], [`karatsuba_mul`] to [`KARATSUBA_TOP`], num-bigint's `mac3` above.
+fn bigint_work(short: usize, long: usize) -> BigintWork {
+    debug_assert!(short <= long);
+    let mut memo = Vec::new();
+    match short {
+        0..=NUM_BIGINT_ROWS => mac3_work(short, long, &mut memo),
+        s if s <= KARATSUBA_TOP => ours_work(short, long, &mut memo),
+        _ => mac3_work(short, long, &mut memo),
+    }
+}
+
+/// The work of num-bigint 0.4.8's `mac3` (`biguint/multiplication.rs`) on dense factors of
+/// `x <= y` words, step by step as it chooses: long multiplication while `x <= 32`; while
+/// `2 x <= y`, the halves `y / 2` and `y - y / 2` of `y`, each by `x`; to `x <= 256`
+/// Karatsuba with `b = x / 2`, products of `x - b` by `y - b` words (`x1 y1` and the
+/// difference product `j0 j1`) and of `b` by `b`; above, Toom-3 with `i = y / 3 + 1`, the
+/// pieces `x0 = min(x, i)`, `x2 = x - x0 - min(x - x0, i)` and `y2` likewise, four products of
+/// about `x0` by `i` words (`r0` to `r3`; the three made of sums of pieces have up to one word
+/// more, not counted) and `r4 = x2 y2`.
+///
+/// Complexity tradeoff: the steps of one depth have sizes within a few words of each other,
+/// so `memo`, a list searched in full, holds a few shapes per depth and the count takes
+/// O(log y) steps with O(log^2 y) comparisons, where following each product would take
+/// `O(y^1.465)`.
+fn mac3_work(x: usize, y: usize, memo: &mut Vec<((usize, usize), BigintWork)>) -> BigintWork {
+    let (x, y) = (x.min(y), x.max(y));
+    if x == 0 {
+        return BigintWork::default();
+    }
+    if x <= NUM_BIGINT_ROWS {
+        return BigintWork {
+            long: x as f64 * y as f64,
+            ..BigintWork::default()
+        };
+    }
+    if let Some(&(_, w)) = memo.iter().find(|&&(k, _)| k == (x, y)) {
+        return w;
+    }
+    let w = if 2 * x <= y {
+        let m2 = y / 2;
+        mac3_work(x, m2, memo).plus(mac3_work(x, y - m2, memo))
+    } else if x <= 256 {
+        let b = x / 2;
+        let parts = mac3_work(x - b, y - b, memo)
+            .times(2.0)
+            .plus(mac3_work(b, b, memo));
+        BigintWork {
+            karatsuba: parts.karatsuba + (x + y) as f64,
+            ..parts
+        }
+    } else {
+        let i = y / 3 + 1;
+        let x0 = x.min(i);
+        let x2 = x - x0 - (x - x0).min(i);
+        let y2 = y - i - (y - i).min(i);
+        let parts = mac3_work(x0, i, memo)
+            .times(4.0)
+            .plus(mac3_work(x2, y2, memo));
+        BigintWork {
+            toom: parts.toom + (x + y) as f64,
+            ..parts
+        }
+    };
+    memo.push(((x, y), w));
+    w
+}
+
+/// The work of [`karatsuba_words`] on dense factors of `a <= b` words: rows to
+/// [`KARATSUBA_LEAF`]; where `a <= h = ceil(b / 2)`, `b / a` products of `a` by `a` words and
+/// one of the rest by `a`; else products of `h` by `h` words (`a0 b0` and the difference
+/// product) and of `a - h` by `b - h`. `memo` as in [`mac3_work`].
+fn ours_work(a: usize, b: usize, memo: &mut Vec<((usize, usize), BigintWork)>) -> BigintWork {
+    let (a, b) = (a.min(b), a.max(b));
+    if a == 0 {
+        return BigintWork::default();
+    }
+    if a <= KARATSUBA_LEAF {
+        return BigintWork {
+            leaf: a as f64 * b as f64,
+            ..BigintWork::default()
+        };
+    }
+    if let Some(&(_, w)) = memo.iter().find(|&&(k, _)| k == (a, b)) {
+        return w;
+    }
+    let h = b.div_ceil(2);
+    let parts = match a <= h {
+        true => ours_work(a, a, memo)
+            .times((b / a) as f64)
+            .plus(ours_work(b % a, a, memo)),
+        false => ours_work(h, h, memo)
+            .times(2.0)
+            .plus(ours_work(a - h, b - h, memo)),
+    };
+    let w = BigintWork {
+        ours: parts.ours + (a + b) as f64,
+        ..parts
+    };
+    memo.push(((a, b), w));
+    w
 }
 
 /// `a * b` by transforms, the longer factor cut into pieces of `piece` words (whole when it
@@ -5341,6 +5513,22 @@ pub mod crossover {
         super::sparse_mul(a, b)
     }
 
+    /// `a * b` as [`super::mul`] takes num-bigint's product, whatever the sizes:
+    /// `super::karatsuba_mul` for a narrower factor of 33 to `super::KARATSUBA_TOP` words,
+    /// num-bigint's own otherwise.
+    pub fn mul_by_num_bigint(a: &BigUint, b: &BigUint) -> BigUint {
+        super::num_bigint_mul(a, b)
+    }
+
+    /// The work of [`mul_by_num_bigint`] on dense factors of `a` and `b` words, by method:
+    /// word products of num-bigint's rows and of `super::karatsuba_words`' rows, then the
+    /// words of the steps of num-bigint's Karatsuba, of its Toom-3 and of
+    /// `super::karatsuba_words` (`super::BigintWork`).
+    pub fn bigint_work(a: usize, b: usize) -> [f64; 5] {
+        let w = super::bigint_work(a.min(b), a.max(b));
+        [w.long, w.leaf, w.karatsuba, w.toom, w.ours]
+    }
+
     /// `(a / b, a mod b)` past `super::DIV_LEAF`, whatever the sizes: the cheaper of long
     /// division over the nonzero words of `b` and the division by a reciprocal; `a >= b > 0`.
     pub fn div_rem_past_leaf(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
@@ -5418,7 +5606,7 @@ pub mod crossover {
         let rows = (super::nonzero_words(a) as u128 * lb as u128)
             .min(super::nonzero_words(b) as u128 * la as u128);
         let (cost, _) = super::transform_plan(short, long);
-        let per = super::toom_cost(short, long) / super::TOOM_COST;
+        let per = super::bigint_cost(short, long);
         Some((rows as f64).min(cost) / per)
     }
 
@@ -5717,6 +5905,40 @@ mod tests {
             let x = random(5, la);
             assert_eq!(karatsuba_mul(&x, &x), &x * &x, "square of {la} words");
         }
+    }
+
+    /// The counts of [`bigint_work`] at shapes worked by hand from num-bigint 0.4.8's `mac3`
+    /// and [`karatsuba_words`]: 4 by 9 words is 36 word products of num-bigint's rows; 40 by
+    /// 100 is 4000 of ours (at or below `KARATSUBA_LEAF`); 64 by 64 is ours, three products of
+    /// 32 by 32 (3072 word products) and one step of 128 words; 300 by 300 is num-bigint's
+    /// Toom-3 (`i` = 101), four products of 101 by 101 and one of 98 by 98, each by its
+    /// Karatsuba: 101 = 2 (51 by 51) + (50 by 50), 51 = 2 (26) + (25), 50 = 3 (25), 98 = 3
+    /// (49), 49 = 2 (25) + (24), so `4 (2 (2 26^2 + 25^2) + 3 25^2) + 3 (2 25^2 + 24^2)` =
+    /// 28,794 word products and `4 (2 102 + 100 + 202) + 3 98 + 196` = 2514 words of its steps.
+    /// Then the widest shape `mul_cost` takes: the list of shapes stays short (each depth holds
+    /// a few, `mac3_work`'s complexity comment), which a count by every product could not.
+    #[test]
+    fn bigint_work_counts_each_method() {
+        let w = |long, leaf, karatsuba, toom, ours| BigintWork {
+            long,
+            leaf,
+            karatsuba,
+            toom,
+            ours,
+        };
+        assert_eq!(bigint_work(4, 9), w(36.0, 0.0, 0.0, 0.0, 0.0));
+        assert_eq!(bigint_work(40, 100), w(0.0, 4000.0, 0.0, 0.0, 0.0));
+        assert_eq!(bigint_work(64, 64), w(0.0, 3072.0, 0.0, 0.0, 128.0));
+        assert_eq!(bigint_work(0, 7), BigintWork::default());
+        let mut memo = Vec::new();
+        assert_eq!(
+            mac3_work(300, 300, &mut memo),
+            w(28_794.0, 0.0, 2514.0, 600.0, 0.0)
+        );
+        let n = usize::MAX / 4;
+        let mut memo = Vec::new();
+        assert!(mac3_work(n, n, &mut memo).long.is_finite());
+        assert!(memo.len() < 400, "{} shapes", memo.len());
     }
 
     /// Numbers of `words` words whose words are each 0, 1, `2^63`, `2^64 - 2` or `2^64 - 1`,

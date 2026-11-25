@@ -32,7 +32,7 @@ fn ten_to_n_costs_its_exponent_and_not_its_digits() {
 fn a_kept_power_beside_its_built_successor_costs_n_log_n() {
     // `3^n` is built by squaring, so a run's work is a sum over squares of halving widths:
     // those num-bigint's Toom-3 does faster (at most `fast::MUL_LEAF` = 400 words, and above
-    // it where `toom_cost` is the least of `fast::mul`'s computed costs), and the wider by
+    // it where `bigint_cost` is the least of `fast::mul`'s computed costs), and the wider by
     // transforms. The smaller run has three fewer squares by transforms than the larger, so
     // its sum stops short and the ratio counts the change of method as growth. Measured with
     // a leaf of 6144 words (SCALE-fix-crossover, 2026-11-07, load 47): from n = 2^18 (the

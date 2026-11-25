@@ -9,6 +9,9 @@
 //!
 //! - `mul [ratio]`: `MUL_LEAF` and `TOOM_COST`, num-bigint's product against the transforms,
 //!   dense random factors of `w` and `ratio w` words (1, 4 and 32 in `all`).
+//! - `mul-units`: the units of `mul_cost` per method of num-bigint's product (the counts of
+//!   `bigint_work`), fitted by least squares over balanced shapes and 4 and 32 times the
+//!   words; a fit, not a crossover, so not in `all`.
 //! - `mul-rows`: `TRANSFORM_COST` against rows, a dense factor of 8192 words by one of the same
 //!   width with `k` nonzero words spread over it: rows over the nonzero words against the
 //!   transforms.
@@ -243,6 +246,123 @@ fn mul(args: &[String]) -> ExitCode {
         TOLERANCE,
     );
     status(verdict.holds())
+}
+
+/// The names of the five counts of `x::bigint_work`, in its order.
+const BIGINT_WORK: [&str; 5] = [
+    "num-bigint rows",
+    "our rows",
+    "num-bigint Karatsuba",
+    "Toom-3",
+    "our Karatsuba",
+];
+
+/// The least-squares solution of `rows · c = 1` (each row a shape's counts divided by its
+/// measured work, so that each shape's relative error weighs the same), by the normal
+/// equations and Gaussian elimination with partial pivoting. A count that is zero in every
+/// row gets 0.
+fn relative_fit(rows: &[[f64; 5]]) -> [f64; 5] {
+    let used: Vec<usize> = (0..5)
+        .filter(|&j| rows.iter().any(|r| r[j] != 0.0))
+        .collect();
+    let n = used.len();
+    let mut m: Vec<Vec<f64>> = (0..n)
+        .map(|i| {
+            let mut line: Vec<f64> = (0..n)
+                .map(|j| rows.iter().map(|r| r[used[i]] * r[used[j]]).sum())
+                .collect();
+            line.push(rows.iter().map(|r| r[used[i]]).sum());
+            line
+        })
+        .collect();
+    for c in 0..n {
+        let p = (c..n)
+            .max_by(|&a, &b| m[a][c].abs().total_cmp(&m[b][c].abs()))
+            .expect("a row");
+        m.swap(c, p);
+        for r in 0..n {
+            if r != c {
+                let f = m[r][c] / m[c][c];
+                for k in c..=n {
+                    m[r][k] -= f * m[c][k];
+                }
+            }
+        }
+    }
+    let mut out = [0.0; 5];
+    for (i, &j) in used.iter().enumerate() {
+        out[j] = m[i][n] / m[i][i];
+    }
+    out
+}
+
+/// The units of `zed_kernel::num::mul_cost` for num-bigint's product (PERF-mul-cost-below-leaf):
+/// the work of [`x::mul_by_num_bigint`] on dense random factors at balanced shapes and at 4
+/// and 32 times the words, with the counts of each of its methods (`x::bigint_work`), and the
+/// work of one word product of rows over a dense factor ([`x::mul_by_rows`]), the unit of
+/// `TRANSFORM_COST`. Prints each shape's work, its counts, the constants per count that fit
+/// every shape best (least squares of the relative errors) in that unit, and each shape's
+/// work against the fit. A fit, not a crossover, so not in `all`.
+fn mul_units(_: &[String]) -> ExitCode {
+    let mut meter = Meter::new();
+    let unit = meter.unit();
+    println!("mul-units, {}", conditions());
+    let mut per_row = Vec::new();
+    println!("\n| rows w by w | {unit} | {unit} per word product |\n|---|---|---|");
+    for w in [32, 128, 512] {
+        let mut rng = Rng::new(w as u64);
+        let (a, b) = (random(&mut rng, w), random(&mut rng, w));
+        let work = least(&mut meter, || {
+            drop(std::hint::black_box(x::mul_by_rows(&a, &b)))
+        });
+        let per = work.units as f64 / (w * w) as f64;
+        per_row.push(per);
+        println!("| {w} | {} | {per:.3} |", work.units);
+    }
+    let row = per_row.iter().copied().fold(f64::INFINITY, f64::min);
+    let mut shapes: Vec<(usize, usize)> = ladder(2, 4096, 2).into_iter().map(|w| (w, w)).collect();
+    shapes.extend(ladder(8, 2048, 2).into_iter().map(|w| (w, 4 * w)));
+    shapes.extend(ladder(8, 512, 1).into_iter().map(|w| (w, 32 * w)));
+    shapes.extend([(64, 72), (129, 145), (258, 290), (516, 580), (372, 1892)]);
+    let mut measured = Vec::new();
+    for &(s, l) in &shapes {
+        let mut rng = Rng::new((s * 7919 + l) as u64);
+        let (a, b) = (random(&mut rng, s), random(&mut rng, l));
+        let work = least(&mut meter, || {
+            drop(std::hint::black_box(x::mul_by_num_bigint(&a, &b)))
+        });
+        measured.push((s, l, work.units as f64, x::bigint_work(s, l)));
+    }
+    let rows: Vec<[f64; 5]> = measured
+        .iter()
+        .map(|&(_, _, units, c)| c.map(|v| v / units))
+        .collect();
+    let fit = relative_fit(&rows);
+    println!("\nunit: one word product of rows, {row:.3} {unit} (the least above)");
+    println!("\n| count | {unit} per count | units per count |\n|---|---|---|");
+    for (name, c) in BIGINT_WORK.iter().zip(fit) {
+        println!("| {name} | {c:.3} | {:.4} |", c / row);
+    }
+    println!(
+        "\n| short | long | {unit} | {} | fit / measured |\n{}|",
+        BIGINT_WORK.join(" | "),
+        "|---".repeat(4 + BIGINT_WORK.len())
+    );
+    let mut worst: f64 = 1.0;
+    for &(s, l, units, c) in &measured {
+        let model: f64 = c.iter().zip(fit).map(|(v, k)| v * k).sum();
+        let r = model / units;
+        worst = worst.max(r).max(1.0 / r);
+        println!(
+            "| {s} | {l} | {units:.0} | {} | {r:.3} |",
+            c.map(|v| format!("{v:.0}")).join(" | ")
+        );
+    }
+    println!(
+        "\nworst fit / measured, either way: {worst:.3}\n{}",
+        conditions()
+    );
+    ExitCode::SUCCESS
 }
 
 fn mul_rows(_: &[String]) -> ExitCode {
@@ -1798,12 +1918,15 @@ fn main() -> ExitCode {
     if name == "poly-support-units" {
         return poly_support_units(rest);
     }
+    if name == "mul-units" {
+        return mul_units(rest);
+    }
     match BENCHES.iter().find(|(n, _, _)| *n == name) {
         Some((_, run, _)) => run(rest),
         None => {
             let names: Vec<&str> = BENCHES.iter().map(|(n, _, _)| *n).collect();
             eprintln!(
-                "usage: crossover (all | print-never-slower [digits...] | factor-bits | poly-support-units [words] | {}) [--exact]",
+                "usage: crossover (all | print-never-slower [digits...] | factor-bits | poly-support-units [words] | mul-units | {}) [--exact]",
                 names.join(" | ")
             );
             ExitCode::FAILURE
