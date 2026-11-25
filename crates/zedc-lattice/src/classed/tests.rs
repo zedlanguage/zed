@@ -288,9 +288,8 @@ fn wider_class_case(rng: &mut Rng, kind: usize) -> IntervalSet {
 #[test]
 fn the_members_check_gives_the_walks_answer() {
     let (mut rng, seed) = Rng::fresh("the_members_check_gives_the_walks_answer");
-    let wrong = |set: &IntervalSet| {
-        set.len() >= 2 && set.members() == Some(Num::from(set.len() as u64))
-    };
+    let wrong =
+        |set: &IntervalSet| set.len() >= 2 && set.members() == Some(Num::from(set.len() as u64));
     let (mut answers, mut caught) = ([0usize; 2], 0usize);
     for kind in 0..5 {
         for case in 0..5000 {
@@ -318,5 +317,8 @@ fn the_members_check_gives_the_walks_answer() {
         answers[0] >= 1000 && answers[1] >= 1000,
         "seed {seed}: answers (false, true) {answers:?}"
     );
-    assert!(caught > 0, "seed {seed}: the wrong check agreed with the walk on every case");
+    assert!(
+        caught > 0,
+        "seed {seed}: the wrong check agreed with the walk on every case"
+    );
 }
