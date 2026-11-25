@@ -507,20 +507,19 @@ impl<'a> Runs<'a> {
             .located(&ready[lo..hi])
             .map(|q| lo + q)
             .filter(|&q| q < hi)
+            && (q == lo || self.run(&ready[lo..q], Self::nothing()).is_ok())
         {
-            if q == lo || self.run(&ready[lo..q], Self::nothing()).is_ok() {
-                self.values_of(&ready[lo..q]);
-                lo = q;
-                match self.run(&ready[lo..=q], Self::nothing()) {
-                    Err(e) => return (q, e),
-                    // The engine runs the let the interpreter stops at: the halving below
-                    // searches the rest, `ready[..hi]` stopping as before.
-                    Ok(_) if q + 1 < hi => {
-                        self.values_of(&ready[lo..=q]);
-                        lo = q + 1;
-                    }
-                    Ok(_) => {}
+            self.values_of(&ready[lo..q]);
+            lo = q;
+            match self.run(&ready[lo..=q], Self::nothing()) {
+                Err(e) => return (q, e),
+                // The engine runs the let the interpreter stops at: the halving below
+                // searches the rest, `ready[..hi]` stopping as before.
+                Ok(_) if q + 1 < hi => {
+                    self.values_of(&ready[lo..=q]);
+                    lo = q + 1;
                 }
+                Ok(_) => {}
             }
         }
         // `ready[..lo]` runs and `ready[..hi]` stops with `error`, its own let at `hi - 1`
