@@ -18,7 +18,8 @@
 # a benchmark of each binary by the name the table lists; `fresh`, the
 # listings with --only afresh; `short`, the short-addresses pieces and their clone; `copy`, a
 # piece that starts its binary again after the build is gone; `concurrent`, two runs at once on
-# one log directory; `trace`; `nobus`, three pieces run with no user bus (FARM-run-tests-systemd-run);
+# one log directory; `trace`; `nobus`, four pieces run with no user bus (FARM-run-tests-systemd-run,
+# FAIL-nobus-data-limit-stacks);
 # and `warm`, the report of a piece that fails in the linking warm-up (FAIL-warm-step-drops-output)
 # and the order and thread bound of the warm-up's pieces (FAIL-warm-binaries-rc101-cause).
 # select, table, except and benches are run after list, with no build of the tests between them. With no part named
@@ -43,6 +44,9 @@ want() { [ "$part" = all ] || [ "$part" = "$1" ]; }
 # runs without it, to show --pieces leaves the doc check out by itself.
 export ZED_DOC_CHECK_SKIP="tools/test_run_tests.sh tests the pieces, not the docs"
 logs=build/test-run-tests
+# A part may write `$logs.out` before any run has made build/: on a fresh VM copy, `nobus` alone
+# failed every check with "build/test-run-tests-nobus.out: No such file or directory".
+mkdir -p build
 run() {
   tools/run_tests.sh --logs "$logs" "$@"
 }
@@ -764,7 +768,8 @@ fi
 if want nobus; then
 logs=build/test-run-tests-nobus
 for only in '^l01_06_lexer_tokens$' '^zed_tests::scaling_tests::bytes_of_the_order_given_pass$' \
-  '^zed_rt::stack::tests::a_run_is_on_its_own_stack_and_gives_its_result$'; do
+  '^zed_rt::stack::tests::a_run_is_on_its_own_stack_and_gives_its_result$' \
+  '^zed_rt::stack::tests::a_stack_for_each_core_is_reserved_at_once$'; do
   env -u DBUS_SESSION_BUS_ADDRESS -u XDG_RUNTIME_DIR tools/run_tests.sh --logs "$logs" \
     --only "$only" >"$logs.out" 2>&1
   rc=$?

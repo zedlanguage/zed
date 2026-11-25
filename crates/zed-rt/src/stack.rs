@@ -796,6 +796,28 @@ mod tests {
         assert_eq!(got, 100);
     }
 
+    /// A test binary runs its tests on a thread for each core, and each test with a native run
+    /// holds a stack as large as memory and swap, all in one process. tools/run_tests.sh with no
+    /// user bus limits each piece's data (RLIMIT_DATA), which counts every such stack in full,
+    /// so the limit must hold a stack for each core at once (FAIL-nobus-data-limit-stacks: a
+    /// fourth stack at once passed it on a v5e). The stacks are reserved in a child process of
+    /// this binary, which inherits the runner's limit but no other test's stacks.
+    #[test]
+    fn a_stack_for_each_core_is_reserved_at_once() {
+        let name = "stack::tests::a_stack_for_each_core_is_reserved_at_once";
+        let Some(out) = in_child(name, || {
+            let n = std::thread::available_parallelism().map_or(1, usize::from);
+            let held: Vec<Stack> = (0..n)
+                .map(|i| Stack::new().unwrap_or_else(|e| panic!("stack {i} of {n}: {e}")))
+                .collect();
+            assert_eq!(held.len(), n);
+        }) else {
+            return;
+        };
+        let (code, err) = status(&out);
+        assert_eq!(code, Some(0), "{err}");
+    }
+
     #[test]
     fn the_stack_is_as_large_as_memory_and_swap() {
         let s = Stack::new().unwrap();

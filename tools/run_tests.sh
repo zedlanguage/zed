@@ -1629,14 +1629,24 @@ export root out cores run_kind cov trace spec_dir spec_real
 # Every piece, and every link made before the timed pieces, runs under `capped`: in the systemd
 # slice zedtests.slice (above) when a user bus answers, and otherwise with a data limit
 # (RLIMIT_DATA, `ulimit -d`) of 112 GiB, the slice's MemoryMax, plus the machine's memory and
-# swap (FARM-run-tests-systemd-run). A Colab VM, a docker container, has no user bus, and
+# swap once for each core (FARM-run-tests-systemd-run). A Colab VM, a docker container, has no user bus, and
 # `systemd-run --user` there fails with "Failed to connect to bus", so every piece failed (found
 # by b22-presburger4). tools/farm_run.sh puts a stand-in systemd-run first on PATH on a VM, which
 # runs the piece with no limit; the probe below finds that stand-in, so there it is used instead.
 # Why memory and swap are added: a native run reserves a stack as large as memory and swap
 # together, writable (crates/zed-rt/src/stack.rs, `Stack::new` with no limit of `main`), which
 # the data limit counts in full though it is not written; 112 GiB alone refused it on a machine
-# with more than that (this one has 192 GiB). So each piece may write 112 GiB beyond that stack.
+# with more than that (this one has 192 GiB). Why once for each core: the limit holds for the
+# whole process, and a test binary runs its tests on as many threads as there are cores, each
+# test with a native run holding its own stack. With memory and swap counted once, a fourth run
+# at once passed the limit on a v5e (47 GiB, no swap, a limit of 159 GiB): `zedc` refused to
+# start in l01_36_cranelift::hooks with "Cannot allocate memory" (b22-checkrest18, 2026-11-25,
+# FAIL-nobus-data-limit-stacks). So each piece may write 112 GiB beyond the stacks of its
+# threads. Test: zed_rt::stack::tests::a_stack_for_each_core_is_reserved_at_once, run with no
+# user bus by tools/test_run_tests.sh nobus. The address space this reserves, cores times
+# memory and swap, is far below the 2^47 bytes a process can address on x86_64. The sum is
+# written with printf "%.0f": past 2^31 an awk's `print` may write it in exponent form (mawk
+# 1.3.3 does), which `ulimit` refuses.
 # Why the data limit and not the address-space limit (`ulimit -v`, `prlimit --as`):
 # zed-alloc-count reserves 2^46 bytes of address space with no access before it meters
 # (`RESERVED`, crates/zed-alloc-count/src/meter.rs), and zed-native 64 GiB (`FarApart`), which
@@ -1652,8 +1662,8 @@ user_bus= data_kib=
 if systemd-run --user --scope --quiet true 2>/dev/null; then
   user_bus=1
 else
-  data_kib=$(awk '/^(MemTotal|SwapTotal):/ { s += $2 } END { print s + 112 * 1024 * 1024 }' /proc/meminfo)
-  echo "no user bus: each piece runs with a data limit of $data_kib KiB (112 GiB, memory and swap), not in zedtests.slice" >&2
+  data_kib=$(awk -v cores="$cores" '/^(MemTotal|SwapTotal):/ { s += $2 } END { printf "%.0f\n", cores * s + 112 * 1024 * 1024 }' /proc/meminfo)
+  echo "no user bus: each piece runs with a data limit of $data_kib KiB (112 GiB, and memory and swap for each of $cores cores), not in zedtests.slice" >&2
 fi
 capped() {
   [ -z "$user_bus" ] || exec systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice "$@"
