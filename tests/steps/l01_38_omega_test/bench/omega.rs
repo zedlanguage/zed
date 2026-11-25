@@ -418,7 +418,7 @@ fn holes_of_steps_of_ten_on_a_difference_chain_scale() {
 }
 
 /// Projecting every symbol of the holes family `fam` at 16 and 128 by `project`.
-fn holes_family_scales(fam: &str, project: impl Fn(&Formula, &[Atom])) {
+fn holes_family_scales(fam: &str, project: impl Fn(&Formula, &[Atom]) + Sync) {
     let inputs = scaling::inputs(16, |n| holes_family(fam, n));
     scaling::check_order(&format!("every symbol of the family {fam}"), 16, 1, |n| {
         let (f, s) = &inputs[&n];
