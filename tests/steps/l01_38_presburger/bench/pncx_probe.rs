@@ -20,8 +20,20 @@ fn pncx_distinct_moduli_scale() {
 #[test]
 fn pncx_easy_pairs_scale() {
     use zedc::store::presburger::satisfiable;
-    let inputs = zed_tests::scaling::inputs(2, |n| pncx_formula("pairs", n));
-    zed_tests::scaling::check_order("separate remainder pairs", 2, 1, |n| {
+    // Power 2 in `n` (PRES-growth-pncx-pairs): the work is O(n log N), `N` the largest value of
+    // the model, the bound the performance rule allows where O(n) is not possible, and the
+    // answer itself is Θ(n log N) = Θ(n² log n) bits, as in
+    // `l01_38_omega_test::bench::omega::chains_of_equalities_cost_the_digits_of_their_values`.
+    // Proof: each pair `(a, b)` holds `(r_a, r_b)` in {(0, 1), (1, 0)}, so `x` is divisible by
+    // one prime of each of the `n` pairs; and `x != 0`, since `x = 0` makes every remainder 0.
+    // So `|x|` is at least the product of `n` distinct primes, at least `n!`, Θ(n log n) bits.
+    // The model gives each of the `2n` quotients `q_i = (x - r_i)/p_i` its value
+    // (`modular::build_model`), each Θ(n log n) bits since `p_i` is O(n log n): one division of
+    // `x` by a one-word prime each, O(log N), and writing the model is Θ(n² log n) bits.
+    // Measured at 650 to 5200 (2026-11-14 and 2026-11-25): 24.1 to 30 times the bytes, under
+    // the limit of 84 for power 2.
+    let inputs = zed_tests::scaling::inputs(650, |n| pncx_formula("pairs", n));
+    zed_tests::scaling::check_order("separate remainder pairs", 650, 2, |n| {
         let ans = satisfiable(&inputs[&n]);
         assert!(matches!(ans, Ok(Some(_))));
         let _ = std::hint::black_box(ans);

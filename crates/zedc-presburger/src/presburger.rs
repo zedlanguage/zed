@@ -116,6 +116,7 @@ use zed_kernel::refine::Refine;
 use zed_kernel::value::fresh_id;
 use zedc_int::int::{Int, IntRange, meet_range, range_meet, row_range};
 use zedc_lattice::interval::{End, IntervalSet, Num};
+use zedc_lattice::lattice::Congruence;
 use zedc_solvers::linear::{Q, Term};
 use zedc_solvers::{live3, twovar, utvpi};
 
@@ -15031,6 +15032,9 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
     let mut base = Linked::default();
     let mut near = Near::default();
     take(&std::mem::take(&mut p.cons), &mut base, &mut near);
+    // How many rows of the base have been read for a row of three or more atoms, and whether
+    // one was found (see their use below).
+    let (mut base_read, mut base_wide) = (0, false);
     loop {
         // Complexity tradeoff: when `probe_kept` refutes one arm of `r` 2-way unary disjunctions
         // via `SlackIndex`, `p.ors` enters `settle` with `r` 1-element disjunctions `[d]`. Testing
@@ -15069,14 +15073,26 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
         let mut next = 0;
         while next < todo.len() {
             let end = todo.len();
-            let mut dw_rep = point
-                .as_ref()
+            // Whether the base has a row of three or more atoms, read only over the rows added
+            // since the last round (PRES-growth-nest-point). Without one,
+            // `WidePointRepairer::of_cons` is `None`, and it found that by reading every row of
+            // the base each round: a nest `n` deep takes about `2n` rounds over a base that
+            // grows to O(n) rows, Θ(n²) (63.7 times the instructions of that test at 8 times
+            // the depth, 700 to 5600). Why reading the new rows suffices: the base changes
+            // only through `take`, that is [`Linked::meet`], which appends a row or replaces
+            // one by a row with the same terms; so the number of atoms of each row already
+            // read never changes, and once true the flag stays true. Each row is read once in
+            // all, O(r) for the `r` rows of the base, and the answer of each round is the one
+            // of reading them all.
+            base_wide |= (base.cons[base_read..].iter()).any(|c| c.lin.terms.len() > 2);
+            base_read = base.cons.len();
+            let mut dw_rep = (point.as_ref())
+                .filter(|_| base_wide)
                 .and_then(|pt| slack::WidePointRepairer::of_cons(&base.cons, pt));
             // Whether a disjunct of these disjunctions may be asked of the solver: one that does
             // not hold at the point, in a disjunction that the point does not serve.
-            let dw_old = old_path()
-                && base.cons.iter().any(|c| c.lin.terms.len() > 2)
-                && slack::DisjointWide::of_cons(&base.cons).is_some();
+            let dw_old =
+                old_path() && base_wide && slack::DisjointWide::of_cons(&base.cons).is_some();
             let asks = (!old_path() || dw_old)
                 && point.as_ref().is_some_and(|pt| {
                     todo[next..end].iter().any(|ds| {
@@ -21165,7 +21181,7 @@ fn project_each_as_named(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each
         if !meter::EXACT_OFF.get()
             && let Some(each) = certified_domains(f, syms)
         {
-            return Ok(EachClassed::plain(each));
+            return Ok(each);
         }
         if !meter::EXACT_OFF.get()
             && let Some(each) = two_var_domains(f, syms)
@@ -21394,7 +21410,7 @@ fn cover_input(f: &Formula) -> Formula {
 /// for S symbols even when the old solver's answer was already exact. A forest
 /// certificate that fails costs one extra base solve and forest pass; arbitrary
 /// integer rows are rejected by a shared-DAG walk before either is attempted.
-fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
+fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<EachClassed> {
     if syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         return None;
     }
@@ -21416,26 +21432,36 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
         return None;
     }
     let model = match solve(&p.cons, true).ok()? {
-        None => return Some(no_points(syms)),
+        None => return Some(EachClassed::plain(no_points(syms))),
         Some(m) => m,
     };
     let linked = Linked::of(std::mem::take(&mut p.cons));
     let rows: Vec<&Con> = linked.cons.iter().collect();
     let mut doms = difference_hulls(&rows, &model)?;
-    let (forest, handled, empty) = forest_domains(&linked, &p.ors, &model);
+    let (forest, handled, empty) = forest_domains_classed(&linked, &p.ors, &model);
     if empty {
-        return Some(no_points(syms));
+        return Some(EachClassed::plain(no_points(syms)));
     }
     if handled.iter().any(|h| !h) {
         return None;
     }
+    // The forest's sets kept classed (PRES-holes-steps-cost): O(1) ranges each on a chain of
+    // steps of ten, where as ranges alone the k-th has k + 1 pieces.
+    let mut doms: HashMap<Atom, Classed> = (doms.drain())
+        .map(|(a, d)| (a, Classed::plain(d)))
+        .collect();
     doms.extend(forest);
-    Some((
-        syms.iter()
-            .map(|s| Ok(doms.get(s).cloned().unwrap_or_else(IntervalSet::top)))
+    Some(EachClassed {
+        sets: (syms.iter())
+            .map(|s| {
+                Ok(doms
+                    .get(s)
+                    .cloned()
+                    .unwrap_or_else(|| Classed::plain(IntervalSet::top())))
+            })
             .collect(),
-        Vec::new(),
-    ))
+        causes: Vec::new(),
+    })
 }
 
 /// Exact integer projection onto `syms` when `f` (containing no product atoms) is a conjunction
@@ -27207,13 +27233,19 @@ fn is_difference(c: &Con) -> bool {
 /// Tests: `l01_38_omega_test::omega::forest_answers_match_enumeration`, `steps_of_ten_are_exact`,
 /// `exact::tests::certified_forests_match_enumerated_points_without_questions`. They cannot catch
 /// a shape the random draws do not reach, such as deep trees with disjunctions of many parts.
-fn forest_domains(
+///
+/// The sets are [`Classed`] (PRES-holes-steps-cost): the values of the `k`-th atom of the chain
+/// `x[k+1] - x[k]` in {0, 10} are `{0, 10, ..., 10k}`, one range in the class 0 mod 10, where as
+/// ranges alone they are `k + 1` pieces, Θ(n²) pieces over the chain's `n` atoms. Every step
+/// below is exact on the classed form (the proof of each is at [`shifted_classed`] and
+/// [`fold_classed`]), so the domains are the sets the steps above prove, written another way.
+fn forest_domains_classed(
     linked: &Linked,
     ors: &[Vec<Rc<Parts>>],
     model: &Model,
-) -> (HashMap<Atom, IntervalSet>, Vec<bool>, bool) {
+) -> (HashMap<Atom, Classed>, Vec<bool>, bool) {
     let mut handled = vec![false; ors.len()];
-    let mut doms: HashMap<Atom, IntervalSet> = HashMap::new();
+    let mut doms: HashMap<Atom, Classed> = HashMap::new();
     let n_base = linked.parent.len();
     // Complexity tradeoff: the naive way (main to 6a223ba86) put every disjunction's atoms into
     // the union-find, those of its disjuncts' nests too: Θ(size of the nest below) at each level
@@ -27381,6 +27413,19 @@ fn forest_domains(
     (doms, handled, false)
 }
 
+/// [`forest_domains_classed`] with each set as ranges alone ([`Classed::met`]), for the callers
+/// that read ranges ([`probe_unhandled`], [`tree_domains`]): O(v) for the v values of a strided
+/// set, the pieces it had when the passes built it as ranges.
+fn forest_domains(
+    linked: &Linked,
+    ors: &[Vec<Rc<Parts>>],
+    model: &Model,
+) -> (HashMap<Atom, IntervalSet>, Vec<bool>, bool) {
+    let (doms, handled, empty) = forest_domains_classed(linked, ors, model);
+    let doms = (doms.into_iter()).map(|(a, d)| (a, d.met())).collect();
+    (doms, handled, empty)
+}
+
 /// The units of simple disjunctions in [`forest_domains`] (`simple_units`, sorted, and
 /// `of_simple` by unit: a group of base rows by its root, below `n_base`, or the free atom
 /// `free[u - n_base]`) that the disjunction `ds` touches, sorted, found from the smaller side.
@@ -27500,6 +27545,65 @@ fn fold_in_pairs(mut sets: Vec<IntervalSet>, meet: bool) -> IntervalSet {
     sets.pop().expect("one set")
 }
 
+/// [`shifted`] on the classed form: `{x + t : x in set, lo <= t <= hi}`, exact.
+///
+/// Proof, for `set` the values of `R` in the class `r mod m`:
+/// 1. `m` is 1 (no stride): the ranges shifted, as [`shifted`], in their one form.
+/// 2. `lo = hi = t`: each value moves by `t`, so the ranges move by `t` and the class becomes
+///    `r + t mod m`; every end of the ranges was a member, so every end moved is one.
+/// 3. `lo` or `hi` unbounded, or `hi - lo >= m - 1`: each range `[a, b]` (ends members) gives
+///    every integer of `[a + lo, b + hi]`. For `y` there, take `x` the greatest member of the
+///    range at most `y - lo`, `b` where `y - lo >= b` (then `t = y - b` lies in `[lo, hi]`,
+///    as `y <= b + hi`); else `0 <= y - lo - x <= m - 1`, so `t = y - x` lies in
+///    `[lo, lo + m - 1]`, within `[lo, hi]`. Unbounded on one side, the same with the bound
+///    on that side dropped. So the shifted ranges ([`shifted`]) are the set, every integer
+///    their class.
+/// 4. Otherwise (`0 < hi - lo < m - 1`): the set is listed ([`Classed::met`]) and shifted as
+///    ranges, as every shift was before PRES-holes-steps-cost.
+///
+/// Cost: O(p log p) for p ranges in cases 1 to 3; O(v log v) for v values in case 4.
+fn shifted_classed(set: &Classed, lo: &Option<Int>, hi: &Option<Int>) -> Classed {
+    let Some((m, r)) = set.strided() else {
+        return Classed::plain(shifted(&set.ranges, lo, hi));
+    };
+    match (lo, hi) {
+        (Some(l), Some(h)) if l > h => Classed::plain(IntervalSet::empty()),
+        (Some(l), Some(h)) if l == h => Classed::new(
+            shifted(&set.ranges, lo, hi),
+            Congruence::new(m.clone(), r + &Num::from(l)),
+        ),
+        (Some(l), Some(h)) if Num::from(&(h - l)) < m - &Num::ONE => {
+            Classed::plain(shifted(&set.met(), lo, hi))
+        }
+        _ => Classed::plain(shifted(&set.ranges, lo, hi)),
+    }
+}
+
+/// [`fold_in_pairs`] on the classed form: the join of `sets` at once ([`Classed::join_all`],
+/// exact, O(P log P + L) for P ranges in all and L values listed where two classes differ),
+/// or their meet in pairs level by level ([`Classed::meet`], exact), O(P log P log k) for k
+/// sets.
+fn fold_classed(mut sets: Vec<Classed>, meet: bool) -> Classed {
+    if !meet {
+        return Classed::join_all(sets);
+    }
+    if sets.is_empty() {
+        return Classed::plain(IntervalSet::top());
+    }
+    while sets.len() > 1 {
+        let mut next = Vec::with_capacity(sets.len().div_ceil(2));
+        let mut it = sets.into_iter();
+        while let Some(a) = it.next() {
+            next.push(match it.next() {
+                Some(b) => a.meet(&b),
+                None => a,
+            });
+        }
+        sets = next;
+    }
+    sets.pop().expect("one set")
+}
+
 fn lower_to(a: &mut Option<Int>, v: Int) {
     if a.as_ref().is_none_or(|x| v < *x) {
         *a = Some(v);
@@ -27535,7 +27639,7 @@ fn forest_component_domains(
     free_atoms: &[&Atom],
     js: &[usize],
     ors: &[Vec<Rc<Parts>>],
-) -> Option<Option<HashMap<Atom, IntervalSet>>> {
+) -> Option<Option<HashMap<Atom, Classed>>> {
     // Nodes: 0 is z, 1..=atoms the graph's atoms, then the free atoms.
     let n0 = g.out.len();
     let n = n0 + free_atoms.len();
@@ -27606,7 +27710,7 @@ fn forest_component_domains(
         })
         .collect();
     let nc = reps.len();
-    let mut dom: Vec<IntervalSet> = vec![IntervalSet::top(); nc];
+    let mut dom: Vec<Classed> = vec![Classed::plain(IntervalSet::top()); nc];
     let fin = |k: Int| End::Fin(Num::from(&k));
     let mut edges: Vec<ForestEdge> = Vec::new();
     let mut key: HashMap<(usize, usize), usize> = HashMap::new();
@@ -27657,11 +27761,12 @@ fn forest_component_domains(
             match (u, v) {
                 (0, v) => {
                     let c = class[v];
-                    dom[c] = dom[c].meet(&IntervalSet::range(End::NegInf, fin(w - &off[v])));
+                    dom[c] = dom[c].meet_ranges(&IntervalSet::range(End::NegInf, fin(w - &off[v])));
                 }
                 (u, 0) => {
                     let c = class[u];
-                    dom[c] = dom[c].meet(&IntervalSet::range(fin(&(-w) - &off[u]), End::PosInf));
+                    dom[c] =
+                        dom[c].meet_ranges(&IntervalSet::range(fin(&(-w) - &off[u]), End::PosInf));
                 }
                 (u, v) if class[u] == class[v] => {}
                 (u, v) => {
@@ -27769,7 +27874,7 @@ fn forest_component_domains(
     }
     for (d, us) in dom.iter_mut().zip(unary) {
         if !us.is_empty() {
-            *d = d.meet(&fold_in_pairs(us, true));
+            *d = d.meet_ranges(&fold_in_pairs(us, true));
         }
     }
     // Two passes of arc revision over each tree.
@@ -27778,7 +27883,7 @@ fn forest_component_domains(
         adj[e.a].push(i);
         adj[e.b].push(i);
     }
-    let revise = |e: &ForestEdge, x: usize, dx: &IntervalSet| -> IntervalSet {
+    let revise = |e: &ForestEdge, x: usize, dx: &Classed| -> Classed {
         // The values of the other end `y` that some value of `x` in `dx` supports.
         let fwd = x == e.a;
         let orient = |lo: &Option<Int>, hi: &Option<Int>| -> (Option<Int>, Option<Int>) {
@@ -27791,10 +27896,10 @@ fn forest_component_domains(
         match &e.parts {
             None => {
                 let (lo, hi) = orient(&e.lo, &e.hi);
-                shifted(dx, &lo, &hi)
+                shifted_classed(dx, &lo, &hi)
             }
             Some(parts) => {
-                let mut s: Vec<IntervalSet> = Vec::with_capacity(parts.len());
+                let mut s: Vec<Classed> = Vec::with_capacity(parts.len());
                 for pt in parts {
                     let (mut lo, mut hi) = (e.lo.clone(), e.hi.clone());
                     if let Some(l) = &pt.lo {
@@ -27809,9 +27914,9 @@ fn forest_component_domains(
                     } else {
                         (&pt.ib, &pt.ia)
                     };
-                    s.push(shifted(&dx.meet(ix), &lo, &hi).meet(iy));
+                    s.push(shifted_classed(&dx.meet_ranges(ix), &lo, &hi).meet_ranges(iy));
                 }
-                fold_in_pairs(s, false)
+                fold_classed(s, false)
             }
         }
     };
@@ -27846,19 +27951,21 @@ fn forest_component_domains(
     // passes below start from sets no wider than the bounds the whole tree gives: a set built
     // leaves to root then holds only values inside them (`x[k+1] - x[k]` in {0, 10} with both
     // ends 0 keeps `{0}` at every step, not `k + 1` intervals).
-    let mut hdom: Vec<IntervalSet> = dom.iter().map(hull).collect();
+    // A hull as a classed set: one range, every integer its class (O(1), [`Classed::plain`]).
+    let plain_hull = |s: &IntervalSet| Classed::plain(s.clone());
+    let mut hdom: Vec<IntervalSet> = dom.iter().map(|d| hull(&d.ranges)).collect();
     for order in &orders {
         for &(v, u, ei) in order.iter().rev() {
-            let s = hull(&revise(&edges[ei], v, &hdom[v]));
+            let s = hull(&revise(&edges[ei], v, &plain_hull(&hdom[v])).ranges);
             hdom[u] = hdom[u].meet(&s);
         }
         for &(v, u, ei) in order {
-            let s = hull(&revise(&edges[ei], u, &hdom[u]));
+            let s = hull(&revise(&edges[ei], u, &plain_hull(&hdom[u])).ranges);
             hdom[v] = hdom[v].meet(&s);
         }
     }
     for (d, h) in dom.iter_mut().zip(&hdom) {
-        *d = d.meet(h);
+        *d = d.meet_ranges(h);
     }
     for order in &orders {
         for &(v, u, ei) in order.iter().rev() {
@@ -27870,7 +27977,7 @@ fn forest_component_domains(
             dom[v] = dom[v].meet(&s);
         }
     }
-    if dom.iter().any(IntervalSet::is_empty) {
+    if dom.iter().any(Classed::is_empty) {
         return Some(None);
     }
     Some(Some(
@@ -27885,7 +27992,7 @@ fn forest_component_domains(
                         free_atoms[v - n0]
                     })
                     .clone(),
-                    shifted(&dom[class[v]], &k, &k),
+                    shifted_classed(&dom[class[v]], &k, &k),
                 )
             })
             .collect(),

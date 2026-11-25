@@ -5,7 +5,7 @@ use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::presburger::{
-    Atom, Con, Formula, Lin, decide, project_each, row_box, satisfiable,
+    Atom, Con, Formula, Lin, decide, project_each, project_each_classed, row_box, satisfiable,
 };
 
 #[test]
@@ -404,12 +404,25 @@ fn lossless_bands_scale() {
     });
 }
 
-/// Projecting every symbol of the holes family `fam` at 16 and 128.
-fn holes_family_scales(fam: &str) {
+/// The family `steps` of [`holes_family`] (`x[k+1] - x[k]` in {0, 10}, `x0 == 0`), every symbol
+/// projected at 16 and 128, its sets classed (PRES-holes-steps-cost). The set of `x[k]` is
+/// `{0, 10, ..., 10k}`: as ranges alone `k + 1` pieces, Θ(n²) for the `n` symbols, so the plain
+/// answer of `project_each` cannot be linear; classed it is one range in the class 0 mod 10,
+/// O(1) a symbol, and the forest passes that find it (`forest_domains_classed`) take O(1) ranges
+/// a step, O(n) in all (the proof of each step is at `shifted_classed` and `fold_classed`).
+#[test]
+fn holes_of_steps_of_ten_on_a_difference_chain_scale() {
+    holes_family_scales("steps", |f, s| {
+        drop(std::hint::black_box(project_each_classed(f, s)))
+    });
+}
+
+/// Projecting every symbol of the holes family `fam` at 16 and 128 by `project`.
+fn holes_family_scales(fam: &str, project: impl Fn(&Formula, &[Atom])) {
     let inputs = scaling::inputs(16, |n| holes_family(fam, n));
     scaling::check_order(&format!("every symbol of the family {fam}"), 16, 1, |n| {
         let (f, s) = &inputs[&n];
-        let _ = std::hint::black_box(project_each(f, s));
+        project(f, s.as_slice());
     });
 }
 
@@ -426,6 +439,6 @@ fn holes_on_difference_chains_scale() {
         "chain", "both", "twoway", "pair", "mono", "mono1", "eqchain", "band", "wide", "slope",
         "pinned", "pinlast",
     ] {
-        holes_family_scales(fam);
+        holes_family_scales(fam, |f, s| drop(std::hint::black_box(project_each(f, s))));
     }
 }

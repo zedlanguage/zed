@@ -802,7 +802,8 @@ fn certified_forests_match_enumerated_points_without_questions() {
         ]));
         EXACT_QUESTIONS.set(0);
         let each = super::super::certified_domains(&f, &[a("x"), a("y"), a("z")])
-            .expect("a forest is certified");
+            .expect("a forest is certified")
+            .met();
         for (got, s) in each.0.iter().zip(NAMES) {
             assert_eq!(got, &Ok(brute(&f, s)), "{s}: {f}");
         }

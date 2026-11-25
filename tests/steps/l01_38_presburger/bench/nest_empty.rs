@@ -9,10 +9,10 @@ fn a_nest_whose_every_path_is_empty_costs_its_depth() {
     // Each part is read once, and each hull is the one it is made from with a few forms
     // changed, O(log n) each (COMPLEXITY.md PRES-nest-empty).
     costs("a nest every path of which is empty", 1500, empty);
-    let built = scaling::inputs(64, near);
+    let built = scaling::inputs(1400, near);
     scaling::check_order(
         "a nest with one path that has a point, its point found",
-        64,
+        1400,
         1,
         |n| {
             std::hint::black_box(satisfiable(&built[&n]).is_ok());
