@@ -226,3 +226,97 @@ fn the_pieces_are_those_of_the_set_listed() {
         "seed {seed}: {strided} of 4000 cases strided"
     );
 }
+
+/// A random set of one of five kinds, by `kind`: 0 single values on a stride of 2 to 5,
+/// sometimes with one value moved off the stride; 1 single values with one wide range among
+/// them, first, last or between (the shape of a name whose holes are tested from below); 2
+/// ranges of 1 to 10 values, sometimes with an infinite end; 3 empty; 4 a set made by one of
+/// `IntervalSet`'s builders ([`random_set`]).
+fn wider_class_case(rng: &mut Rng, kind: usize) -> IntervalSet {
+    let points = |rng: &mut Rng| -> Vec<(End, End)> {
+        let (s, a, n) = (rng.int(2, 5), rng.int(-40, 40), rng.below(12));
+        let mut vs: Vec<i64> = (0..n as i64).map(|i| a + s * i).collect();
+        if !vs.is_empty() && rng.below(3) == 0 {
+            let i = rng.below(vs.len());
+            vs[i] += 1;
+        }
+        vs.into_iter().map(|v| (End::of(v), End::of(v))).collect()
+    };
+    match kind {
+        0 => IntervalSet::from_pieces(points(rng)),
+        1 => {
+            let mut raw = points(rng);
+            let lo = match rng.below(3) {
+                0 => -60,
+                1 => 60,
+                _ => rng.int(-40, 40),
+            };
+            raw.push((End::of(lo), End::of(lo + rng.int(1, 6))));
+            IntervalSet::from_pieces(raw)
+        }
+        2 => {
+            let mut raw: Vec<(End, End)> = (0..rng.below(6))
+                .map(|_| {
+                    let lo = rng.int(-40, 40);
+                    (End::of(lo), End::of(lo + rng.int(1, 9)))
+                })
+                .collect();
+            if rng.below(4) == 0 {
+                raw.push((End::NegInf, End::of(rng.int(-60, -41))));
+            }
+            if rng.below(4) == 0 {
+                raw.push((End::of(rng.int(51, 60)), End::PosInf));
+            }
+            IntervalSet::from_pieces(raw)
+        }
+        3 => IntervalSet::empty(),
+        _ => {
+            let finite = rng.coin();
+            random_set(rng, finite)
+        }
+    }
+}
+
+/// `Classed::wider_class`, whose check of the count of members skips the walk on a set with a
+/// piece of two values or more (FAIL-xst-holes-laps-ratio), gives what the walk alone
+/// (`Classed::wider_class_walk`, the version before the check) gives, on 5 000 random sets of
+/// each kind of [`wider_class_case`], and again on each set with one value taken out, which
+/// changes one path of a tree whose counts were already asked, as a test's narrowing does.
+/// Both answers occur in the cases compared. Negative control, kept: a check that takes a set
+/// of single values to be in a wider class without the walk's gcd (wrong for `{0, 1, 3}`)
+/// must disagree with the walk on some case.
+#[test]
+fn the_members_check_gives_the_walks_answer() {
+    let (mut rng, seed) = Rng::fresh("the_members_check_gives_the_walks_answer");
+    let wrong = |set: &IntervalSet| {
+        set.len() >= 2 && set.members() == Some(Num::from(set.len() as u64))
+    };
+    let (mut answers, mut caught) = ([0usize; 2], 0usize);
+    for kind in 0..5 {
+        for case in 0..5000 {
+            let set = wider_class_case(&mut rng, kind);
+            let narrowed = match set.bounds() {
+                Some((End::Fin(lo), End::Fin(hi))) => {
+                    let v = lo + &Num::from(rng.int(0, 70)).min(hi - lo);
+                    set.minus(&IntervalSet::point(v))
+                }
+                _ => set.minus(&IntervalSet::single(rng.int(-40, 40))),
+            };
+            for s in [&set, &narrowed] {
+                let want = Classed::wider_class_walk(s);
+                assert_eq!(
+                    Classed::wider_class(s),
+                    want,
+                    "seed {seed}, kind {kind}, case {case}: {s:?}"
+                );
+                answers[usize::from(want)] += 1;
+                caught += usize::from(wrong(s) != want);
+            }
+        }
+    }
+    assert!(
+        answers[0] >= 1000 && answers[1] >= 1000,
+        "seed {seed}: answers (false, true) {answers:?}"
+    );
+    assert!(caught > 0, "seed {seed}: the wrong check agreed with the walk on every case");
+}

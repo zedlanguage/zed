@@ -156,10 +156,62 @@ impl Classed {
     /// or more, and each piece is one value (a piece of two values holds two consecutive
     /// integers, whose difference 1 makes the gcd 1), the gcd of their differences from the
     /// first above 1. Proof of the early answers: the gcd only falls as values are added, so a
-    /// gcd of 1, an infinite end or a piece of two values settles `false` for the rest. O(1) for
-    /// a set whose first piece is wider than one value, O(p) at most for p pieces; nothing is
-    /// allocated but the iterator's stack, O(log p).
+    /// gcd of 1, an infinite end or a piece of two values settles `false` for the rest.
+    ///
+    /// Complexity tradeoff: naive version, the walk alone, which reads every piece before the
+    /// first wider than one value: a set of `k` single values below one wide range took `O(k)`
+    /// at each call, and a name whose holes are tested one at a time from below (`x != 1`,
+    /// `x != 2`, `x != 4`, … over `0..=6n`) built such a set at each of its `4n` tests,
+    /// `Θ(n²)` in all (`l01_39_scope_relations::xst::holes::bench::
+    /// laps_without_the_closing_edge_take_near_linear_time`, 11.1 times the work at 8 times
+    /// the size, FAIL-xst-holes-laps-ratio). Used: the walk only when every piece is one
+    /// value, which holds exactly when the set has as many members as pieces (each piece holds
+    /// at least one integer, and the pieces are disjoint, so the count of members is at least
+    /// the count of pieces, with equality exactly when each holds one). The count of members
+    /// is [`IntervalSet::members`], kept at each node of the tree: `O(p)` the first time,
+    /// `O(log p)` for a set made from one already asked by a change along one path, as each
+    /// test's narrowing is; `len` is `O(1)`. So a set with a piece of two values or more is
+    /// answered in that time, and the walk runs only on a set of single values, where
+    /// [`Classed::new`] builds its strided form in `O(p)` anyway when the answer is `true`,
+    /// and the walk stops at the first value outside the first two values' class otherwise.
+    /// Measured (b23-band4, job d8 on a Colab VM): pieces walked per call in that bench's open
+    /// lap, 43.06 at n = 128 and 128.39 at n = 384 by the walk alone, 0.33 at both with the
+    /// check; the bench went from 11.1 to 9.09 and 9.11 times the instructions at 8n (jobs d8
+    /// and d9), under the limit of 10.5 and above the preferred 9. Given up:
+    /// nothing; the answer is the same. Worst case still `O(p)`: a set of `p` single values
+    /// every one in the class of the first two but the last.
+    ///
+    /// Proof that the answer is that of the walk alone ([`Classed::wider_class_walk`]). The
+    /// check returns `false` early only when the count of members is not `Some(p)` for the
+    /// `p = set.len()` pieces; otherwise it returns what the walk returns. So it is enough
+    /// to show that the walk returns `false` whenever the count is not `Some(p)`.
+    /// (1) The count is `None` exactly when an end is infinite ([`IntervalSet::members`]).
+    /// An infinite end lies in the first piece (a lower end) or the last (an upper end),
+    /// since only the outer ends of a set are infinite. The walk reads the first piece
+    /// through `let Some((End::Fin(a0), End::Fin(hi0)))`, which fails, giving `false`, when
+    /// either of its ends is infinite; it reads each later piece through `let (End::Fin(lo),
+    /// End::Fin(hi))`, which fails the same way, unless an earlier return came first, which
+    /// also gives `false` (every return inside the walk is `false`). So with an infinite end
+    /// the walk returns `false`. (2) With every end finite, the pieces are disjoint and each
+    /// holds `hi - lo + 1 >= 1` integers, so the count is the sum of those, which is `p`
+    /// exactly when every piece has `lo == hi`. So a count other than `Some(p)` with every
+    /// end finite means some piece has `lo != hi`. The walk returns `true` only on its last
+    /// line, reached only after it has read every piece, the first one with `hi0 == a0` and
+    /// every later one with `lo == hi` (any other piece returns `false` before), so it
+    /// cannot return `true` here. (3) The empty set has count `Some(0)` and `p = 0`, so it
+    /// goes to the walk, as before. Test: `tests::the_members_check_gives_the_walks_answer`
+    /// (the walk as the reference on random sets of single values, mixed, wide and empty,
+    /// with a negative control).
     fn wider_class(set: &IntervalSet) -> bool {
+        if set.members() != Some(Num::from(set.len() as u64)) {
+            return false;
+        }
+        Classed::wider_class_walk(set)
+    }
+
+    /// The answer of [`Classed::wider_class`] by reading the pieces in order: `O(p)` for `p`
+    /// pieces in the worst case, `O(1)` when the first piece is wider than one value.
+    fn wider_class_walk(set: &IntervalSet) -> bool {
         let mut pieces = set.pieces();
         let Some((End::Fin(a0), End::Fin(hi0))) = pieces.next() else {
             return false;
