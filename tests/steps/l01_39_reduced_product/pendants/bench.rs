@@ -394,17 +394,3 @@ fn k_additions_of_pendants_under_two_disjunctions_take_linear_time() {
         d_two,
     );
 }
-
-/// TEMPORARY probes (remove before landing): one run of `k` additions of each family, for a
-/// callgrind profile at k = 16 and 64.
-#[test]
-fn probe_additions() {
-    let k: usize = std::env::var("PROBE_K").map_or(16, |v| v.parse().expect("a count"));
-    let family: fn(usize) -> Family = match std::env::var("PROBE_F").as_deref() {
-        Ok("b") => b_even,
-        Ok("c") => c_spaced,
-        _ => e_one,
-    };
-    let (s, ts) = apart(family(k));
-    std::hint::black_box(add_each(&s, &ts));
-}

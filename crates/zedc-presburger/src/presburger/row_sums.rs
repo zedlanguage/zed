@@ -790,8 +790,19 @@ pub(super) fn project(
     let join_asked = ROW_SUMS_JOIN.with(Cell::get) || JOIN_LIMIT_SET.with(Cell::get).is_some();
     // One atom besides those an equation defines: each set is an affine image of the one
     // atom's, exact as ranges and a class, at a cost that does not grow with the widths of the
-    // ranges (`plane::line`, LIMITS-classed-listing-per-set).
-    if !join_asked && let Some(mut sets) = plane::line(&rows, &want) {
+    // ranges (`plane::line`, LIMITS-classed-listing-per-set). With the cover on only, as for
+    // module `classes` below: with it off (`old_exact` false, the test controls
+    // `project_each_solver` and `meter::EXACT_OFF`) the join answers as before this route, so
+    // the solver-alone runs the tests compare with the cover keep their old path. With the
+    // route taken there too, audit seed 4 step 4 under `EXACT_OFF` gave x `[-1..=5]` with no
+    // class where the join gives {-1, 2, 5}
+    // (`l01_39_scope_relations::families::audit_seed_4_keeps_its_exact_sets_with_the_cover`);
+    // which reader of the solver-alone path drops the line's class is not found (row
+    // FAIL-solver-alone-drops-line-class).
+    if !join_asked
+        && old_exact
+        && let Some(mut sets) = plane::line(&rows, &want)
+    {
         let sets = (syms.iter())
             .map(|s| {
                 let at = rows.atoms.binary_search(s).ok();
