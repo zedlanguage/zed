@@ -2449,7 +2449,7 @@ impl Type {
     }
 
     /// Whether this is a recursive type by name, not its unfolding.
-    fn is_recursive(&self) -> bool {
+    pub fn is_recursive(&self) -> bool {
         matches!(&*self.0, Node::Rec(_))
     }
 

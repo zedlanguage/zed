@@ -92,7 +92,7 @@ pub const NEXT: char = '\u{FDDE}';
 /// Names the variables marked in `out` from `from` on ([`VARS`]): in each marked type, each the
 /// next of `T`, `U`, `V`, `W`, `T5`, … that the program does not bind and `taken` does not hold
 /// ([`fresh_name`]), in the order the variables are first met reading the type, and writes each
-/// union's members by name in code-point order. A printer names its text at once outside a
+/// union's members by name ([`super::order::name_cmp`]). A printer names its text at once outside a
 /// message; inside one, [`lift`] names them, and `taken` is every word of the message.
 ///
 /// Complexity tradeoff: linear in the text, with a hash lookup per mark, plus a sort of each
@@ -130,7 +130,10 @@ pub fn name_vars(out: &mut String, from: usize, taken: &dyn Fn(&str) -> bool) {
                         None => m.to_string(),
                     });
                 }
-                members.sort_unstable();
+                // Every member is a name from `String` on, or a recursive type's text, which
+                // begins with its name (`Ty::write_vars` in zedc-types), so the order of names
+                // orders them (MSG-union-order-rest).
+                members.sort_unstable_by(|a, b| super::order::name_cmp(a, b));
                 for (j, m) in members.iter().enumerate() {
                     if j > 0 {
                         out.push_str(" | ");

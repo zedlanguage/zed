@@ -146,7 +146,7 @@ pub fn cmp(a: &Member<'_>, b: &Member<'_>) -> Ordering {
             .then_with(|| number_cmp(x, y)),
         (Member::NumberType(x), Member::NumberType(y)) => x.cmp(y),
         (Member::Str(x), Member::Str(y)) => x.cmp(y),
-        (Member::Named(x), Member::Named(y)) => x.cmp(y),
+        (Member::Named(x), Member::Named(y)) => name_cmp(x, y),
         (
             Member::Atom {
                 name: x,
@@ -159,6 +159,48 @@ pub fn cmp(a: &Member<'_>, b: &Member<'_>) -> Ordering {
         ) => x.cmp(y).then(p.cmp(q)),
         _ => a.group().cmp(&b.group()),
     }
+}
+
+/// The order of two names (DESIGN.md sec:diagnostics, "Types in a message"): "by name in
+/// code-point order with a run of digits compared as a number, so `T5` before `T10` and `Part2`
+/// before `Part10`". Two names equal in that order, which differ only in a run's leading zeros
+/// (`T5` and `T05`), are ordered by their code points, so two names are equal only when they
+/// are one name.
+///
+/// A total order: each name reads as a sequence of tokens, a run of ASCII digits or one other
+/// character. Two runs compare by value: by length once their leading zeros are dropped, then
+/// digit by digit, which is the order of their values for any length, with no overflow. A run
+/// and a character compare by the run's first digit against the character: the ten digits are
+/// the consecutive code points U+0030 to U+0039, so a character other than a digit is below all
+/// of them or above all of them, and this is a total preorder on tokens. Sequences of tokens in
+/// the lexicographic order of a total preorder are a total preorder, and the code points break
+/// its ties, which makes the order total. O(|x| + |y|). Test `digit_runs_compare_as_numbers`.
+pub fn name_cmp(x: &str, y: &str) -> Ordering {
+    let (a, b) = (x.as_bytes(), y.as_bytes());
+    let (mut i, mut j) = (0, 0);
+    let run = |s: &[u8], from: usize| {
+        let end = from + s[from..].iter().take_while(|c| c.is_ascii_digit()).count();
+        let first = from + s[from..end].iter().take_while(|&&c| c == b'0').count();
+        (&s[first..end], end)
+    };
+    while i < a.len() && j < b.len() {
+        if a[i].is_ascii_digit() && b[j].is_ascii_digit() {
+            let ((p, pe), (q, qe)) = (run(a, i), run(b, j));
+            let o = p.len().cmp(&q.len()).then_with(|| p.cmp(q));
+            if o.is_ne() {
+                return o;
+            }
+            (i, j) = (pe, qe);
+        } else {
+            // Bytes of UTF-8 compare as their code points do, and a digit is one byte.
+            let o = a[i].cmp(&b[j]);
+            if o.is_ne() {
+                return o;
+            }
+            (i, j) = (i + 1, j + 1);
+        }
+    }
+    (a.len() - i).cmp(&(b.len() - j)).then_with(|| x.cmp(y))
 }
 
 /// The member a value is, as the literal type of it: its own literal for a number, a boolean,
@@ -244,6 +286,41 @@ mod tests {
                 "bool", "true", "f16", "false", "rat", "bf16", "f32", "int", "f64"
             ]),
             "int | bf16 | f16 | f32 | f64 | rat | false | true | bool"
+        );
+    }
+
+    /// A run of digits in a name compares as a number (DESIGN.md sec:diagnostics); before,
+    /// names compared by code points alone, `T10 | T5`.
+    #[test]
+    fn digit_runs_compare_as_numbers() {
+        assert_eq!(union_of_names(["T10", "T5", "T"]), "T | T5 | T10");
+        assert_eq!(
+            union_of_names(["Part10", "Part2", "Part1", "Parts"]),
+            "Part1 | Part2 | Part10 | Parts"
+        );
+        // A long run, past any machine word, and leading zeros: by value, ties by code points.
+        let long = format!("A{}", "9".repeat(40));
+        let longer = format!("A1{}", "0".repeat(40));
+        assert_eq!(name_cmp(&long, &longer), Ordering::Less);
+        assert_eq!(name_cmp("T05", "T5"), Ordering::Less);
+        assert_eq!(name_cmp("T5", "T05"), Ordering::Greater);
+        assert_eq!(name_cmp("T5", "T5"), Ordering::Equal);
+        assert_eq!(name_cmp("T5a", "T5"), Ordering::Greater);
+        assert_eq!(name_cmp("T5", "T_"), Ordering::Less);
+        // Sorted, each name is strictly below the next: no two distinct names are tied.
+        let names = [
+            "T", "T5", "T05", "T10", "T5a", "Ta", "U", "T_", "T1x2", "T1x10",
+        ];
+        let mut want = names;
+        want.sort_by(|a, b| name_cmp(a, b));
+        for (k, w) in want.windows(2).enumerate() {
+            assert_eq!(name_cmp(w[0], w[1]), Ordering::Less, "{k}: {want:?}");
+        }
+        assert_eq!(
+            want,
+            [
+                "T", "T1x2", "T1x10", "T05", "T5", "T5a", "T10", "T_", "Ta", "U"
+            ]
         );
     }
 
