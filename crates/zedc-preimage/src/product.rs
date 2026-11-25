@@ -1090,7 +1090,8 @@ fn kept_in(vs: &TreapSet<Value>, x: &IntervalSet) -> TreapSet<Value> {
         return span;
     }
     if span.len() <= x.len() {
-        return match span.iter().any(out) {
+        let any_out = span.iter().any(out);
+        return match any_out {
             false => span,
             true => span.iter().filter(|v| !out(v)).cloned().collect(),
         };
