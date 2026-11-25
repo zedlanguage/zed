@@ -1009,6 +1009,48 @@ fn the_work_limit_is_met_alike_on_both_sides() {
     assert!(solver.meet(&want) == want && solver != want, "{solver}");
 }
 
+/// The case of `the_work_limit_is_met_alike_on_both_sides` with `h` unbounded, where the
+/// work limit stands whatever class 1 of the proof at `exact.rs` `cells_cover` comes to (row
+/// LIMITS-exact-join-remove): [`evens_tied`] with `x` bounded below only. Allowed exactly the
+/// work its cover takes (the fast path's left out), it answers as with the full limit and with
+/// the same work; allowed one unit less, it refuses
+/// ([`Refusal::Questions`]), so the limit, and not any fast path, decides where it stops.
+#[test]
+fn an_unbounded_cover_one_unit_short_of_its_work_is_refused() {
+    let f = Formula::and(vec![
+        Formula::or(vec![
+            eq(&[("x", 1), ("y", -2)], 0),
+            eq(&[("x", 1), ("z", -2)], 0),
+        ]),
+        ge(&[("x", 1)], 0),
+        member(&a("z"), &IntervalSet::of(0, 40)),
+        Formula::or(vec![ge(&[("y", 1), ("z", 1)], 0), ge(&[("y", -1)], -1)]),
+        Formula::or(vec![ge(&[("y", 1), ("z", 2)], 0), ge(&[("y", -1)], -1)]),
+    ]);
+    EXACT_WORK.set(0);
+    FAST_WORK.set(0);
+    let (want, causes) = project_each_exact(&f, &[a("x")]).unwrap();
+    let fast = FAST_WORK.replace(0);
+    let used = EXACT_WORK.replace(0) - fast;
+    assert!(want[0].is_ok(), "{want:?}");
+    assert!(used > 0);
+    assert!(fast > 0, "the fast path read nothing");
+    EXACT_LIMIT_SET.set(Some(used));
+    let again = project_each_exact(&f, &[a("x")]).unwrap();
+    assert_eq!((&again.0, &again.1), (&want, &causes));
+    assert_eq!(
+        EXACT_WORK.replace(0) - FAST_WORK.replace(0),
+        used,
+        "the work is not the same on a second run"
+    );
+    EXACT_LIMIT_SET.set(Some(used - 1));
+    let r = project_each_exact(&f, &[a("x")]).unwrap();
+    EXACT_LIMIT_SET.set(None);
+    EXACT_WORK.set(0);
+    FAST_WORK.set(0);
+    assert_eq!(r.0, vec![Err(Refusal::Questions)]);
+}
+
 /// An unbounded set with holes, the even values of `x == 2 * y || x == 2 * z` with no
 /// bound, is not a finite union of ranges, so no answer is exact: the cover's tail
 /// question proves the holes, and the piece holding them is kept whole, every value,
@@ -6232,4 +6274,63 @@ fn two_disjunctions_past_the_allowance_decline_before_forming_pairs() {
     })
     .expect("answered with no limit");
     assert_eq!(set.met(), IntervalSet::of(-99, 99));
+}
+
+/// Gap G of the proof at `cells_cover` (row LIMITS-exact-join-remove): a stride's residue
+/// question finds a point inside a piece kept from a tail, out of the gap and not in `found`.
+/// `f` is `s >= 0 && s == 2·y` or `40 <= s <= 100 && s == 4·z`: the values of `s` are the even
+/// integers from 0 up. The cover starts with two points, as it does where the covers of the
+/// part's symbols before `s` found them (`exact_each` keeps a part's points for its later
+/// symbols): `s = 0` on the first disjunct, whose cell has holes and no end (a tail from 1 up,
+/// residue 0 modulo 2), and `s = 40` on the second, whose cell is the stride 40, 44, ..., 100.
+/// The tail's question (an odd value from 1 up) finds no point, so the piece from 1 up is kept
+/// and leaves the gap. The stride's `have` was read from `found` alone, residue 0 modulo 4, so
+/// its question asked residues 1 to 3 and found an even value such as 42, inside the kept
+/// piece: not read (not in the gap), the stride pushed back with the same `have`, and the same
+/// question asked again until the work limit (`Err(Questions)`, red on fccab4727).
+/// With the kept pieces' values read into `have` (residues 0 and 2), the question of 1 and 3
+/// finds none and the cover ends: the even integers from 0 up are held by `[0, +inf)`, given
+/// with the cause (`true`, [`ended`]). Catches the loop of gap G; cannot catch a kept piece's
+/// residues read too wide (that would drop a piece with points, which `outside` never sees
+/// here since the gap has no piece in the stride's span).
+#[test]
+fn a_strides_question_that_finds_a_point_in_a_kept_piece_ends() {
+    let f = Formula::or(vec![
+        Formula::and(vec![ge(&[("s", 1)], 0), eq(&[("s", 1), ("y", -2)], 0)]),
+        Formula::and(vec![
+            ge(&[("s", 1)], -40),
+            ge(&[("s", -1)], 100),
+            eq(&[("s", 1), ("z", -4)], 0),
+        ]),
+    ]);
+    let point = |s: i64, y: i64, z: i64| -> Model {
+        [(a("s"), s), (a("y"), y), (a("z"), z)]
+            .into_iter()
+            .map(|(k, v)| (k, Int::from(v)))
+            .collect()
+    };
+    let mut points = vec![point(0, 0, 0), point(40, 0, 10)];
+    let h = IntervalSet::range(fin(&Int::from(-10)), End::PosInf);
+    let mut work = Work {
+        used: 0,
+        limit: EXACT_LIMIT,
+        solver: SOLVER,
+    };
+    let got = cells_cover(
+        &f,
+        &a("s"),
+        &h,
+        constraints(&f),
+        &HashSet::new(),
+        &mut points,
+        &mut PartCache::default(),
+        &mut work,
+    );
+    println!("{got:?}, work {} of {}", work.used, work.limit);
+    let (set, cause) = got.expect("the cover ends");
+    assert_eq!(
+        set,
+        Classed::plain(IntervalSet::range(fin(&Int::from(0)), End::PosInf))
+    );
+    assert!(cause, "a kept piece gives the cause");
 }

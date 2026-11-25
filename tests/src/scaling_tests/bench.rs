@@ -146,6 +146,44 @@ fn a_spin_whose_phase_at_8n_is_read() {
     );
 }
 
+/// The benchmark that [`super::a_hold_in_phases_counts_at_8n_in_a_phase_of_its_own`] runs alone,
+/// with `ZED_BENCH_LIMIT_FILE` and [`super::PHASE_SEEN`] naming one file: the count at 8n reads
+/// the phase the file holds, which must have started after the count at n ended and ask for a
+/// limit of its own (`<start> <ms>`, `ms` above 0); after the hold the file asks for the
+/// runner's limit (`ms` 0).
+#[test]
+fn a_count_held_in_phases() {
+    let now = || {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+        t.expect("a clock past 1970").as_millis()
+    };
+    let seen = std::env::var_os(super::PHASE_SEEN);
+    let phase = || {
+        seen.as_ref().map(|path| {
+            let line = std::fs::read_to_string(path).expect("the file of the phases");
+            let (start, ms) = line.trim().split_once(' ').expect("<start> <ms>");
+            let phase: (u128, u64) = (start.parse().unwrap(), ms.parse().unwrap());
+            phase
+        })
+    };
+    let mut counted_at_n = 0;
+    hold_in_phases("a count held in phases", "passes", 1000, 1, |k| {
+        if k == 1000 {
+            counted_at_n = now();
+        } else if let Some((start, ms)) = phase() {
+            assert!(
+                start >= counted_at_n && ms > 0,
+                "the phase at 8n `{start} {ms}` started before the count at n ended, at \
+                 {counted_at_n}, or asks for no limit of its own"
+            );
+        }
+        k as u64
+    });
+    if let Some((_, ms)) = phase() {
+        assert_eq!(ms, 0, "after the hold, the runner's limit");
+    }
+}
+
 /// The benchmark that [`super::a_benchmark_run_with_other_tests_counts_instructions`] runs
 /// without `--exact`: a spin of 4000 passes per unit of n passes, and its negative control, a
 /// spin of n² passes, 64 times the work at 8n, fails. Run so on a machine with no hardware

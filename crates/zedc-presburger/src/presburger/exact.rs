@@ -1241,7 +1241,8 @@ struct PartCache {
 }
 
 /// [`cover`] by cells and questions, once [`direct`] has not answered.
-// Proof that the loop ends with no work limit, on two classes of input (row
+// Proof that the loop ends with no work limit on one class of input, though not in a number of
+// turns polynomial in the input's size, so the limit stays; a second class open (row
 // LIMITS-exact-join-remove; b22-presburger11, 2026-11-24, checked by reading this function and
 // [`cell`], [`implicant`] and [`joined`] at 842f393fe). Each turn of the loop does one of: (a)
 // reads a point `m` whose value of `s` is in `gap` and takes its cell `c` out of `gap`, `c`
@@ -1255,45 +1256,77 @@ struct PartCache {
 // has its value outside `found` (its residue is held by no value found) and outside the pieces
 // taken out with no point, but it may lie in a piece kept by (b) (`kept_at`), which is out of
 // `gap` and not in `found`. For (b) that is harmless: the tail was popped and is not asked
-// again. For (c) it is a gap in the proof (step G below): the stride is pushed back, `have` is
-// the same, and the same question is asked again with the same answer, so the loop would turn
-// until the work limit. Not known to be reachable (it needs a stride whose span meets a piece
-// kept from a tail with no end); recorded in row LIMITS-exact-join-remove. The fix, if it is
-// reachable, is to read `have` from `found` joined with the values of the kept pieces that have
-// points (those in the tail's residues): a point in a class outside that `have` is then outside
-// every kept piece, so in `gap`, and `outside` stays sound, since it drops only pieces all of
-// whose values are in classes found with no point. The two classes below assume no such
-// point (G).
+// again. For (c) it was a gap in the proof (G, b22-presburger12): the stride was pushed back
+// with the same `have` and asked the same question with the same answer until the work limit.
+// It is reachable (`tests::a_strides_question_that_finds_a_point_in_a_kept_piece_ends`: a
+// stride of step 4 over [40, 100] meets the piece [0, +inf) kept with the even residues of
+// `s == 2·y`; refused with `Questions` before). Closed: `have` is now the residues of `found`
+// joined with those of the values with a point in the kept pieces ([`kept_residues`]). Proof
+// that a point `m` pushed by (c) then has its value `v` in `gap`: `v` is in the stride's span
+// and its residue modulo the step is not in `have`; so `v` is not in `found` (every value of
+// `found` in the span has its residue in `have`, [`residues`]), and not in a kept piece (a
+// value there with a point has a marked residue, [`Kept`], so its residue is in `have`); and
+// not in a piece taken out of `gap` with no point by (b), (c) or (d), since `m` is a point.
+// `gap` starts as `h`, which holds every value with a point, and loses only `found`, the kept
+// pieces and pieces with no point, so `v` is in `gap`, and the next turn reads `m` by (a).
+// `outside` stays sound with the larger `have`: it drops a piece only where none of its
+// values has a residue in `have`, each of those residues asked over the span and found with
+// no point (`absent`), whatever `have` holds.
 // Class 1, `h` finite (every input whose solver's set is bounded, so every formula whose atoms
-// are bounded, as the step tests' boxes are). Every (a) takes at least one value out of `gap`
-// and `gap` only shrinks; `gap` starts as `h`, finitely many values, so there are finitely many
-// (a); there is one (a) for each point pushed, so finitely many points, and so finitely many
-// cells, strides and tails (each made by a cell), finitely many (b) and (c), and each (d)
-// either pushes a point or takes at least one of the finitely many values of `gap` out of it.
-// In class 2 below, a (d) of one value lowers `spare`, which rises only by the ranges of the
-// finitely many cells, so those (d) are finitely many too.
+// are bounded, as the step tests' boxes are); proved with G closed. Every (a) takes at least
+// one value out of `gap` and `gap` only shrinks; `gap` starts as `h`, finitely many values,
+// so there are finitely many (a), so finitely many cells, and so finitely many strides and
+// tails (each made by a cell at an (a)). A tail is asked at most once (popped) and a stride
+// at most `step + 1` times between two (a): each question either adds a class to `absent` or
+// pushes a point whose value is in `gap` (proof of G above), read by the next turn's (a); a
+// stride with every class asked is dropped. Each (d) either pushes a point in `gap`, read by
+// the next (a), or takes at least one value out of `gap`. So between two (a) there are
+// finitely many turns, and the loop ends. Every step inside a turn is bounded by its
+// structure, and each question by the solver's own end (Presburger arithmetic is decidable;
+// the omega test ends, Pugh 1992, doi:10.1145/135226.135233). The count of (a) is bounded
+// only by the number of values of `h`, which is exponential in the bits of the input where
+// its moduli or bounds are large, and it is reached where cells are single values: with the
+// loop run with no limit on class 1 (b22-presburger12, not landed),
+// `ref_memo::mod_chains_with_moduli_near_2_40_and_2_62_are_answered` went from 0.86 s to
+// over 200 s and four other preimage tests from 0.6-8 s to 25-200 s, where the limit had
+// refused in milliseconds. Measured (b22-presburger13, 2026-11-25), mod_chains' time goes to
+// one cell's `projection::pugh`, Pugh's splinters (over 1.3 billion units, 25 levels deep),
+// not to many cells. So class 1 keeps the work limit
+// until a bound polynomial in the input's size is proved (row LIMITS-exact-join-remove).
 // Class 2, every cell exact: `cell` returns the projection onto `s` of the rows of the
 // implicant of `f` at `m` (the branch `plain` under `Method::Pugh`, the exact elimination
 // `work.eliminate` or `eliminated_whole` returning rows, or the line along `s` holding all of
 // `within`), with `h` bounded or not. The implicant's rows are a function of `m` drawn from the
 // finite set of choices of the formula's constraints, each kept as it is, negated, or one side
-// of an equation ([`implicant`]). A point `m'` read later has its value of `s` in `gap`, so
-// outside `c(m)`, so outside the projection of `rows(m)`: `m'` does not satisfy `rows(m)`, while
-// it satisfies `rows(m')`, so `rows(m') != rows(m)`. So no two points read give the same rows,
-// there are finitely many (a), and the count above ends the same way. Under `Method::Liaproj`
+// of an equation ([`implicant`]). The argument of b22-presburger11 was: a point `m'` read later
+// has its value of `s` in `gap`, so outside `c(m)`, so outside the projection of `rows(m)`, so
+// `rows(m') != rows(m)`, and no two points read give the same rows. That step fails (gap H,
+// b22-presburger12): with `h` unbounded the projection may have a part with holes and no end
+// (`holed`), which `c(m)` does not hold; it goes to `open`, and its values stay in `gap` inside
+// a tail's piece. A (d) question over a piece with no end can then find `m'` in such a part,
+// with `rows(m') == rows(m)`; its cell rebuilds the tails, and the tail's question, asked over
+// the tail's whole piece and not over `gap`, may find a point inside a piece kept before,
+// which is not read; the tail is popped and the open values left in `gap` wait for the next
+// (d). Each such turn takes at least one value out of `gap`, but `gap` has no end, and no
+// bound on these turns is known. So class 2 with `h` unbounded is not proved; with `h` finite
+// it is class 1. Under `Method::Liaproj`
 // the cell is one disjunct of the model-based projection of the rows; it ends because that
 // projection has a finite image for linear integer arithmetic (Komuravelli, Gurfinkel, Chaki,
 // "SMT-based model checking for recursive programs", CAV 2014, doi:10.1007/978-3-319-08867-9_2,
 // arXiv:1405.4028; Bjørner and Janota, LPAR 2015), not checked further here.
-// Outside both classes, `h` unbounded and a cell not exact (`s` a product or a factor of one,
-// whose cell is its own value; a product in the implicant's rows; an elimination that stops at
-// a stride atom, whose cell is `runs` or `fixed`), the proof fails: `x == y * z` with `x`
-// unbounded has a new point at every value of `x` and a cell of one value each. There the loop
-// ends only by the work limit (`EXACT_LIMIT`), the one input class that still needs it; the
-// rest of the row (removing the limit, a refusal named by this class, and the fast paths'
-// allowances in `tried`, which are themselves counts) is open, with its cross-review question,
-// in the row. Tests: the finite class by every cover of the step tests (all over boxes);
-// `tests::the_work_limit_is_met_alike_on_both_sides` for the limit's one stopping charge.
+// With `h` unbounded and a cell not exact (`s` a product or a factor of one, whose cell is its
+// own value; a product in the implicant's rows; an elimination that stops at a stride atom,
+// whose cell is `runs` or `fixed`), the proof fails outright: `x == y * z` with `x` unbounded
+// has a new point at every value of `x` and a cell of one value each. With `h` unbounded the
+// loop ends only by the work limit (`EXACT_LIMIT`), every cell exact or not (gap H above). So
+// every input still runs the loop under the work limit; the rest of the row (a bound
+// polynomial in the input's size for class 1, a proof or a refusal named by class for `h`
+// unbounded, and the fast paths' allowances in `tried`, which are themselves counts) is open,
+// with its cross-review question, in the row. Tests: class 1's end by every cover of the step
+// tests (all over boxes); the limit's one stopping charge by
+// `tests::the_work_limit_is_met_alike_on_both_sides` (a box) and
+// `tests::an_unbounded_cover_one_unit_short_of_its_work_is_refused` (`h` unbounded); G by the
+// test named above.
 #[expect(
     clippy::too_many_arguments,
     reason = "the cache is kept by the part, apart from the points of `f` it holds"
@@ -1506,7 +1539,10 @@ fn cells_cover(
         // are answered, and no case answered before is refused
         // (`s22::the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`).
         if let Some(mut st) = strides.pop() {
-            let have = residues(&found, &st, work)?;
+            // The residues of the values found joined with those of the values with points in
+            // the kept pieces (gap G of the proof above, closed): a point in a class outside
+            // `have` is then outside `found` and every kept piece, so in `gap`, and is read.
+            let have = residues(&found, &st, work)?.join(&kept_residues(&kept, &st, work)?);
             let all = IntervalSet::range(fin(&Int::from(0)), fin(&(&st.step - &Int::from(1))));
             let other = all.minus(&have).minus(&st.absent);
             let Some((a, b)) = other.first().cloned() else {
@@ -4948,6 +4984,46 @@ fn residues(found: &ClassUnion, st: &Stride, work: &mut Work) -> Result<Interval
         }
     }
     Ok(have)
+}
+
+/// The residues modulo `st.step` of the values with a point of `f` in the kept pieces, from
+/// `st.lo` to `st.hi`: in each piece `k` cut to that span, `[l, u]`, the values `≡ r mod k.step`
+/// for each `r` marked in `k.have` ([`Kept`]), those from `v0`, the least such at or above `l`,
+/// to `v1`, the greatest at or below `u`, read by [`class_residues`]. Each piece read is charged
+/// [`PIECE`] units of `work`. Exact: in a kept piece the values with a point are exactly those
+/// of the marked residues ([`Kept`]), so these are the residues of the values with a point
+/// there, no more and no fewer.
+/// Complexity tradeoff: O(k + Σ |H|·min(n, step/g)) for k kept pieces of |H| marked residues
+/// each, `g = gcd(k.step, st.step)`; `kept` is empty on every input with no hole repeating
+/// without end, and then this is O(1). Naive alternative: list the values of the pieces in the
+/// span, O(span), which a span with no end bound in the kept piece's direction makes long.
+fn kept_residues(kept: &[Kept], st: &Stride, work: &mut Work) -> Result<IntervalSet, Refusal> {
+    let mut points = Vec::new();
+    for k in kept {
+        work.charge(PIECE)?;
+        let lo = match &k.lo {
+            End::Fin(v) if Int::from(v) > st.lo => Int::from(v),
+            End::PosInf => continue,
+            _ => st.lo.clone(),
+        };
+        let hi = match &k.hi {
+            End::Fin(v) if Int::from(v) < st.hi => Int::from(v),
+            End::NegInf => continue,
+            _ => st.hi.clone(),
+        };
+        if lo > hi {
+            continue;
+        }
+        for (r, _) in k.have.iter().enumerate().filter(|(_, b)| **b) {
+            let r = Int::from(r as i64);
+            let v0 = &lo + &(&r - &lo).mod_floor(&k.step);
+            let v1 = &hi - &(&hi - &r).mod_floor(&k.step);
+            if v0 <= v1 {
+                points.extend(class_residues(&v0, &v1, &k.step, &st.step, work)?);
+            }
+        }
+    }
+    Ok(IntervalSet::from_pieces(points))
 }
 
 /// The pieces of `gap` from `st.lo` to `st.hi`, each cut to that span, that hold no value

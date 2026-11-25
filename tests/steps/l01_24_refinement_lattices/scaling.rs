@@ -325,31 +325,30 @@ fn ends_work(n: usize, base: &num_bigint::BigInt) -> EndsWork {
     }
 }
 
-fn run_ends(w: &EndsWork) {
+/// The work of the ends on `w`, giving the hull of `x` the projection finds: `.0`, the hull,
+/// without the causes of a disjunction left out (`w.hull` has no disjunction).
+fn run_ends(w: &EndsWork) -> IntervalSet {
     use zedc::store::presburger::{Atom, project};
     let three = IntervalSet::single(3);
     let moved = revision::forward(&Op::Add, &w.set, &three);
     let scaled = revision::forward(&Op::Mul, &w.set, &IntervalSet::single(-2));
     std::hint::black_box(moved.join(&w.shifted).meet(&scaled.neg()));
-    std::hint::black_box(project(&w.hull, &Atom::Sym("x".into())).unwrap());
+    std::hint::black_box(project(&w.hull, &Atom::Sym("x".into())).unwrap()).0
 }
 
+/// Checks [`run_ends`] at `n` and `8n` near `base`. Each size's work is built only in the
+/// process that runs it, and the hull is compared with the exact one, which a wider hull
+/// fails, on what each run finds; before, both sizes were built and projected once more ahead
+/// of the first run (`scaling::check_inputs`; FAIL-bench-first-phase-past-20s-l0126-l0129).
 fn check_ends(what: &str, base: num_bigint::BigInt, n: usize) {
-    let (small, large) = (ends_work(n, &base), ends_work(scaling::FACTOR * n, &base));
-    for (w, m) in [(&small, n), (&large, scaling::FACTOR * n)] {
-        // `.0`, the hull, without the causes of a disjunction left out: `w.hull` has no
-        // disjunction, and the hull is compared with the exact one, which a wider hull fails.
-        let hull = zedc::store::presburger::project(
-            &w.hull,
-            &zedc::store::presburger::Atom::Sym("x".into()),
-        )
-        .unwrap()
-        .0;
+    let work = |m: usize| {
         let lo = zedc::store::interval::Num::from(&base + 3 * (m - 1));
         let hi = zedc::store::interval::Num::from(&base + 3 * m + 5);
-        assert_eq!(hull, IntervalSet::range(Fin(lo), Fin(hi)), "{what} at {m}");
-    }
-    scaling::check(what, n, |m| run_ends(if m == n { &small } else { &large }));
+        (m, ends_work(m, &base), IntervalSet::range(Fin(lo), Fin(hi)))
+    };
+    scaling::check_inputs(what, n, work, |(m, w, exact)| {
+        assert_eq!(&run_ends(w), exact, "{what} at {m}");
+    });
 }
 
 /// The bound of `x ^ k` for x in 2..=3, its demand back on x, and its order against another

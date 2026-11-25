@@ -2607,6 +2607,66 @@ impl Blocks {
         self.name.get(name).map(|&id| self.find(id))
     }
 
+    /// The number of names the conjuncts of block `b` mention, in O(log n).
+    pub fn name_count(&self, b: BlockId) -> usize {
+        self.names_in.get(&b).map_or(0, OrdMap::len)
+    }
+
+    /// The blocks on the tree path between the names `x` and `y`, in order from `x`, when both
+    /// are names of one tree of the forest; `None` otherwise. The nodes of a tree are its
+    /// blocks and its names, so the path alternates names and blocks.
+    // Complexity tradeoff: naive version, walk each end up to the root and compare, O(depth),
+    // which is O(n) on a tree that is a path. Used: both ends walked up in turn until one meets
+    // the other's walk, as [`Blocks::path`] does: when the nearest common ancestor is `dx`
+    // and `dy` steps above the ends, the walks meet within `2 max(dx, dy)` steps, so
+    // O(d log n) for a path of `d` nodes, whatever the depth. Tradeoffs: a long path still
+    // costs its length; a link-cut tree (Sleator and Tarjan, "A data structure for dynamic
+    // trees", JCSS 26(3), 1983, pp. 362-391, doi:10.1016/0022-0000(83)90006-5, title, volume
+    // and pages checked on Crossref 2026-11-24; the text could not be fetched (allpapers-fetch:
+    // no PDF), so no quote: the paper keeps a forest under link and cut with each operation in
+    // O(log n) amortized time, paraphrased from memory) answers a path sum in O(log n), but its
+    // splay trees are not persistent, and every scope shares these blocks with the scopes it
+    // was copied from. The facts a test asks about join near names (a rung spans two steps,
+    // a chord three), so `d` is small where it is used. Row ST-band-quintic D1 (b).
+    pub fn blocks_between(&self, x: &str, y: &str) -> Option<Vec<BlockId>> {
+        let (a, b) = (*self.name.get(x)?, *self.name.get(y)?);
+        if self.find(a) != self.find(b) || self.is_apart(self.find(a)) {
+            return None;
+        }
+        let mut walks = [vec![a], vec![b]];
+        let mut seen: [BTreeSet<BlockId>; 2] = [BTreeSet::from([a]), BTreeSet::from([b])];
+        let top = if a == b {
+            a
+        } else {
+            'walk: loop {
+                let mut stepped = false;
+                for side in 0..2 {
+                    let last = *walks[side].last()?;
+                    if let Some(p) = self.parent(last) {
+                        stepped = true;
+                        walks[side].push(p);
+                        seen[side].insert(p);
+                        if seen[1 - side].contains(&p) {
+                            break 'walk p;
+                        }
+                    }
+                }
+                if !stepped {
+                    return None;
+                }
+            }
+        };
+        let [mut up, mut down] = walks;
+        up.truncate(up.iter().position(|&n| n == top)? + 1);
+        down.truncate(down.iter().position(|&n| n == top)?);
+        up.extend(down.into_iter().rev());
+        Some(
+            up.into_iter()
+                .filter(|n| self.members.contains_key(n))
+                .collect(),
+        )
+    }
+
     /// Whether the tree `t` of the forest holds only difference constraints and bounds
     /// ([`edges`]) and none of its names keeps it from shortest paths ([`Blocks::gap`]): read from
     /// two counts kept as conjuncts come and go, in O(log n).

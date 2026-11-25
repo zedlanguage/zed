@@ -42,17 +42,16 @@ fn many_tuple_shapes_compare_in_linear_time() {
 /// `ordered_tuples::tuples_of_numbers_and_atoms_compare`.
 #[test]
 fn tuples_of_every_length_compare_in_time_linear_in_their_components() {
-    // The type holds n(n + 1)/2 components, so work linear in it is of order n².
-    let units: BTreeMap<usize, Resolved> = [200, scaling::FACTOR * 200]
-        .into_iter()
-        .map(|n| (n, Resolved::new(&lengths(n))))
-        .collect();
-    scaling::check_order(
+    // The type holds n(n + 1)/2 components, so work linear in it is of order n². Each program
+    // is resolved only in the process that checks it (`scaling::check_inputs`;
+    // FAIL-bench-first-phase-past-20s-l0126-l0129).
+    scaling::check_order_inputs(
         "x < x over tuples of each length from 1 to n",
         200,
         2,
-        |n| {
-            let info = units[&n].check();
+        |n| (n, Resolved::new(&lengths(n))),
+        |(n, u)| {
+            let info = u.check();
             assert!(info.errors.is_empty(), "at {n}: {:?}", info.errors);
         },
     );

@@ -105,7 +105,41 @@ struct Gen<'a, M: Module> {
 struct Fx<'b> {
     b: FunctionBuilder<'b>,
     refs: HashMap<FuncId, FuncRef>,
-    err: Block,
+    /// The error exits branched to so far, each filled when the function ends ([`Fx::exit`]).
+    exits: Vec<Block>,
+}
+
+impl Fx<'_> {
+    /// A new block that returns the error word as each of the function's results, for one
+    /// branch to leave the function on an error; it is filled when the function ends.
+    ///
+    /// Complexity tradeoff (CRANELIFT-nested-if-domtree): one error exit per branch, not one
+    /// exit shared by every branch. Both Cranelift's register allocator (regalloc2 0.15.2,
+    /// `domtree::calculate`) and the method it follows (K. D. Cooper, T. J. Harvey and
+    /// K. Kennedy, "A Simple, Fast Dominance Algorithm", Rice University report TR-06-33870,
+    /// 2006, from memory; the loop was read in regalloc2's `merge_sets`, 2026-11-24) find the
+    /// immediate dominator of a block by walking from each of its predecessors up the chain of
+    /// immediate dominators to the one found so far. A block with p predecessors at depths
+    /// d_1..d_p of the dominator tree costs O(d_1 + … + d_p). A shared exit had a predecessor
+    /// at every checked call, and each call adds a block (its `ok` block) to the chain below
+    /// it, so n calls in a row, or n nested `if`s each with a call, cost O(n²): 12.02 times
+    /// the instructions at 8n for n = 1,000 nested `if`s, 19.6% of the time in `merge_sets`
+    /// (plan row CRANELIFT-nested-if-domtree, 2026-11-14). An exit of its own has one
+    /// predecessor, so its dominator costs O(1) and the function's O(blocks). The cost is
+    /// code: each exit is two constants and a return, the function's epilogue, a few
+    /// instructions where a shared exit had a branch only; the exits are cold blocks, which
+    /// Cranelift places after the rest of the function. A chain of exit blocks (each jumping
+    /// to the exit of the branch before it, which MachBuffer's branch threading would turn
+    /// into one target) was weighed and left: the walks to merge such a chain still follow
+    /// the dominator tree from each arm's first exit up to the test, O(n²) for the deep arm
+    /// of n nested `if`s, unless the chain follows the nesting, which is more code here than
+    /// the exits are.
+    fn exit(&mut self) -> Block {
+        let x = self.b.create_block();
+        self.b.set_cold_block(x);
+        self.exits.push(x);
+        x
+    }
 }
 
 /// A region being emitted. Regions nest as deep as the term and the arms of `if` and `match`
@@ -242,21 +276,22 @@ impl<M: Module> Gen<'_, M> {
             let start = b.create_block();
             b.ins().jump(start, &[]);
             b.switch_to_block(start);
-            let err = b.create_block();
             let mut fx = Fx {
                 b,
                 refs: HashMap::new(),
-                err,
+                exits: Vec::new(),
             };
             let ws = ps.chunks(2).map(|c| (c[0], c[1])).collect();
             let out = f(self, &mut fx, ws)?;
             let flat: Vec<V> = out.iter().flat_map(|(t, b)| [*t, *b]).collect();
             fx.b.ins().return_(&flat);
-            fx.b.switch_to_block(err);
-            let e = fx.b.ins().iconst(I64, Word::ERR);
-            let z = fx.b.ins().iconst(I64, 0);
-            let flat: Vec<V> = (0..rets).flat_map(|_| [e, z]).collect();
-            fx.b.ins().return_(&flat);
+            for x in std::mem::take(&mut fx.exits) {
+                fx.b.switch_to_block(x);
+                let e = fx.b.ins().iconst(I64, Word::ERR);
+                let z = fx.b.ins().iconst(I64, 0);
+                let flat: Vec<V> = (0..rets).flat_map(|_| [e, z]).collect();
+                fx.b.ins().return_(&flat);
+            }
             fx.b.seal_all_blocks();
             let fc = self.m.isa().frontend_config();
             fx.b.finalize(fc);
@@ -456,7 +491,8 @@ impl<M: Module> Gen<'_, M> {
     fn checked(&mut self, fx: &mut Fx<'_>, w: W) -> W {
         let is_err = fx.b.ins().icmp_imm_s(IntCC::Equal, w.0, Word::ERR);
         let ok = fx.b.create_block();
-        fx.b.ins().brif(is_err, fx.err, &[], ok, &[]);
+        let exit = fx.exit();
+        fx.b.ins().brif(is_err, exit, &[], ok, &[]);
         fx.b.switch_to_block(ok);
         w
     }
@@ -1062,7 +1098,8 @@ impl<M: Module> Gen<'_, M> {
             if ni.error.is_some() {
                 let k = fx.b.ins().iconst(I64, id as i64);
                 self.call_word(fx, "rt_error", &[k]);
-                fx.b.ins().jump(fx.err, &[]);
+                let exit = fx.exit();
+                fx.b.ins().jump(exit, &[]);
             } else {
                 let flat = self.flat(fx, ins);
                 let r = self.fref(fx, self.bodies[li]);
@@ -1117,7 +1154,8 @@ impl<M: Module> Gen<'_, M> {
         for (i, b) in blocks.iter().enumerate() {
             s.set_entry(i as u128, *b);
         }
-        s.emit(&mut fx.b, r, fx.err);
+        let exit = fx.exit();
+        s.emit(&mut fx.b, r, exit);
     }
 
     /// The test of `if` node `id`; `early` releases the condition once an arm is chosen.

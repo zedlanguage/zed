@@ -471,6 +471,28 @@ fn many_divisions_on_one_line_print_the_line_once_in_one_message() {
     assert_eq!(type_errors(&src).len(), 1);
 }
 
+/// The bytes printed for `n` divisions on one line are linear in `n`. A count of bytes does not
+/// change with the load, so it is held here, at 100 and 800 divisions (about 0.4 ms each), not
+/// in the benchmark: there it was checked at 800 and 6,400 before the first run, natively and
+/// again under DynamoRIO, which ran the benchmark's first phase past its 20 s
+/// (FAIL-bench-first-phase-past-20s-l0126-l0129). Negative control of the benchmark, with one
+/// message for each decimal, each quoting the line: 16.2 times the bytes for 4 times the
+/// decimals at 200 and 800, so a line quoted once per division fails here too.
+#[test]
+fn the_bytes_printed_for_many_divisions_on_one_line_are_linear() {
+    let n = 100;
+    let bytes = |m: usize| printed(&divisions(m)).len() as u64;
+    zed_tests::scaling::hold_linear(
+        &format!(
+            "{n} and {} divisions on one line, rejected",
+            zed_tests::scaling::FACTOR * n
+        ),
+        "bytes printed",
+        bytes(n),
+        bytes(zed_tests::scaling::FACTOR * n),
+    );
+}
+
 #[test]
 fn calls_of_a_chain_that_returns_a_division_are_one_error() {
     // A small instance of the benchmark

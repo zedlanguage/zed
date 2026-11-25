@@ -212,7 +212,14 @@ impl Tuples {
     /// block's list (`out` at least that long). One walk, O([`Tuples::visits`]), nothing
     /// allocated, so a caller reading many tuples reuses one `out`.
     pub(super) fn read_into(&self, id: usize, m: &Moved, out: &mut [usize]) {
-        fn go(t: &Tuples, s: Option<usize>, r: usize, ps: &[usize], ord: &[usize], out: &mut [usize]) {
+        fn go(
+            t: &Tuples,
+            s: Option<usize>,
+            r: usize,
+            ps: &[usize],
+            ord: &[usize],
+            out: &mut [usize],
+        ) {
             let Some(s) = s else {
                 out[ord[0]] = r;
                 return;
@@ -244,7 +251,12 @@ impl Tuples {
     /// is, not interned again: its id is the one interned for that pair before, since the
     /// interner gives each pair one id. So a block whose `f` leaves a value as it was (a shift by
     /// 0, a rest already 0) costs no lookup at the nodes above it.
-    pub(super) fn map(&mut self, id: usize, m: &Moved, mut f: impl FnMut(usize, usize) -> usize) -> usize {
+    pub(super) fn map(
+        &mut self,
+        id: usize,
+        m: &Moved,
+        mut f: impl FnMut(usize, usize) -> usize,
+    ) -> usize {
         fn go<F: FnMut(usize, usize) -> usize>(
             t: &mut Tuples,
             s: Option<usize>,

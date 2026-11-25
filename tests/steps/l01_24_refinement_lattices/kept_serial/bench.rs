@@ -12,20 +12,20 @@ use super::*;
 /// TEST-bench-move-l0123, author P169: n was 128 KiB, now 40 MiB; 1x 0.32 s at load 60.
 #[test]
 fn addressing_a_wide_end_and_class_scales() {
-    let (n, sizes) = (40usize << 20, [40usize << 20, 320 << 20]);
-    let inputs: HashMap<usize, (Def, Def)> = sizes
-        .into_iter()
-        .map(|b| {
-            let v = wide(b);
-            (b, (at(v.clone()), class(&v + &v, v)))
-        })
-        .collect();
-    check_order(
+    // Each pair of definitions is built only in the process that addresses it
+    // (`scaling::check_inputs`; FAIL-bench-first-phase-past-20s-l0126-l0129): the parent built
+    // the numbers of 320 MiB too, before its run at 40 MiB.
+    let n = 40usize << 20;
+    let defs = |b: usize| {
+        let v = wide(b);
+        (at(v.clone()), class(&v + &v, v))
+    };
+    zed_tests::scaling::check_order_inputs(
         "addressing a wide end and a wide class, by the bytes of the number",
         n,
         1,
-        |b| {
-            let (end, class) = &inputs[&b];
+        defs,
+        |(end, class)| {
             addr(end);
             addr(class);
         },

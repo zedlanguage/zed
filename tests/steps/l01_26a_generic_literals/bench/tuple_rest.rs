@@ -15,30 +15,23 @@ fn many_divisions_on_one_line_print_the_line_once() {
     // for 3,200 on 2026-11-16, so 6,600 and 52,800 divisions ran past the 60 s a test may take;
     // they are held at 800 and 6,400, which print 285978 and 2439956 bytes, 8.53 times, in about
     // 6 s.
+    //
+    // The bytes printed were held here at 800 and 6,400, and the line printed once checked at
+    // 800, before the first run: with the run at 800, all of it done natively and again under
+    // DynamoRIO, the first phase ran past its 20 s. The bytes are now held by
+    // `tuple_rest::the_bytes_printed_for_many_divisions_on_one_line_are_linear`, and the line
+    // printed once is checked on what each run prints, at both sizes
+    // (FAIL-bench-first-phase-past-20s-l0126-l0129).
     scaling::on_a_thread(1 << 28, || {
         let n = 800;
-        let bytes = |m: usize| printed(&divisions(m)).len() as u64;
-        scaling::hold_linear(
-            &format!(
-                "{n} and {} divisions on one line, rejected",
-                scaling::FACTOR * n
-            ),
-            "bytes printed",
-            bytes(n),
-            bytes(scaling::FACTOR * n),
-        );
-        assert_eq!(
-            printed(&divisions(n)).matches(&divisions(n)[..20]).count(),
-            1,
-            "the line is printed once"
-        );
-        let units = scaling::inputs(n, divisions);
-        scaling::check_order(
+        scaling::check_inputs(
             "printing the rejection of n divisions on one line",
             n,
-            1,
-            |m| {
-                std::hint::black_box(printed(&units[&m]));
+            divisions,
+            |src| {
+                let out = printed(src);
+                assert_eq!(out.matches(&src[..20]).count(), 1, "the line is printed once");
+                std::hint::black_box(out);
             },
         );
     });

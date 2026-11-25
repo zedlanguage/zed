@@ -5,12 +5,9 @@
 //! with the memory asked named, where the writing used to build the value and its decimal
 //! digits unasked and stop the compiler when the system refused.
 
-use std::collections::HashMap;
-
 use num_bigint::{BigInt, Sign};
 use zed_kernel::num::bytes_of;
 use zed_kernel::term::build::var;
-use zed_tests::scaling::check_order;
 use zed_tests::seed::Rng;
 use zed_tests::step_helpers::l01_17_value_representation::{in_child_at, lower_limit_by};
 use zedc::canon::{Def, Domain, address};

@@ -16,12 +16,14 @@ use super::super::operations::{chain, mixed_chain};
 #[test]
 fn an_operation_on_many_literals_elaborates_in_linear_time() {
     scaling::on_a_thread(1 << 29, || {
-        let units = scaling::inputs(10_000, |m| checked(&chain(m)));
-        scaling::check(
+        // Each input is checked only in the process that elaborates it (`scaling::check_inputs`;
+        // FAIL-bench-first-phase-past-20s-l0126-l0129).
+        scaling::check_inputs(
             "elaborating an operation on n generic literals",
             10_000,
-            |m| {
-                units[&m].elab();
+            |m| checked(&chain(m)),
+            |u| {
+                u.elab();
             },
         );
     });

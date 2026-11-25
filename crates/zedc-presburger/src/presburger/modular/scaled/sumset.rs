@@ -987,7 +987,9 @@ pub(super) fn solve_by_sums(
     let mut pairs: Vec<(Int, Int)> = Vec::new();
     for ((b, level), moved) in blocks.iter().zip(&levels).zip(&moved).rev() {
         let mut minus = |s: usize, mv: &[usize], w: &Tuple| -> usize {
-            tuples.map(s, moved, |i, v| add_mod(v, radix[mv[i]] - w[i], radix[mv[i]]))
+            tuples.map(s, moved, |i, v| {
+                add_mod(v, radix[mv[i]] - w[i], radix[mv[i]])
+            })
         };
         let t = match level {
             Level::Shift { mv, w, t } => {

@@ -968,8 +968,9 @@ struct Pending {
     needs: Vec<Span>,
     ty: Ty,
     /// Whether a `Lines` push of the value this fix's type is carried up to checks it
-    /// ([`Ck::push_carried`]): set for the fixes of a cast ([`Ck::int_not_whole`]), whose
-    /// type is the one the fixed program gives.
+    /// ([`Ck::push_carried`]): set for the fixes of a cast ([`Ck::int_not_whole`]) and the
+    /// repairs of an int power on a `rat` or a float ([`Ck::power_rejects`]), whose type is
+    /// the one the fixed program gives.
     at_push: bool,
 }
 
@@ -17015,10 +17016,15 @@ impl<'a> Ck<'_, 'a> {
     /// 3. A call of a bit word whose operands have values: the callee resolves to the prelude
     ///    (`Ref::Prelude`), or is a method of a prelude word of layer 1 whose callee does not
     ///    resolve to a binder ([`Ck::bit_call`]), so a function or lambda of the program named
-    ///    `bitAnd` gives none. Not proved for later forms: a record or struct field named
-    ///    after a bit word, `s.bitAnd(3)`, is no form this version compiles (name resolution
-    ///    rejects every struct and record, as the walk's `unreachable!` arms for them say);
-    ///    once it is, `bit_call` must also see that the receiver is an int.
+    ///    `bitAnd` gives none. A call through a member, `s.bitAnd(3)`, gives a value only when
+    ///    its receiver `s` has one, since [`bit_operands`] puts the receiver first among the
+    ///    operands and a value is given only when every operand has one; and every value a
+    ///    [`Known`] holds is an integer, since [`Known::of`] is the one place that sets
+    ///    `Known::value` and keeps only a value `Num::of_integer` reads as an integer (every
+    ///    other `Known` built in this file has `value: None`, and [`Ck::memo`] copies). So a
+    ///    receiver that is a record or a struct, or a field of one named after a bit word,
+    ///    gives no value, whatever later versions compile (plan row PROOF-sweep-zedc-check,
+    ///    b22-free1, 2026-11-24, which replaced "not proved for later forms" here).
     /// 4. A block whose statements before its last are all `Bind` and whose last returns one
     ///    expression ([`block_value`]): its value is that expression's.
     /// 5. A name with one binder (`Ref::Bound` of one id, never an overload set) that is no

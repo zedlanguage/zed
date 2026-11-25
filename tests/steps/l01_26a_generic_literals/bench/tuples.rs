@@ -24,19 +24,25 @@ fn a_deeply_nested_tuple_checks_in_linear_time() {
 fn a_wide_tuple(call: bool) {
     scaling::on_a_thread(1 << 29, || {
         let n = 7300;
-        let units = scaling::inputs(n, |m| Resolved::new(&wide(m, call)));
-        for (m, u) in &units {
-            let [e] = &u.type_errors()[..] else {
-                panic!("one rejection")
-            };
-            assert!(call || e.contains(&format!("y[{m}] is 0.5\n")), "{e}");
-        }
+        // Each program is resolved only in the process that checks it, and the rejection is
+        // asserted on what each run finds (`scaling::check_inputs`;
+        // FAIL-bench-first-phase-past-20s-l0126-l0129). The text the message must hold is
+        // made with the input, outside the run.
+        let unit = |m: usize| {
+            let named = format!("y[{m}] is 0.5\n");
+            (Resolved::new(&wide(m, call)), named)
+        };
         let what = match call {
             false => "rejecting the division of a tuple of n components",
             true => "rejecting the division of a tuple of n components passed to `id`",
         };
-        scaling::check_order(what, n, 1, |m| {
-            std::hint::black_box(units[&m].type_errors());
+        scaling::check_inputs(what, n, unit, |(u, named)| {
+            let errors = u.type_errors();
+            let [e] = &errors[..] else {
+                panic!("one rejection")
+            };
+            assert!(call || e.contains(named.as_str()), "{e}");
+            std::hint::black_box(errors);
         });
     });
 }

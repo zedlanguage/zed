@@ -2735,6 +2735,148 @@ fn a_band_with_chords_not_implied_keeps_the_sets_of_enumeration() {
     }
 }
 
+/// Random chains against the sets by enumeration (ST-band-quintic D1): `x_0..=x_k`, `k` in 2 to
+/// 6, each `x_i` in `[b, b + 9]`, `b = 10 (k - i)`, less one random value or none, the steps
+/// `10 <= x_i - x_(i+1) <= 11`, and spans `x_i - x_j >= c` or `<= c` for `j >= i + 2`, `c`
+/// drawn around the steps' sums `[10 (j - i), 11 (j - i)]` so that a span is implied by the
+/// steps, cuts values, or empties the scope; all assumed in a random order, so a span comes
+/// before or after the steps that imply it. A span implied by a tree path of blocks of two
+/// names is kept out of the relation ([`Scope`]'s implied differences) and one refuted by it
+/// empties the scope without the solver; both must give the sets of enumeration.
+#[test]
+fn random_chains_with_spans_keep_the_sets_of_enumeration() {
+    let (mut r, seed) = Rng::fresh("linked: random chains with spans");
+    let p = Premises::new();
+    let (mut implied, mut cutting, mut empty) = (0, 0, 0);
+    for case in 0..40 {
+        let k = 2 + r.below(5);
+        let n = named(k + 1, "x");
+        let base = |i: usize| (10 * (k - i)) as i64;
+        let mut dom: Vec<IntervalSet> = Vec::new();
+        let mut tests: Vec<Term> = Vec::new();
+        for (i, x) in n.iter().enumerate() {
+            tests.push(prim(Prim::Ge, var(x), int(base(i))));
+            tests.push(prim(Prim::Le, var(x), int(base(i) + 9)));
+            let mut d = IntervalSet::of(base(i), base(i) + 9);
+            if r.coin() {
+                let h = base(i) + r.below(10) as i64;
+                tests.push(prim(Prim::Ne, var(x), int(h)));
+                d = d.minus(&IntervalSet::single(h));
+            }
+            dom.push(d);
+        }
+        for i in 0..k {
+            tests.push(ge(&n[i], &n[i + 1], 10));
+            tests.push(ge(&n[i + 1], &n[i], -11));
+        }
+        let mut spans: Vec<(usize, usize, i64, i64)> = Vec::new();
+        for _ in 0..1 + r.below(3) {
+            if k < 2 {
+                break;
+            }
+            let i = r.below(k - 1);
+            let j = i + 2 + r.below(k - i - 1);
+            let (lo, hi) = (10 * (j - i) as i64, 11 * (j - i) as i64);
+            let c = lo - 1 + r.below((hi - lo + 3) as usize) as i64;
+            if r.coin() {
+                tests.push(ge(&n[i], &n[j], c));
+                spans.push((i, j, c, i64::MAX / 4));
+            } else {
+                tests.push(ge(&n[j], &n[i], -c));
+                spans.push((i, j, i64::MIN / 4, c));
+            }
+        }
+        let mut s = ints(&n);
+        for t in shuffled(tests.len(), &mut r) {
+            s = s.assume(&tests[t], true, &p);
+        }
+        let want = chain_sets_by_enumeration(&dom, (10, 11), &spans);
+        let plain = chain_sets_by_enumeration(&dom, (10, 11), &[]);
+        if want.iter().all(IntervalSet::is_empty) {
+            empty += 1;
+            assert!(
+                s.to_string() == "unreachable\n" || n.iter().any(|x| s.get(x).ints().is_empty()),
+                "seed {seed} case {case}: reachable where enumeration has no point\n{s}"
+            );
+            continue;
+        }
+        if want == plain {
+            implied += 1;
+        } else {
+            cutting += 1;
+        }
+        for (i, x) in n.iter().enumerate() {
+            assert_eq!(
+                s.get(x).ints().clone(),
+                want[i],
+                "seed {seed} case {case}: {x}, spans {spans:?}\n{s}"
+            );
+        }
+    }
+    eprintln!("seed {seed}: implied {implied}, cutting {cutting}, empty {empty}");
+}
+
+/// A span implied by the steps and kept out of the relation is put back when a name inside its
+/// path is forgotten (ST-band-quintic D1): on `x_0..=x_3`, `b = 10 (3 - i)`, each in
+/// `[b, b + 9]`, steps in `[10, 11]`, the span `x_0 - x_2 >= 20` is implied; `x_1` is bound
+/// anew, which forgets every conjunct that mentions it, so the steps through it go; then
+/// `x_0 == 30` leaves `x_2` at `{10}` only through the span (`x_2 <= x_0 - 20`). Also after a
+/// join of two scopes that both keep the span out. Negative control: without the span the same
+/// tests leave `x_2` at `[10, 19]`, so the test sees a lost span.
+#[test]
+fn an_implied_span_is_put_back_when_a_name_on_its_path_is_forgotten() {
+    let p = Premises::new();
+    let n = named(4, "x");
+    let build = |span: bool| {
+        let mut s = ints(&n);
+        for (i, x) in n.iter().enumerate() {
+            let b = (10 * (3 - i)) as i64;
+            s = s.assume(&prim(Prim::Ge, var(x), int(b)), true, &p).assume(
+                &prim(Prim::Le, var(x), int(b + 9)),
+                true,
+                &p,
+            );
+        }
+        for i in 0..3 {
+            s = s.assume(&ge(&n[i], &n[i + 1], 10), true, &p).assume(
+                &ge(&n[i + 1], &n[i], -11),
+                true,
+                &p,
+            );
+        }
+        if span {
+            s = s.assume(&ge(&n[0], &n[2], 20), true, &p);
+        }
+        s
+    };
+    let forget_fix = |mut s: Scope| {
+        let _ = s.bind(
+            &n[1],
+            Product::of_type(Type::int()),
+            &zed_kernel::Shared::new(Term::Var(n[1].clone())),
+        );
+        s.assume(&prim(Prim::Eq, var(&n[0]), int(30)), true, &p)
+    };
+    let joined = |span: bool| {
+        let s = build(span);
+        let a = s.assume(&prim(Prim::Ne, var(&n[3]), int(1)), true, &p);
+        let b = s.assume(&prim(Prim::Ne, var(&n[3]), int(2)), true, &p);
+        a.join(&b)
+    };
+    for (what, s, want) in [
+        ("kept", forget_fix(build(true)), IntervalSet::single(10)),
+        ("joined", forget_fix(joined(true)), IntervalSet::single(10)),
+        ("control", forget_fix(build(false)), IntervalSet::of(10, 19)),
+        (
+            "joined control",
+            forget_fix(joined(false)),
+            IntervalSet::of(10, 19),
+        ),
+    ] {
+        assert_eq!(s.get(&n[2]).ints().clone(), want, "{what}\n{s}");
+    }
+}
+
 /// The band of [`band_holes_run`] at `k = 5`, 10 and 20: no refusal, and each name keeps
 /// exactly its values in the closed form `x_i = [b, b + 9]` less `b + 5` for `i < k - 1`,
 /// `[b, b + 9]` otherwise, `b = 10 (k - i)`. Proof (cross-review XR-st-band-quintic r1, Claude

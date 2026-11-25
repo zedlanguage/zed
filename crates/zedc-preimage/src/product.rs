@@ -2009,6 +2009,23 @@ impl Relation {
         }
     }
 
+    /// The conjunction as far as it is built, with no pending conjunct folded in: the built one
+    /// when a reader has built it, else the one without the pending conjuncts, in O(1). Each of
+    /// its conjuncts is one of the relation's, so what it implies the relation implies.
+    // Complexity tradeoff (ST-band-quintic D1, job j6): naive version, the read through
+    // `Deref`, which builds the conjunction, O(k log n) for the `k` pending conjuncts; a read
+    // at each test of a chain admitted one test at a time folded them all at each test, so
+    // O(k^2 log n) in all (s4 open chain 74.5 times the instructions at 8n, 63 times the bytes;
+    // `linked` chain against the order 4.4 s at 512 and past 300 s at 4096). Used: this read,
+    // which leaves out the pending conjuncts: a query that needs only some conjuncts of the
+    // relation, such as a sufficient test, may miss those, never answer wrongly.
+    fn read_built(&self) -> &Conjuncts {
+        match self.pending {
+            None => &self.base,
+            Some(_) => self.built.get().unwrap_or(&self.base),
+        }
+    }
+
     fn build(&self) -> Conjuncts {
         let mut fs = Vec::new();
         let mut at = self.pending.as_deref();
@@ -2262,6 +2279,14 @@ pub struct Scope {
     /// Each root of an obligation's equation at which a written constraint gave neither
     /// `true` nor `false` (DESIGN.md sec:constraints, QUESTIONS A81).
     pub root_failures: imbl::OrdSet<RootFailure>,
+    /// Each difference of two names a test gave that the relation already implied by a tree
+    /// path of blocks of two names ([`Scope::decided_by_path`]), kept out of the relation, with
+    /// the names of that path from one end to the other ([`Scope::imply`]). Every state of the
+    /// scope holds each one, since the relation does.
+    implied: imbl::OrdMap<Arc<Formula>, Arc<[Arc<str>]>>,
+    /// The differences of [`Scope::implied`] whose path holds each name, so that a name
+    /// forgotten puts back those it was inside ([`Scope::restore_implied`]).
+    implied_on: imbl::OrdMap<Arc<str>, imbl::OrdSet<Arc<Formula>>>,
 }
 
 /// The tests of a scope whose cases were joined ([`Scope::join_kept`]), by their content
@@ -10171,6 +10196,8 @@ impl Scope {
             gaps: LowerGaps::default(),
             rooted: imbl::OrdSet::new(),
             root_failures: imbl::OrdSet::new(),
+            implied: imbl::OrdMap::new(),
+            implied_on: imbl::OrdMap::new(),
         };
         s.reduce();
         s
@@ -10953,6 +10980,7 @@ impl Scope {
         // the stars at the hubs a satellite `x` relates to ([`Conjuncts::around`]). No
         // reduction follows to settle them, so they are settled first, against the relation
         // they were stars of.
+        self.restore_implied(x);
         let mut after = self.relation.clone();
         after.forget(x);
         let leaves: Vec<Arc<str>> = self
@@ -12100,6 +12128,35 @@ impl Scope {
         let mut added = vec![Formula::either(&a, &b, &reduce)];
         added.extend(kept);
         relation.swap(&mine, Formula::and(added));
+        // The differences kept out of the relation ([`Scope::implied`]) that both sides hold:
+        // those both sides keep alike stay out, their paths' conjuncts being shared, so in the
+        // join's relation; one that a side alone keeps out, or keeps on another path, goes into
+        // the relation when the other side holds it too, kept out or in its relation, since
+        // its path may run through conjuncts the sides do not share; any other is dropped, as
+        // a conjunct one side alone holds goes into the disjunction. In O(e log n) for the `e`
+        // entries that differ, by the maps' difference.
+        let (mut implied, mut implied_on) = (self.implied.clone(), self.implied_on.clone());
+        for d in self.implied.diff(&other.implied) {
+            let (g, path, holds) = match d {
+                DiffItem::Remove(g, path) => (g, Some(path), other.holds_conjunct(g)),
+                DiffItem::Add(g, _) => (g, None, self.holds_conjunct(g)),
+                DiffItem::Update { old: (g, path), .. } => (g, Some(path), true),
+            };
+            if let Some(path) = path {
+                implied.remove(g);
+                for n in path.iter() {
+                    if let Some(on) = implied_on.get_mut(n) {
+                        on.remove(g);
+                        if on.is_empty() {
+                            implied_on.remove(n);
+                        }
+                    }
+                }
+            }
+            if holds {
+                relation.and((**g).clone());
+            }
+        }
         // The written and enumerated constraints both sides hold.
         let (mut written, mut written_by) = (self.written.clone(), self.written_by.clone());
         for d in self.written.diff(&other.written) {
@@ -12277,6 +12334,8 @@ impl Scope {
                 .root_failures
                 .clone()
                 .union(other.root_failures.clone()),
+            implied,
+            implied_on,
             spent: {
                 // An entry either side spent is spent on the join, so that no later test
                 // projects for it again on this path: a bound on the work, not a fact of the
@@ -12453,6 +12512,27 @@ impl Scope {
         premises: &Premises,
         reduce: fn(&mut Scope),
     ) -> Scope {
+        // A difference the relation implies by a tree path is kept out of it, so that it merges
+        // no blocks (ST-band-quintic D1). One the path refutes, the path implying the test's
+        // negation, leaves no point, so the scope is bottom, as the solver would find; but the
+        // solver also records where a written constraint failed at a root (`rooted`,
+        // `root_failures`), so a scope with rooted names sends it on to the solver as before.
+        // Complexity tradeoff: naive version, the refuted difference put in the potential,
+        // whose repair ([`put_in`]) spreads through the cycles of weight 0 the steps' gaps tie
+        // before it reaches the negative one: O(k) names a test on a band of `k` steps, O(k²)
+        // over its rungs (`repair_steps` 139, 470, 1,894, 7,611 at k = 16 to 128,
+        // COUNTS-band3.md). Used: the path's sum, O(d log n) for a path of `d` nodes.
+        if let Some((g, path)) = self.decided_by_path(test, outcome) {
+            let mut s = self.clone();
+            s.imply(g, path);
+            return s;
+        }
+        if self.rooted.is_empty() && self.decided_by_path(test, !outcome).is_some() {
+            let mut s = self.clone();
+            s.bottom = true;
+            reduce(&mut s);
+            return s;
+        }
         let mut s = self.clone();
         let admitted =
             s.extend_path(test, outcome, premises) || s.extend_pendant(test, outcome, premises);
@@ -12493,6 +12573,124 @@ impl Scope {
             }
         }
         s
+    }
+
+    /// When `test` giving `outcome` is a difference of two names `x - y >= m` whose tree of
+    /// blocks joins them by blocks of two names each, and the lower bounds of the differences
+    /// of those blocks add up to `m` or more: the test's conjunct and the names of the path,
+    /// `x` to `y`. `None` otherwise.
+    // Proof: the path's blocks are conjuncts of the relation, each between the two names it
+    // joins on the path, so every point of the scope has `a - b` at or above each block's
+    // lower bound, and `x - y` is the sum of the path's differences: at or above the sum of
+    // the bounds. So the test's conjunct holds at every point when that sum reaches `m`: it
+    // removes no point. Only blocks on the one tree path are read, so this is a sufficient
+    // test, never a wrong one: `None` sends the test on to the solver as before. Cost:
+    // [`Blocks::blocks_between`], O(d log n) for a path of `d` nodes, plus the conjuncts of
+    // its blocks, two names each.
+    fn decided_by_path(&self, test: &Term, outcome: bool) -> Option<(Formula, Vec<Arc<str>>)> {
+        if self.bottom || self.lazy {
+            return None;
+        }
+        let con = path_con(test, outcome)?;
+        let g = Formula::Con(con);
+        let (e, None) = conjuncts::edges(&g)? else {
+            return None;
+        };
+        let (Some(x), Some(y)) = (e.from, e.to) else {
+            return None;
+        };
+        let m = -&e.weight;
+        // The blocks as far as the relation is built ([`Relation::read_built`]): a path of
+        // its conjuncts is a path of the relation's, and one through a pending conjunct is
+        // missed, which sends the test on to the solver as before.
+        let blocks = self.relation.read_built().blocks();
+        let path = blocks.blocks_between(&x, &y)?;
+        // The sum of the lower bounds of `a - next` of the blocks on the path, `x` to `y`.
+        let mut lo = Int::ZERO;
+        let mut at = x.clone();
+        let mut names = vec![x.clone()];
+        for b in path {
+            if blocks.is_apart(b) || blocks.name_count(b) != 2 {
+                return None;
+            }
+            let next = blocks.names_of(b).find(|n| ***n != *at)?.clone();
+            let mut down: Option<Int> = None;
+            for g in blocks.members(b) {
+                let (e, eq) = conjuncts::edges(g)?;
+                for e in std::iter::once(e).chain(eq) {
+                    // An edge the other way, or a bound of one name, gives no lower bound of
+                    // `at - next`; leaving it out only weakens the sum, which stays sound.
+                    let ends = (e.from.as_deref(), e.to.as_deref());
+                    if ends != (Some(&*at), Some(&*next)) {
+                        continue;
+                    }
+                    let w = -&e.weight;
+                    if down.as_ref().is_none_or(|v| *v < w) {
+                        down = Some(w);
+                    }
+                }
+            }
+            lo = &lo + &down?;
+            names.push(next.clone());
+            at = next;
+        }
+        (at == y && lo >= m).then_some((g, names))
+    }
+
+    /// Whether the scope holds the conjunct `g` as a conjunct of its relation or one kept out
+    /// of it ([`Scope::implied`]), in O(log n). Not whether its points imply `g`.
+    fn holds_conjunct(&self, g: &Arc<Formula>) -> bool {
+        self.relation.set().contains(g) || self.implied.contains_key(g)
+    }
+
+    /// Records `g`, a difference the relation implies by the tree path through `path`
+    /// ([`Scope::decided_by_path`]), out of the relation: kept in it, `g` would close a cycle
+    /// of the blocks' graph and merge the path's blocks into one ([`conjuncts::Blocks`]),
+    /// which each later projection of the block then reads whole. In O(d log n) for a path of
+    /// `d` names.
+    fn imply(&mut self, g: Formula, path: Vec<Arc<str>>) {
+        let g = Arc::new(g);
+        // A conjunct pending in the relation ([`Relation::read_built`]) is kept out as well;
+        // the relation then holds it twice over, which changes no point.
+        if self.relation.read_built().set().contains(&g) || self.implied.contains_key(&g) {
+            return;
+        }
+        for n in &path {
+            self.implied_on
+                .entry(n.clone())
+                .or_default()
+                .insert(g.clone());
+        }
+        self.implied.insert(g, path.into());
+    }
+
+    /// Puts back into the relation each difference [`Scope::imply`] kept out whose path goes
+    /// through `x` between its ends, before `x` is forgotten: the conjuncts of the path that
+    /// mention `x` then go ([`Conjuncts::forget`] forgets each conjunct alone), and the
+    /// difference, which does not mention `x`, is implied by what is left no more. One whose
+    /// end is `x` is forgotten with it. In O(f d log n) for `f` differences on paths of `d`
+    /// names through `x`.
+    fn restore_implied(&mut self, x: &Arc<str>) {
+        let Some(gs) = self.implied_on.remove(x) else {
+            return;
+        };
+        for g in gs {
+            let Some(path) = self.implied.remove(&g) else {
+                continue;
+            };
+            for n in path.iter().filter(|n| *n != x) {
+                if let Some(on) = self.implied_on.get_mut(n) {
+                    on.remove(&g);
+                    if on.is_empty() {
+                        self.implied_on.remove(n);
+                    }
+                }
+            }
+            let end = path.first() == Some(x) || path.last() == Some(x);
+            if !end {
+                self.relation.and((*g).clone());
+            }
+        }
     }
 
     /// A path of difference constraints whose projections share affine bounds.
@@ -15661,7 +15859,34 @@ impl Scope {
                     }
                 }
                 let names: Vec<Arc<str>> = at.names.iter().cloned().collect();
-                self.raise_all(&relation, t, &names);
+                // A tree that keeps a name off shortest paths other than the names raised here
+                // is not raised (ST-band-quintic D1). Proof that no answer changes: a name's
+                // record of being off the paths ([`Blocks::is_gapped`]) changes only when the
+                // name is a seed ([`Scope::sync_gap`] below) or at a projection of every block,
+                // which has no seeds; so such a name is still off the paths after this
+                // projection, the tree's count of them ([`Blocks::gaps`]) stays above 0, and the
+                // tree is not projected by shortest paths here whatever the raises do. The gaps
+                // the potential holds with are read only to choose that mode
+                // ([`Scope::off_paths`]), to order the searches of shortest paths
+                // ([`Scope::bound_pass`]) and by the repairs of the potential ([`put_in`]),
+                // whose outcome does not depend on them (case (c) there); so a raise left out
+                // changes the cost and the mode, never an answer. A name not raised stays off
+                // the paths, and is raised again when it is next a seed.
+                // Complexity tradeoff: naive version, the raises of every tree, each moving the
+                // names below its name when the steps have no slack in the potential: on the
+                // band of `linked::band_holes_run` every other raise holds and moves
+                // min(i, k - i) names, O(k²) over its `k` holes (`raise_all_steps` 111, 355,
+                // 1,227, 4,503 at k = 16 to 128, COUNTS-band3.md), the raise between them failing
+                // on the cycle of its two holed steps. Used: two lookups a name, O(b log n) for
+                // `b` names. Tradeoff: a tree whose name off the paths comes back on them (its
+                // holes cut off by a bound) stays off them until each name not raised is a seed
+                // again, and is projected block by block meanwhile, which is exact. The raises of
+                // `k` holes that all hold stay O(k² log k) (item ST-holes-moves).
+                let off = blocks.gaps(t).unwrap_or(0);
+                let raised_off = names.iter().filter(|n| blocks.is_gapped(n)).count();
+                if off <= raised_off {
+                    self.raise_all(&relation, t, &names);
+                }
             }
         }
         // Whether each seed keeps its tree from shortest paths, now that the gaps are raised.
@@ -15727,7 +15952,22 @@ impl Scope {
             // cross-review xst, and not approved. COMPLEXITY.md row S25.
             let shortest =
                 !every && !blocks.is_apart(b) && !fallen.contains_key(&t) && !holed.contains(&t);
+            // A block of two names is projected alone, never by the ends of the whole tree: the
+            // blocks of a tree share one name each with the next, so the tree of blocks is a
+            // join tree, and an exact projection of each block, repeated while a name it shares
+            // moves (the worklist below), is the projection of the whole: Freuder, "A
+            // sufficient condition for backtrack-free search", JACM 29(1), 1982, shows that an
+            // arc-consistent tree of binary constraints is solved without backtracking, so each
+            // value left has a solution; for blocks of more than two names, the same holds of
+            // acyclic hypergraphs (Beeri, Fagin, Maier and Yannakakis, JACM 30(3), 1983).
+            // Paraphrase, not a quote: the wording and DOIs are to be checked (row
+            // ST-band-quintic D1).
+            // Complexity tradeoff (ST-band-quintic D1): naive version, the ends of the whole
+            // tree at each projection that reaches a block of two names, O(N) per fact for a
+            // tree of `N` names, O(k^2) over a band of `k` steps. Used: the block alone, its two
+            // names' pieces, with the ends kept for blocks of three names or more.
             let ends = !blocks.is_apart(b)
+                && blocks.name_count(b) > 2
                 && !blockwise.contains(&t)
                 && blocks
                     .gaps(t)
@@ -20205,8 +20445,15 @@ impl fmt::Display for Scope {
                 writeln!(f, "  {l}")?;
             }
         }
-        if !self.relation.is_top() {
-            writeln!(f, "relation {}", self.relation)?;
+        // The differences kept out of the relation ([`Scope::implied`]) are shown in it, in
+        // the relation's order, as they were when they were kept in it: the relation with them
+        // put back, in O((r + i) log r) for its `r` conjuncts and the `i` kept out.
+        let mut relation = self.relation.clone();
+        for g in self.implied.keys() {
+            relation.and((**g).clone());
+        }
+        if !relation.is_top() {
+            writeln!(f, "relation {relation}")?;
         }
         Ok(())
     }

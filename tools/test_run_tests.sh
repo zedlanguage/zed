@@ -19,7 +19,8 @@
 # listings with --only afresh; `short`, the short-addresses pieces and their clone; `copy`, a
 # piece that starts its binary again after the build is gone; `concurrent`, two runs at once on
 # one log directory; `trace`; `nobus`, three pieces run with no user bus (FARM-run-tests-systemd-run);
-# and `warm`, the report of a piece that fails in the linking warm-up (FAIL-warm-step-drops-output).
+# and `warm`, the report of a piece that fails in the linking warm-up (FAIL-warm-step-drops-output)
+# and the order and thread bound of the warm-up's pieces (FAIL-warm-binaries-rc101-cause).
 # select, table, except and benches are run after list, with no build of the tests between them. With no part named
 # it runs list, select, table, except, benches, fresh, short, copy and concurrent one after another.
 # Each part has a log directory of its own, under which every run of run_tests.sh writes a
@@ -82,7 +83,8 @@ fi
 # `tools/test_run_tests.sh warm` checks the linking warm-up's report of a failing piece (`warm`,
 # tools/lib.sh, FAIL-warm-step-drops-output) on fake binaries, with `capped` and `in_run_copy`
 # as plain runs: it builds and lists nothing (under 1 s). Before the fix the output of a failing
-# piece was emptied unread, and only "rc=101" was printed.
+# piece was emptied unread, and only "rc=101" was printed. It also checks the order and thread
+# bound of `warm_all` (tools/lib.sh, FAIL-warm-binaries-rc101-cause), in about 1 s more.
 if [ "$part" = warm ]; then
   w=$(pwd)/$logs-warm
   mkdir -p "$w"
@@ -125,6 +127,63 @@ noise
 test t has been running for over 60 seconds
 test result: FAILED. 0 passed; 1 failed" "$(cat "$w/warm-fake::fails.log" 2>&1)"
   check "a passing piece keeps no output" "" "$(ls "$w" | command grep -a -F 'warm-fake::passes')"
+  # `warm_all` (tools/lib.sh, FAIL-warm-binaries-rc101-cause) on a fake binary that writes when
+  # each piece starts, with its RUST_TEST_THREADS, and ends: the first piece runs alone, the others
+  # with cores / min(jobs, others) threads; a single piece runs once; a first piece that fails
+  # still lets the others run, and the whole fails. Before dcadbe535 every piece ran side by side
+  # with no bound, and until warm_all took xargs -r, a single piece made a second `warm` with no
+  # arguments, which printed a line with an empty piece name.
+  printf '#!/bin/bash\necho "start $1 ${RUST_TEST_THREADS:--}" >>"$ORDER"\nsleep "$2"\necho "end $1" >>"$ORDER"\n[ "$1" != bad ]\n' >"$w/rec"
+  chmod +x "$w/rec"
+  printf 'p%s %s %s p%s 0.3\n' 1 "$logs-warm" "$w/rec" 1 2 "$logs-warm" "$w/rec" 2 \
+    3 "$logs-warm" "$w/rec" 3 4 "$logs-warm" "$w/rec" 4 >"$w/four"
+  printf 'one %s %s one 0\n' "$logs-warm" "$w/rec" >"$w/one"
+  printf '%s %s %s %s 0\n' bad "$logs-warm" "$w/rec" bad q "$logs-warm" "$w/rec" q >"$w/badfirst"
+  # The order file of one run: its first two lines as written, the others sorted, since the
+  # pieces after the first run side by side.
+  order() { head -n 2 "$w/order"; tail -n +3 "$w/order" | sort; }
+  got=$(
+    root=$(pwd) out=$w ORDER=$w/order
+    export root out ORDER
+    capped() { "$@"; }
+    in_run_copy() {
+      shift
+      exec "$@"
+    }
+    . tools/lib.sh || exit 2
+    export -f capped in_run_copy warm
+    : >"$w/order"
+    warm_all "$w/four" 2 8 >/dev/null
+    echo "four returned $?"
+    order
+    : >"$w/order"
+    warm_all "$w/one" 6 8
+    echo "one returned $?"
+    order
+    : >"$w/order"
+    warm_all "$w/badfirst" 6 8 >/dev/null
+    echo "badfirst returned $?"
+    order
+  )
+  check "warm_all runs the first piece alone, bounds the others' threads, and runs a single piece once" \
+    "four returned 0
+start p1 -
+end p1
+end p2
+end p3
+end p4
+start p2 4
+start p3 4
+start p4 4
+one links made before the timed pieces: rc=0
+one returned 0
+start one -
+end one
+badfirst returned 1
+start bad -
+end bad
+end q
+start q 8" "$(printf '%s\n' "$got" | sed 's/ rc=\([0-9]*\) [0-9]*ms$/ rc=\1/')"
   echo "checks failed: $fails"
   [ "$fails" = 0 ]
   exit

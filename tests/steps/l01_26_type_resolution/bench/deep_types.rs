@@ -33,16 +33,19 @@ fn replacements_in_a_shared_type_take_linear_time() {
 fn shared_types_built_apart_compare_in_linear_time() {
     // Each side holds `2^n` paths through `n` nodes, and no node is shared between the sides:
     // a comparison that followed the paths took `2^n` time.
+    // Each pair is built only in the process that compares it (`scaling::check_inputs`;
+    // FAIL-bench-first-phase-past-20s-l0126-l0129), on the 2 MiB stack of `on_small_stack`,
+    // the default of the test thread they were built and dropped on before.
     let n = 32_000;
-    let pairs: std::collections::BTreeMap<usize, (Ty, Ty)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|k| (k, (shared(k), shared(k))))
-        .collect();
     on_small_stack(|| {
-        scaling::check_order("== on two shared types n deep built apart", n, 1, |k| {
-            let (a, b) = &pairs[&k];
-            assert!(a == b, "{k} deep");
-        });
+        scaling::check_inputs(
+            "== on two shared types n deep built apart",
+            n,
+            |k| (k, shared(k), shared(k)),
+            |(k, a, b)| {
+                assert!(a == b, "{k} deep");
+            },
+        );
     });
 }
 

@@ -58,19 +58,21 @@ fn a_cast_menu_costs_the_same_in_a_larger_program() {
     // allocate at the same time, it was 0.97 to 1.02 times in 30 runs. At m = 60,000 this test
     // took 36 s alone at load 46, so m is now 30,000: a scan of that record once per offered
     // repair still did 1.88 times the work there, against a limit of 1.32 (TESTS-l01_29-split).
+    // The checks at 8m are in a phase of the time limit of their own, as a check's run at 8n is
+    // (`scaling::hold_in_phases`; FAIL-bench-first-phase-past-20s-l0126-l0129).
     const R: usize = 100;
     let meter = &mut Meter::new();
     let unit = meter.unit();
     let m = 30_000;
-    scaling::hold(
+    scaling::hold_in_phases(
         &format!(
             "{R} rejections beside {m} and {} expressions",
             scaling::FACTOR * m
         ),
         unit,
-        rejections(meter, m, R, 1, padded),
-        rejections(meter, scaling::FACTOR * m, R, 1, padded),
+        m,
         0,
+        |k| rejections(meter, k, R, 1, padded),
     );
 }
 
@@ -96,15 +98,15 @@ fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program
     let unit = meter.unit();
     let m = 30_000;
     let make = |m: usize, r: usize| padded_with(m, &called(r));
-    scaling::hold(
+    scaling::hold_in_phases(
         &format!(
             "{R} functions beside {m} and {} expressions",
             scaling::FACTOR * m
         ),
         unit,
-        rejections(meter, m, R, 3, make),
-        rejections(meter, scaling::FACTOR * m, R, 3, make),
+        m,
         0,
+        |k| rejections(meter, k, R, 3, make),
     );
 }
 

@@ -125,12 +125,23 @@ fn the_default_path_takes_a_bounded_time_per_unit_of_work() {
 
 /// The cases of the per-unit benchmarks, with `n` times `scale`: the multiples of a few
 /// numbers, the evens through a choice of two multiples, and the evens with a padding chain.
+///
+/// Since b7ab00a78 (a strided set stays one class through the cover) a case's units no longer
+/// grow with `n`, and four of the five unpadded or lightly padded cases counted under 10^5 on
+/// the default path (19,920 to 60,408) and one on the cover path (`2, 4 n=4000`: 45,556), so
+/// both benchmarks failed their 10^5 check (b22-presburger13, 2026-11-25, on 8394f8975). The
+/// padding chain adds 300 units a conjunct on both paths (measured: `2, 4 n=4000` at pads 0,
+/// 100, 200 and 800 counts 19,920, 50,620, 80,620 and 260,620 with `direct`), so each case now
+/// carries enough padding to count 10^5 or more on both: by that rate, with `direct` off 215,469
+/// to 2,638,906 units, with it 110,620 to 200,620 (`2, 3, 5, 7 n=1000 pad=200` measured: 2,638,906
+/// and 121,708). Larger `n` does
+/// not help: `2, 3, 5, 7` at n = 2000 or 4000 with `direct` off is refused at the limit.
 fn per_unit_cases(scale: i64) -> Vec<(String, Formula)> {
     [
-        (&[2, 4][..], 4000, 0),
-        (&[2, 3], 3000, 0),
-        (&[2, 3, 5, 7], 1000, 0),
-        (&[2, 4], 2000, 50),
+        (&[2, 4][..], 4000, 300),
+        (&[2, 3], 3000, 300),
+        (&[2, 3, 5, 7], 1000, 200),
+        (&[2, 4], 2000, 600),
         (&[2, 4], 400, 400),
     ]
     .into_iter()
@@ -163,7 +174,9 @@ fn most_at_the_limit(what: &str, cases: &[(String, Formula)], questions: bool) {
             "{what}: {name}: {asked} questions; the case must reach the cover and ask a question"
         );
         let ns = with.saturating_sub(alone);
-        eprintln!("{what}: {name}: {asked} questions, {with} ns with the cover, {alone} ns alone");
+        eprintln!(
+            "{what}: {name}: {units} units, {asked} questions, {with} ns with the cover, {alone} ns alone"
+        );
         measured.push((name.clone(), ns, units));
     }
     zed_tests::scaling::per_unit_bound(what, &measured, 100_000, EXACT_LIMIT);

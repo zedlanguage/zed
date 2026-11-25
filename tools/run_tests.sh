@@ -1887,8 +1887,9 @@ if [ "$runtimes" != "$(cat "$logbase/runtimes" 2>/dev/null)" ]; then
       echo "$name $rest"
     fi
   done <"$out/pieces" >"$out/linking"
-  if [ ! -s "$out/linking" ] ||
-    xargs -P "$jobs" --process-slot-var=slot -L 1 bash -c 'warm "$@"' _ <"$out/linking"; then
+  # The first linking piece runs alone, the others side by side with a bound on their test
+  # threads (`warm_all`, tools/lib.sh, FAIL-warm-binaries-rc101-cause).
+  if [ ! -s "$out/linking" ] || warm_all "$out/linking" "$jobs" "$cores"; then
     printf '%s\n' "$runtimes" >"$out/runtimes"
     publish "$out/runtimes" runtimes
   fi
