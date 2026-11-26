@@ -900,8 +900,11 @@ enum DeriveWork {
 /// whose type is its parts' as last found ([`Ck::tuple_seen`]).
 #[derive(Default)]
 struct DerivedLines {
-    /// The lines of each kept step and of every step it leads to, by the span it derives.
-    sets: HashMap<Span, Lines>,
+    /// The lines of each kept step and of every step it leads to, with those steps, by the
+    /// span it derives.
+    sets: HashMap<Span, Reach>,
+    /// A number for each step met, the key of its span in [`Reach::steps`].
+    keys: HashMap<Span, i64>,
     /// The binders whose origins a step read.
     ids: HashSet<usize>,
     /// The spans a step found with no type yet.
@@ -990,6 +993,15 @@ struct LitMasks {
 /// share nothing cost O(m log(n/m + 1)) for sizes m <= n. Cost: an `Arc` per key in place of
 /// a B-tree's 16 keys a node.
 type Lines = zed_kernel::treap_set::TreapSet<i64>;
+
+/// The lines of the notes of a step and of every step it leads to ([`Ck::derivation_lines`]),
+/// with those steps, each by its number in [`DerivedLines::keys`]: `steps` holds every step
+/// reachable from one it holds, so a step found in it brings no line `lines` lacks.
+#[derive(Clone, Default)]
+struct Reach {
+    lines: Lines,
+    steps: Lines,
+}
 
 /// The key of line `l` in [`Lines`]; a line number is far below `2^63`.
 fn line_key(l: usize) -> i64 {
@@ -4936,7 +4948,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         // Used: the memo too, O(1) expected per step, so a rejection enters O(1) steps. The
         // memo is only read here: every write that clears it takes `&mut self`.
         let memo = self.derived_lines.borrow();
-        let enters = |span: Span| match (&cut, sets.get(&span).or_else(|| memo.sets.get(&span))) {
+        let enters = |span: Span| match (
+            &cut,
+            sets.get(&span)
+                .or_else(|| memo.sets.get(&span).map(|r| &r.lines)),
+        ) {
             (Some((keep, _)), Some(lines)) => keep.iter().any(|l| lines.contains(l)),
             _ => true,
         };
@@ -5299,21 +5315,20 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///
     /// Complexity tradeoff (DERIV-too-large-chain-quadratic): walking every step of each
     /// derivation to count its lines costs O(n) per rejection along a chain of `n` names,
-    /// Theta(n^2) in all. Kept as persistent sets ([`Lines`], treaps that share their
-    /// subtrees), a step's lines cost the union of the sets of the steps it leads to and an
-    /// insert, O(log n), of each of its own lines. A step that leads to one step copies its
-    /// set, O(1): a chain of `n` names adds O(1) lines per name, O(n log n) time and words for
-    /// the whole chain, and O(1) new steps per rejection. Steps that lead to several sets
-    /// that share nothing, as `y_i = y_(i-1) + z_i` with `z_i` a chain of its own, cost
-    /// O(m log(n/m + 1)) for the smaller size `m`, which sums to O(n log n) over a tree of
-    /// steps (the union bound of `zed_kernel::treap_set`, summed as in small-into-large
-    /// merging: a line in the smaller set lands in a union at least twice its size). Where
-    /// next steps are shared, a DAG such as `a_i = a_(i-1) + a_(i-1)`, their sets are made from
-    /// one set by a few inserts each and differ only on those inserts' paths, so the union
-    /// stops at the subtrees they share: O(log n) per step. Sets with the same lines that were
-    /// built apart share no nodes, and their union costs O(n), no more than the walk that met
-    /// every step of such a derivation cost before. A step that is not kept is found again
-    /// by each derivation that takes it, as the walk did before.
+    /// Theta(n^2) in all. Kept as persistent sets ([`Reach`], treaps that share their
+    /// subtrees), a step's lines and steps are copied, O(1), from the next step that reaches
+    /// the most steps, and each step the others reach that it does not adds its own lines,
+    /// O(log n) each (the walk at the end of the loop below). A step that leads to one step
+    /// copies its set: a chain of `n` names adds O(1) lines per name, O(n log n) time and
+    /// words for the whole chain, and O(1) new steps per rejection. Steps that lead to several
+    /// steps that share nothing, as `y_i = y_(i-1) + z_i` with `z_i` a chain of its own, walk
+    /// the smaller side, which sums to O(n log^2 n) over a tree of steps (small-into-large
+    /// merging: a step on the smaller side lands in a set at least twice its size). A DAG
+    /// such as `a_i = a_(i-1) + a_(i-1)`, or `e_i = (e_(i-1), d_i)` with `d_i` reaching
+    /// `a_i` and `a_(i-1)`, walks O(1) steps per step, as the steps it shares are held. A
+    /// step taken from the memo is joined by a union of its sets, O(m log(n/m + 1)) for the
+    /// smaller size `m`. A step that is not kept is found again by each derivation that takes
+    /// it, as the walk did before.
     fn derivation_lines(
         &self,
         start: &[DeriveWork],
@@ -5321,11 +5336,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         sets: &mut HashMap<Span, Lines>,
     ) -> Option<Lines> {
         let mut d = self.derived_lines.borrow_mut();
+        let d = &mut *d;
         let mut all = Lines::new();
         // The steps the walk is inside, a root's included, to find a cycle; whether each step
         // found may be kept.
         let mut inside: HashSet<Span> = HashSet::new();
         let mut keep: HashMap<Span, bool> = HashMap::new();
+        // Each step found, with its lines and the steps it reaches ([`Reach`]); the own lines
+        // and next steps of each step this call walked, for the walks below.
+        let mut reach: HashMap<Span, Reach> = HashMap::new();
+        let mut walked: HashMap<Span, StepLines> = HashMap::new();
+        // The type of each tuple written out built so far ([`Ck::tuple_seen`]), one memo over
+        // every step of this call: `self` is not written during it, so no entry goes stale.
+        let mut tuples: HashMap<Span, Ty> = HashMap::new();
         for w in start {
             let root = match w {
                 DeriveWork::Show(n) => {
@@ -5342,36 +5365,72 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if sets.contains_key(&s) {
                         continue;
                     }
-                    if let Some(lines) = d.sets.get(&s)
+                    if let Some(r) = d.sets.get(&s)
                         && !roots.contains(&s)
                     {
-                        sets.insert(s, lines.clone());
+                        sets.insert(s, r.lines.clone());
+                        reach.insert(s, r.clone());
                         keep.insert(s, true);
                         continue;
                     }
                     if !inside.insert(s) {
                         return None;
                     }
-                    let step = self.step_lines(s, roots.contains(&s), &mut d);
+                    let step = self.step_lines(s, roots.contains(&s), d, &mut tuples);
                     let next: Vec<Span> = step.next.clone();
                     stack.push((s, Some(step)));
                     stack.extend(next.into_iter().rev().map(|c| (c, None)));
                     continue;
                 };
                 inside.remove(&s);
-                // The union of the next steps' sets, which stops at the subtrees they share
-                // ([`Lines`]), with the step's own lines.
-                let mut lines = Lines::new();
-                for c in &step.next {
-                    if let Some(x) = sets.get(c) {
-                        lines = lines.union(x);
+                // The step's lines and steps: those of the next step that reaches the most
+                // steps, then those of the steps the other next steps reach that it does not,
+                // found by a walk that stops at a step already held. Complexity tradeoff
+                // (SCALE-derivation-lines-memo): naive version, the union of the next steps'
+                // sets (3fc191160): two next steps that reach many lines in common, as
+                // `e_i = (e_(i-1), d_i)` with `d_i` and `e_(i-1)` both reaching `a_(i-1)`,
+                // cost O(m) a union for the m lines they share, since sets built apart share
+                // no nodes: Theta(n^2) over such a chain of `n` names
+                // (l01_29 `unions_inside`). Used: a step held is
+                // left at once, as every step it reaches is held too, so a step costs
+                // O((k + 1) log n) for the `k` steps it reaches that its largest next step
+                // does not, O(1) new steps a link on such a chain, and a step taken from the
+                // memo is joined by a union, as before. Where the steps reached through each
+                // next step are many and mostly shared but not reached through the largest,
+                // the walk is the plain walk of those steps, which no set of lines avoids:
+                // counting what each step of a DAG reaches is as hard as its transitive
+                // closure.
+                let base = (step.next.iter())
+                    .filter_map(|c| reach.get(c))
+                    .max_by_key(|r| r.steps.len());
+                let mut r = base.cloned().unwrap_or_default();
+                let mut todo: Vec<Span> = vec![s];
+                while let Some(t) = todo.pop() {
+                    let n = d.keys.len() as i64;
+                    let k = *d.keys.entry(t).or_insert(n);
+                    if r.steps.contains(&k) {
+                        continue;
                     }
-                }
-                if let Some(x) = &step.narrowing {
-                    lines = lines.union(x);
-                }
-                for l in step.lines {
-                    lines.insert(line_key(l));
+                    let own = if t == s { Some(&step) } else { walked.get(&t) };
+                    match own {
+                        Some(o) => {
+                            r.steps.insert(k);
+                            for &l in &o.lines {
+                                r.lines.insert(line_key(l));
+                            }
+                            if let Some(x) = &o.narrowing {
+                                r.lines = r.lines.union(x);
+                            }
+                            todo.extend(o.next.iter().copied());
+                        }
+                        // A step taken from the memo: its set and steps are whole.
+                        None => {
+                            if let Some(x) = reach.get(&t) {
+                                r.lines = r.lines.union(&x.lines);
+                                r.steps = r.steps.union(&x.steps);
+                            }
+                        }
+                    }
                 }
                 let kept = step.kept
                     && !roots.contains(&s)
@@ -5380,10 +5439,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .iter()
                         .all(|c| keep.get(c).copied().unwrap_or(false));
                 if kept {
-                    d.sets.insert(s, lines.clone());
+                    d.sets.insert(s, r.clone());
                 }
                 keep.insert(s, kept);
-                sets.insert(s, lines);
+                sets.insert(s, r.lines.clone());
+                reach.insert(s, r);
+                walked.insert(s, step);
             }
             all = all.union(&sets[&root]);
         }
@@ -5395,7 +5456,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// but one that clears [`DerivedLines`] changes them. Each case is the walk's own, in its
     /// order; a build with debug assertions checks that the two agree (see `derive_work`).
     /// The binders it reads the origins of, and a span with no type yet, are put in `d`.
-    fn step_lines(&self, span: Span, root: bool, d: &mut DerivedLines) -> StepLines {
+    ///
+    /// `tuples` is the caller's memo for [`Ck::tuple_seen`]. Complexity tradeoff: a fresh memo
+    /// per step, as this had (3fc191160), builds each nested tuple again at every level above
+    /// it, `O(n^2)` over a display `n` tuples deep; one memo over the call builds each once.
+    fn step_lines(
+        &self,
+        span: Span,
+        root: bool,
+        d: &mut DerivedLines,
+        tuples: &mut HashMap<Span, Ty>,
+    ) -> StepLines {
         let mut step = StepLines {
             lines: Vec::new(),
             narrowing: None,
@@ -5408,7 +5479,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let id = match (kept, src) {
             (Some(_), Src::Name(id) | Src::Call(id, _)) => *id,
-            (None, Src::Other(e)) if self.tuple_seen(e, &mut HashMap::new()).is_none() => {
+            (None, Src::Other(e)) if self.tuple_seen(e, tuples).is_none() => {
                 step.kept = false;
                 return step;
             }
