@@ -222,6 +222,19 @@ impl Elem for Value {
             }
         }
     }
+    /// By class, then 64-bit integers by value, big integers and `rat`s by their forms as held
+    /// (`Rat::held_cmp`, which copies nothing where `Ord` may
+    /// align the two), and every other kind by `Ord`: a total order, as each part is one.
+    fn held_cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Value::Int(x), Value::Int(y)) => x.cmp(y),
+            (Value::Big(x), Value::Big(y)) | (Value::Rat(x), Value::Rat(y)) => x.held_cmp(y),
+            _ => match self.class().cmp(&other.class()) {
+                Ordering::Equal => self.cmp(other),
+                o => o,
+            },
+        }
+    }
     fn class(&self) -> u32 {
         match self {
             Value::Int(_) => Value::INT_CLASS,

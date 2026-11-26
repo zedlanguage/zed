@@ -1489,3 +1489,28 @@ fn equal_literal_sets_made_apart_are_one_tree() {
     assert!(!lits(&up).ptr_eq(&lits(&more)));
     assert_eq!(up.cmp(&down), std::cmp::Ordering::Equal);
 }
+
+/// TYPE-hashcons: the table orders a bucket by the keys as held ([`Elem::held_cmp`]), so a set
+/// of `231^64` kept as powers and a set of it built, which meet in one bucket, are not compared
+/// by value (which copies the built coefficient) and stay two trees; the same form made again
+/// shares its tree. The two types are still equal.
+#[test]
+fn a_kept_and_a_built_form_of_one_integer_stay_two_literal_trees() {
+    use crate::num::Rat;
+    let kept = Rat::int(num_bigint::BigInt::from(231u32))
+        .pow(&num_bigint::BigUint::from(64u32))
+        .expect("a power is kept");
+    assert!(!kept.kept().2.is_empty(), "231^64 is kept as powers");
+    let built = Rat::int(num_bigint::BigInt::from(231u32).pow(64));
+    assert!(built.kept().2.is_empty(), "231^64 is built");
+    let one = |r: &Rat| {
+        let mut s = TreapSet::new();
+        s.insert(Value::integer(r.clone()));
+        Type::ints_of(s)
+    };
+    let (k1, k2, b) = (one(&kept), one(&kept), one(&built));
+    let lits = |t: &Type| t.ints_set().unwrap();
+    assert!(lits(&k1).ptr_eq(&lits(&k2)));
+    assert!(!lits(&k1).ptr_eq(&lits(&b)));
+    assert_eq!(k1.cmp(&b), std::cmp::Ordering::Equal);
+}

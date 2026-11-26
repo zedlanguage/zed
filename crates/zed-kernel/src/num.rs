@@ -3736,6 +3736,20 @@ impl Rat {
         (&a.num, &a.den, &a.pows, &a.wide).cmp(&(&b.num, &b.den, &b.pows, &b.wide))
     }
 
+    /// An order on the forms as held, for a table that must order numbers without building
+    /// or copying one ([`crate::treap_set::Elem::held_cmp`]): total, and `Equal` only for two
+    /// equal forms, so only for equal values, but a value held in two forms (kept and built)
+    /// is two keys. O(the words compared).
+    pub(crate) fn held_cmp(&self, other: &Rat) -> Ordering {
+        (&self.num, &self.den, &self.pows, &self.wide, self.t()).cmp(&(
+            &other.num,
+            &other.den,
+            &other.pows,
+            &other.wide,
+            other.t(),
+        ))
+    }
+
     /// At least `|log2 |x||` for the value `x` of its coefficients and powers (its `Ten` left
     /// out): the bits of `num` and `den`, and `|e| (floor(log2 p) + 1)` for each power, since
     /// `p < 2^(floor(log2 p) + 1)`. O(the count of words of the exponents).

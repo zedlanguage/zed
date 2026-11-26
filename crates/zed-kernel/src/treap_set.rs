@@ -91,6 +91,12 @@ pub trait Elem: Ord + Clone {
     fn seeded_weight(&self) -> u64 {
         seeded(self.weight())
     }
+    /// An order on the keys as held, for [`HashConsTable`]'s buckets: total, `Equal` only for
+    /// equal keys, and building nothing. The default is the key's `Ord`; a kind whose `Ord`
+    /// can build or copy (`Value`'s big integers and `rat`s, compared by value) gives its own.
+    fn held_cmp(&self, other: &Self) -> Ordering {
+        self.cmp(other)
+    }
 }
 
 /// Integers tie only when equal: the point of `n` is `n` with its sign bit flipped, below `p`
@@ -1155,6 +1161,14 @@ impl<T: Elem> Eq for TreapSet<T> {}
 /// handles: a dead set's nodes stay until the next sweep, at most as many sets as were live at
 /// the last one. Cost: a hash lookup per set put in, and a handle per set held.
 ///
+/// A bucket is ordered by the keys as held ([`Elem::held_cmp`]), not by `Ord`: equal sets
+/// have one seeded sum, so a set of a big integer kept as powers and a set of the same integer
+/// built meet in one bucket, and `Value`'s `Ord` orders the two by value, which copies the
+/// built coefficient (`Rat`'s `aligned`) without asking for the memory. That copy aborted
+/// `addressing_a_wide_constant_is_refused_when_memory_is_short` (l01_17, `231^(2^20)`, 1 MB
+/// asked under a lowered limit) when the buckets were ordered by `Ord`. Cost: two
+/// equal sets held in different forms stay two trees, compared by `==` as before the table.
+///
 /// Prior work: a treap of distinct priorities has one shape per set (Seidel and Aragon,
 /// "Randomized search trees", Algorithmica 16(4/5), 464-497, 1996, doi:10.1007/BF01940876,
 /// sec. 2: "the treap for X is unique: the item with largest priority becomes the root, and the
@@ -1169,10 +1183,48 @@ impl<T: Elem> Eq for TreapSet<T> {}
 /// most d, then there is an n-subset on which an update operation requires Ω(n − 2d)
 /// rotations." Both checked 2026-11-25 against the papers' text.
 pub struct HashConsTable<T> {
-    table: crate::digest::DigestMap<u64, std::collections::BTreeSet<TreapSet<T>>>,
+    table: crate::digest::DigestMap<u64, std::collections::BTreeSet<Held<T>>>,
     held: usize,
     swept_at: usize,
 }
+
+/// A set ordered by its keys as held ([`Elem::held_cmp`]), compared as sequences; one tree is
+/// equal at once.
+struct Held<T>(TreapSet<T>);
+
+impl<T: Elem> Ord for Held<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.0.ptr_eq(&other.0) {
+            return Ordering::Equal;
+        }
+        let (mut a, mut b) = (self.0.iter(), other.0.iter());
+        loop {
+            match (a.next(), b.next()) {
+                (None, None) => return Ordering::Equal,
+                (None, Some(_)) => return Ordering::Less,
+                (Some(_), None) => return Ordering::Greater,
+                (Some(x), Some(y)) => match x.held_cmp(y) {
+                    Ordering::Equal => {}
+                    o => return o,
+                },
+            }
+        }
+    }
+}
+
+impl<T: Elem> PartialOrd for Held<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T: Elem> PartialEq for Held<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl<T: Elem> Eq for Held<T> {}
 
 impl<T> Default for HashConsTable<T> {
     fn default() -> Self {
@@ -1191,16 +1243,17 @@ impl<T: Elem> HashConsTable<T> {
             return;
         };
         let bucket = self.table.entry(root.keyed).or_default();
-        if let Some(other) = bucket.get(set) {
-            *set = other.clone();
+        let key = Held(set.clone());
+        if let Some(other) = bucket.get(&key) {
+            *set = other.0.clone();
             return;
         }
-        bucket.insert(set.clone());
+        bucket.insert(key);
         self.held += 1;
         if self.held > 2 * self.swept_at {
             // A set is dead when the table holds its root's only handle.
             self.table.retain(|_, b| {
-                b.retain(|s| s.root.as_ref().is_some_and(|r| Arc::strong_count(r) > 1));
+                b.retain(|s| s.0.root.as_ref().is_some_and(|r| Arc::strong_count(r) > 1));
                 !b.is_empty()
             });
             self.held = self
