@@ -1303,14 +1303,7 @@ fn bf_dijkstra<H, G: Edges + ?Sized>(
     eta: u64,
     tick: &mut impl FnMut() -> Result<(), H>,
 ) -> Step<Vec<Int>, H> {
-    let mut rounds = Rounds::with_parents(graph, label, seeds, eta);
-    loop {
-        match rounds.step() {
-            Did::Work => unit(tick)?,
-            Did::Move => {}
-            Did::End(found) => return found.ok_or(Stop::Negative),
-        }
-    }
+    Rounds::with_parents(graph, label, seeds, eta).run(tick)
 }
 
 /// Where a [`Rounds`] search is within a round.
@@ -1518,6 +1511,72 @@ impl<'a, G: Edges + ?Sized> Rounds<'a, G> {
         Did::Work
     }
 
+    /// The search run to its end, `tick` called once for each step that [`Rounds::step`]
+    /// counts as [`Did::Work`], in the same order, so with the same answer and work count:
+    /// `step`'s phases as plain loops, for a caller that does not interleave another search.
+    // Complexity tradeoff: driving `step` to the end costs a match on the phase and a store of
+    // it per unit of work. As `bf_dijkstra`'s loop on 2026-11-26 that took 3.1% / 4.4% more
+    // instructions on `duong_scales_alone` at n / 8n (1,225M / 8,346M against 1,188M /
+    // 7,991M), and 3.5% / 3.4% and 3.5% / 3.5% more on the race benches
+    // `the_joined_union_family_scales` and `bad_gor_scales`, over the 2% the merge of the two
+    // copies allowed; these loops are the copy negsssp had, on the shared state and `lower`.
+    fn run<H>(mut self, tick: &mut impl FnMut() -> Result<(), H>) -> Step<Vec<Int>, H> {
+        let out = self.out;
+        loop {
+            while let Some((dx, x)) = self.heap.pop() {
+                unit(tick)?;
+                if dx != self.label[x] || self.settled_in[x] == self.round {
+                    continue;
+                }
+                self.settled_in[x] = self.round;
+                self.settled.push(x);
+                let mut e = 0;
+                while let Some((y, w)) = out.edge(false, x, e) {
+                    unit(tick)?;
+                    e += 1;
+                    if !w.is_negative() {
+                        self.lower(x, y, w);
+                    }
+                }
+            }
+            for i in 0..self.settled.len() {
+                let x = self.settled[i];
+                let mut e = 0;
+                while let Some((y, w)) = out.edge(true, x, e) {
+                    unit(tick)?;
+                    e += 1;
+                    if w.is_negative() && self.lower(x, y, w) {
+                        self.fell.push(y);
+                    }
+                }
+            }
+            if self.fell.is_empty() {
+                return Ok(self.label);
+            }
+            if self.round >= self.eta {
+                return Err(Stop::Negative);
+            }
+            if !self.parent.is_empty() {
+                let before = self.walks;
+                for &s in self.settled.iter().chain(&self.fell) {
+                    self.walks += 1;
+                    let mut v = s;
+                    while v != NONE && self.walked[v] <= before {
+                        unit(tick)?;
+                        self.walked[v] = self.walks;
+                        v = self.parent[v];
+                    }
+                    if v != NONE && self.walked[v] == self.walks {
+                        return Err(Stop::Negative);
+                    }
+                }
+            }
+            self.round += 1;
+            self.settled.clear();
+            self.fell.clear();
+        }
+    }
+
     /// The end of a round's negative edges: the labels if none fell, a negative cycle at the
     /// round bound, else the parent walk or the next round.
     fn end_round(&mut self) -> Did {
@@ -1582,7 +1641,7 @@ mod completeness;
 mod tests {
     use std::convert::Infallible;
 
-    use super::{Aux, Edges, Int, Rows, Stop, bf_dijkstra};
+    use super::{Aux, Did, Edges, Int, Rounds, Rows, Stop, bf_dijkstra};
 
     /// A graph `u → (v, w)` built in [`Aux`], the negative edges apart.
     fn split(out: &[Vec<(usize, i64)>]) -> Aux {
@@ -1628,11 +1687,28 @@ mod tests {
             eta: u64,
         ) -> Option<Vec<Int>> {
             let label = vec![Int::ZERO; n];
-            match bf_dijkstra(graph, label, seeds, eta, &mut || Ok::<(), Infallible>(())) {
+            let mut units = 0u64;
+            let mut tick = || {
+                units += 1;
+                Ok::<(), Infallible>(())
+            };
+            let found = match bf_dijkstra(graph, label.clone(), seeds, eta, &mut tick) {
                 Ok(d) => Some(d),
                 Err(Stop::Negative) => None,
                 Err(Stop::Tick(never)) => match never {},
-            }
+            };
+            // `Rounds::run` is `Rounds::step` driven to the end: the same answer and work.
+            let mut rounds = Rounds::with_parents(graph, label, seeds, eta);
+            let mut steps = 0u64;
+            let stepped = loop {
+                match rounds.step() {
+                    Did::Work => steps += 1,
+                    Did::Move => {}
+                    Did::End(found) => break found,
+                }
+            };
+            assert_eq!((&stepped, steps), (&found, units));
+            found
         }
         let n = out.len();
         let found = run(&(aux.rows(), aux.negative_rows()), n, &seeds, eta);
