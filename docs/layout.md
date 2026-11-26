@@ -118,6 +118,36 @@ Code generation through MLIR and LLVM (L28) and the GPU, distributed and hardwar
 (L27) go into new modules of `zedc`, or into a new crate only where they bring a heavy native
 dependency that a build should be able to leave out.
 
+### Library DAG
+
+Generic algorithms and data structures live in library crates, which know nothing of Zed's terms,
+types or ZIR. The libraries form a DAG; each sits as low as its dependencies allow (author,
+2026-11-26). Crates marked *new* are being made by the DRY-2026-11-26 rows of
+`docs/plan_dag.md`.
+
+| Library | Depends on | Holds |
+|---|---|---|
+| zed-hash (new) | | splitmix64, FNV-1a, seeded test generators (xorshift, the two LCGs kept bit-exact) |
+| zed-numtheory | | word arithmetic: gcd, inverses (also mod 2^64), `add_mod`/`mul_mod`, CRT, primes, factoring, sieves, bit width (`BitLen`), mod 2^61-1 and 2^64-59 hashing |
+| zed-graph | | reach, SCC, Kahn, worklists (plain, priority, keyed), union-find, BFS paths, Knuth's least derivation, functional-graph cycles |
+| zed-alloc-count | | the counting allocator |
+| zed-collections | numtheory, hash | sorted lists (merge, merge with values, subset, disjoint, `sort_dedup`), intervals, gallop search, interners, min-add segment tree, persistent treap with a lazy tag, join-based AVL, Patricia trie, priority search tree |
+| zed-bignum (new) | numtheory, num-bigint | big-integer algorithms: product and remainder trees, fast division and gcd, roots, prime powers, coprime bases, CRT trees, directed-rounding `m * 2^e` bounds |
+| zed-testkit (new, dev only) | hash, alloc-count, meter-settings | `seed` and `scaling` (timers, n/8n ratios, inputs, load), now included by `#[path]` in 20 places |
+
+Above the libraries, two compiler crates are shared by the rest and hold the generic parts that
+need the compiler's integer `Int`: `zedc-int` (`Int`, `Int::inverse_mod`, `Int::crt_pair`, the
+rational `Q`) and `zedc-affine` (new; depends on zedc-int and zed-collections: affine forms
+`Affine<K, V>`, gcd-normalized rows, primitive-form keys, Fourier-Motzkin pairs and dark shadows,
+2D geometry, unimodular bases, and later LLL, simplex and Gauss-Jordan). Text helpers stay in
+`zed_kernel::text::prose` and `zedc_base` (`source`, `terminal`, `address`).
+
+Before writing an algorithm that is likely generic or reusable, search these crates and call what
+is there. If nothing fits, put the reusable part in the lowest library that can hold it, with its
+tests, and call it. If the library version is too narrow, make it more general there (a type
+parameter, a closure, a trait, an option), with tests for its old and new uses, rather than
+writing a variant beside it.
+
 ## Tests
 
 There are two kinds of test.
