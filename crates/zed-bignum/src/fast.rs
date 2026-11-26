@@ -557,7 +557,7 @@ const PRINT_LEAF: usize = 597;
 /// instructions, against 162.0, 372.4 and 1820.1 million at 496 and 172.5, 389.8 and 1877.8
 /// million splitting down to `10^597`; its bytes are 1.13 times the latter's and 0.91 times those
 /// at 496 (2026-11-12, load 42 to 51; COMPLEXITY.md K81). The digits do not depend on it.
-/// One in the unit tests ([`SMALL_LEAVES`]), below every power's words, so that their small
+/// One in the unit tests (`SMALL_LEAVES`), below every power's words, so that their small
 /// numbers reach the transforms.
 pub const PRINT_HANDOFF: usize = if SMALL_LEAVES { 1 } else { 248 };
 
@@ -579,7 +579,7 @@ pub const PRINT_HANDOFF: usize = if SMALL_LEAVES { 1 } else { 248 };
 /// where num-bigint measured 5.85: l01_24 `num_text::bench::
 /// the_fixed_cost_of_writing_an_end_of_one_and_of_eight_words_scales`.
 ///
-/// One in the unit tests ([`SMALL_LEAVES`]), so that every number reaches the split.
+/// One in the unit tests (`SMALL_LEAVES`), so that every number reaches the split.
 pub const PRINT_WHOLE: usize = if SMALL_LEAVES { 1 } else { 7845 };
 
 /// The most bits of a number that the split writes as one leaf without building the powers,
@@ -2446,7 +2446,7 @@ fn rounded_div_pow2(x: &BigUint, e: u64) -> BigUint {
     q
 }
 
-/// `b^e`, by squaring with [`mul`]: left to right for a base of at most [`POW_LEFT_WORDS`]
+/// `b^e`, by squaring with [`mul`]: left to right for a base of at most `POW_LEFT_WORDS`
 /// words, so each step is a square and a product by the base, and right to left for a wider
 /// one, so the squarings are of the base's powers and the products only at the exponent's
 /// ones.

@@ -531,7 +531,7 @@ fn seeded_words(seed: u64, tag: u64) -> impl FnMut() -> u64 {
     move || g.next_u64()
 }
 
-/// The variable that fixes the draw, read by [`fixed_seed`]. A test binary that links
+/// The variable that fixes the draw, read by `fixed_seed`. A test binary that links
 /// zed-meter-settings sets it to 0 as it starts when it is unset and the arguments name a
 /// benchmark (`zed_meter_settings::ZED_TREAP_SEED`, the same name).
 pub const SEED_VAR: &str = "ZED_TREAP_SEED";
