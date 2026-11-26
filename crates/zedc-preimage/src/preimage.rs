@@ -15250,9 +15250,9 @@ static PIECE_PRIORITIES: zed_collections::priority::Priorities =
 /// Distinct pieces tie with probability at most `11/p` a pair (`p = 2^64 - 59`, a little more
 /// than `11/2^64`): the key is two `i128`s, 32 bytes, so the stream is 4 words and the word of
 /// its length, at most `S = 10` symbols (two a word), and two distinct streams tie with
-/// probability at most `(S + 1)/p` (module [`zed_collections::priority`]); the priorities are otherwise
-/// 5-wise independent and uniform, and every node's depth is `O(log n)` in expectation for
-/// every set of pieces (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
+/// probability at most `(S + 1)/p` (module [`zed_collections::priority`]); the priorities are
+/// otherwise 5-wise independent and uniform, and every node's depth is `O(log n)` in expectation
+/// for every set of pieces (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
 /// doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full comment and the proof are in
 /// module [`zed_collections::priority`]), where the fixed
 /// hash this replaces had no bound for chosen pieces (COMPLEXITY.md K123). The shape is never

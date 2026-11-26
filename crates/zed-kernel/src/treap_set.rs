@@ -37,8 +37,8 @@
 //! shares every subtree it leaves alone. The one exception is [`TreapSet::insert`], which
 //! changes in place the nodes no other set holds (`Arc::make_mut`), so no other set sees it.
 //! A node's priority is a function of its key drawn at random once per run
-//! ([`Elem::priority`], module [`zed_collections::priority`]), ties broken by the order of the keys,
-//! so in a run the keys of a set fix its shape whatever order they came in.
+//! ([`Elem::priority`], module [`zed_collections::priority`]), ties broken by the order of the
+//! keys, so in a run the keys of a set fix its shape whatever order they came in.
 //! So two sets made from one set by cuts and set operations share the subtrees where they agree,
 //! and an operation on them stops at the first pair of shared subtrees (`Arc::ptr_eq`): the
 //! intersection of a set with a range cut of it is the cut's path, `O(log n)`, not `O(n)`. An
@@ -57,10 +57,10 @@
 //! `l01_39_reduced_product::arm_test_through_call::bench::tests_on_a_callee_of_k_literal_arms_scale`.
 //!
 //! The depth. Priorities are drawn by [`Priorities::eight_wise`]: the module comment of
-//! [`zed_collections::priority`] proves the expected depth `O(log n)` for keys at distinct points of the
-//! draw, and the work of a join-based operation `O(m log(1 + n/m))` in expectation under 8-wise
-//! independence (plan row PROOF-join-work-limited-independence). Keys at one point tie whatever
-//! the draw; which keys share a point is said at each [`Elem`] implementation.
+//! [`zed_collections::priority`] proves the expected depth `O(log n)` for keys at distinct points
+//! of the draw, and the work of a join-based operation `O(m log(1 + n/m))` in expectation under
+//! 8-wise independence (plan row PROOF-join-work-limited-independence). Keys at one point tie
+//! whatever the draw; which keys share a point is said at each [`Elem`] implementation.
 //!
 //! Every walk keeps a stack of its own, and a set is dropped in a loop, so the stack needed does
 //! not depend on a set's height.
@@ -266,9 +266,9 @@ fn own_keyed<T>(n: &Node<T>) -> u64 {
 /// function's values are equal with probability `2^-64`. The default input is the weight, and
 /// a kind whose unequal keys can share a weight gives an input that tells them apart
 /// ([`Elem::seeded_weight`]: `Value` gives a big integer's or `rat`'s fingerprint,
-/// `zed_collections::priority::fingerprint_primes`). So a bucket holds the sets equal to the one put in
-/// and, in expectation, `O(1)` others. Where the inputs still tie (a fingerprint collision, or
-/// keys of a kind whose weights tie and which gives no other input, as types of one digest,
+/// `zed_collections::priority::fingerprint_primes`). So a bucket holds the sets equal to the one
+/// put in and, in expectation, `O(1)` others. Where the inputs still tie (a fingerprint collision,
+/// or keys of a kind whose weights tie and which gives no other input, as types of one digest,
 /// plan row PERF-set-tied-digest-depth), the bucket is ordered, so a share costs `O(log b)`
 /// comparisons of sets for `b` sets in the bucket, not `b` ([`HashConsTable`]). Not proved here
 /// that SipHash-1-3 (std's algorithm, "subject to change" by its documentation) is such a
@@ -673,11 +673,11 @@ impl<T: Elem> TreapSet<T> {
     // doi:10.1007/BF01940876, Crossref checked 2026-11-21; the abstract: "in the expected case
     // a search or an update takes logarithmic time, with the update requiring fewer than two
     // rotations"). Not proved here for the 8-wise independent draw ([`Priorities::eight_wise`]);
-    // the walk is at most the depth, `O(log n)` expected under it (module [`zed_collections::priority`]).
-    // Measured after, over seeds 0 to 15: 3.74M to 3.87M and 32.0M to 34.8M, at most 9.25
-    // times (8.4 times the bytes); with the path changed in place and the subtree below still
-    // made again, 4.86M and 42.7M, up to 10.2 times the bytes. Given up: none of the sharing;
-    // a set's nodes are still never changed while another set holds them.
+    // the walk is at most the depth, `O(log n)` expected under it (module
+    // [`zed_collections::priority`]). Measured after, over seeds 0 to 15: 3.74M to 3.87M and 32.0M
+    // to 34.8M, at most 9.25 times (8.4 times the bytes); with the path changed in place and the
+    // subtree below still made again, 4.86M and 42.7M, up to 10.2 times the bytes. Given up: none
+    // of the sharing; a set's nodes are still never changed while another set holds them.
     // Tests: `every_operation_agrees_with_a_btree_set`,
     // `an_insertion_leaves_every_set_sharing_its_nodes_as_it_was`.
     pub fn insert(&mut self, key: T) -> bool {

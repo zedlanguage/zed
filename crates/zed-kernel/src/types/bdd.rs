@@ -2790,13 +2790,13 @@ pub(super) enum Piece<'a, N> {
 ///
 /// Complexity tradeoff: two sequences whose digests tie were compared by their roots, then
 /// their subtrees, which is `O(1)` where the roots differ but reads the shapes, which follow the
-/// run's draw of priorities (module [`zed_collections::priority`]), so the order of two distinct sequences
-/// of one digest would follow the draw. Read in order, they are compared by their contents only,
-/// in `O(k + d)` for a first difference at the `k`-th key and treaps of depth `d` (the nodes
-/// opened are those on the paths to the first `k + 1` keys), `O(n)` at worst, as the walk by
-/// roots was. Two pieces that are one node are passed over whole, as are two found equal before.
-/// Given up: one allocation of the box and two of its stacks for each pair of sequences compared
-/// this way; two equal sets have one shape and are compared without it (`SetsInOrder`).
+/// run's draw of priorities (module [`zed_collections::priority`]), so the order of two distinct
+/// sequences of one digest would follow the draw. Read in order, they are compared by their
+/// contents only, in `O(k + d)` for a first difference at the `k`-th key and treaps of depth `d`
+/// (the nodes opened are those on the paths to the first `k + 1` keys), `O(n)` at worst, as the
+/// walk by roots was. Two pieces that are one node are passed over whole, as are two found equal
+/// before. Given up: one allocation of the box and two of its stacks for each pair of sequences
+/// compared this way; two equal sets have one shape and are compared without it (`SetsInOrder`).
 pub(super) struct Rest<'a, N> {
     a: Vec<Piece<'a, N>>,
     b: Vec<Piece<'a, N>>,
@@ -2977,10 +2977,11 @@ mod xor {
     //! `T0 + n(n - 1)/p + 2c H_n` (Seidel and Aragon, "Randomized search trees", Algorithmica
     //! 16(4-5):464-497, 1996, doi:10.1007/BF01940876, which holds for 5-wise independent
     //! priorities and so for the 8-wise ones of module `set`; cited in full and quoted in module
-    //! `zed_collections::priority`), with no condition on the hash beyond `T0`, the literals sharing a
-    //! digest, which a program can still make large (plan row PERF-set-tied-digest-depth). Given
-    //! up: reading the whole form of an exclusive or of `n` atoms makes its `n - 1` nested ones,
-    //! a removal from a set each, `O(n log n)` expected, where the tree's form was `O(n)`.
+    //! `zed_collections::priority`), with no condition on the hash beyond `T0`, the literals
+    //! sharing a digest, which a program can still make large (plan row
+    //! PERF-set-tied-digest-depth). Given up: reading the whole form of an exclusive or of `n`
+    //! atoms makes its `n - 1` nested ones, a removal from a set each, `O(n log n)` expected, where
+    //! the tree's form was `O(n)`.
 
     use std::collections::HashMap;
     use std::sync::{Arc, Weak};
@@ -3433,8 +3434,8 @@ mod list {
     /// (module `set`), one polynomial for each value of `taken`.
     ///
     /// The bound. Each block's root is a function of the block and the sets' draw, which is
-    /// independent of this one (other sites, module [`zed_collections::priority`]), so given the sets'
-    /// draw the cells' priorities are the polynomials of this draw at points fixed before it.
+    /// independent of this one (other sites, module [`zed_collections::priority`]), so given the
+    /// sets' draw the cells' priorities are the polynomials of this draw at points fixed before it.
     /// No atom is in two blocks of a list (module comment), so the roots of two cells of one
     /// sequence are distinct literals, and distinct points unless their atoms' digests are
     /// equal: cells at distinct points take 5-wise independent uniform priorities, which bounds
@@ -3664,8 +3665,8 @@ mod list {
 
     /// The label of the one block of a list of one literal ([`Cell::indexed`]). A block put
     /// first takes the least label less one, so the labels stay below `P` and at distinct points
-    /// of the draw (module [`zed_collections::priority`]) for the first `2^62` blocks put first along one
-    /// list's edits.
+    /// of the draw (module [`zed_collections::priority`]) for the first `2^62` blocks put first
+    /// along one list's edits.
     const FIRST: u64 = 1 << 62;
 
     impl Keyed for Label {

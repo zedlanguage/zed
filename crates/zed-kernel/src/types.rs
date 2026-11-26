@@ -179,8 +179,9 @@ fn scalar(v: &Value) -> u64 {
 /// on `2^64 + k (2^61 - 1)` for every `k`; the same fingerprint gives its seeded weight
 /// ([`Elem::seeded_weight`]), so a set of such values is a treap of expected depth O(log n)
 /// whatever its program chose, under the conjecture stated at
-/// [`fingerprint_primes`](zed_collections::priority::fingerprint_primes). Values that still tie whatever
-/// the draw (tuples and families of equal digests) remain under PERF-set-tied-digest-depth.
+/// [`fingerprint_primes`](zed_collections::priority::fingerprint_primes). Values that still tie
+/// whatever the draw (tuples and families of equal digests) remain under
+/// PERF-set-tied-digest-depth.
 impl Elem for Value {
     fn priority(&self) -> u64 {
         static PRIORITIES: Priorities = Priorities::eight_wise(17).fixed_in_unit_tests(cfg!(test));

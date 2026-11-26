@@ -373,9 +373,10 @@ static PRIORITIES: Priorities = Priorities::new(3).fixed_in_unit_tests(cfg!(test
 /// the treap's depth is `O(log b)` in expectation for every order of lookups and drops (Seidel
 /// and Aragon, "Randomized search trees", Algorithmica 16(4-5):464-497, 1996,
 /// doi:10.1007/BF01940876, Theorem 3.3: 5-wise independence suffices for logarithmic expected
-/// access; checked against the text 2026-11-20; the proof is in module [`zed_collections::priority`]).
-/// Counts that wrap past `2^32` meet again and tie, each adding at most one to a depth. The
-/// splitmix64 of the count that this replaces had no proved bound (COMPLEXITY.md K123).
+/// access; checked against the text 2026-11-20; the proof is in module
+/// [`zed_collections::priority`]). Counts that wrap past `2^32` meet again and tie, each adding at
+/// most one to a depth. The splitmix64 of the count that this replaces had no proved bound
+/// (COMPLEXITY.md K123).
 fn priority(seed: u32) -> u64 {
     PRIORITIES.of(u64::from(seed))
 }

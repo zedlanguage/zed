@@ -1,6 +1,6 @@
 //! The output of zedc is the same under two draws of the treap priorities
-//! (PERF-treap-seeded-priorities, module `zed_collections::priority`): each corpus program run on its
-//! input, each step unit's tests, and programs rejected with messages that print unions, run by
+//! (PERF-treap-seeded-priorities, module `zed_collections::priority`): each corpus program run on
+//! its input, each step unit's tests, and programs rejected with messages that print unions, run by
 //! the zedc executable under `ZED_TREAP_SEED=1` and `ZED_TREAP_SEED=2`, give the same exit
 //! status and the same bytes on standard output and standard error. A treap's shape follows the
 //! draw, so this fails if any shape reaches what zedc prints. `crates/zed-native/Cargo.toml`

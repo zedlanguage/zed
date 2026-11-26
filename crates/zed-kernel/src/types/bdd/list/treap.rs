@@ -17,12 +17,12 @@
 //! In this module: `join` is JOIN2, merging the facing spines of the two trees, higher priority
 //! first, which is JOIN's recursion with no middle key; `split` is one walk down the search
 //! path that hands each node to the left or right result, the standard treap split (Seidel and
-//! Aragon 1996, doi:10.1007/BF01940876; the full comment is in module [`zed_collections::priority`], at
-//! the head of `priority.rs`) rather than the paper's split by JOIN, with the same
-//! result, since a treap's shape is fixed by its keys and priorities. Departures: the paper's
-//! priorities are independent and uniform; here they are the 8-wise or 5-wise independent draw
-//! of module [`zed_collections::priority`], under which the bounds used are proved there. The size kept
-//! at each node, for the place of a key and the key at a place, is
+//! Aragon 1996, doi:10.1007/BF01940876; the full comment is in module
+//! [`zed_collections::priority`], at the head of `priority.rs`) rather than the paper's split by
+//! JOIN, with the same result, since a treap's shape is fixed by its keys and priorities.
+//! Departures: the paper's priorities are independent and uniform; here they are the 8-wise or
+//! 5-wise independent draw of module [`zed_collections::priority`], under which the bounds used are
+//! proved there. The size kept at each node, for the place of a key and the key at a place, is
 //! the augmentation of Y. Sun, D. Ferizovic and G. E. Blelloch, "PAM: parallel augmented maps",
 //! PPoPP 2018, 290-304, doi:10.1145/3178487.3178509, with the size as the augmented value.
 //! Checked 2026-11-19 against the full version's text (sections 2-5) and Crossref for both;
@@ -37,8 +37,8 @@
 //!
 //! A map is shared, never changed: an operation makes new nodes along the paths it changes and
 //! shares every subtree it leaves alone. A node's priority is a function of its key drawn at
-//! random once per run ([`Keyed::priority`], module [`zed_collections::priority`]), ties broken by the
-//! order of the keys, so in a run the keys of a map fix its shape whatever order they came in.
+//! random once per run ([`Keyed::priority`], module [`zed_collections::priority`]), ties broken by
+//! the order of the keys, so in a run the keys of a map fix its shape whatever order they came in.
 //! Seidel and Aragon's bound on the expected depth, `O(log n)` for every set of keys, holds for
 //! keys at distinct points of the draw (module [`zed_collections::priority`]).
 //!
@@ -223,8 +223,8 @@ fn split<K: Keyed + Borrow<Q>, Q: Ord + ?Sized, V: Clone>(
             // of `insert` follows its ancestors down to it and stops there, and gives it the new
             // value without a split. The subtree split never holds the key. Facts used: every
             // node's `prio` is its key's `priority()` (`insert` sets it, `again` keeps it), a
-            // function of the key in a run (module [`zed_collections::priority`]); the heap order by
-            // `above` holds in every tree (`insert` puts the new node below the nodes above
+            // function of the key in a run (module [`zed_collections::priority`]); the heap order
+            // by `above` holds in every tree (`insert` puts the new node below the nodes above
             // it, `split` and `join` keep it); and the search path to a key in a search tree is
             // its node's ancestors, then the node. Test: `a_treap_agrees_with_an_ordered_map`
             // (`list::treap::tests`) inserts keys drawn from 300 at about half of 4000 steps, so

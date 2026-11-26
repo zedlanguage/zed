@@ -4,8 +4,8 @@
 //! join for parallel ordered sets", SPAA 2016, doi:10.1145/2935764.2935768, Theorem 4 of the
 //! full version, for independent
 //! priorities, cited in full and quoted in module `bdd::list::treap`; for the 8-wise
-//! independent priorities here, module [`zed_collections::priority`]), where adding the smaller set's
-//! settings to the larger one at a time takes `O(k log n)`.
+//! independent priorities here, module [`zed_collections::priority`]), where adding the smaller
+//! set's settings to the larger one at a time takes `O(k log n)`.
 //!
 //! Unlike the sets of module `set`, these nodes are kept in no table: [`Part::forced`] never asks
 //! whether two sets are one node, so a table lookup per node made would be cost with no use
@@ -63,8 +63,8 @@ impl<A: Atom> Drop for Node<A> {
 }
 
 /// The priorities of the settings of each value, drawn once per run (module
-/// [`zed_collections::priority`]): two uses, so that the two settings of one atom are two independent
-/// points.
+/// [`zed_collections::priority`]): two uses, so that the two settings of one atom are two
+/// independent points.
 static PRIORITIES: [Priorities; 2] = [
     Priorities::eight_wise(1).fixed_in_unit_tests(cfg!(test)),
     Priorities::eight_wise(2).fixed_in_unit_tests(cfg!(test)),
@@ -75,8 +75,8 @@ static PRIORITIES: [Priorities; 2] = [
 /// node's expected depth by `O(log n)` for every set of settings (Seidel and Aragon 1996,
 /// doi:10.1007/BF01940876, Theorem 3.3 and section 6, cited in full and quoted in module
 /// [`zed_collections::priority`]) and the work of [`combine`] by the finger bound (module
-/// [`zed_collections::priority`] has both proofs), where the fixed hash this replaces had no bound for
-/// chosen settings (COMPLEXITY.md K123). Atoms of one digest share a point: they tie whatever
+/// [`zed_collections::priority`] has both proofs), where the fixed hash this replaces had no bound
+/// for chosen settings (COMPLEXITY.md K123). Atoms of one digest share a point: they tie whatever
 /// the draw, and each such atom adds at most one to a depth.
 fn priority<A: Atom>(key: &Key<A>) -> u64 {
     PRIORITIES[usize::from(key.1)].of(key.0.digest())
@@ -241,8 +241,8 @@ enum Op {
 /// union and intersection. For `k` settings into `n`, `O(k log(n/k + 1))` expected time
 /// (Blelloch, Ferizovic and Sun, Theorem 4 of the full version, splits and joins included, for
 /// independent priorities, cited in full in module `bdd::list::treap`; for the 8-wise
-/// independent ones of [`priority`], the finger bound of module [`zed_collections::priority`], plus the
-/// settings that share a point).
+/// independent ones of [`priority`], the finger bound of module [`zed_collections::priority`], plus
+/// the settings that share a point).
 fn combine<A: Atom>(x: &Tree<A>, y: &Tree<A>, op: Op) -> Tree<A> {
     /// A pair of subtrees to combine, or a node to make over the two combined last: with its
     /// setting kept, or (for an intersection whose other set lacked it) the two joined.

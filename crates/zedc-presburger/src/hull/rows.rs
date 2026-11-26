@@ -34,8 +34,8 @@ static PRIORITIES: Priorities = Priorities::new(9);
 /// `O(log n)` in expectation for every set of pivots (Seidel and Aragon, "Randomized search
 /// trees", Algorithmica 16, 1996, doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full
 /// comment and the proof are in module
-/// [`zed_collections::priority`]), where the fixed hash this replaces had no bound for chosen pivots
-/// (COMPLEXITY.md K123). The shape is never shown: [`Rows`] is read and printed in order.
+/// [`zed_collections::priority`]), where the fixed hash this replaces had no bound for chosen
+/// pivots (COMPLEXITY.md K123). The shape is never shown: [`Rows`] is read and printed in order.
 fn prio_of(key: &Atom) -> u64 {
     PRIORITIES.hash(key)
 }

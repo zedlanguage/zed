@@ -41,8 +41,8 @@ static PRIORITIES: Priorities = Priorities::new(8);
 /// independent and uniform, and every node's depth is `O(log n)` in expectation for every set
 /// of holes (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
 /// doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full comment and the proof are in
-/// module [`zed_collections::priority`]), where the fixed hash this replaces had no bound for chosen
-/// intervals (COMPLEXITY.md K123). The shape is never shown: the tree is a private field of
+/// module [`zed_collections::priority`]), where the fixed hash this replaces had no bound for
+/// chosen intervals (COMPLEXITY.md K123). The shape is never shown: the tree is a private field of
 /// [`Holes`], and each of its reads gives one answer for every tree over the same intervals:
 /// `len` is a size, `holds` a search by key, `intervals` an in-order walk (which `merged` and
 /// `clauses` read), and `cut` splits and joins by key, so the intervals it leaves depend only
