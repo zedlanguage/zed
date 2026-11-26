@@ -71,8 +71,8 @@ fn the_forest_of_atoms_of_wide_and_small_integers_scales() {
 /// The operation count that bounds the tied ratio at 1024 by 10.18 is at `decide_counted`
 /// (escape.rs, PROOF-escape-tied-log-only); `the_big_heads_family_reads_its_cells_in_its_size`
 /// checks the cell count it starts from.
-/// Measured at fe0e4a810 (b22-free2 meas26, a Colab VM, 2026-11-26, this test run with n = 1024,
-/// 512 and 256), debug build: tied, 510.1M and 5122.2M instructions at m = 1024 and 8192 (10.04)
+/// Measured at 11ccd6bec's zed-kernel (b22-free2 meas26, a Colab VM, 2026-11-26, this test run
+/// with n = 1024, 512 and 256), debug build: tied, 510.1M and 5122.2M instructions at m = 1024 and 8192 (10.04)
 /// and 19.11M and 152.20M bytes (7.96); untied, 182.5M and 1553.0M (8.51) and 19.87M and 158.80M
 /// bytes (7.99); a release build, 10.07 tied and 8.55 untied. Tied, per head: 498.1K, 541.7K
 /// and 593.3K instructions at m = 1024, 2048 and 4096; the cost `m (a + b log2 m)` through 1024
