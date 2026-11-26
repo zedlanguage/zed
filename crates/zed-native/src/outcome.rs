@@ -64,8 +64,11 @@ pub(crate) fn call(
     let mut s = hooks::remove();
     let r = hooks::finish(&s.t, &mut s.run, w);
     *ev = s.run.ev;
+    // The hooks record the node's index in the tables; the sites are by its number in the
+    // graph, which counts the nodes of the bodies the kernel runs too.
+    let at = s.run.err_at.map(|i| s.t.nodes[i].number);
     Ok(Outcome {
-        value: r.map_err(|e| (e, s.run.err_at))?,
+        value: r.map_err(|e| (e, at))?,
         stats: s.run.heap.stats,
         kernel_calls: s.run.kernel_calls,
         placed_calls: s.run.placed_calls,

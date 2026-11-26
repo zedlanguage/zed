@@ -86,8 +86,9 @@ pub(crate) struct Run {
     outs: Vec<Word>,
     pending: Word,
     pub err: Option<String>,
-    /// The number of the node whose hook recorded [`Run::err`], when a hook with a node
-    /// recorded it: the executable prints the site of that node (plan row RT-sites).
+    /// The index in [`Tables::nodes`] of the node whose hook recorded [`Run::err`], when a hook
+    /// with a node recorded it: the executable prints the site of that node (plan row
+    /// RT-sites), found by its number (`outcome::call`).
     pub err_at: Option<usize>,
     /// The address of each lambda's entry, then of its body ([`Tables::body`]), then of its
     /// placed entry ([`Tables::placed`]), then of each function that calls a body on

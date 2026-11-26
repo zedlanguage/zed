@@ -362,10 +362,15 @@ impl<M: Module> Gen<'_, M> {
         Ok(())
     }
 
-    /// The source location of node `id`'s code: its number, or the default, which marks code
-    /// of no node, for a number past Cranelift's 31 bits (`MaybeRelSourceLoc`).
-    fn at(id: usize) -> SourceLoc {
-        u32::try_from(id)
+    /// The source location of the code of the node numbered `number` in the legalized graph
+    /// ([`NodeInfo::number`](crate::tables::NodeInfo)): its number, as the sites, the line
+    /// table and the fault map read it, or the default, which marks code of no node, for a
+    /// number past Cranelift's 31 bits (`MaybeRelSourceLoc`). Not the node's index in
+    /// [`Tables::nodes`], which leaves out the nodes of the `fam`, `fix` and `gen` bodies the
+    /// kernel runs, so the two differ after such a body (test
+    /// `l01_36a_executables::sites::a_node_after_a_family_body_takes_its_own_site`).
+    fn at(number: usize) -> SourceLoc {
+        u32::try_from(number)
             .ok()
             .filter(|&k| k < SourceLoc::default().bits())
             .map_or_else(SourceLoc::default, SourceLoc::new)
@@ -684,7 +689,7 @@ impl<M: Module> Gen<'_, M> {
                 }
                 // The node's code, up to the next node's, is marked with its number, which a
                 // fault in it is reported at (plan row RT-internal-fault).
-                fx.b.set_srcloc(Self::at(id));
+                fx.b.set_srcloc(Self::at(t.nodes[id].number));
                 match &node.op {
                     Op::If => {
                         // An `if` reads its condition only to choose an arm, so an owned
