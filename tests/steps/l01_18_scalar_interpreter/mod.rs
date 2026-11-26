@@ -18,6 +18,7 @@ mod int_base;
 mod literals;
 mod prim_names;
 mod rat_text;
+mod round_places;
 mod rounding;
 mod scaling;
 mod sqrt_fma;
