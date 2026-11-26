@@ -202,6 +202,15 @@ mod a_lazy_scope_settles_each_name_to_the_eager_product {
     }
 
     #[test]
+    fn seed_4014432025532948819() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-scope-random-seed, merge_check of
+        // 2026-11-26): after its eleventh step, `n - a4 >= 2`, the two scopes disagreed on
+        // whether the scope is empty. `run` panics on the first step the two differ at. Its
+        // six steps that matter: `a_test_of_a_name_reads_its_term_after_a_reduction_narrowed_it`.
+        run(&start(), [4014432025532948819], test);
+    }
+
+    #[test]
     fn seed_19_leaves_a_name_unsettled() {
         let (stale, _, _, _) = run(&start(), [19], test);
         assert!(stale > 0, "the lazy scope settled every name at once");
@@ -1508,6 +1517,34 @@ fn joins_beside_a_shared_tie_agree_with_and_without_inner_reductions() {
             }
         }
     }
+}
+
+/// The six steps left of seed 4014432025532948819 of `random_seeds` when every other is
+/// removed (FAIL-lazy-scope-random-seed). `n` is bound to `m`, so `n == m`, and `m - a3 >= 3`
+/// with `a3 - n >= 0` leaves no state. `a3 - n >= 0` reads `n <= 17` back through `n`'s term
+/// into `m <= 17`, and the reduction then gives `a3 == 14` and `n <= 14`. Only a later test of
+/// `n` reads `n <= 14` back into `m`, which empties `m`: the last step, which repeats the
+/// third. Before, that test changed nothing of `n` in the eager scope and so did not read its
+/// term, while the lazy scope, which settled `n` there, did: the lazy scope was empty and the
+/// eager one was not. Now each test reads its own names' terms, and both are empty.
+#[test]
+fn a_test_of_a_name_reads_its_term_after_a_reduction_narrowed_it() {
+    let p = Premises::new();
+    let start = boxed(&["n", "m", "a0", "a1", "a2", "a3", "a4"], 20);
+    let (mut eager, mut lazy) = (start.clone(), start.lazy());
+    let assume = |s: &Scope, t: &Term, o: bool| s.assume(t, o, &p);
+    for s in [&mut eager, &mut lazy] {
+        *s = assume(s, &diff_ge("m", "a3", 3), true);
+        let (n, m): (Arc<str>, Arc<str>) = ("n".into(), "m".into());
+        let pm = s.settled(&m);
+        s.bind(&n, pm, &Shared::new(Term::Var(m)));
+        *s = assume(s, &diff_ge("a4", "n", -1), false);
+        *s = assume(s, &prim(Prim::Ge, var("a3"), int(14)), true);
+        *s = assume(s, &diff_ge("a3", "n", 0), true);
+        *s = assume(s, &diff_ge("n", "a4", 2), true);
+    }
+    assert!(eager.bottom, "eager: {:?}", eager.get(&Arc::from("m")));
+    assert!(lazy.bottom, "lazy");
 }
 
 mod bench;
