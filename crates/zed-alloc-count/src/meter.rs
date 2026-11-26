@@ -87,7 +87,24 @@ const HEADER: usize = 64;
 /// (PROOF-sweep-front-end): this allocator serves only metered test and bench processes, and
 /// past the reservation a request is refused as the system refuses one, so a process that
 /// meters too many runs stops on an allocation failure instead of giving a wrong count.
+/// The size first asked for: where the system refuses it, [`ready`] halves it down to
+/// [`LEAST_RESERVED`] ([`reserved`]).
 const RESERVED: usize = 1 << 46;
+
+/// The least reservation [`ready`] asks for, 4 GiB: valgrind refuses 64 TiB (on a Colab VM,
+/// valgrind 3.x: "reserving 70368748371968 bytes of address space for the meter's allocator:
+/// Invalid argument", job b29 j4), and so may a process under an address-space limit
+/// (`ulimit -v`). A smaller reservation only lowers the bound on the spans all metered runs of
+/// the process take; past it a request is refused, as above.
+const LEAST_RESERVED: usize = 1 << 32;
+
+/// The size of the reservation [`ready`] made, or 0 before it.
+static RESERVED_LEN: AtomicUsize = AtomicUsize::new(0);
+
+/// The size of the reservation: [`RESERVED`] where the system gave it. O(1).
+fn reserved() -> usize {
+    RESERVED_LEN.load(Relaxed)
+}
 
 /// The size classes of requests aligned to 16 bytes or less: 4 up to 64 bytes, then 4 for each
 /// power of two from `2^6` up to `2^62` (`isize::MAX` bounds a size).
@@ -194,25 +211,35 @@ fn with_heap<R>(f: impl FnOnce() -> R) -> R {
 pub(crate) fn ready() {
     static RESERVE: Once = Once::new();
     RESERVE.call_once(|| {
-        let len = RESERVED + SPAN;
-        #[expect(unsafe_code, reason = "reserving address space")]
-        // SAFETY: a new private mapping with no access at an address the kernel picks touches no
-        // memory this process uses.
-        let at = unsafe {
-            libc::mmap(
-                null_mut(),
-                len,
-                libc::PROT_NONE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-                -1,
-                0,
-            )
+        // Halved until the system gives it, at most 15 tries from 2^46 to 2^32.
+        let mut size = RESERVED;
+        let at = loop {
+            let len = size + SPAN;
+            #[expect(unsafe_code, reason = "reserving address space")]
+            // SAFETY: a new private mapping with no access at an address the kernel picks touches
+            // no memory this process uses.
+            let at = unsafe {
+                libc::mmap(
+                    null_mut(),
+                    len,
+                    libc::PROT_NONE,
+                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+                    -1,
+                    0,
+                )
+            };
+            if at != libc::MAP_FAILED {
+                break at;
+            }
+            assert!(
+                size > LEAST_RESERVED,
+                "reserving {len} bytes of address space for the meter's allocator: {}",
+                std::io::Error::last_os_error()
+            );
+            size /= 2;
         };
-        assert!(
-            at != libc::MAP_FAILED,
-            "reserving {len} bytes of address space for the meter's allocator: {}",
-            std::io::Error::last_os_error()
-        );
+        // Before `BASE`, whose release store makes it seen by every thread that sees `BASE`.
+        RESERVED_LEN.store(size, Relaxed);
         BASE.store((at as usize).next_multiple_of(SPAN), Release);
     });
     // After the reservation, and apart from it: the probe runs on a heap, whose spans need it.
@@ -239,7 +266,7 @@ pub(crate) fn ready() {
 /// Whether `block` is a block of this allocator: whether it lies in the reservation.
 pub fn ours(block: *mut u8) -> bool {
     let base = BASE.load(Acquire);
-    base != 0 && (block as usize).wrapping_sub(base) < RESERVED
+    base != 0 && (block as usize).wrapping_sub(base) < reserved()
 }
 
 /// The class of a request of `size` bytes aligned to `align` (a power of two), with the size of
@@ -323,16 +350,16 @@ impl Heap {
         let Some(len) = offset
             .checked_add(size)
             .and_then(|b| b.checked_next_multiple_of(SPAN))
-            .filter(|&len| len <= RESERVED)
+            .filter(|&len| len <= reserved())
         else {
             return (null_mut(), false);
         };
         let spans = (len / SPAN) as u64;
-        if NEXT.load(Relaxed) > (RESERVED / SPAN) as u64 {
+        if NEXT.load(Relaxed) > (reserved() / SPAN) as u64 {
             return (null_mut(), false);
         }
         let first = NEXT.fetch_add(spans, Relaxed);
-        if first + spans > (RESERVED / SPAN) as u64 {
+        if first + spans > (reserved() / SPAN) as u64 {
             return (null_mut(), false);
         }
         let at = BASE.load(Acquire) + first as usize * SPAN;

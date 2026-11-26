@@ -648,6 +648,51 @@ fn threads_started_in_a_metered_run_have_heaps_of_their_own_and_threads_outside_
     assert!(!ours(outside.as_mut_ptr()));
 }
 
+/// The variable that makes [`reserve_part_metered`] run, in the process
+/// [`a_metered_run_works_where_the_system_refuses_the_full_reservation`] starts.
+#[cfg(target_os = "linux")]
+const RESERVE_ROLE: &str = "ZED_ALLOC_COUNT_RESERVE_ROLE";
+
+/// The meter's heap works where the system refuses its reservation of 64 TiB, as valgrind does
+/// (job b29 j4: "reserving 70368748371968 bytes of address space for the meter's allocator:
+/// Invalid argument"), by a smaller one. The test starts this binary under an address-space
+/// limit of 32 GiB (`ulimit -v`, which sets RLIMIT_AS, setrlimit(2): "mmap(2) ... will fail with
+/// the error ENOMEM upon exceeding this limit"), where [`reserve_part_metered`] counts the fixed
+/// workload in a metered run. Before the fallback, the child stopped on that panic.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_metered_run_works_where_the_system_refuses_the_full_reservation() {
+    let exe = std::env::current_exe().expect("this test binary");
+    let out = std::process::Command::new("sh")
+        .args(["-c", "ulimit -v 33554432 && exec \"$0\" \"$@\""])
+        .arg(exe)
+        .args(["--exact", "--test-threads=1", "--nocapture"])
+        .arg("reserve_part_metered")
+        .env(RESERVE_ROLE, "1")
+        .output()
+        .expect("sh starts");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{text}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("1 passed"), "{text}");
+}
+
+/// The part of [`a_metered_run_works_where_the_system_refuses_the_full_reservation`] that runs
+/// under the limit; does nothing in a run of its own.
+#[cfg(target_os = "linux")]
+#[test]
+fn reserve_part_metered() {
+    if std::env::var_os(RESERVE_ROLE).is_none() {
+        return;
+    }
+    let (bytes, mut v) = metered(|| (bytes_of(workload), vec![0u8; 100]));
+    assert_eq!(bytes, WORKLOAD_BYTES);
+    assert!(ours(v.as_mut_ptr()));
+}
+
 /// The variable that gives a process of this test binary its part in
 /// [`a_test_gives_back_what_it_freed_when_it_ends`].
 #[cfg(all(target_os = "linux", target_env = "gnu"))]

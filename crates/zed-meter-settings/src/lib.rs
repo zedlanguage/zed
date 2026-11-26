@@ -39,8 +39,10 @@
 //!
 //! Where the hardware has no counter of instructions and [`ZED_METER_DRRUN`] and
 //! [`ZED_METER_ICOUNT`] name DynamoRIO and its client `zed_icount`, a test that makes a meter
-//! starts the binary again under them, so that its instructions are counted in software
-//! ([`start_under_dynamorio`] says when).
+//! starts DynamoRIO inside the process at its first measured run, so that its instructions are
+//! counted in software ([`attach_dynamorio`] says how and when). [`start_under_dynamorio`], which
+//! starts the binary again under `drrun`, is left for the crossover benchmarks, which measure the
+//! whole run.
 //!
 //! A process whose arguments name a benchmark measures the fixed draw 0 of the treap priorities
 //! and fingerprint primes when it is given none ([`ZED_TREAP_SEED`]).
@@ -104,17 +106,68 @@ pub const ZED_METER_UNDER_DRRUN: &str = "ZED_METER_UNDER_DRRUN";
 /// instructions does not open or does not move. It returns only when it does not start the
 /// process again, or `execve` fails. Linux with glibc only; elsewhere it does nothing.
 ///
-/// `zed_tests::scaling::Meter::new` calls it where it finds neither count, so only a test that
-/// makes a meter pays the slowdown, in the process it runs in: the new image runs the same test
-/// (`--exact`) from its start, and its meter reads the client's count. A benchmark, a check's
-/// run in a new process and `the_instructions_of_a_run_repeat`'s run each start a test binary
-/// with `--exact`. Until 2026-11-22 the function in `.init_array` started every `--exact` run
-/// under DynamoRIO; a test farm runs each test that way, and the tests that measure nothing ran
-/// 7.3 times slower there, so 94 of 3059 failed, most of them by their time limit (merge check of
-/// b22-meter1). The slowdown and how the count compares with the hardware's are in the comment at
-/// `zed_tests::scaling`.
+/// From 2026-11-22 to batch b29 `zed_tests::scaling::Meter::new` called it where it found neither
+/// count, so only a test that made a meter paid the slowdown, in the process it ran in: the new
+/// image ran the same test (`--exact`) from its start, and its meter read the client's count. It
+/// now starts DynamoRIO at the first measured run instead ([`attach_dynamorio`]), and only the
+/// crossover benchmarks (`benches/src/bin/crossover.rs`), which measure a whole run, call this.
+/// A benchmark, a check's run in a new process and `the_instructions_of_a_run_repeat`'s run each
+/// start a test binary with `--exact`. Until 2026-11-22 the function in `.init_array` started
+/// every `--exact` run under DynamoRIO; a test farm runs each test that way, and the tests that
+/// measure nothing ran 7.3 times slower there, so 94 of 3059 failed, most of them by their time
+/// limit (merge check of b22-meter1). The slowdown and how the count compares with the hardware's
+/// are in the comment at `zed_tests::scaling`.
 pub fn start_under_dynamorio() {
     imp::start_under_dynamorio()
+}
+
+/// The variable DynamoRIO reads its options from when a process starts it itself
+/// ([`attach_dynamorio`]). The function in `.init_array` sets it, while the process has one
+/// thread, wherever [`ZED_METER_DRRUN`] and [`ZED_METER_ICOUNT`] are named, and
+/// [`start_under_dynamorio`] does not pass it to `drrun`, which sets the options of the process
+/// it starts itself.
+pub const DYNAMORIO_OPTIONS: &str = "DYNAMORIO_OPTIONS";
+
+/// Whether [`attach_dynamorio`] may start DynamoRIO in this process: the conditions of
+/// [`start_under_dynamorio`] (both variables named, `--exact`, no count of the client yet, not
+/// started by that function, the hardware counter of instructions does not open or does not
+/// move), and the function in `.init_array` set [`DYNAMORIO_OPTIONS`]. Linux with glibc only;
+/// elsewhere false.
+pub fn can_attach_dynamorio() -> bool {
+    imp::can_attach_dynamorio()
+}
+
+/// Starts DynamoRIO, with the client `zed_icount`, inside this running process, once: the
+/// remedy of BENCH-icount-attach-at-run. `zed_tests::scaling::Meter::new` makes a meter that
+/// calls it at its first read, the start of the first measured run, so that the process's start,
+/// a test's set-up and the inputs it builds before that run, and a new process's replay of the
+/// test up to its run, all run natively, not under DynamoRIO, which ran 4.8 times slower than
+/// native on them (b28 job j9). Before, [`start_under_dynamorio`] started the whole process
+/// again under `drrun`, so all of that ran under DynamoRIO, and the phases of benchmarks whose
+/// runs take under 2 s stopped at the 20 s limit (FAIL-bench-pieces-past-limit-on-main).
+///
+/// How: `dlopen` of `libdynamorio.so` (at `../lib64/release/` from [`ZED_METER_DRRUN`]'s `drrun`,
+/// as DynamoRIO's own packages lay it out) and its `dr_app_setup_and_start`, DynamoRIO's
+/// interface for a program that starts it itself ("start/stop" in its documentation), which
+/// takes over every thread of the process and returns on the calling thread under DynamoRIO.
+/// The options are in [`DYNAMORIO_OPTIONS`]:
+/// - `-code_api`: without it DynamoRIO's start/stop interface does not take the process over, and
+///   the client counted 0 (experiment of batch b29, job j2, `tmp-b29/attach`: with
+///   `-client_lib` alone `dr_app_setup_and_start` returned 0 and the counts were 0; with
+///   `-code_api` the counts of a loop of n and 8n steps were 8000029 and 64000029, the same as
+///   under `drrun -c`, and a thread started after the start counted 32002328 under both);
+/// - `-no_follow_children`: a process this one starts (the run at 8n of a check, in a new process
+///   of the test binary) starts natively and starts DynamoRIO itself at its own first run, where
+///   by default DynamoRIO would follow its `execve` and run its whole set-up under DynamoRIO;
+/// - `-client_lib <client>;0;`: the client, with id 0 and no options.
+///
+/// Counting is off until the client's first read, as under `drrun` (tools/icount/zed_icount.c),
+/// so what the process does between the start and that read is not counted. An error names the
+/// step that failed; the meter then stops the test, since without the client the work cannot be
+/// counted. The second and later calls give the first call's answer. Linux with glibc only;
+/// elsewhere an error.
+pub fn attach_dynamorio() -> Result<(), String> {
+    imp::attach_dynamorio()
 }
 
 /// The variable that names the DynamoRIO client `libzed_icount.so`; see [`ZED_METER_DRRUN`].
@@ -473,6 +526,13 @@ mod imp {
             // strings were copied into `env` above.
             unsafe { std::env::remove_var(super::ZED_METER_UNDER_DRRUN) };
         }
+        if let Some(options) = dynamorio_options(&env) {
+            // SAFETY: the calling thread is the only one (checked at the top), and `envp`'s
+            // strings were copied into `env` above. Set here and not at the attach, which runs
+            // with other threads, whose C library may read the environment meanwhile.
+            unsafe { std::env::set_var(super::DYNAMORIO_OPTIONS, options) };
+            OPTIONS_SET.store(true, Relaxed);
+        }
         if let Some(name) = again {
             if !name.is_empty() {
                 let name = CString::new(name).expect("an environment string has no NUL");
@@ -516,6 +576,108 @@ mod imp {
     /// does not start itself under DynamoRIO a second time when the client does not answer.
     static STARTED_UNDER_DYNAMORIO: AtomicBool = AtomicBool::new(false);
 
+    /// Set by [`start`] when it set [`super::DYNAMORIO_OPTIONS`].
+    static OPTIONS_SET: AtomicBool = AtomicBool::new(false);
+
+    /// The options [`attach_dynamorio`] starts DynamoRIO with (see [`super::attach_dynamorio`]),
+    /// from the environment strings `env`: `None` unless [`super::ZED_METER_DRRUN`] and
+    /// [`super::ZED_METER_ICOUNT`] are both named, and for a client path that DynamoRIO's
+    /// option text cannot hold as it is (a space, which ends an option, or `;`, which ends the
+    /// path, or a quote).
+    fn dynamorio_options(env: &[Vec<u8>]) -> Option<String> {
+        let value = |name: &str| {
+            env.iter()
+                .rev()
+                .find_map(|e| e.strip_prefix(name.as_bytes())?.strip_prefix(b"="))
+                .filter(|v| !v.is_empty())
+        };
+        value(super::ZED_METER_DRRUN)?;
+        let client = std::str::from_utf8(value(super::ZED_METER_ICOUNT)?).ok()?;
+        if client.contains(|c: char| c.is_whitespace() || matches!(c, ';' | '"' | '\'')) {
+            return None;
+        }
+        Some(format!(
+            "-code_api -no_follow_children -client_lib {client};0;"
+        ))
+    }
+
+    /// See [`super::can_attach_dynamorio`].
+    pub(super) fn can_attach_dynamorio() -> bool {
+        OPTIONS_SET.load(Relaxed)
+            && !STARTED_UNDER_DYNAMORIO.load(Relaxed)
+            && std::env::args_os().skip(1).any(|a| a == "--exact")
+            && zed_alloc_count::os::software_instructions().is_none()
+            && !hardware_counter_moves()
+    }
+
+    /// See [`super::attach_dynamorio`].
+    pub(super) fn attach_dynamorio() -> Result<(), String> {
+        static ATTACHED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+        ATTACHED.get_or_init(attach_once).clone()
+    }
+
+    fn attach_once() -> Result<(), String> {
+        if !OPTIONS_SET.load(Relaxed) {
+            return Err(format!(
+                "{} was not set as the process started (it is set where {} and {} are named)",
+                super::DYNAMORIO_OPTIONS,
+                super::ZED_METER_DRRUN,
+                super::ZED_METER_ICOUNT
+            ));
+        }
+        let drrun = std::env::var_os(super::ZED_METER_DRRUN).unwrap_or_default();
+        let lib = std::path::Path::new(&drrun)
+            .parent()
+            .and_then(std::path::Path::parent)
+            .map(|d| d.join("lib64/release/libdynamorio.so"))
+            .ok_or_else(|| {
+                format!(
+                    "{} = {drrun:?} names no bin64/drrun",
+                    super::ZED_METER_DRRUN
+                )
+            })?;
+        let path = CString::new(lib.clone().into_os_string().into_encoded_bytes())
+            .map_err(|_| format!("{} holds a NUL", lib.display()))?;
+        let error = || {
+            // SAFETY: dlerror returns null or a NUL-ended string, valid until the next dl call
+            // of this thread; it is copied at once.
+            let e = unsafe { libc::dlerror() };
+            if e.is_null() {
+                String::new()
+            } else {
+                // SAFETY: not null, so a NUL-ended string (above).
+                unsafe { CStr::from_ptr(e) }.to_string_lossy().into_owned()
+            }
+        };
+        // SAFETY: `path` is NUL-ended. The library is DynamoRIO's, whose constructors do nothing
+        // until it is started; it is never closed, as DynamoRIO runs from it from here on.
+        let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+        if handle.is_null() {
+            return Err(format!("dlopen of {}: {}", lib.display(), error()));
+        }
+        // SAFETY: `handle` is a library dlopen gave, and the name is NUL-ended.
+        let start = unsafe { libc::dlsym(handle, c"dr_app_setup_and_start".as_ptr()) };
+        if start.is_null() {
+            return Err(format!(
+                "dr_app_setup_and_start in {}: {}",
+                lib.display(),
+                error()
+            ));
+        }
+        // SAFETY: DynamoRIO's dr_app.h declares `int dr_app_setup_and_start(void)`, which gives 0
+        // when it started; the pointer is that function's (dlsym above).
+        let start =
+            unsafe { std::mem::transmute::<*mut libc::c_void, extern "C" fn() -> c_int>(start) };
+        match start() {
+            0 => Ok(()),
+            r => Err(format!(
+                "dr_app_setup_and_start gave {r} with {} = {:?}",
+                super::DYNAMORIO_OPTIONS,
+                std::env::var_os(super::DYNAMORIO_OPTIONS).unwrap_or_default()
+            )),
+        }
+    }
+
     /// See [`super::start_under_dynamorio`].
     pub(super) fn start_under_dynamorio() {
         let var = |name: &str| {
@@ -556,6 +718,7 @@ mod imp {
         unsafe { libc::prctl(libc::PR_GET_NAME, name.as_mut_ptr()) };
         let name = CStr::from_bytes_until_nul(&name).map_or(&[][..], CStr::to_bytes);
         let mut env: Vec<CString> = std::env::vars_os()
+            .filter(|(k, _)| k != super::DYNAMORIO_OPTIONS)
             .flat_map(|(k, v)| {
                 CString::new([k.as_encoded_bytes(), b"=", v.as_encoded_bytes()].concat())
             })
@@ -790,6 +953,14 @@ mod imp {
     }
 
     pub(super) fn start_under_dynamorio() {}
+
+    pub(super) fn can_attach_dynamorio() -> bool {
+        false
+    }
+
+    pub(super) fn attach_dynamorio() -> Result<(), String> {
+        Err("DynamoRIO is started this way on Linux with glibc only".to_owned())
+    }
 
     pub(super) fn running_on_valgrind() -> bool {
         false

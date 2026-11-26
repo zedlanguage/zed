@@ -61,9 +61,11 @@
 //! (BENCH-vm-no-instruction-counter). When `zed_meter_settings::ZED_METER_DRRUN` and
 //! `ZED_METER_ICOUNT` name DynamoRIO and its client `zed_icount` (tools/icount; Colab's job.sh sets
 //! both), [`Meter::new`] in a test binary started with `--exact` (a benchmark under
-//! `tools/run_tests.sh`, a run in a new process) starts it again under them
-//! (`zed_meter_settings::start_under_dynamorio`), so that only the tests that measure pay the
-//! slowdown, and the meter of the new image reads the client's count:
+//! `tools/run_tests.sh`, a run in a new process) starts DynamoRIO with the client inside the
+//! process at its first measured run (`zed_meter_settings::attach_dynamorio`; until batch b29 it
+//! started the whole process again under `drrun`, `zed_meter_settings::start_under_dynamorio`),
+//! so that only the tests that measure pay the slowdown, and only from that run on, and the
+//! meter reads the client's count:
 //! an add of a basic block's length to a counter of the thread as the block is entered, the
 //! threads folded into the
 //! thread that started them as they end, as the kernel's count with `inherit` is. DynamoRIO:
@@ -296,8 +298,9 @@ pub fn hold_in_phases(
 /// l01_29_repairs_and_printing take the difference of two such counts, the check of a program
 /// with R rejections less the check without; beside the binary's other tests, on Colab, the
 /// difference came out negative ("the rejections add work", both benchmarks, on the branch and on
-/// main), so it measured nothing. A process that runs the test alone starts under DynamoRIO
-/// (`zed_meter_settings::start_under_dynamorio`, from [`Meter::new`]) and counts instructions,
+/// main), so it measured nothing. A process that runs the test alone starts DynamoRIO at its
+/// meter's first read (`zed_meter_settings::attach_dynamorio`, from [`Meter::new`]) and counts
+/// instructions,
 /// which the other tests' allocations and load do not change. Where neither the hardware nor
 /// DynamoRIO counts, the new process counts processor time alone, the least load the machine
 /// offers.
@@ -647,10 +650,12 @@ impl Meter {
             .or_else(|| Self::open(Hardware::INSTRUCTIONS, "instructions", true))
             .or_else(|| {
                 let thread = std::thread::current();
-                // The new image runs the process's tests from the start, so only a process that
-                // runs this test alone starts again; the call returns where it does not.
-                if thread.name().is_some_and(runs_alone) {
-                    zed_meter_settings::start_under_dynamorio();
+                // DynamoRIO then counts every thread of the process, so only a process that runs
+                // this test alone starts it.
+                if thread.name().is_some_and(runs_alone)
+                    && let Some(meter) = Self::in_software_from_the_first_read()
+                {
+                    return Some(meter);
                 }
                 let elsewhere = thread.name().is_some_and(counts_in_new_processes);
                 Self::open(Software::TASK_CLOCK, "ns of processor time", false)
@@ -660,7 +665,8 @@ impl Meter {
     }
 
     /// The instructions the DynamoRIO client `zed_icount` counts, when this process runs under
-    /// it (zed_meter_settings::start_under_dynamorio says when it does). It comes first: the
+    /// it: started under `drrun`, or with DynamoRIO started inside it by an earlier meter
+    /// ([`Meter::in_software_from_the_first_read`]). It comes first: the
     /// process runs under the client only where the hardware counter did not open or did not
     /// move, and
     /// a hardware counter that did would count DynamoRIO's own work too.
@@ -684,6 +690,48 @@ impl Meter {
             software_count(false);
         }
         meter
+    }
+
+    /// The instructions DynamoRIO's client `zed_icount` counts, with DynamoRIO started inside this
+    /// process at the meter's first read (`zed_meter_settings::attach_dynamorio`, which says why
+    /// and how), where it can be (`zed_meter_settings::can_attach_dynamorio`); `None` elsewhere.
+    /// The first read is the start of the first measured run ([`Meter::work_on_the_c_heap`]), so
+    /// what the test does before it, and what a new process for a run at 8n does before its run
+    /// (its start and the replay of the test, [`replay_or_measure`]), runs natively. Not tried by
+    /// [`Meter::first_that_moves`], whose reads would start DynamoRIO at the meter's making: the
+    /// client's count moves on every block it runs, and the first read stops the test where
+    /// DynamoRIO did not start or the client does not answer, naming the cause.
+    ///
+    /// Complexity tradeoff: COMPLEXITY.md has none for the meter. Before (batch b28):
+    /// `zed_meter_settings::start_under_dynamorio` started the process again under `drrun` at the
+    /// meter's making, and the start, the set-up and the replay ran under DynamoRIO, 4.8 times
+    /// native (b28 job j9). What is given up: DynamoRIO is not stopped after the run, so a test
+    /// that builds more inputs in this process after its first run (a second check's input at n)
+    /// builds them under DynamoRIO, as all of them were before; stopping and starting it again
+    /// would empty its cache of the program's code at each start.
+    #[cfg(target_os = "linux")]
+    fn in_software_from_the_first_read() -> Option<Self> {
+        if !zed_meter_settings::can_attach_dynamorio() {
+            return None;
+        }
+        let read = || {
+            if let Err(e) = zed_meter_settings::attach_dynamorio() {
+                panic!("starting DynamoRIO in this process to count instructions: {e}");
+            }
+            zed_alloc_count::os::software_instructions().unwrap_or_else(|| {
+                panic!(
+                    "DynamoRIO started in this process, but its client {} does not answer",
+                    std::env::var(zed_meter_settings::ZED_METER_ICOUNT).unwrap_or_default()
+                )
+            })
+        };
+        Some(Self {
+            read: Box::new(read),
+            unit: "instructions (counted in software by DynamoRIO's zed_icount)",
+            instructions: true,
+            fresh: true,
+            elsewhere: false,
+        })
     }
 
     /// A meter of the instructions of the whole process where the kernel counts them, or else of
@@ -1120,10 +1168,11 @@ pub fn inputs<T>(n: usize, make: impl Fn(usize) -> T) -> std::collections::HashM
 /// (BENCH-follow-group-near-60s). [`inputs`] stays for the checks that read their inputs
 /// otherwise (309 call sites name its map's type, and some check every input outside the runs).
 ///
-/// A benchmark's first phase holds its whole set-up, under the runner's limit of 20 s, and a
-/// count of instructions runs that set-up twice: natively, then again under DynamoRIO, about
-/// five times slower. So a check whose set-up built both sizes and checked each (a type check
-/// of the program at 8n to assert it has no error, say) ran past 20 s before its first run.
+/// A benchmark's first phase holds its whole set-up, under the runner's limit of 20 s, and until
+/// batch b29 a count of instructions ran that set-up under DynamoRIO, about five times slower
+/// (now DynamoRIO starts at the first measured run, BENCH-icount-attach-at-run). So a check
+/// whose set-up built both sizes and checked each (a type check of the program at 8n to assert
+/// it has no error, say) ran past 20 s before its first run.
 /// With this function such a check is made in `run`, on the result each run computes: work
 /// linear in that result, added to a run that already computes it, where the set-up repeated
 /// the run's own work at both sizes (FAIL-bench-first-phase-past-20s-l0126-l0129).
@@ -1699,7 +1748,7 @@ pub(crate) fn runs_alone(test: &str) -> bool {
 
 /// Whether the checks of `test`, run in this process with other tests where the hardware has no
 /// counter of instructions, count instructions in new processes of the test, each started with
-/// `--exact` and so under DynamoRIO (`zed_meter_settings::start_under_dynamorio`): `test` is a
+/// `--exact` and so under DynamoRIO (`Meter::in_software_from_the_first_read`): `test` is a
 /// benchmark (its path holds `bench::`, as tools/run_tests.sh names one), it does not run alone
 /// here, this is not a process started for one of its runs, and ZED_METER_DRRUN and
 /// ZED_METER_ICOUNT name DynamoRIO and its client.
@@ -1910,8 +1959,8 @@ fn replay_or_measure(
          an order that changes from run to run cannot run its runs in a new process"
     );
     let run = if *measure_large { large } else { small };
-    // The phase at 8n starts here, at the run, and not at this process's start: the start, the
-    // re-run under DynamoRIO (`Meter::new`), the replay of the test up to this check and the
+    // The phase at 8n starts here, at the run, and not at this process's start: the start (and
+    // until batch b29 the re-run under DynamoRIO), the replay of the test up to this check and the
     // inputs at 8n ([`check_inputs`]) come before the run at 8n, and so have the runner's limit
     // (author A160: "that limit for each run at n and what comes before it", and 10.5 t1 for
     // each run at 8n; [`start_bench_phase`]). Counted from this process's start, the phase at 8n

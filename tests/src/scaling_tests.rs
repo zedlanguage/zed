@@ -24,10 +24,11 @@ fn fails(run: impl FnOnce()) -> bool {
 
 /// A command that runs this test binary with the meter this process has, for a test that
 /// compares the unit a run prints with this process's `Meter::new`. A process that runs more
-/// than one test does not start again under DynamoRIO (`Meter::new`), and one started with
-/// `--exact` for one test does; so where this process does not count in software, the run is
-/// started without `ZED_METER_DRRUN`, and both measure by the hardware or the task clock. Where
-/// it does, DynamoRIO follows the run's `execve`, or the run starts itself again under it.
+/// than one test does not start DynamoRIO (`Meter::new`), and one started with `--exact` for one
+/// test does, at its meter's first read; so where this process does not count in software, the
+/// run is started without `ZED_METER_DRRUN`, and both measure by the hardware or the task clock.
+/// Where it does, the run starts DynamoRIO itself (DynamoRIO, started with
+/// `-no_follow_children`, does not follow the run's `execve`).
 fn this_binary_with_this_meter() -> std::process::Command {
     let mut command =
         std::process::Command::new(std::env::current_exe().expect("this test binary"));
@@ -962,14 +963,85 @@ fn a_benchmark_run_with_other_tests_counts_instructions() {
     );
 }
 
+/// The start of the line [`reports_where_dynamorio_runs`] prints.
+const WHERE_DYNAMORIO_RUNS: &str = "zed-test-dynamorio-runs";
+
+/// Run alone by [`dynamorio_starts_at_the_meters_first_read`]: prints whether this process
+/// runs under DynamoRIO's client after its meter is made and after the meter's first read, and
+/// the meter's unit. Run with other tests it prints the same line, and nothing is held to it.
+#[test]
+fn reports_where_dynamorio_runs() {
+    let mut meter = Meter::new();
+    let made = zed_alloc_count::os::software_instructions().is_some();
+    meter.read();
+    let read = zed_alloc_count::os::software_instructions().is_some();
+    println!("{WHERE_DYNAMORIO_RUNS}\t{made}\t{read}\t{}", meter.unit());
+}
+
+/// A test run alone, with `--exact`, where the hardware has no counter and DynamoRIO and its
+/// client are named, runs natively until its meter's first read, the start of its first
+/// measured run, and under DynamoRIO's client from then on (BENCH-icount-attach-at-run), so its
+/// set-up before that run runs natively. Red on origin/main d0ab2c950 on a Colab VM: the process
+/// started again under `drrun` as its meter was made, so it ran under the client before the
+/// first read. Where the hardware counts, or DynamoRIO is not named, the process never runs
+/// under the client.
+#[cfg(target_os = "linux")]
+#[test]
+fn dynamorio_starts_at_the_meters_first_read() {
+    let named = |var: &str| std::env::var_os(var).is_some_and(|v| !v.is_empty());
+    let hardware = Meter::open(
+        perf_event::events::Hardware::INSTRUCTIONS,
+        "instructions",
+        true,
+    )
+    .is_some();
+    let software =
+        named(zed_meter_settings::ZED_METER_DRRUN) && named(zed_meter_settings::ZED_METER_ICOUNT);
+    let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            "--exact",
+            "scaling_tests::reports_where_dynamorio_runs",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .output()
+        .expect("running this test binary");
+    let out = String::from_utf8_lossy(&run.stdout);
+    let err = String::from_utf8_lossy(&run.stderr);
+    assert!(run.status.success(), "{out}\n{err}");
+    // With `--nocapture` the harness writes `test <name> ... ` and then the test's own output on
+    // the same line, so the report is found where it starts in a line, not at its start.
+    let line = out
+        .lines()
+        .find_map(|l| l.split_once(WHERE_DYNAMORIO_RUNS).map(|(_, r)| r))
+        .unwrap_or_else(|| panic!("no line {WHERE_DYNAMORIO_RUNS} in:\n{out}\n{err}"));
+    let fields: Vec<&str> = line.split('\t').skip(1).collect();
+    let expected = if software && !hardware {
+        ["false", "true"]
+    } else {
+        ["false", "false"]
+    };
+    assert_eq!(
+        fields[..2],
+        expected,
+        "under the client after the meter was made, and after its first read; hardware \
+         counter: {hardware}; DynamoRIO named: {software}; unit: {:?}",
+        fields.get(2)
+    );
+    if software && !hardware {
+        assert!(fields[2].contains("zed_icount"), "{line}");
+    }
+}
+
 /// The variable naming, for [`bench::a_spin_whose_phase_at_8n_is_read`], the file of the
 /// benchmark's phases: its own name, since a process started for a run at 8n is not given
 /// `ZED_BENCH_LIMIT_FILE`.
 const PHASE_SEEN: &str = "ZED_TEST_PHASE_SEEN";
 
 /// The phase at 8n of a benchmark starts at the run at 8n, after the inputs it reads are built,
-/// and asks for its own limit, 10.5 t1: in a process started for that run too, which starts,
-/// runs again under DynamoRIO, replays the test and builds its input at 8n first, all before
+/// and asks for its own limit, 10.5 t1: in a process started for that run too, which starts
+/// (until batch b29 again under DynamoRIO), replays the test and builds its input at 8n first,
+/// all before
 /// the run (author A160: the runner's limit for "each run at n and what comes before it").
 /// Before, that phase was started in the process that started that one, before it did any of
 /// this: on origin/main 6b511a69a on a Colab VM, where the run at 8n is in a new process, this
