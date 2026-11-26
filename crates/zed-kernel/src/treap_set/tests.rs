@@ -277,7 +277,7 @@ fn is_subset_agrees_on_sets_made_from_one_set() {
 }
 
 /// The height of a tree: the nodes on its longest path from the root.
-fn height(t: &Tree<i64>) -> u64 {
+fn height<T: Elem>(t: &Tree<T>) -> u64 {
     t.as_ref()
         .map_or(0, |n| 1 + height(&n.left).max(height(&n.right)))
 }
@@ -529,4 +529,43 @@ fn comparing_tied_sets_allocates_nothing() {
         assert_eq!(seen, (true, false, true, false, true), "n {n}");
         assert_eq!(bytes, 0, "n {n}: bytes allocated by the five calls");
     }
+}
+
+/// A key whose priority rises with it, so a set of `n` of them is one path of height `n`; its
+/// weight is 0, so equal-length sets tie and `==` and `is_subset` walk the trees.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct Spine(i64);
+
+impl Elem for Spine {
+    fn priority(&self) -> u64 {
+        self.0 as u64
+    }
+    fn weight(&self) -> u64 {
+        0
+    }
+    fn class(&self) -> u32 {
+        1
+    }
+}
+
+/// TREAP-eq-alloc: trees of height 100 push past the 32 pairs or jobs held inline in `eq`,
+/// `subset_walk` and `combine`, so the stacks move to the heap (`eq`'s, of at most 101 pairs,
+/// grows once more there, from 64 to 128); the results must be what they are on short trees. Only the results are checked, not the allocations.
+#[test]
+fn comparing_and_combining_tall_tied_sets() {
+    let n = 100i64;
+    let a: TreapSet<Spine> = (0..n).map(Spine).collect();
+    let same: TreapSet<Spine> = (0..n).rev().map(Spine).collect();
+    let other: TreapSet<Spine> = (0..n - 1).chain([n]).map(Spine).collect();
+    assert_eq!((height(&a.root), height(&other.root)), (100, 100));
+    assert!(!a.ptr_eq(&same) && !a.ptr_eq(&other));
+    assert_eq!((a.len(), a.sum()), (other.len(), other.sum()));
+    assert!(a == same && a != other && other != a);
+    assert!(a.is_subset(&same) && !a.is_subset(&other) && !other.is_subset(&a));
+    assert!(a.union(&a.clone()).ptr_eq(&a));
+    let keys = |s: TreapSet<Spine>| s.iter().map(|k| k.0).collect::<Vec<_>>();
+    assert_eq!(keys(a.union(&other)), Vec::from_iter(0..=n));
+    assert_eq!(keys(a.intersection(&other)), Vec::from_iter(0..n - 1));
+    assert_eq!(keys(a.difference(&other)), vec![n - 1]);
+    assert!(a.difference(&other).is_subset(&a) && a.intersection(&other).is_subset(&a));
 }
