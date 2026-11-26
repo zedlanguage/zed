@@ -12,18 +12,83 @@ use crate::scaling;
 fn forced_atoms_of_a_long_chain_scale() {
     // `w ∧ ((x_1 ∧ … ∧ x_m) ∨ z)`: `true` is reached past `z` from every `x_k`. Finding the
     // branches that dominate `true` took the nearest common dominator of `m` branches at
-    // growing depths, walking up one step at a time: `O(m²)`. Small instances:
+    // growing depths, walking up one step at a time: `O(m²)`. On the decision list that `zip`
+    // makes, `Part::forced` now reads the first block only (`Bdd::forced_to`), the same
+    // instructions at both sizes (15,869 and 16,871, v5e1, 2026-11-26), so the chain is also
+    // kept as an expression, whose every link `Part::forced` walks
+    // (BENCH-forced-atoms-chain-measures-first-block); the negative control is
+    // `a_walk_of_the_chain_again_from_its_top_fails_the_ratio`. Small instances:
     // `the_one_atom_a_chain_forces_is_its_first`. On a thread of 2 MiB, the stack the thread
     // spawned here before had, by `on_a_stack`, which gives it the test's name: the meter finds
     // the test by that name, and on a thread without one it measured processor time (`work=`),
     // which moves with the load, in place of instructions (the coordinator, 2026-11-26).
     scaling::on_a_stack(2 << 20, || {
         let n = 1 << 12;
-        let built = scaling::inputs(n, forced_chain);
+        let built = scaling::inputs(n, |m| (forced_chain(m), forced_chain_expr(m)));
         scaling::check("the forced atoms of a chain, by its length", n, |m| {
-            let (p, w) = &built[&m];
-            assert_eq!(p.forced(), (vec![w.clone()], Vec::new()));
+            let ((p, w), e) = &built[&m];
+            let want = (vec![w.clone()], Vec::new());
+            assert_eq!(p.forced(), want);
+            assert_eq!(e.forced(), want);
         });
+    });
+}
+
+/// The literals of the meet `x_1 ∧ … ∧ x_m` of [`forced_chain_expr`], counted by walking down
+/// from the meet `d` links for each `d` in turn until the walk runs past the last: `O(m²)`
+/// steps, a deliberately quadratic walk over the chain.
+fn literals_walked_again(p: &Part<Row>) -> usize {
+    fn form(q: &Part<Row>) -> Option<&Form<Row>> {
+        match q {
+            Part::Expr(e) => Some(e.form()),
+            Part::Bdd(_) => None,
+        }
+    }
+    let Some(Form::And(_, g)) = form(p) else {
+        panic!("the chain is `w ∧ g`")
+    };
+    let Some(Form::Or(meet, _)) = form(g) else {
+        panic!("`g` is `meet ∨ z`")
+    };
+    for d in 0.. {
+        let mut q = meet;
+        for _ in 0..d {
+            match form(q) {
+                Some(Form::And(a, _)) => q = a,
+                _ => return d,
+            }
+        }
+    }
+    unreachable!("a walk runs past the last link")
+}
+
+/// The negative control of `forced_atoms_of_a_long_chain_scale`: a walk of the chain's links
+/// from its top again for each link, `O(m²)`, does at least [`scaling::limit`]`(1)` times the
+/// instructions at 8m, so the benchmark's ratio tells a quadratic pass over the same input from
+/// the linear one. At m = 512 and 4096, not the benchmark's sizes, since 32,768² / 2 steps
+/// would take seconds under the software counter.
+#[test]
+fn a_walk_of_the_chain_again_from_its_top_fails_the_ratio() {
+    scaling::on_a_stack(2 << 20, || {
+        let mut meter = scaling::Meter::new();
+        let n = 1 << 9;
+        let work = [n, scaling::FACTOR * n].map(|m| {
+            let e = forced_chain_expr(m);
+            let mut got = 0;
+            let w = meter.work(|| got = literals_walked_again(&e)).units;
+            assert_eq!(got, m, "the literals of the meet");
+            w
+        });
+        let ratio = work[1] as f64 / work[0] as f64;
+        let limit = scaling::limit(1);
+        eprintln!(
+            "the quadratic walk of a chain: {} and {} {}, {ratio:.2} times at 8n; the limit is \
+             {limit:.2}",
+            work[0],
+            work[1],
+            meter.unit()
+        );
+        assert!(ratio >= limit, "the quadratic walk passed the ratio");
     });
 }
 

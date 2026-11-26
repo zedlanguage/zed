@@ -2368,11 +2368,23 @@ pub(super) fn forced_chain(m: usize) -> (Part<Row>, Row) {
     (lit(0).zip(&g, Op::And), xs[0].clone())
 }
 
+/// [`forced_chain`] kept as an expression (`Part::connect`), as [`conjunction`] keeps its
+/// conjunction: `Part::forced` walks every link of it, where on the decision list that `zip`
+/// makes it reads the first block only (`Bdd::forced_to`).
+pub(super) fn forced_chain_expr(m: usize) -> Part<Row> {
+    let lit = |k: usize| Part::literal(atom(k as u64));
+    let and = |a, b| Part::connect(Op::And, a, b);
+    let meet = (2..=m).fold(lit(1), |g, k| and(g, lit(k)));
+    and(lit(0), Part::connect(Op::Or, meet, lit(m + 1)))
+}
+
 #[test]
 fn the_one_atom_a_chain_forces_is_its_first() {
     for m in [1, 2, 3, 8, 33] {
         let (p, w) = forced_chain(m);
-        assert_eq!(p.forced(), (vec![w], Vec::new()), "{m}");
+        let want = (vec![w], Vec::new());
+        assert_eq!(p.forced(), want, "{m}");
+        assert_eq!(forced_chain_expr(m).forced(), want, "{m}, as an expression");
     }
 }
 
