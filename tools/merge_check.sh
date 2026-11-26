@@ -938,15 +938,24 @@ farm_owner() {
 # run_steps_farm: the steps in $steps on one VM, as one command of `$farm --commands`, which runs
 # it in the checkout's root at the build root of the short-addresses build (test_run_tests.sh's
 # list and short parts build that clone), with the logs under the job's out/ (FARM_OUT), which
-# come back to the farm's directory. Prints the step script's lines; fails when it failed or did
-# not run to its end.
+# come back to the farm's directory; with $doc_vm set, the check of the changed documentation is
+# a second command of the same job (doc_vm, below). Prints the commands' lines; fails when one
+# failed or did not run to its end.
 run_steps_farm() {
   local o spec
   o=$(farm_dir merge-check-steps) || return 1
   spec=$(tools/spec_groups.sh --dir) && [[ $spec == /?* ]] && [ -d "$spec" ] ||
     { echo "merge check: tools/spec_groups.sh --dir gave no spec directory ('$spec')"; return 1; }
-  printf 'tools/merge_check_steps.sh --logs "$FARM_OUT/merge-check"%s\n' "$(printf ' %q' "${steps[@]}")" >"$o/commands" || return 1
-  echo "merge check: steps ${steps[*]} on a Colab VM as $(farm_owner) (logs $o)"
+  : >"$o/commands" || return 1
+  if [ ${#steps[@]} -gt 0 ]; then
+    printf 'tools/merge_check_steps.sh --logs "$FARM_OUT/merge-check"%s\n' "$(printf ' %q' "${steps[@]}")" >>"$o/commands" || return 1
+    echo "merge check: steps ${steps[*]} on a Colab VM as $(farm_owner) (logs $o)"
+  fi
+  if [ -n "$doc_vm" ]; then
+    echo 'tools/check_changed_docs.sh "$FARM_OUT/doc-changed.log"' >>"$o/commands" || return 1
+    echo "merge check: the check of the changed documentation on a Colab VM as $(farm_owner) (logs $o)"
+    doc_by="the merge check's job on a Colab VM (logs $o)"
+  fi
   "$farm" --owner "$(farm_owner)" --vms 1 --jobs "$jobs" --out "$o/run" --commands "$o/commands" --spec "$spec"
 }
 # Steps 0b, 0, 0c and 1a, in that order (see the header), in tools/merge_check_steps.sh: run here
@@ -966,7 +975,27 @@ steps=()
 [ -z "$rtself" ] || steps+=(--rt)
 [ -z "$farmself" ] || steps+=(--farm)
 [ -z "$clippy_run" ] || steps+=(--clippy "$clippy_run")
-if [ ${#steps[@]} -gt 0 ] && [ -z "$list" ]; then
+# The check of the changed documentation (tools/check_changed_docs.sh), which runs cargo
+# metadata, cargo tree and cargo doc. With a farm runner it runs on the VM of the steps
+# (TOOL-doc-check-on-vm; author: no builds on this machine): until then run_farm ran it here
+# before the VMs, a local build of every changed package's documentation, twice. The VM's copy
+# has no git history, so the changes are found here, by git alone (`--changes` exits before any
+# cargo call), and `$farm --commands` sends them with the command (ZED_DOC_CHANGES). It runs when
+# tests run, as it did in run_farm and does in run_chunks: doc_vm is set when there are tests to
+# run and `--changes` printed a changed file or a lost name, or printed nothing, which it does
+# with no origin/main here, and then the check on the VM fails as it would have here. doc_by
+# names the run that did the check, for the VM shares of run_farm (ZED_DOC_CHECKED).
+doc_vm= doc_by=
+if [ "$farm" != local ] && [ -z "$list" ] && [ -n "$torun" ]; then
+  doc_changes=$(tools/check_changed_docs.sh --changes) ||
+    { echo "merge check: FAILED: tools/check_changed_docs.sh --changes" >&2; exit 1; }
+  if [ -z "$doc_changes" ] || awk -F '\t' '$1 == "changed" || $1 == "name" { f = 1 } END { exit !f }' <<<"$doc_changes"; then
+    doc_vm=1
+  else
+    doc_by="the merge check, which found no doc line changed and no linked name lost since origin/main"
+  fi
+fi
+if { [ ${#steps[@]} -gt 0 ] || [ -n "$doc_vm" ]; } && [ -z "$list" ]; then
   if [ "$farm" = local ]; then
     "${BASH_SOURCE[0]%/*}/merge_check_steps.sh" --logs "$(git rev-parse --path-format=absolute --git-path merge-check)" "${steps[@]}" ||
       exit 1
@@ -1294,7 +1323,7 @@ run_chunks() {
 # as '^(<terms>)$' anchors them in run_chunks. The VMs' owner is merge-check-<branch>, so the
 # pool shows whose check holds them; 4 VMs, the most one owner may hold (FARM.md). The VMs run
 # tools/run_tests.sh, whose --list there checks no changed documentation (the VM's copy has no
-# origin/main), so that check runs here first, as run_chunks runs it after its list. With
+# origin/main), so that check ran first, in the steps' job on a VM (doc_vm, above). With
 # --record each VM's trace comes back as a directory of `groups` and `<piece>.reads` files,
 # which join tdirs as run_chunks' chunk directories do. The spec the VMs get is the one the
 # tests here would read (tools/spec_groups.sh --dir). The short-* pieces run on VMs too since
@@ -1305,11 +1334,7 @@ run_farm() {
   local terms=$1 o owner spec rc d
   o=$(farm_dir "merge-check-farm${fullarg:+-full}") || return 1
   printf '%s\n' "$terms" >"$o/terms" || return 1
-  if ! tools/check_changed_docs.sh "$o/doc-changed.log" >"$o/doc-changed.out" 2>&1; then
-    cat "$o/doc-changed.out"
-    echo "merge check: FAILED: the check of the changed documentation (log $o/doc-changed.log)"
-    return 1
-  fi
+  [ -n "$doc_by" ] || { echo "merge check: the check of the changed documentation did not run (doc_vm)"; return 1; }
   owner=$(farm_owner)
   spec=$(tools/spec_groups.sh --dir) && [[ $spec == /?* ]] && [ -d "$spec" ] ||
     { echo "merge check: tools/spec_groups.sh --dir gave no spec directory ('$spec')"; return 1; }
@@ -1317,9 +1342,9 @@ run_farm() {
   [ -z "$fullarg" ] || a+=("$fullarg")
   [ -z "$record" ] || a+=(--trace "$o/trace")
   echo "merge check: $(wc -l <"$o/terms") groups${fullarg:+ of tests/full} on Colab VMs as $owner (logs $o)"
-  # The check above is the doc check of the shares, whose copies have no origin/main
-  # (MERGECHECK-doc-check-skipped-without-origin; tools/check_changed_docs.sh).
-  ZED_DOC_CHECKED="the merge check's run before the VMs (log $o/doc-changed.log)" "$farm" "${a[@]}"
+  # The doc check of the shares, whose copies have no origin/main, is the one the steps' job ran
+  # (doc_vm, above; MERGECHECK-doc-check-skipped-without-origin; tools/check_changed_docs.sh).
+  ZED_DOC_CHECKED=$doc_by "$farm" "${a[@]}"
   rc=$?
   if [ -n "$record" ] && [ "$rc" = 0 ]; then
     for d in "$o/trace"/*/; do

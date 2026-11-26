@@ -141,8 +141,9 @@ chmod +x tools/test_farm_run.sh
 printf '#!/bin/bash\nexit 2\n' >tools/farm_run.sh
 chmod +x tools/farm_run.sh
 # The toy's own tools/check_changed_docs.sh, which the chunks of step 2b leave to the merge check
-# (tools/run_tests.sh --pieces does not run it): it fails when $STUB_DOCS_FAIL is set.
-printf '#!/bin/bash\n[ -z "$STUB_DOCS_FAIL" ] || { echo "a doc link names no item"; exit 1; }\n' >tools/check_changed_docs.sh
+# (tools/run_tests.sh --pieces does not run it): it fails when $STUB_DOCS_FAIL is set. With
+# --changes it prints a base line, and a changed file when $STUB_DOCS_CHANGED is set.
+printf '#!/bin/bash\n[ "$1" != --changes ] || { printf "base\\t0\\n"; [ -z "$STUB_DOCS_CHANGED" ] || printf "changed\\tcrates/c/src/lib.rs\\n"; exit 0; }\n[ -z "$STUB_DOCS_FAIL" ] || { echo "a doc link names no item"; exit 1; }\n' >tools/check_changed_docs.sh
 chmod +x tools/check_changed_docs.sh
 : >tools/test_lib.sh
 echo '# Notes' >docs/notes.md
@@ -453,9 +454,10 @@ merge check: passed
 $(two_calls '' "$(sorted "$(short c s_01f_import_graph)" | tr ' ' '|')")" "$(clippy_run)"
 # With a farm runner, steps 0b, 0, 0c and 1a go to one VM as one command of `--commands`
 # (FARM-merge-check-clippy-selftests-remote), and none runs here. The stub farm records its
-# arguments and the commands file, prints the line a step would, and exits $STUB_FARM_RC.
+# arguments, the commands file and the run its caller names in ZED_DOC_CHECKED, prints the line a
+# step would, and exits $STUB_FARM_RC.
 stub_farm=$ws/target/stub-farm
-printf '#!/bin/bash\necho "$*" >>"$STUB_FARM_LOG"\nwhile [ $# -gt 0 ]; do [ "$1" != --commands ] || cat "$2" >>"$STUB_FARM_LOG"; shift; done\necho "farm stub ran"\nexit "${STUB_FARM_RC:-0}"\n' >"$stub_farm"
+printf '#!/bin/bash\necho "$*" >>"$STUB_FARM_LOG"\nwhile [ $# -gt 0 ]; do [ "$1" != --commands ] || cat "$2" >>"$STUB_FARM_LOG"; shift; done\necho "docs checked by: [${ZED_DOC_CHECKED-}]" >>"$STUB_FARM_LOG"\necho "farm stub ran"\nexit "${STUB_FARM_RC:-0}"\n' >"$stub_farm"
 chmod +x "$stub_farm"
 export STUB_FARM_LOG=$ws/target/stub-farm-log
 steps_farm_run() {
@@ -478,6 +480,24 @@ check "a failed farm run of the steps refuses the merge with exit 1, and no test
 farm stub ran
 1
 1" "$(STUB_FARM_RC=1 steps_farm_run; command grep -a -c '^--owner ' "$STUB_FARM_LOG"; calls >/dev/null)"
+# With a farm runner the check of the changed documentation runs on the steps' VM, as a second
+# command of their job, and not here (TOOL-doc-check-on-vm: it builds documentation), and the
+# VM shares are told that job did it (ZED_DOC_CHECKED). Before, it ran here before the shares,
+# and a check that fails here (STUB_DOCS_FAIL) failed the merge check.
+docs_farm_run() {
+  steps_farm_run >/dev/null
+  command grep -a -E '^tools/check_changed_docs|^docs checked by' "$STUB_FARM_LOG" | sed -E 's/\(logs [^)]*\)/(logs)/' |
+    LC_ALL=C sort -u
+}
+check "a changed doc line is checked on the steps' VM, and the shares are told so" \
+  'docs checked by: []
+docs checked by: [the merge check'"'"'s job on a Colab VM (logs)]
+tools/check_changed_docs.sh "$FARM_OUT/doc-changed.log"' \
+  "$(STUB_DOCS_CHANGED=1 STUB_DOCS_FAIL=1 docs_farm_run)"
+check "with no doc line changed, no doc check is sent, and the shares are told why" \
+  "docs checked by: []
+docs checked by: [the merge check, which found no doc line changed and no linked name lost since origin/main]" \
+  "$(STUB_DOCS_FAIL=1 docs_farm_run)"
 change_on_base crates/c/src/lib.rs 'pub fn n(v: &Vec<u8>) -> usize { v.len() }'
 check "a branch with a clippy warning is refused with exit 1, and its tests do not run" \
   "merge check: clippy -D warnings on: c
