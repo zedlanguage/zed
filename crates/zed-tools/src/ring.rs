@@ -5,7 +5,7 @@ use zedc::parse::TOP;
 
 use crate::spec::Spec;
 use crate::syntax::{Tokens, Tree, lex, parse};
-use crate::text::read_text;
+use crate::text::{elided, read_text};
 use crate::{Outcome, arg, say};
 
 /// A text parsed at the full ring: the lowest ring it parses at, its tree and its tokens.
@@ -21,7 +21,7 @@ pub struct Ringed {
 
 /// The lowest ring of `text` as a `Unit`, or the reason it has none.
 pub fn ring_of(spec: &Spec, text: &str) -> Result<Ringed, String> {
-    let toks = lex(&spec.lexical, &text.replace('…', "elided")).map_err(|e| format!("LEX {e}"))?;
+    let toks = lex(&spec.lexical, &elided(text)).map_err(|e| format!("LEX {e}"))?;
     let (syn, lexical) = (&spec.syntactic, &spec.lexical);
     let tree = parse(syn, lexical, &toks, TOP, "Unit")?;
     for ring in 1..=TOP {

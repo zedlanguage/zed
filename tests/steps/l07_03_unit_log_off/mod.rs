@@ -28,9 +28,7 @@ fn build(text: &str) -> Vec<Stmt> {
 /// notes as `; note line:column: text`.
 fn resolved(text: &str) -> Result<Resolution, Vec<String>> {
     let at = |byte: usize| {
-        let before = &text[..byte];
-        let line = before.matches('\n').count() + 1;
-        let column = byte - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+        let (line, column) = zed_kernel::sites::line_col(text.as_bytes(), byte);
         format!("{line}:{column}")
     };
     resolve(&build(text)).map_err(|errors| {

@@ -74,10 +74,11 @@ fn findings(program: &str) -> String {
 fn lambdas_whose_classes_are_read_inside_check_as_when_replaced_at_every_depth() {
     let got: String = PROGRAMS.iter().map(|p| findings(p)).collect();
     let want = include_str!("curried_classes.txt");
-    for (i, (g, w)) in got.lines().zip(want.lines()).enumerate() {
-        assert_eq!(g, w, "line {}", i + 1);
-    }
-    assert_eq!(got.lines().count(), want.lines().count());
+    assert!(
+        got.lines().eq(want.lines()),
+        "the findings and curried_classes.txt differ at {}",
+        zed_tests::first_difference(&got, want)
+    );
 }
 
 /// The lines `findings` gives `program` that start with `start`.

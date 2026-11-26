@@ -227,7 +227,7 @@ pub fn ports(t: &Tables<'_>) -> Ports {
     let code = |span: Span| {
         (t.text)
             .and_then(|s| s.get(span.start..span.end))
-            .filter(|c| !c.contains('\n'))
+            .and_then(zed_kernel::text::prose::one_line_only)
     };
     let main = t.funcs.values().find(|f| f.main.is_some());
     let m = main.and_then(|f| f.main.as_ref()?.param.as_ref().map(|(m, ..)| m.as_str()));

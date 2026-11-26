@@ -645,13 +645,7 @@ mod tests {
             (Some("a + b"), None, Some("(c\n  + d)"))
         );
         // The same lines and columns in both texts.
-        let place = |t: &str, s: usize| {
-            let before = &t[..s];
-            (
-                before.matches('\n').count(),
-                s - before.rfind('\n').map_or(0, |i| i + 1),
-            )
-        };
+        let place = |t: &str, s: usize| zed_kernel::sites::line_col(t.as_bytes(), s);
         for (k, s) in sites.iter().enumerate() {
             if let (Some(s), Some(m)) = (s, moved[k]) {
                 assert_eq!(place(text, s.start), place(&kept, m.start));

@@ -754,10 +754,16 @@ pub fn strip(s: &str) -> &str {
     s.trim_matches(is_space)
 }
 
+/// `text` with each `…`, which the spec's code writes for a part left out, replaced by the
+/// name `elided`, so that code which leaves a part out still lexes and parses. O(len).
+pub fn elided(text: &str) -> String {
+    text.replace('…', "elided")
+}
+
 /// The text of the file at `path`, with `\r\n` and `\r` read as `\n`.
 pub fn read_text(path: &str) -> Result<String, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    Ok(text.replace("\r\n", "\n").replace('\r', "\n"))
+    Ok(zedc::source::unified_newlines(&text))
 }
 
 /// Whether `repr` writes `c`, which is not ASCII, as itself.
@@ -797,16 +803,6 @@ pub fn repr(s: &str) -> String {
 /// Python's `s[:n]`, counting code points.
 pub fn prefix(s: &str, n: usize) -> &str {
     s.char_indices().nth(n).map_or(s, |(i, _)| &s[..i])
-}
-
-/// Python's `'%-Ns' % s`: `s` padded on the right to `n` code points.
-pub fn left(s: &str, n: usize) -> String {
-    format!("{s}{}", " ".repeat(n.saturating_sub(s.chars().count())))
-}
-
-/// Python's `'%Ns' % s`: `s` padded on the left to `n` code points.
-pub fn right(s: &str, n: usize) -> String {
-    format!("{}{s}", " ".repeat(n.saturating_sub(s.chars().count())))
 }
 
 /// The last component of the path `path`.

@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use imbl::Vector;
 use zed_collections::spelling::{fold, near_in_spelling};
-use zed_kernel::text::prose::{and_list, ordinal, plural};
+use zed_kernel::text::prose::{and_list, code_list, first_line, ordinal, plural};
 
 use zedc_base::address::ContentAddress;
 use zedc_base::rejection::{Row, not_yet};
@@ -3647,14 +3647,10 @@ impl Resolver<'_> {
                         [one] => format!(
                             "`{x}` is not a field of `{receiver}`, whose one field is `{one}`"
                         ),
-                        _ => {
-                            let fields: Vec<String> =
-                                written.iter().map(|f| format!("`{f}`")).collect();
-                            format!(
-                                "`{x}` is not a field of `{receiver}`, whose fields are {}",
-                                and_list(&fields)
-                            )
-                        }
+                        _ => format!(
+                            "`{x}` is not a field of `{receiver}`, whose fields are {}",
+                            code_list(written.iter(), "and")
+                        ),
                     }
                 }
                 _ => return self.later(span, "a generation push `x' <- e`"),
@@ -5131,10 +5127,7 @@ impl Resolver<'_> {
         if let Some(i) = site_text[from..].find(own) {
             out.replace_range(from + i..from + i + own.len(), lower);
         }
-        match out.split_once('\n') {
-            Some((first, _)) => format!("{} …", first.trim_end()),
-            None => out,
-        }
+        first_line(&out).into_owned()
     }
 
     /// The row "Capitalized name, not of a type variable's form, that names no type in scope"

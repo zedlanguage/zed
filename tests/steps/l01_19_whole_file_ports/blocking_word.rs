@@ -17,8 +17,7 @@ fn refused(text: &str) -> Vec<(Option<Row>, String, String)> {
     let errs = resolve_text(&stmts, Some(text)).expect_err(text);
     (errs.into_iter())
         .map(|e| {
-            let line = text[..e.span.start].matches('\n').count() + 1;
-            let col = e.span.start - text[..e.span.start].rfind('\n').map_or(0, |i| i + 1) + 1;
+            let (line, col) = zed_kernel::sites::line_col(text.as_bytes(), e.span.start);
             let mut s = e.message;
             for n in &e.notes {
                 s.push_str(&format!("\n  {}", n.text));

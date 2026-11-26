@@ -14,7 +14,7 @@ use zedc::parse::TOP;
 use crate::layer::{Parsed, WordTable, add_holes, analyze, label_at};
 use crate::spec::{Fence, Spec, zed_fences};
 use crate::syntax::{lex, parse};
-use crate::text::base_name;
+use crate::text::{base_name, elided};
 
 /// The layer named by a `// layer Lk` line. A fence's label may be on any line, since its first
 /// line is usually its `// [d4]` header; the layer checker reads only a program's first line.
@@ -43,7 +43,7 @@ pub struct LaidFence {
 /// The fence `fence` laid out against `spec` and the words of `table`.
 fn lay(fence: Fence, spec: &Spec, table: &WordTable) -> Result<LaidFence, String> {
     let lexical = &spec.lexical;
-    let toks = lex(lexical, &fence.text.replace('…', "elided"))?;
+    let toks = lex(lexical, &elided(&fence.text))?;
     let (g, start, notation, tree) = match parse(&spec.syntactic, lexical, &toks, TOP, "Unit") {
         Ok(tree) => (&spec.syntactic, "Unit", false, tree),
         Err(_) => (

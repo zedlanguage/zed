@@ -1063,9 +1063,7 @@ impl fmt::Display for Literal<'_> {
                 // `escape_debug` escapes exactly the characters with no visible form of their
                 // own, as Rust's `{:?}` of a string does; `'` it escapes only for a `char`.
                 '\'' => f.write_char(c)?,
-                c if c.is_control() || c.escape_debug().len() > 1 => {
-                    write!(f, "\\u{{{:X}}}", c as u32)?
-                }
+                c if c.is_control() || c.escape_debug().len() > 1 => escape(c, f)?,
                 c => f.write_char(c)?,
             }
         }
@@ -1087,6 +1085,32 @@ pub fn escaped(c: char) -> Option<char> {
         '\\' | '"' | '$' => Some(c),
         _ => None,
     }
+}
+
+/// The escape form of `c`: `\u{X}`, `X` its code point in upper-case hex with no leading zeros,
+/// as a Zed string writes it. The one writer of the form, for [`Literal`], the lexer's
+/// messages and a terminal's hidden characters (`zedc_base::terminal`).
+pub fn escape(c: char, f: &mut impl fmt::Write) -> fmt::Result {
+    write!(f, "\\u{{{:X}}}", c as u32)
+}
+
+/// The columns [`escape`] writes for `c`: `\u{` and `}` and one hex digit for each four bits up
+/// to the highest set.
+pub fn escape_width(c: char) -> usize {
+    use crate::bits::BitLen;
+    let bits = (c as u32 | 1).bit_len() as usize;
+    4 + bits.div_ceil(4)
+}
+
+/// The character the digits `hex` of an escape `\u{hex}` name: none unless `hex` is one or
+/// more ASCII hex digits naming a `char` (not a surrogate, not past U+10FFFF). The one reader
+/// of the digits, for the lexer, ZIR text and the grammar file. `u32::from_str_radix` alone
+/// would also take a leading `+`, which no escape is written with.
+pub fn read_unicode_escape(hex: &str) -> Option<char> {
+    if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
 }
 
 #[cfg(test)]
@@ -1112,6 +1136,42 @@ mod tests {
             .filter_map(|c| Some((c, escaped(c)?)))
             .collect();
         assert_eq!(got, want);
+    }
+
+    #[test]
+    fn escape_width_counts_what_escape_writes() {
+        for c in [
+            '\0', '\u{1}', '\u{F}', '\u{10}', '\u{1B}', '\u{FF}', '\u{100}', '\u{202E}',
+        ] {
+            let mut s = String::new();
+            escape(c, &mut s).unwrap();
+            assert_eq!(escape_width(c), s.len(), "{s}");
+        }
+        let mut s = String::new();
+        escape('\u{10FFFF}', &mut s).unwrap();
+        assert_eq!(
+            (s.as_str(), escape_width('\u{10FFFF}')),
+            ("\\u{10FFFF}", 10)
+        );
+    }
+
+    /// Over every `char`, the digits [`escape`] writes read back as it, in either case and
+    /// with leading zeros; text that is not only hex digits names none.
+    #[test]
+    fn a_unicode_escape_reads_back_what_escape_writes() {
+        for c in (0..=0x10FFFF).filter_map(char::from_u32) {
+            let mut s = String::new();
+            escape(c, &mut s).unwrap();
+            let hex = &s[3..s.len() - 1];
+            assert_eq!(read_unicode_escape(hex), Some(c), "{s}");
+            assert_eq!(read_unicode_escape(&hex.to_lowercase()), Some(c), "{s}");
+            assert_eq!(read_unicode_escape(&format!("00{hex}")), Some(c), "{s}");
+        }
+        let signed = ["+41", "-1", " 41", "41 "];
+        let out_of_range = ["D800", "DFFF", "110000", "FFFFFFFFF"];
+        for hex in ["", "g"].into_iter().chain(signed).chain(out_of_range) {
+            assert_eq!(read_unicode_escape(hex), None, "{hex:?}");
+        }
     }
 
     // Every expected text below is a literal or a plain `String` built by `push_str`, never

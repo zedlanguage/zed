@@ -5351,8 +5351,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if Self::remap_further(self.remap_rank(e, &src), *rank) {
             return true;
         }
-        let remap = (self.code(Some(*at)))
-            .filter(|c| !c.contains('\n'))
+        let remap = (self.code_line(Some(*at)))
             .map_or("this remap".to_string(), |c| format!("the remap `{c}`"));
         let message = format!(
             "{remap} is checked again at each type that flows into a value of unknown type its \
@@ -10180,16 +10179,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             1 => "one argument".to_string(),
             _ => format!("{k} arguments"),
         };
-        let one_line = |c: &'a str| (!c.contains('\n')).then_some(c);
         let whole = params.join(", ");
-        let passes = match self.code(Some(span)).and_then(one_line) {
+        let passes = match self.code_line(Some(span)) {
             Some(c) => format!("`{c}` passes {n}"),
             None => format!("this call passes {n}"),
         };
         let mut message = format!("`{w}` takes {takes}, `{w}({whole})`, and {passes}.");
         let mut menu = Vec::new();
         // The value before the dot is the first argument, which the count includes.
-        if let Some(x) = of.and_then(|e| self.code(Some(e.span))).and_then(one_line) {
+        if let Some(x) = of.and_then(|e| self.code_line(Some(e.span))) {
             menu.push(format!(
                 "`{x}` before `.{w}` is the first argument of `{w}`"
             ));
@@ -10198,7 +10196,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // one line or the checker has no text.
         let written: Option<Vec<&str>> = (of.into_iter().chain(positional))
             .take(k)
-            .map(|e| self.code(Some(e.span)).and_then(one_line))
+            .map(|e| self.code_line(Some(e.span)))
             .collect();
         match written {
             Some(written) if n > k => {
@@ -10211,8 +10209,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let all: Vec<&str> = written.into_iter().chain(missing.iter().copied()).collect();
                 let call = format!("{w}({})", all.join(", "));
                 // `missing` is not empty: the call has fewer arguments than parameters.
-                let named: Vec<String> = missing.iter().map(|p| format!("`{p}`")).collect();
-                let named = and_list(&named);
+                let named = code_list(missing, "and");
                 menu.push(format!("repair: give {named} a value, as `{call}`"));
             }
             None => menu.push(format!("repair: pass {takes}, as `{w}({whole})`")),
@@ -12665,13 +12662,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             // write, or wrote across lines, is named by its parameter as DESIGN step L3.2
             // writes the call (`s.split(sep)`, `concat(pieces, sep: s)`), so no separator the
             // program did not write is offered (plan row FAIL-l01-37a-split-snapshot).
-            let one_line = |c: &'a str| (!c.contains('\n')).then_some(c);
             let mut written: Vec<Option<&'a str>> = Vec::new();
             if let Some(x) = &receiver {
-                written.push(self.code(x.at).and_then(one_line));
+                written.push(self.code_line(x.at));
             }
             let operands = positional.iter().chain(named.iter().map(|(_, e)| e));
-            written.extend(operands.map(|e| self.code(Some(e.span)).and_then(one_line)));
+            written.extend(operands.map(|e| self.code_line(Some(e.span))));
             let first = written.first().copied().flatten();
             let second = written.get(1).copied().flatten();
             let subject = first.unwrap_or(if word == "concat" { "pieces" } else { "s" });
@@ -17476,11 +17472,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             let shown = self.show(r);
             let got = self.text(&got);
-            let one_line = |s: Option<&'a str>| s.filter(|c| !c.contains('\n'));
-            let used = one_line(self.code(Some(n.span)));
+            let used = self.code_line(Some(n.span));
             let value = came
                 .filter(|v| v.from != n.span)
-                .and_then(|v| one_line(self.code(Some(v.from))));
+                .and_then(|v| self.code_line(Some(v.from)));
             let message = match (used, value) {
                 (Some(u), Some(v)) => {
                     format!("`{u}` gives {got} on the value `{v}`, but other uses need {shown}")
@@ -20668,7 +20663,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let blank = rest.len() - rest.trim_start().len();
             end += blank + rest[blank..].strip_prefix(')').map(|_| 1)?;
         }
-        text.get(span.start..end).filter(|c| !c.contains('\n'))
+        text.get(span.start..end).and_then(one_line_only)
     }
 
     /// The name `e` is, where it is bound once, so that a test of it narrows it.
@@ -22782,7 +22777,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         from: Span,
         whole: Option<Span>,
     ) -> (String, Option<String>) {
-        let line = |at: Span| self.code(Some(at)).filter(|c| !c.contains('\n'));
+        let line = |at: Span| self.code_line(Some(at));
         let code = line(from).filter(|_| whole != Some(from));
         let written = whole.and_then(line);
         let piece = match code {
@@ -22848,7 +22843,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(code) => Some((code, a.ty.without_loose())),
             None => {
                 let c = self.read_whole(a)?;
-                let code = self.code(a.at).filter(|c| !c.contains('\n'))?;
+                let code = self.code_line(a.at)?;
                 Some((code, Ty::carrier(c)))
             }
         };
@@ -22928,7 +22923,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             return None;
         }
-        self.code(Some(at)).filter(|c| !c.contains('\n'))
+        self.code_line(Some(at))
     }
 
     /// Checks each value of `t`, an operand of the ordering `what` whose other operand has no
@@ -23301,9 +23296,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             None => format!("{} (`{}`)", label(s, path), shown[s]),
         };
         // The comparison as written, where the source is known and on one line.
-        let written = (self.t.text)
-            .and_then(|t| t.get(span.start..span.end))
-            .filter(|w| !w.contains('\n'));
+        let written = self.code_line(Some(span));
         // The pair as code with its types, `x[1] : int < y[1] : rat`, and the comparison it
         // lies in where it is not the operands themselves.
         let pair = fmt::from_fn(|f| {
@@ -23382,13 +23375,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if !text.is_empty() {
                         text.push_str("; ");
                     }
-                    let _ = write!(text, "{what} compares {with} only with {with}, not ");
-                    for (j, p) in ps.iter().enumerate() {
-                        if j > 0 {
-                            text.push_str(if j + 1 == ps.len() { " or " } else { ", " });
-                        }
-                        let _ = write!(text, "`{p}`");
-                    }
+                    let _ = write!(
+                        text,
+                        "{what} compares {with} only with {with}, not {}",
+                        code_list(ps, "or")
+                    );
                 }
                 text
             }
@@ -24808,9 +24799,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
         derive: bool,
     ) {
-        let code = (self.code(of))
-            .filter(|c| !c.contains('\n'))
-            .map(|c| format!("`{c}`"));
+        let code = self.code_line(of).map(|c| format!("`{c}`"));
         let message = match code {
             Some(c) => format!(
                 "{c} is {shown}, not a function: this call applies {c} to an argument, and a \

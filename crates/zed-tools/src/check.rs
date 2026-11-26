@@ -12,7 +12,7 @@ use zedc::parse::{Expr, Grammar, TOP, marked_rule};
 
 use crate::spec::{Spec, fence_texts};
 use crate::syntax::{Tokens, Tree, lex, parse};
-use crate::text::strip;
+use crate::text::{elided, strip};
 use crate::{Outcome, arg, say};
 
 /// Every sub-expression `e` holds that `descend` allows, in order, `e` included: `visit` sees
@@ -228,7 +228,7 @@ fn fence(
     bad: &mut usize,
     out: &mut String,
 ) -> Fenced {
-    let toks = match lex(&spec.lexical, &text.replace('…', "elided")) {
+    let toks = match lex(&spec.lexical, &elided(text)) {
         Ok(toks) => toks,
         Err(e) => {
             say!(out, "{site} LEX {e}");

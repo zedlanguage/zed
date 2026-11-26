@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::ast::{self, BinaryOp, Expr, ExprKind, Note, Stmt, StrPart};
 use crate::lex::Span;
 use crate::resolve::{Ref, Resolution};
-use zed_kernel::text::prose::and_list;
+use zed_kernel::text::prose::{and_list, code_list};
 
 /// The targets a build may be for, each `<architecture>-<system>` (DESIGN.md L28.4 and S.12).
 pub const TARGETS: &[&str] = &[
@@ -245,8 +245,7 @@ fn with(declared: &[String], o: &str) -> String {
 
 /// The targets, for a message: "`x86_64-linux`, … and `aarch64-windows`".
 fn targets() -> String {
-    let names: Vec<String> = TARGETS.iter().map(|t| format!("`{t}`")).collect();
-    and_list(&names)
+    code_list(TARGETS, "and")
 }
 
 /// What a use of `build` reads.

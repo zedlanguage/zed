@@ -310,16 +310,12 @@ enum GTok {
     Op(char),
 }
 
-/// The character a backslash escape stands for: `\n`, `\t`, `\r`, `\0`, or the character
-/// itself.
+/// The character a backslash escape of the grammar file stands for: a string's escape by the
+/// kernel's table (`\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\$`), or else the character itself.
+/// The grammar file is more lenient than a Zed string on purpose: the `.peg` files write `\-`,
+/// `\[`, `\]`, `\'` and `\:` for the characters themselves, which a string refuses.
 fn escaped(c: char) -> char {
-    match c {
-        'n' => '\n',
-        't' => '\t',
-        'r' => '\r',
-        '0' => '\0',
-        c => c,
-    }
+    zed_kernel::text::escaped(c).unwrap_or(c)
 }
 
 /// The ranges of a character class's body: `a-z` is a range unless `-` is first or last, and
@@ -337,12 +333,9 @@ fn class_ranges(body: &[char]) -> Result<Vec<(char, char)>, String> {
                     .position(|&c| c == '}')
                     .ok_or("a `\\u{` in a character class has no `}`")?;
                 let hex: String = body[i + 3..i + 3 + close].iter().collect();
-                let c = u32::from_str_radix(&hex, 16)
-                    .ok()
-                    .and_then(char::from_u32)
-                    .ok_or_else(|| {
-                        format!("`\\u{{{hex}}}` in a character class is not a valid character")
-                    })?;
+                let c = zed_kernel::text::read_unicode_escape(&hex).ok_or_else(|| {
+                    format!("`\\u{{{hex}}}` in a character class is not a valid character")
+                })?;
                 chars.push(Some(c));
                 i += 4 + close;
             }

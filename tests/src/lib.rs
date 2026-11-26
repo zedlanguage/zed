@@ -40,6 +40,21 @@ pub mod tables;
 pub mod tokens;
 pub mod trees;
 
+/// The first line where `a` and `b` differ, with its number, for the message of a failure:
+/// `line 3:` and the two lines, `None` for the one that has ended; `none` when every line
+/// agrees. O(the shorter text up to the difference).
+pub fn first_difference(a: &str, b: &str) -> String {
+    let (mut la, mut lb) = (a.lines(), b.lines());
+    for n in 1.. {
+        match (la.next(), lb.next()) {
+            (None, None) => break,
+            (x, y) if x == y => {}
+            (x, y) => return format!("line {n}:\n  {x:?}\n  {y:?}"),
+        }
+    }
+    "none".into()
+}
+
 /// A Zed function that doubles a string, for [`too_long`].
 pub const TWICE: &str = "twice(positional s: String) = s ++ s;\n";
 

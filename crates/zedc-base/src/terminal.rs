@@ -8,7 +8,9 @@ use std::fmt;
 
 use unicode_normalization::char::is_combining_mark;
 use unicode_width::UnicodeWidthChar;
-use zed_kernel::bits::BitLen;
+// The escape form of a character and its columns, which the kernel's string literals write too;
+// kept in `zed_kernel::text`, below this crate, so both write one form.
+pub use zed_kernel::text::{escape, escape_width};
 
 /// Whether `c` is printed in its escape form: a control character, a space other than U+0020
 /// (U+00A0, U+2028, …), or a character of no display width that is not a combining mark (a
@@ -23,17 +25,28 @@ pub fn hidden(c: char) -> bool {
         || (c.width() == Some(0) && !is_combining_mark(c))
 }
 
-/// The escape form of `c`: `\u{X}`, `X` its code point in upper-case hex with no leading zeros,
-/// as a Zed string writes it.
-pub fn escape(c: char, f: &mut impl fmt::Write) -> fmt::Result {
-    write!(f, "\\u{{{:X}}}", c as u32)
+/// The columns `c` takes in a diagnostic: four for a tab, which a quoted line shows as four
+/// spaces; the columns of its escape form for another [`hidden`] character; else the columns a
+/// terminal gives it, none for a combining mark and two for a wide character. O(1).
+pub fn char_width(c: char) -> usize {
+    match c {
+        '\t' => 4,
+        _ if hidden(c) => escape_width(c),
+        _ => c.width().unwrap_or(0),
+    }
 }
 
-/// The columns [`escape`] writes for `c`: `\u{` and `}` and one hex digit for each four bits up
-/// to the highest set.
-pub fn escape_width(c: char) -> usize {
-    let bits = (c as u32 | 1).bit_len() as usize;
-    4 + bits.div_ceil(4)
+/// The columns `text` takes in a diagnostic, the sum of [`char_width`] over its characters:
+/// what a column of text written after it must pad to, not its count of characters. O(len).
+pub fn width(text: &str) -> usize {
+    text.chars().map(char_width).sum()
+}
+
+/// Writes `n` copies of `c`: padding or a mark under a quoted line. Not a width in a format
+/// string, which takes at most 2^16 - 1, so a mark at a column past that, on a line of 65,536
+/// characters or more, is still placed. O(n).
+pub fn pad(f: &mut (impl fmt::Write + ?Sized), c: char, n: usize) -> fmt::Result {
+    (0..n).try_for_each(|_| f.write_char(c))
 }
 
 /// `text` as a terminal is to show it: each character [`hidden`] gives in its escape form, but
@@ -61,23 +74,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn escape_width_counts_what_escape_writes() {
-        for c in [
-            '\0', '\u{1}', '\u{F}', '\u{10}', '\u{1B}', '\u{FF}', '\u{100}', '\u{202E}',
-        ] {
-            let mut s = String::new();
-            escape(c, &mut s).unwrap();
-            assert_eq!(escape_width(c), s.len(), "{s}");
-        }
-        let mut s = String::new();
-        escape('\u{10FFFF}', &mut s).unwrap();
-        assert_eq!(
-            (s.as_str(), escape_width('\u{10FFFF}')),
-            ("\\u{10FFFF}", 10)
-        );
-    }
-
-    #[test]
     fn hidden_characters() {
         for c in [
             '\0', '\u{1B}', '\r', '\u{7F}', '\u{9B}', '\u{A0}', '\u{2028}', '\u{200B}',
@@ -93,6 +89,23 @@ mod tests {
         for c in [' ', 'a', 'é', '日', '😀', '\u{301}', '\u{94D}'] {
             assert!(!hidden(c), "{:X}", c as u32);
         }
+    }
+
+    /// A narrow, a wide and a combining character, a tab and two hidden characters, each by
+    /// the columns a terminal gives it as a diagnostic shows it.
+    #[test]
+    fn a_width_counts_columns_not_characters() {
+        assert_eq!(width(""), 0);
+        assert_eq!(width("abc"), 3);
+        assert_eq!(width("日本"), 4);
+        assert_eq!(width("ne\u{301}e"), 3);
+        assert_eq!(width("\tx"), 5);
+        assert_eq!(width("a\u{1B}b"), 2 + escape_width('\u{1B}'));
+        assert_eq!(char_width('\u{202E}'), "\\u{202E}".len());
+        let mut s = String::from(">");
+        pad(&mut s, '^', 3).unwrap();
+        pad(&mut s, ' ', 0).unwrap();
+        assert_eq!(s, ">^^^");
     }
 
     #[test]

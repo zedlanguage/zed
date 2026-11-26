@@ -212,7 +212,7 @@ fn checked_unit(
 /// past the syntax tree or resolution.
 fn check(table: &Table, ns: &[usize]) -> Option<HashMap<usize, String>> {
     let (text, lines, res, info) = checked_unit(table, ns)?;
-    let line_of = |start: usize| text[..start].matches('\n').count() + 1;
+    let line_of = |start: usize| zed_kernel::sites::line_col(text.as_bytes(), start).0;
     let mut errors: HashMap<usize, String> = HashMap::new();
     for e in &info.errors {
         if let Some(&n) = lines.get(&line_of(e.span.start)) {
@@ -507,7 +507,7 @@ fn a_case_that_warns_gives_its_warning_at_its_line() {
             checked_unit(&table, &[n]).expect("the case gets past resolution");
         let at: Vec<(usize, &str)> = (info.warnings.iter())
             .map(|w| {
-                let line = text[..w.span.start].matches('\n').count() + 1;
+                let (line, _) = zed_kernel::sites::line_col(text.as_bytes(), w.span.start);
                 (line, w.message.as_str())
             })
             .collect();

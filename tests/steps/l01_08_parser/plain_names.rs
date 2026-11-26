@@ -8,21 +8,13 @@ use std::path::Path;
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
 
+use crate::errors::report;
+
 /// The grammar's names for kinds of token (`Kind::name`, and `HEAD`, which the grammar also
 /// writes in capitals).
 const GRAMMAR_NAMES: [&str; 12] = [
     "IDENT", "WILD", "INT", "FLOAT", "RAT", "STRING", "ATOM", "ANNOT", "KW", "OP", "END", "HEAD",
 ];
-
-fn report(text: &str) -> String {
-    let tokens = lex(text).unwrap();
-    let err = parse(text, &tokens, "Unit", TOP).unwrap_err();
-    let line = text[..err.span.start].matches('\n').count() + 1;
-    format!(
-        "{text:?}\n  line {line}, at {:?}: {err}",
-        &text[err.span.start..err.span.end]
-    )
-}
 
 /// Programs that fail at different points, each with the message it gets.
 #[test]

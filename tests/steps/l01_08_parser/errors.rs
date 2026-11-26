@@ -4,10 +4,10 @@
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
 
-fn report(text: &str) -> String {
+pub(crate) fn report(text: &str) -> String {
     let tokens = lex(text).unwrap();
     let err = parse(text, &tokens, "Unit", TOP).unwrap_err();
-    let line = text[..err.span.start].matches('\n').count() + 1;
+    let (line, _) = zed_kernel::sites::line_col(text.as_bytes(), err.span.start);
     format!(
         "{text:?}\n  line {line}, at {:?}: {err}",
         &text[err.span.start..err.span.end]
