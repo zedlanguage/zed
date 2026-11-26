@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use zed_tests::instances::Rng;
 use zed_tests::scaling::Meter;
+use zed_tests::step_helpers::l01_38_presburger::small_cost::least;
 use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, decide, satisfiable};
 use zedc::store::utvpi::integer_empty;
@@ -179,18 +180,12 @@ fn unit_rows_at_their_corners_are_decided() {
 }
 
 /// The instructions `decide` and `integer_empty` take on the family `utvpi(n)`, each the least
-/// of two runs, after checking that both find a point.
+/// of [`Meter::least`]'s runs, after checking that both find a point.
 pub(super) fn costs(meter: &mut Meter, n: usize) -> (u64, u64) {
     let (f, rows) = utvpi_rows(n);
     let terms: Vec<(&[(usize, Int)], &Int)> = rows.iter().map(|(t, k)| (&t[..], k)).collect();
     assert_eq!(decide(&f), Ok(true));
     assert!(!integer_empty(n, &terms));
-    let least = |meter: &mut Meter, run: &dyn Fn()| {
-        (0..2)
-            .map(|_| meter.work(run).units)
-            .min()
-            .expect("two runs")
-    };
     let d = least(meter, &|| drop(std::hint::black_box(decide(&f))));
     let u = least(meter, &|| {
         std::hint::black_box(integer_empty(n, &terms));

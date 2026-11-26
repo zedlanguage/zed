@@ -277,7 +277,7 @@ fn two_disjunctions_empty_blocks_charge_work_per_block() {
     // A disjunction with an empty block is `true` and is dropped (`two_distributed`), so no
     // pair is formed: instructions within the scaling limit.
     assert!(
-        instr_ratio < 10.5,
+        instr_ratio < crate::scaling::LIMIT,
         "empty blocks: {instr_ratio:.2}x instructions per 8x m"
     );
     // If actual instructions grow quadratically (> 20x), counted work must grow comparably, not 8x.
@@ -403,7 +403,7 @@ fn joining_classes_keeps_the_run_cheap() {
     crate::scaling::compare_costs(
         "the union stride keeps its long run",
         "a constant number of ranges should be combined without listing the long run",
-        10.5,
+        crate::scaling::LIMIT,
         || {
             std::hint::black_box(direct_stride_union(32_000));
         },
@@ -586,9 +586,10 @@ fn a_stride_meeting_a_kept_piece_scales_linearly() {
     };
     let (work, instr, bytes) = (ratio(0, &counts), ratio(1, &counts), ratio(2, &counts));
     println!("kept_stride ratios (8x n): work={work:.2}x instr={instr:.2}x bytes={bytes:.2}x");
-    assert!(work < 10.5, "work {work:.2}x per 8x n");
-    assert!(instr < 10.5, "{instr:.2}x instructions per 8x n");
-    assert!(bytes < 10.5, "{bytes:.2}x bytes per 8x n");
+    let limit = crate::scaling::LIMIT;
+    assert!(work < limit, "work {work:.2}x per 8x n");
+    assert!(instr < limit, "{instr:.2}x instructions per 8x n");
+    assert!(bytes < limit, "{bytes:.2}x bytes per 8x n");
 }
 
 /// The exact meet, union and difference of two sets with tails (zedc-lattice `classed::tails`,

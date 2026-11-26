@@ -546,7 +546,10 @@ fn many_callers_read_few_nodes() {
         })
     };
     let r = ratio(mutant::NONE, 2000);
-    assert!(r <= 10.5, "nodes grew {r:.2} times from 2,000 to 16,000");
+    assert!(
+        r < crate::scaling::LIMIT,
+        "nodes grew {r:.2} times from 2,000 to 16,000"
+    );
     let r = ratio(mutant::SCAN, 100);
-    assert!(r > 10.5, "the scan grew only {r:.2} times");
+    assert!(r > crate::scaling::LIMIT, "the scan grew only {r:.2} times");
 }

@@ -108,7 +108,7 @@ fn binary_tmpdir() -> PathBuf {
 ///   a process of another build ran between two of its processes (TEST-scratch-native-dirs).
 ///   The cost is one small file per build of the binary, kept until the target directory is
 ///   cleaned; no process can tell whether another build still runs, so none deletes another's
-///   record. A process of `compare_by` (tests/src/scaling.rs), which runs the same test again
+///   record. A process of `compare_by` (zed_testkit::scaling), which runs the same test again
 ///   in a new process, claims with the same name and passes.
 /// - A path inside another test's path, or holding it: `scratch_dir("d")` of one test and
 ///   `scratch("d/prog.zed")` of another reuse the directory `d`, and a test that empties its

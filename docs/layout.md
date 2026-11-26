@@ -40,6 +40,8 @@ crates/               the Rust-hosted toolchain, kept permanently as the bootstr
   zed-alloc-count/    the counting allocator the test binaries use to measure bytes allocated
   zed-meter-settings/ the C library settings the scaling tests count under; a test binary
                       started without them starts itself again with them
+  zed-testkit/        the seed of a random test and the scaling test (n/8n ratios), a
+                      dev-dependency of every crate's tests; zed-tests re-exports both
   zed-tools/          the commands: sync, check, cases, fences, fuzz, layer, ring, audit,
                       progress, catalog; each takes the spec directory, and shares `zedc::parse`;
                       conflicts writes the conflict lists of docs/plan_dag.md
@@ -135,7 +137,7 @@ types or ZIR. The libraries form a DAG; each sits as low as its dependencies all
 | zed-collections | numtheory, hash | sorted lists (merge, merge with values, subset, disjoint, `sort_dedup`), intervals, interval ends with the infinities (`ext::Ext`), gallop search, interners, min-add segment tree, persistent treap with a lazy tag, join-based AVL, Patricia trie, priority search tree |
 | zed-bignum (new) | numtheory, collections, num-bigint | big-integer algorithms: product and remainder trees, fast division, gcd and printing, power by squaring, least and nth roots, coprime bases, CRT trees (the `m * 2^e` bound type is DRY-bignum-bound-type) |
 | zed-bignum-small (dev only) | as zed-bignum | zed-bignum's source built again with its unit tests' small leaves, for zed-kernel's unit tests alone (zed-bignum `fast::SMALL_LEAVES`) |
-| zed-testkit (new, dev only) | hash, alloc-count, meter-settings | `seed` and `scaling` (timers, n/8n ratios, inputs, load), now included by `#[path]` in 20 places |
+| zed-testkit (dev only) | hash, alloc-count, meter-settings | `seed` and `scaling` (timers, n/8n ratios, inputs, load), a dev-dependency of 15 crates and zed-tests (until DRY-testkit-2026-11-26 included by `#[path]` in 24 places) |
 
 Above the libraries, two compiler crates are shared by the rest and hold the generic parts that
 need the compiler's integer `Int`: `zedc-int` (`Int`, `Int::inverse_mod`, `Int::crt_pair`, the

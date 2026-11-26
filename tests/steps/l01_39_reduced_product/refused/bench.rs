@@ -156,7 +156,7 @@ fn the_join_of_arms_with_many_refused_tests_and_its_warnings_scale() {
 /// the test measures nothing.
 #[test]
 fn one_refused_test_costs_at_most_a_fixed_number_of_instructions() {
-    use zed_tests::scaling::Meter;
+    use zed_tests::scaling::{self, Meter};
     use zedc::store::cell::Premises;
     let mut meter = Meter::new();
     if meter.unit() != "instructions" {
@@ -173,14 +173,8 @@ fn one_refused_test_costs_at_most_a_fixed_number_of_instructions() {
             .fold(scope.clone(), |s, g| s.assume(g, true, &none));
         assert_eq!(s.warnings().len(), k);
     };
-    let least = (0..2)
-        .map(|_| meter.work(run).units)
-        .min()
-        .expect("two runs");
-    let each = least / k as u64;
-    let load = std::fs::read_to_string("/proc/loadavg")
-        .map(|l| l.split(' ').next().unwrap_or("").to_string())
-        .unwrap_or_default();
+    let each = meter.least(|| {}, run).units / k as u64;
+    let load = scaling::load().map(|[one, ..]| one).unwrap_or_default();
     eprintln!("one refused test: {each} instructions (limit {ASSUME_LIMIT}), load {load}");
     assert!(
         each <= ASSUME_LIMIT,

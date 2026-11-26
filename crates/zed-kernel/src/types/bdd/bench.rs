@@ -972,7 +972,7 @@ fn the_connectives_on_parts_nested_deep_run_on_the_default_stack() {
 fn three_thousand_random_parts_agree_with_the_recursive_diagrams() {
     let (mut rng, _) =
         crate::seed::Rng::fresh("three_thousand_random_parts_agree_with_the_recursive_diagrams");
-    let start = std::time::Instant::now();
-    random_parts_agree(&mut rng, 100, 30);
-    eprintln!("3000 random parts in {:.2?}", start.elapsed());
+    scaling::timed("3000 random parts", || {
+        random_parts_agree(&mut rng, 100, 30)
+    });
 }

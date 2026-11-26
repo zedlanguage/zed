@@ -9,9 +9,7 @@
 )]
 
 /// The scaling test of the rule of low complexity, shared with the step tests.
-#[path = "../../src/scaling.rs"]
-#[expect(dead_code, reason = "this test uses only some of the shared checks")]
-mod scaling;
+use zed_testkit::scaling;
 
 // The meter's `malloc` in this test binary, which `scaling` measures each run with
 // (`zed_alloc_count::metered`, TEST-meter-allocator-bias).

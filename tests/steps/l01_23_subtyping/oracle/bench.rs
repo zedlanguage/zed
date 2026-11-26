@@ -10,9 +10,8 @@ use super::*;
 const FUZZ_PIECE: usize = 1500;
 
 fn fuzz_piece(k: usize) {
-    let start = std::time::Instant::now();
-    fuzz(&format!("12,000 types, piece {k}"), FUZZ_PIECE);
-    eprintln!("12,000 types, piece {k}, in {:.2?}", start.elapsed());
+    let what = format!("12,000 types, piece {k}");
+    zed_tests::scaling::timed(&what, || fuzz(&what, FUZZ_PIECE));
 }
 
 #[test]

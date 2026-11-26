@@ -23,8 +23,8 @@ zed-numtheory.workspace = true
 zed-bignum.workspace = true
 
 [dev-dependencies]
-# The generators of tests/src/seed.rs, which the tests compile in by `#[path]`.
-zed-hash.workspace = true
+# The seed and generator of a random test (zed_testkit::seed).
+zed-testkit.workspace = true
 
 [lints]
 workspace = true

@@ -108,7 +108,7 @@ pub fn unstep(h: u64, z: u64) -> u64 {
 
 /// The splitmix64 generator: the state steps by [`GAMMA`] and each output is [`finalize`] of the
 /// new state (Vigna's `splitmix64.c`; Steele, Lea and Flood 2014, cited at [`finalize`]). The
-/// generator of every random test, through `tests/src/seed.rs`'s `Rng`, and of the Chaotic
+/// generator of every random test, through zed-testkit's `seed::Rng`, and of the Chaotic
 /// schedule of zed-kernel's evaluator.
 ///
 /// Why this generator for tests. Its state is one `u64` that steps by an odd constant, so every

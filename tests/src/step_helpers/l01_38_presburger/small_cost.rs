@@ -1,6 +1,6 @@
 //! Helpers of `tests/steps/l01_38_presburger/small_cost.rs` shared with its hand-run benchmark
 //! (`benches/src/bin/small_cost.rs`): the chains of `max` definitions, the ladders of bounds, and
-//! the least work of five runs.
+//! the least work of a few runs.
 
 use std::sync::Arc;
 
@@ -82,9 +82,10 @@ pub fn defs(n: u32, inputs: Inputs) -> Formula {
     Formula::and(fs)
 }
 
-/// The least instructions of five runs of `run`.
+/// The least work of the runs of `run`, as many as [`Meter::repeats`] says: one on a count of
+/// instructions (author A160).
 pub fn least(meter: &mut Meter, run: &dyn Fn()) -> u64 {
-    (0..5).map(|_| meter.work(run).units).min().expect("runs")
+    meter.least(|| {}, run).units
 }
 
 /// A ladder of `n` bounds, `x0 <= 5 && x1 <= x0 + 1 && ... && x(n-1) <= x(n-2) + 1`: no

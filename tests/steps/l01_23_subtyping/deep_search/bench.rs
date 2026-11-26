@@ -216,11 +216,7 @@ fn shallow(levels: usize, bottom: Type) -> Type {
 
 /// Runs `f` on a 2 MiB stack, whatever `RUST_MIN_STACK` says, and prints its time.
 fn timed(what: &str, f: impl FnOnce() + Send) {
-    zed_tests::deep::on_small_stack(|| {
-        let start = std::time::Instant::now();
-        f();
-        eprintln!("{what} in {:.2?}", start.elapsed());
-    });
+    zed_tests::deep::on_small_stack(|| scaling::timed(what, f));
 }
 
 /// The levels of the chain STACK-big-tests (a44c82a2) probed on a 2 MiB stack and did not

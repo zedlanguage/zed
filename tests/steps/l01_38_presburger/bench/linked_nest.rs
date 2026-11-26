@@ -22,7 +22,7 @@ fn a_linked_nest_projects_in_time_linear_in_its_depth() {
             .iter()
             .map(|&k| (k, nest(k, &w, (2, 1), true)))
             .collect();
-        exponents("project_each of the linked nest, x[k] odd", &sizes, |k| {
+        scaling::exponents("project_each of the linked nest, x[k] odd", &sizes, |k| {
             let f = &all.iter().find(|(n, _)| *n == k).expect("an input").1;
             assert_no_way_has_an_odd_top(f);
         });
@@ -69,7 +69,7 @@ fn twin_linked_nests_project_in_time_linear_in_their_depth() {
         .iter()
         .map(|&k| (k, twin(k, &w, (2, 1), true)))
         .collect();
-    exponents(
+    scaling::exponents(
         "project_each of the twin nests, x[k] + y[k] odd",
         &sizes,
         |k| {

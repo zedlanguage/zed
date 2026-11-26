@@ -10,15 +10,12 @@ use super::*;
 const PIECE: usize = 1000;
 
 fn piece(k: usize) {
-    let start = std::time::Instant::now();
-    probe_keeps_the_points_of_the_box(
-        &format!("probe keeps the points of the box, piece {k}"),
-        PIECE,
-    );
-    eprintln!(
-        "{PIECE} boxed formulas, piece {k}, in {:.2?}",
-        start.elapsed()
-    );
+    crate::scaling::timed(&format!("{PIECE} boxed formulas, piece {k}"), || {
+        probe_keeps_the_points_of_the_box(
+            &format!("probe keeps the points of the box, piece {k}"),
+            PIECE,
+        )
+    });
 }
 
 #[test]

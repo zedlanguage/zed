@@ -90,8 +90,8 @@
 #     (MERGE-runner-selects-all; 324a94ebe, a change to tools/run_tests.sh, broke build_binary,
 #     which its check did not select). Not the pieces of tests/full, which need --full. A file
 #     that a Rust source names in `#[path = "…"]`, `include!("…")`, `include_str!("…")` or
-#     `include_bytes!("…")` counts as a change to that source too (tests/src/seed.rs is compiled
-#     into the unit tests of seven crates, zed/grammar/*.peg into zedc-syntax), to a fixed point.
+#     `include_bytes!("…")` counts as a change to that source too (zed/grammar/*.peg is compiled
+#     into zedc-syntax), to a fixed point.
 #     A change to Cargo.toml, Cargo.lock, .cargo/ or rust-toolchain* selects every package.
 #     A group is the test binary of a target with `test = true` and no required features (so not
 #     tests/full, which needs --full): a lib's or bin's unit tests, named after the target, and

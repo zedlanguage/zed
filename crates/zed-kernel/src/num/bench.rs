@@ -455,20 +455,17 @@ fn fingerprint_instructions() {
         }
         assert_eq!(a.len(), xs.len());
         // Time as well: a 128-bit division is one instruction of tens of cycles, so the counts
-        // alone favor `ByDivision`. The least of 5 trials of 100 passes over the 64 numbers, in
-        // nanoseconds a fingerprint.
+        // alone favor `ByDivision`. The least processor time of 5 trials of 100 passes over the
+        // 64 numbers, in nanoseconds a fingerprint.
         let time = |f: &dyn Fn(&Rat) -> [u64; 4]| {
-            (0..5)
-                .map(|_| {
-                    let start = std::time::Instant::now();
-                    for _ in 0..100 {
-                        for x in &xs {
-                            std::hint::black_box(f(std::hint::black_box(x)));
-                        }
+            let (ns, ()) = crate::scaling::least_cpu_ns(5, || {
+                for _ in 0..100 {
+                    for x in &xs {
+                        std::hint::black_box(f(std::hint::black_box(x)));
                     }
-                    start.elapsed().as_nanos() as f64 / 6400.0
-                })
-                .fold(f64::INFINITY, f64::min)
+                }
+            });
+            ns as f64 / 6400.0
         };
         let ns = [
             time(&|x| {

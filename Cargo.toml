@@ -30,6 +30,7 @@ members = [
     "crates/zed-tools",
     "crates/zed-alloc-count",
     "crates/zed-meter-settings",
+    "crates/zed-testkit",
     "zed/corpus/ref",
     "tests",
     "benches",
@@ -60,6 +61,7 @@ zed-corpus-ref = { path = "zed/corpus/ref" }
 zed-tools = { path = "crates/zed-tools" }
 zed-alloc-count = { path = "crates/zed-alloc-count" }
 zed-meter-settings = { path = "crates/zed-meter-settings" }
+zed-testkit = { path = "crates/zed-testkit" }
 zedc-base = { path = "crates/zedc-base" }
 zedc-syntax = { path = "crates/zedc-syntax" }
 zedc-int = { path = "crates/zedc-int" }

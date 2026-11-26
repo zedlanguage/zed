@@ -868,12 +868,8 @@ pub fn least(meter: &mut Meter, f: impl Fn()) -> Work {
 /// The load average over 1, 5 and 15 minutes, as the system reports it, and the platform, for
 /// the head of each table.
 pub fn conditions() -> String {
-    let load = std::fs::read_to_string("/proc/loadavg")
-        .ok()
-        .and_then(|s| {
-            let fields: Vec<&str> = s.split_whitespace().take(3).collect();
-            (fields.len() == 3).then(|| fields.join(" "))
-        })
+    let load = zed_tests::scaling::load()
+        .map(|l| l.join(" "))
         .unwrap_or_else(|| "not known".into());
     format!(
         "platform {}-{}, load {load}",

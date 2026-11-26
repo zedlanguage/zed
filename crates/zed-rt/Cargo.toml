@@ -38,20 +38,14 @@ counts = []
 path = "."
 features = ["counts"]
 
-# The shared scaling checks (tests/src/scaling.rs) of the benchmarks in `stack/bench.rs`: they
-# count instructions with perf-event2 and bytes with zed-alloc-count, read clocks with rustix
-# and the room left on the stack with stacker. loom model-checks the lock-free list of stacks under
-# a memory limit (src/stack/weakmem.rs).
+# The shared scaling checks (zed_testkit::scaling) of the benchmarks in `stack/bench.rs`, and the
+# meter's `malloc` they count bytes with (zed-alloc-count's `meter_entry_points!`). loom
+# model-checks the lock-free list of stacks under a memory limit (src/stack/weakmem.rs).
 [dev-dependencies]
 loom.workspace = true
-rustix.workspace = true
-stacker.workspace = true
+zed-testkit.workspace = true
 zed-alloc-count.workspace = true
-zed-meter-settings.workspace = true
 # smallvec, under loom's tracing-subscriber, with `union`, which cranelift-codegen gives it in
 # the workspace build, so that `cargo test -p zed-rt` builds it as that build does (merge_check
 # step 0a; without this line zed-rt alone got smallvec [ ]).
 smallvec = { version = "1.16.4", features = ["union"] }
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-perf-event2.workspace = true

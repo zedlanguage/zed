@@ -338,6 +338,7 @@ fn tied_projection_endpoint_reports_scale_past_512() {
 #[test]
 fn ss_project_each_costs_at_most_four_decides() {
     use zed_tests::scaling::Meter;
+    use zed_tests::step_helpers::l01_38_presburger::small_cost::least;
     use zedc::store::presburger::HULL_BISECT;
     let mut meter = Meter::new();
     if meter.unit() != "instructions" {
@@ -348,12 +349,6 @@ fn ss_project_each_costs_at_most_four_decides() {
     ROW_SUMS_OFF.with(|o| o.set(true));
     let f = subset_sum_dp(&weights(64));
     let y0 = [sym("y0")];
-    let least = |meter: &mut Meter, run: &dyn Fn()| {
-        (0..2)
-            .map(|_| meter.work(run).units)
-            .min()
-            .expect("two runs")
-    };
     let d = least(&mut meter, &|| drop(std::hint::black_box(decide(&f))));
     let reported = least(&mut meter, &|| {
         drop(std::hint::black_box(project_each_solver(&f, &y0)))

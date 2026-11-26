@@ -12,16 +12,13 @@ publish.workspace = true
 crate-type = ["rlib", "dylib"]
 
 [dev-dependencies]
-# The generators of tests/src/seed.rs, which the tests compile in by `#[path]`. zed-hash depends
-# on no crate, so this adds no cycle.
+# The fixed xorshift64 streams of some tests (`zed_hash::Xorshift64`); the seed of a random test
+# and the scaling test of the rule of low complexity (zed_testkit); and the meter's `malloc` it
+# measures with (zed-alloc-count's `meter_entry_points!`). None depends on a library crate of
+# the workspace, so these add no cycle.
 zed-hash.workspace = true
-rustix.workspace = true
+zed-testkit.workspace = true
 zed-alloc-count.workspace = true
-zed-meter-settings.workspace = true
-stacker.workspace = true
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-perf-event2.workspace = true
 
 [lints]
 workspace = true

@@ -124,14 +124,10 @@ fn foldl_frames() -> Term {
     }
 }
 
-/// The least instructions of three runs of `run` at `k`.
-fn least(meter: &mut Meter, k: usize, run: &impl Fn(usize)) -> u64 {
-    (0..3).map(|_| meter.work(|| run(k)).units).min().unwrap()
-}
-
-/// Holds the instructions of `run` at n and 8n under the limit for work of order
-/// `n^power`, and returns the ratio; `None` when the test ran again alone, in a new process,
-/// which measured and passed (`scaling::ran_alone_in_a_new_process`), and the caller returns.
+/// Holds the instructions of `run` at n and 8n ([`Meter::least`] of its runs) under the limit
+/// for work of order `n^power`, and returns the ratio; `None` when the test ran again alone, in
+/// a new process, which measured and passed (`scaling::ran_alone_in_a_new_process`), and the
+/// caller returns.
 fn ratio(what: &str, n: usize, power: u32, run: impl Fn(usize)) -> Option<f64> {
     let mut meter = Meter::new();
     // Counted here and held by `hold`, not by a check: beside other tests on a machine with no
@@ -139,10 +135,8 @@ fn ratio(what: &str, n: usize, power: u32, run: impl Fn(usize)) -> Option<f64> {
     if scaling::ran_alone_in_a_new_process(&meter) {
         return None;
     }
-    let (small, large) = (
-        least(&mut meter, n, &run),
-        least(&mut meter, FACTOR * n, &run),
-    );
+    let mut least = |k: usize| meter.least(|| {}, || run(k)).units;
+    let (small, large) = (least(n), least(FACTOR * n));
     Some(hold(what, meter.unit(), small, large, power))
 }
 
@@ -671,9 +665,7 @@ fn first_last_and_concat_of_a_joined_list_build_no_map() {
     // n = 1000, the ratio of n log n at 8n (measured 9.92, 2026-11-16, load 40; 10.21 with
     // short leaves merged at a join, `chain::LEAF` 16, 2026-11-17, load 61 to 74, COMPLEXITY.md
     // F223d).
-    let n = N_CONCAT as f64;
-    let n_log_n = FACTOR as f64 * (FACTOR as f64 * n).ln() / n.ln();
-    joined_read_under("a ++ a", n_log_n, |_| {
+    joined_read_under("a ++ a", scaling::n_log_n_ratio(N_CONCAT), |_| {
         Term::Prim(Prim::ListConcat, vec![acc(), acc()])
     });
 }

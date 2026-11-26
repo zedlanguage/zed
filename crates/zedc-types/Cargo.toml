@@ -25,17 +25,12 @@ zedc-syntax.workspace = true
 [lints]
 workspace = true
 
-# The scaling benchmarks of src/ty/tests/bench.rs (tests/src/scaling.rs, which src/lib.rs includes
-# in the unit tests by `#[path]`). zed-alloc-count and zed-meter-settings depend on no crate of
-# the workspace, so these add no cycle.
 [dev-dependencies]
-rustix.workspace = true
+# The seed of a random test and the scaling benchmarks of src/ty/tests/bench.rs (zed_testkit),
+# and the meter's `malloc` they measure with (zed-alloc-count's `meter_entry_points!`). Neither
+# depends on a library crate of the workspace, so these add no cycle.
+zed-testkit.workspace = true
 zed-alloc-count.workspace = true
-zed-meter-settings.workspace = true
-stacker.workspace = true
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-perf-event2.workspace = true
 
 [features]
 # Records each type printed on a thread with its text, for the test that parses each back

@@ -6,7 +6,7 @@ functions, type variables, atom payloads and the unknown, with union, meet, diff
 subtyping, the fit of an argument to a function's arrows, and the text of a type. Its unit
 tests are the `tests` module at the end of `ty.rs` (65 tests, and 2 benchmarks in `ty/tests/bench.rs`,
 run apart); the step tests reach it through the checker. The test binary lists those 67; the
-tests of the generators of `tests/src/seed.rs`, which the crate compiles in by `#[path]`, run
+tests of the generators of zed-testkit's `seed`, a dev-dependency of the crate, run
 in zed-hash only (TEST-seed-test-once, DRY-hash-crate-2026-11-26). Expected results are from DESIGN.md
 L1.22, L1.23, sec:type_language, sec:type_resolution and sec:diagnostics. llvm-cov, as a floor
 (regions; branch counts need a nightly compiler, so regions stand in for branches), over the

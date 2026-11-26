@@ -41,17 +41,13 @@ workspace = true
 zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 zedc-solvers = { workspace = true, features = ["counts"] }
 zedc-preimage = { workspace = true, features = ["counts", "preimage-ref"] }
-# The scaling test of the rule of low complexity (tests/src/scaling.rs), which the benchmarks of
-# `check::tests::bench` use.
-rustix.workspace = true
+# The scaling test of the rule of low complexity (zed_testkit::scaling), which the benchmarks of
+# `check::tests::bench` use, and the meter's `malloc` it measures with (zed-alloc-count's
+# `meter_entry_points!` in src/lib.rs).
+zed-testkit.workspace = true
 zed-alloc-count.workspace = true
-zed-meter-settings.workspace = true
-stacker.workspace = true
 # The keys and hashes of the r10 tests' expected output (`check/r10_tests/expected.rs`).
 blake3.workspace = true
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-perf-event2.workspace = true
 
 [features]
 # Records each type the checker prints on a thread with its text, for the test that parses each back

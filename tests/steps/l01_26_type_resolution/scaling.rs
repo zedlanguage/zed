@@ -4,7 +4,7 @@
 //! each body is checked once. The programs and types here are checked small; their time, at
 //! sizes where a cost above linear shows, is measured in `bench::scaling`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use zed_kernel::types::Type as KType;
 use zed_tests::scaling;
@@ -14,11 +14,8 @@ use super::{Resolved, info, sig, sig_of, type_errors};
 
 /// The units `text(m)` at `n` and `FACTOR * n`, read and resolved before the timing, so that a
 /// test times the checker alone (COMPLEXITY.md F85).
-pub(super) fn resolved(n: usize, text: impl Fn(usize) -> String) -> BTreeMap<usize, Resolved> {
-    [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, Resolved::new(&text(m))))
-        .collect()
+pub(super) fn resolved(n: usize, text: impl Fn(usize) -> String) -> HashMap<usize, Resolved> {
+    scaling::inputs(n, |m| Resolved::new(&text(m)))
 }
 
 /// `20 n` constants, each adopting its literal with no search, and `n` functions of one untyped

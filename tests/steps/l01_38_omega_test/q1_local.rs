@@ -344,9 +344,7 @@ fn table(
         println!(
             "Q1-LOCAL growth | {what} | n={m} | rows={rows} | terms={terms} | {} | {units} | {ratio:.2}x | n log n {nlogn:.2}x | load {}",
             short(&answer),
-            std::fs::read_to_string("/proc/loadavg")
-                .map(|l| l.split(' ').next().unwrap_or("").to_string())
-                .unwrap_or_default()
+            scaling::load().map(|[one, ..]| one).unwrap_or_default()
         );
         answers.push(answer);
     }
