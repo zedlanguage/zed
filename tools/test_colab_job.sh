@@ -10,6 +10,14 @@
 #                 fix it packed an empty source, called colab, and the VM's tests all failed with
 #                 rustup's "no default is configured".
 #   checkout      a git checkout with a tracked file: job.sh gets past the check and calls colab.
+# Case (FARM-job-untracked-tracked-on-vm, b22-scale1, 2026-11-26):
+#   tracked-only  a checkout with a tracked file, a tracked file deleted from the worktree, a
+#                 tracked file .gitignore matches, and an untracked file with a bad citation. The
+#                 VM side is run here: src.tgz is unpacked, and run.sh's `git init -q` line is run
+#                 in it with J set to the job directory. `git ls-files` there must equal the
+#                 worktree's less the deleted file, and the untracked file must still be sent.
+#                 Before the fix that line ran `git add -A`, so the VM's git tracked the untracked
+#                 file, and b28 job j21's citation test read an untracked tmp-b28/main.tar.
 # The temporary directory is left in place (it holds a few small files).
 set -u
 job=${1:-/home/luke/Work/wt/colab/job.sh}
@@ -58,6 +66,37 @@ if [ -e "$t/called-checkout" ] && [ $rc -eq 5 ]; then
   ok checkout
 else
   bad checkout "rc $rc, want 5 after a call to the fake colab: $(tail -2 <<<"$o")"
+fi
+
+m=$t/mixed
+mkdir -p "$m" "$t/vm/src"
+echo '[workspace]' > "$m/Cargo.toml"
+echo 'gone.txt' > "$m/.gitignore"
+echo 'x' > "$m/kept.txt"
+echo 'x' > "$m/gone.txt"
+echo 'x' > "$m/deleted.txt"
+g "$m" init -q && g "$m" add Cargo.toml .gitignore kept.txt deleted.txt && g "$m" add -f gone.txt ||
+  { echo "test_colab_job: cannot make the mixed checkout"; exit 2; }
+mv "$m/deleted.txt" "$t/deleted.txt"
+echo 'See [Nobody 1999, DOI 10.0000/none].' > "$m/scratch.txt"
+want=$(printf '%s\n' .gitignore Cargo.toml gone.txt kept.txt)
+run tracked-only "$m"
+line=$(command grep -a -m 1 '^git init -q' "$t/out-tracked-only/run.sh")
+if ! [ -e "$t/called-tracked-only" ] || [ $rc -ne 5 ] || [ -z "$line" ]; then
+  bad tracked-only "rc $rc, want 5 after a call to the fake colab and a run.sh with a git init line: $(tail -2 <<<"$o")"
+elif ! tar xzf "$t/out-tracked-only/src.tgz" -C "$t/vm/src" ||
+  ! [ -f "$t/vm/src/scratch.txt" ]; then
+  bad tracked-only "the untracked scratch.txt was not sent in src.tgz"
+else
+  [ ! -f "$t/out-tracked-only/tracked.lst" ] || cp "$t/out-tracked-only/tracked.lst" "$t/vm/tracked.lst"
+  pushd "$t/vm/src" > /dev/null &&
+    { J=$t/vm GIT_CONFIG_GLOBAL=$t/no-config GIT_CONFIG_NOSYSTEM=1 bash -c "set -u; $line" > "$t/vm/git.log" 2>&1
+      vrc=$?; got=$(git ls-files 2>&1); } ; popd > /dev/null
+  if [ "${vrc-}" != 0 ] || [ "${got-}" != "$want" ]; then
+    bad tracked-only "the VM's git line ($line) exited ${vrc-?} and tracks: $(tr '\n' ' ' <<<"${got-}"); want: $(tr '\n' ' ' <<<"$want"); $(tail -2 "$t/vm/git.log")"
+  else
+    ok tracked-only
+  fi
 fi
 
 echo "test_colab_job: $pass passed, $fail failed (temporary directory $t)"
