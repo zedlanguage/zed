@@ -532,7 +532,7 @@ fn decode(text: &str, start: usize, end: usize, cuts: &[(usize, usize)]) -> Stri
         out.push(match chars.next().expect("an escape was checked") {
             'u' => {
                 let hex: String = chars.by_ref().skip(1).take_while(|&c| c != '}').collect();
-                char::from_u32(u32::from_str_radix(&hex, 16).expect("checked")).expect("checked")
+                zed_kernel::text::read_unicode_escape(&hex).expect("an escape was checked")
             }
             c => zed_kernel::text::escaped(c).expect("an escape was checked"),
         });
@@ -558,7 +558,8 @@ fn escaped(text: &str, pos: usize) -> Option<String> {
         let stop = scan.next_hole(text).ok()?;
         for c in text[from..stop.unwrap_or(scan.i)].chars() {
             if is_bidi_control(c) {
-                out.push_str(&format!("\\u{{{:X}}}", c as u32));
+                // Writing to a `String` cannot fail.
+                let _ = zed_kernel::text::escape(c, &mut out);
             } else {
                 out.push(c);
             }

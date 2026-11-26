@@ -336,21 +336,18 @@ impl Diagnostic {
 /// character takes as many columns as it does on a terminal: none for a combining mark, two for a
 /// wide character, and an escaped one the columns of its escape. O(L) for L characters.
 fn shown(source: &str) -> (String, Vec<usize>) {
-    use unicode_width::UnicodeWidthChar;
     let mut text = String::with_capacity(source.len());
     let mut at = Vec::with_capacity(source.len() + 1);
     let mut column = 0;
     for c in source.chars() {
         at.push(column);
+        column += terminal::char_width(c);
         if c == '\t' {
             text.push_str("    ");
-            column += 4;
         } else if terminal::hidden(c) {
             terminal::escape(c, &mut text).expect("writing to a String cannot fail");
-            column += terminal::escape_width(c);
         } else {
             text.push(c);
-            column += c.width().unwrap_or(0);
         }
     }
     at.push(column);
@@ -630,8 +627,8 @@ fn draw(f: &mut std::fmt::Formatter<'_>, margin: &str, l: &Layout) -> std::fmt::
         let mut done = 0;
         for &k in row {
             let (from, width, label) = &l.full[k];
-            repeat(f, ' ', from - done)?;
-            repeat(f, '^', *width)?;
+            terminal::pad(f, ' ', from - done)?;
+            terminal::pad(f, '^', *width)?;
             f.write_str(label)?;
             done = from + width + label.len();
         }
@@ -654,9 +651,9 @@ fn draw(f: &mut std::fmt::Formatter<'_>, margin: &str, l: &Layout) -> std::fmt::
             let ticks = &l.rulers[k];
             for (j, (col, label)) in ticks.iter().enumerate() {
                 if j == 0 {
-                    repeat(f, ' ', col - done)?;
+                    terminal::pad(f, ' ', col - done)?;
                 } else {
-                    repeat(f, '-', col - done)?;
+                    terminal::pad(f, '-', col - done)?;
                 }
                 f.write_str("^")?;
                 done = col + 1;
@@ -677,7 +674,7 @@ fn draw(f: &mut std::fmt::Formatter<'_>, margin: &str, l: &Layout) -> std::fmt::
             let mut done = 0;
             for k in under {
                 let (col, label) = below[k];
-                repeat(f, ' ', col - done)?;
+                terminal::pad(f, ' ', col - done)?;
                 f.write_str(label)?;
                 done = col + label.len();
             }
@@ -1861,10 +1858,4 @@ pub(crate) fn parse_unit(text: &str) -> Parsed {
     let mut imports = resolve::resolve_in(&stmts, &Alone).res.units;
     imports.sort_by_key(|i| i.1);
     Ok((stmts, imports, broken))
-}
-
-/// Writes `n` copies of `c`. A width in a format string takes at most 2^16 - 1, so a mark at a
-/// column past that, on a line of 65,536 characters or more, cannot be placed by one. O(n).
-fn repeat(f: &mut std::fmt::Formatter<'_>, c: char, n: usize) -> std::fmt::Result {
-    (0..n).try_for_each(|_| std::fmt::Write::write_char(f, c))
 }

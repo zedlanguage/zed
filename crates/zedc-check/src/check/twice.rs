@@ -315,7 +315,7 @@ impl<'a> Walk<'_, 'a> {
         let text = self.t.text;
         let code = |s: Span| {
             text.and_then(|x| x.get(s.start..s.end))
-                .filter(|c| !c.contains('\n'))
+                .and_then(zed_kernel::text::prose::one_line_only)
                 .map_or_else(String::new, |c| format!(" `{c}`"))
         };
         // Without the source text, or with a push that spans lines, a push has no quote; the

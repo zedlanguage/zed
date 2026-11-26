@@ -24,6 +24,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::path::PathBuf;
 
+use zed_tests::first_difference;
 use zedc::front::{Diagnostic, Front};
 use zedc::query::Db;
 use zedc::run;
@@ -195,19 +196,6 @@ fn by_unit(out: &str) -> BTreeMap<&str, &str> {
     }
     assert!(rest.is_empty(), "the output is units only");
     map
-}
-
-/// The first line where `a` and `b` differ, with its number, for the message of a failure.
-fn first_difference(a: &str, b: &str) -> String {
-    let (mut la, mut lb) = (a.lines(), b.lines());
-    for n in 1.. {
-        match (la.next(), lb.next()) {
-            (None, None) => break,
-            (x, y) if x == y => {}
-            (x, y) => return format!("line {n}:\n  {x:?}\n  {y:?}"),
-        }
-    }
-    "none".into()
 }
 
 /// The test of piece `k`: in a child, its output; in the parent, the children's outputs

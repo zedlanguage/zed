@@ -50,7 +50,7 @@ use zedc::parse::{Kind, Parser, TOP};
 use crate::ring::ring_of;
 use crate::spec::Spec;
 use crate::syntax::{Tokens, Tree, lex, then_end};
-use crate::text::{base_name, left, read_text, repr, right, strip};
+use crate::text::{base_name, read_text, repr, strip};
 use crate::{Outcome, arg, say};
 // In `steps`, which reads them too, so that the two files do not import each other.
 use steps::spans;
@@ -541,13 +541,13 @@ pub fn report(spec: &Spec, verbose: bool, files: &[&str], out: &mut String) -> O
     let mut fails = 0;
     say!(
         out,
-        "{} {} {} {} {} {} agree",
-        left("program", 34),
-        right("units", 5),
-        right("ring", 5),
-        left("table (word)", 16),
-        right("label", 5),
-        right("enabled", 7)
+        "{:<34} {:>5} {:>5} {:<16} {:>5} {:>7} agree",
+        "program",
+        "units",
+        "ring",
+        "table (word)",
+        "label",
+        "enabled"
     );
     // Every main file of one package has the whole package as its program, so the package's
     // layers are found once and kept by its root. Naive, once per main file: p main files of a
@@ -567,7 +567,7 @@ pub fn report(spec: &Spec, verbose: bool, files: &[&str], out: &mut String) -> O
                 &alone
             }
         };
-        let name = left(&shown_name(f), 34);
+        let name = format!("{:<34}", shown_name(f));
         let r = match verdict {
             Ok(r) => r,
             Err(why) => {
@@ -589,21 +589,16 @@ pub fn report(spec: &Spec, verbose: bool, files: &[&str], out: &mut String) -> O
         };
         say!(
             out,
-            "{name} {} {} {} {} {} {tag}",
-            right(&r.units.to_string(), 5),
-            right(&format!("L{}", r.ring), 5),
-            left(&format!("L{} ({})", r.table, r.word), 16),
-            right(&lab, 5),
-            right(&format!("L{enabled}"), 7)
+            "{name} {:>5} {:>5} {:<16} {:>5} {:>7} {tag}",
+            r.units,
+            format!("L{}", r.ring),
+            format!("L{} ({})", r.table, r.word),
+            lab,
+            format!("L{enabled}")
         );
         if verbose {
             for (k, w, how) in r.hits.iter().rev() {
-                say!(
-                    out,
-                    "      L{} {} {how}",
-                    left(&k.to_string(), 3),
-                    left(w, 14)
-                );
+                say!(out, "      L{k:<3} {w:<14} {how}");
             }
         }
         fails += usize::from(!agree);

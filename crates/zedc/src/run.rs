@@ -1973,6 +1973,7 @@ mod against {
     use std::collections::BTreeSet;
 
     use zed_kernel::text::Text;
+    use zed_kernel::text::prose::counted;
 
     use super::{PortKind, Program, Record, Wave};
 
@@ -2011,8 +2012,8 @@ mod against {
                     match first {
                         None => "the lines of a `Lines` input, no lines".to_string(),
                         Some(line) => format!(
-                            "the lines of a `Lines` input, {count} {}, the first {}",
-                            plural(count, "line"),
+                            "the lines of a `Lines` input, {}, the first {}",
+                            counted(count, "line"),
                             quoted(line)
                         ),
                     }
@@ -2020,17 +2021,16 @@ mod against {
                 Held::Reads(count, first) => match first {
                     None => "the reads of the file port or the environment, no reads".to_string(),
                     Some(key) => format!(
-                        "the reads of the file port or the environment, {count} {}, \
+                        "the reads of the file port or the environment, {}, \
                          the first of {key}",
-                        plural(*count, "read")
+                        counted(*count, "read")
                     ),
                 },
                 Held::Args(args) => match args.first() {
                     None => "the command-line arguments, none".to_string(),
                     Some(arg) => format!(
-                        "the command-line arguments, {} {}, the first {}",
-                        args.len(),
-                        plural(args.len(), "argument"),
+                        "the command-line arguments, {}, the first {}",
+                        counted(args.len(), "argument"),
                         Text::from(arg.as_str()).literal()
                     ),
                 },
@@ -2045,14 +2045,6 @@ mod against {
             PortKind::Files => "the file port, `Files`",
             PortKind::CommandLine => "the command line, `CommandLine`",
             PortKind::Env => "the environment, `(String) ->? String`",
-        }
-    }
-
-    /// `noun`, with an `s` unless `n` is 1.
-    fn plural(n: usize, noun: &str) -> String {
-        match n {
-            1 => noun.to_string(),
-            _ => format!("{noun}s"),
         }
     }
 
@@ -2192,8 +2184,8 @@ mod against {
                     let n = lines_of(written(wave, port)).len();
                     format!(
                         "{port}: only {file} has this port, and {other} does not write it; \
-                         {file} writes {n} {} to it.",
-                        plural(n, "line")
+                         {file} writes {} to it.",
+                        counted(n, "line")
                     )
                 }
             };
@@ -2241,9 +2233,8 @@ mod against {
         let (a, b) = (lines_of(old.0), lines_of(new.0));
         let (old_file, new_file) = (old.1, new.1);
         let counts = format!(
-            "{old_file} writes {} {}, and {new_file} {}",
-            a.len(),
-            plural(a.len(), "line"),
+            "{old_file} writes {}, and {new_file} {}",
+            counted(a.len(), "line"),
             b.len()
         );
         match a.iter().zip(&b).position(|(x, y)| x != y) {
@@ -2254,9 +2245,8 @@ mod against {
                 quoted(b[k])
             ),
             None if a.len() == b.len() => format!(
-                "{port}: no difference: both write the same {} {}.",
-                a.len(),
-                plural(a.len(), "line")
+                "{port}: no difference: both write the same {}.",
+                counted(a.len(), "line")
             ),
             None => {
                 format!("{port}: the lines both write are the same, and one writes more: {counts}.")

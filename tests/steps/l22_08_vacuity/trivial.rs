@@ -3639,7 +3639,7 @@ pub fn render(t: &Theory, r: &Report) -> String {
     let mut complete = r.refused.is_empty();
     for g in &r.groups {
         let law_names: Vec<&str> = g.laws.iter().map(|&l| t.laws[l].name.as_str()).collect();
-        let s = if g.laws.len() == 1 { "" } else { "s" };
+        let s = zed_kernel::text::prose::plural(&g.laws.len());
         let head = format!(
             "    {}, linked by law{s} {}:",
             names(t, &g.fields),

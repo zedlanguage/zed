@@ -840,10 +840,7 @@ fn each_package_near_miss_gives_its_row_place_and_first_repair() {
             panic!("{}: no problem in the row: {bad:?}", row.name());
         };
         assert_eq!(e.file, "main.zed", "{}", row.name());
-        // The texts are ASCII, so a column is a byte offset in its line, from 1.
-        let before = &rejected[..e.error.span.start];
-        let line = before.matches('\n').count() + 1;
-        let col = before.len() - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+        let (line, col) = zed_kernel::sites::line_col(rejected.as_bytes(), e.error.span.start);
         let repair = (e.error.notes.iter()).find_map(|n| n.text.strip_prefix("repair: "));
         assert_eq!(
             (format!("{line}:{col}"), repair),

@@ -72,11 +72,14 @@ use zed_kernel::num::{
 };
 use zed_kernel::term::ScalarType;
 use zed_kernel::text::ident;
-use zed_kernel::text::prose::{and_list, or_list, ordinal, plural};
+use zed_kernel::text::prose::{
+    and_list, code_list, first_line, joined_into, one_line_only, or_list, ordinal, plural,
+};
 use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{KernelError, Prim, Rat, Term, Universe, Value, eval};
 
 use zedc_base::rejection::Row;
+use zedc_base::terminal;
 use zedc_lattice::interval::{
     End::{self, Fin, NegInf, PosInf},
     IntervalSet, Num, bit_word,
@@ -7318,13 +7321,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The code at `s`, its first line only, so that a loop or a block a message names
         // takes one line.
         let code = |s: Span| match text {
-            Some(t) => {
-                let c = &t[s.start..s.end];
-                match c.split_once('\n') {
-                    Some((first, _)) => format!("{} …", first.trim_end()),
-                    None => c.to_string(),
-                }
-            }
+            Some(t) => first_line(&t[s.start..s.end]).into_owned(),
             None => "…".to_string(),
         };
         let made = sites.last().copied().unwrap_or(span);
@@ -13882,21 +13879,23 @@ fn write_repairs<R: Copy>(
     groups: &[(Vec<R>, &str)],
     form: impl Fn(&mut fmt::Formatter<'_>, R) -> fmt::Result,
 ) -> fmt::Result {
-    let total: usize = groups.iter().map(|(rs, _)| rs.len()).sum();
-    let mut k = 0;
-    for (rs, what) in groups {
-        for &r in rs {
-            if k > 0 {
-                f.write_str(if k + 1 == total { " or " } else { ", " })?;
-            }
-            form(f, r)?;
-            k += 1;
+    // Each repair, with its group's word when it is the last of its group.
+    let repairs: Vec<(R, Option<&str>)> = groups
+        .iter()
+        .flat_map(|(rs, what)| {
+            let last = rs.len().wrapping_sub(1);
+            rs.iter()
+                .enumerate()
+                .map(move |(i, &r)| (r, (i == last).then_some(*what)))
+        })
+        .collect();
+    joined_into(f, repairs, "or", |f, (r, what)| {
+        form(f, r)?;
+        match what {
+            Some(what) => write!(f, " {what}"),
+            None => Ok(()),
         }
-        if !rs.is_empty() {
-            write!(f, " {what}")?;
-        }
-    }
-    Ok(())
+    })
 }
 
 /// The digits of the literal `l` as the lexer reads them, without its `-`, the `_` that
@@ -14302,7 +14301,9 @@ impl Msg {
         });
         let written = match &lines {
             Some(lines) => {
-                let last = |l: &str| l.rsplit('\n').next().unwrap_or(l).chars().count();
+                // The columns of a fix's last line, as a terminal shows them: a wide name or a
+                // combining mark in it would misalign the menu, counted as characters.
+                let last = |l: &str| terminal::width(l.rsplit('\n').next().unwrap_or(l));
                 let width = lines.iter().map(|l| last(l)).max().unwrap_or(0) + 4;
                 let menu = shown(&fmt::from_fn(|f| {
                     f.write_str("\n  fixes, each checked here:")?;
@@ -14310,9 +14311,7 @@ impl Msg {
                         for part in l.split('\n') {
                             write!(f, "\n    {}", part.trim_end())?;
                         }
-                        let pad = width - last(l);
-                        // Not a width in the format, which takes at most 2^16 - 1.
-                        (0..pad).try_for_each(|_| fmt::Write::write_char(f, ' '))?;
+                        terminal::pad(f, ' ', width - last(l))?;
                         f.write_str(&x.holds)?;
                     }
                     Ok(())
@@ -14335,15 +14334,7 @@ impl Msg {
             None => shown(&fmt::from_fn(|f| {
                 let head = self.text.strip_suffix('.').unwrap_or(&self.text);
                 write!(f, "{head}. Try ")?;
-                let n = self.fixes.len();
-                for (i, x) in self.fixes.iter().enumerate() {
-                    let sep = match i {
-                        0 => "",
-                        _ if i + 1 == n => " or ",
-                        _ => ", ",
-                    };
-                    write!(f, "{sep}`{}`", x.alone)?;
-                }
+                joined_into(f, &self.fixes, "or", |f, x| write!(f, "`{}`", x.alone))?;
                 f.write_str(" instead.")
             }))
             .map(|text| (Some(text), String::new())),
@@ -18312,6 +18303,12 @@ impl<'a> Ck<'_, 'a> {
     fn code(&self, at: Option<Span>) -> Option<&'a str> {
         let at = at?;
         self.t.text?.get(at.start..at.end)
+    }
+
+    /// [`Self::code`] where it is on one line ([`one_line_only`]), for a message that quotes
+    /// the code inline.
+    fn code_line(&self, at: Option<Span>) -> Option<&'a str> {
+        self.code(at).and_then(one_line_only)
     }
 
     /// The text of the operand at `at`, where it is on one line, for a message. Written here,

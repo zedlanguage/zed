@@ -40,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use zed_graph::{BfsPaths, Compression, Diff, Keep, Linking, UnionFind};
-use zed_kernel::text::prose::and_list;
+use zed_kernel::text::prose::{and_list, grouped};
 use zedc_affine::shadow::{i128_meet, i128_row_bound};
 use zedc_int::int::{Int, i128_div_ceil};
 use zedc_presburger::presburger::{Atom, Con, Formula, Lin, Rel};
@@ -745,19 +745,6 @@ impl Link {
             Link::Dead { part, .. } => *part,
         }
     }
-}
-
-/// `n` with a comma between each group of three digits: `-1,000`.
-fn grouped(n: i128) -> String {
-    let d = n.unsigned_abs().to_string();
-    let mut s = String::new();
-    for (i, ch) in d.chars().enumerate() {
-        if i > 0 && (d.len() - i).is_multiple_of(3) {
-            s.push(',');
-        }
-        s.push(ch);
-    }
-    if n < 0 { format!("-{s}") } else { s }
 }
 
 impl Say<'_> {

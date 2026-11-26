@@ -37,7 +37,7 @@ use zedc_base::rejection::Row;
 use super::engine::Parser;
 use super::grammar::{Grammar, Kind};
 use crate::lex::{Span, Tok, Token, ident};
-use zed_kernel::text::prose::and_list;
+use zed_kernel::text::prose::{and_list, code_list};
 
 /// A parse error that a row of sec:diagnostics explains: the row, the message, the span the
 /// error is reported at, and the notes, each a span with its text.
@@ -824,7 +824,7 @@ fn with_item(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         if !beside.is_empty() {
             why.push(format!(
                 "{} written beside the statement, the sentinel value given once, before step 0",
-                and_list(&beside.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>())
+                code_list(&beside, "and")
             ));
         }
         if own {

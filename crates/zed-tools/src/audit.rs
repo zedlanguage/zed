@@ -26,7 +26,7 @@ use zedc::parse::{Grammar, TOP, split_line};
 use crate::layer::{WordTable, program_units, report, shown_name};
 use crate::spec::Spec;
 use crate::syntax::{Tokens, Tree, lex, parse};
-use crate::text::{base_name, prefix, read_text, repr, strip};
+use crate::text::{base_name, elided, prefix, read_text, repr, strip};
 use crate::{Outcome, arg, say};
 
 /// The grammar text of each alternative of the grammar `text`, by rule and index.
@@ -67,7 +67,7 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
     let (lexical, syn) = (&spec.lexical, &spec.syntactic);
     let mut units = Vec::new();
     for u in program_units(&main)? {
-        let toks = lex(lexical, &read_text(&u)?.replace('…', "elided"))?;
+        let toks = lex(lexical, &elided(&read_text(&u)?))?;
         let full = parse(syn, lexical, &toks, TOP, "Unit")
             .map_err(|_| "the program does not parse".to_string())?;
         units.push((toks, full));

@@ -406,10 +406,9 @@ impl Refusal {
             Refused::Exponent => {}
         }
         if !self.agreed.is_empty() {
-            let points: Vec<String> = self.agreed.iter().map(|p| format!("`{p}`")).collect();
             out.push_str(&format!(
                 "\n  note: the two sides agree at every point tried: {}.",
-                crate::text::prose::and_list(&points)
+                crate::text::prose::code_list(&self.agreed, "and")
             ));
         }
         out.push_str(&format!("\n  Try `{law} proof {{ … }}` instead."));

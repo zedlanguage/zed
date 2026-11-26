@@ -26,7 +26,7 @@ use zedc::parse::{Expr, Grammar, Kind, Parser, TOP};
 
 use crate::spec::{Spec, zed_fences};
 use crate::syntax::lex;
-use crate::text::read_text;
+use crate::text::{elided, read_text};
 use crate::{Outcome, arg, impl_root, say};
 
 /// The number of token kinds, the variants of [`Kind`], of which `End` is the last.
@@ -725,10 +725,7 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
         let docs = [spec.design.clone(), format!("{}/EXAMPLES.md", spec.root)];
         for doc in docs {
             for f in zed_fences(&doc)? {
-                programs.push((
-                    format!("{}:{}", f.file, f.line),
-                    f.text.replace('…', "elided"),
-                ));
+                programs.push((format!("{}:{}", f.file, f.line), elided(&f.text)));
             }
         }
         for f in zed_files(&format!("{}/zed", impl_root()))? {

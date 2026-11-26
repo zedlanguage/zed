@@ -160,7 +160,13 @@ pub fn load(bytes: &[u8]) -> Result<String, Reject> {
         let nfc = text[span.start..span.end].nfc().collect();
         return Err(Reject::NotNfc { span, nfc });
     }
-    Ok(text.replace("\r\n", "\n").replace('\r', "\n"))
+    Ok(unified_newlines(text))
+}
+
+/// `text` with each `\r\n` and each lone `\r` written `\n`, the one line end the lexer reads.
+/// `\r\n` is replaced first, so it becomes one `\n`, not two. O(the length of `text`).
+pub fn unified_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 /// The first sequence of `text` that NFC changes, for a `text` that is not NFC. The text is cut
@@ -285,6 +291,14 @@ impl Lines {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_line_end_becomes_one_newline() {
+        let ends = "a\r\nb\rc\nd\r\r\n\n\r";
+        assert_eq!(unified_newlines(ends), "a\nb\nc\nd\n\n\n\n");
+        assert_eq!(unified_newlines(""), "");
+        assert_eq!(unified_newlines("é\r"), "é\n");
+    }
 
     /// A lone `\r` ends a line, as `\n` and `\r\n` do (D5 of REPORT-dryA3: the copies this
     /// replaced looked for `\n` alone and took `a\rb` as one line).

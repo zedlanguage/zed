@@ -49,9 +49,7 @@ fn through_check(src: &str) -> Vec<String> {
     info.errors
         .iter()
         .map(|e| {
-            let before = &src[..e.span.start];
-            let line = before.matches('\n').count() + 1;
-            let col = before.len() - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+            let (line, col) = zed_kernel::sites::line_col(src.as_bytes(), e.span.start);
             format!("{line}:{col}: {}", e.message)
         })
         .collect()

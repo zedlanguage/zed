@@ -1511,7 +1511,6 @@ version = "0.0.0"
 dependencies = [
  "blake3",
  "rustix",
- "unicode-width",
  "zed-alloc-count",
  "zed-collections",
  "zed-graph",

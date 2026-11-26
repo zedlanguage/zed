@@ -21,7 +21,7 @@ use super::{
     RangeEnd, Stmt, StmtKind, StrPart, Target, TypeKind, UnaryOp,
 };
 use crate::lex::{Span, Tok, Token, ident};
-use zed_kernel::text::prose::and_list;
+use zed_kernel::text::prose::{and_list, code_list};
 use zedc_base::rejection::Row;
 
 /// The `initial` statement `s` is, through the annotations written before it.
@@ -2907,8 +2907,7 @@ impl Builder<'_, '_> {
             });
         }
         if let Some(k) = &keyed {
-            let keys: Vec<String> = k.keys.iter().map(|k| format!("`{k}`")).collect();
-            let keys = and_list(&keys);
+            let keys = code_list(&k.keys, "and");
             notes.push(Note {
                 span: w.span,
                 text: format!(

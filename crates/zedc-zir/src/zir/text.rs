@@ -1304,9 +1304,7 @@ impl<'a> P<'a> {
                                 }
                                 hex.push(h);
                             }
-                            u32::from_str_radix(&hex, 16)
-                                .ok()
-                                .and_then(char::from_u32)
+                            zed_kernel::text::read_unicode_escape(&hex)
                                 .ok_or_else(|| format!("`\\u{{{hex}}}` is not a character"))?
                         }
                         e => zed_kernel::text::escaped(e)

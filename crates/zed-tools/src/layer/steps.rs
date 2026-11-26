@@ -34,7 +34,7 @@ use zedc::parse::TOP;
 
 use crate::spec::Spec;
 use crate::syntax::{lex, parse};
-use crate::text::read_text;
+use crate::text::{elided, read_text};
 use crate::{Outcome, say};
 
 /// The non-empty backtick spans of `s`, for this audit and for the table of words (`super`).
@@ -112,7 +112,7 @@ fn step_of(line: &str) -> Option<(&str, Option<u32>)> {
 /// alternative would have read, which `ring::ring_of` reports as a tree that changes), so the
 /// span is read at its step's ring itself rather than compared with its lowest ring.
 fn ring(spec: &Spec, span: &str, layer: u32) -> Option<u32> {
-    let span = span.replace('…', "elided");
+    let span = elided(span);
     let readings = [
         span.clone(),
         format!("{span};"),

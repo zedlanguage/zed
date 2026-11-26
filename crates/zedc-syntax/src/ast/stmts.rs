@@ -17,7 +17,7 @@ use super::{
     StmtKind, Struct, TestPorts, Type, TypeDecl, TypeKind, TypeParam,
 };
 use crate::lex::{Part, Span, Tok};
-use zed_kernel::text::prose::and_list;
+use zed_kernel::text::prose::{and_list, first_line, one_line_only};
 use zedc_base::address::ContentAddress;
 use zedc_base::rejection::Row;
 
@@ -451,7 +451,7 @@ impl Builder<'_, '_> {
         let tree = self.tree;
         let kids = self.kids(d);
         let text = |s: Span| &self.text[s.start..s.end];
-        let one_line = |s: Span| Some(text(s)).filter(|t| !t.contains('\n'));
+        let one_line = |s: Span| one_line_only(text(s));
         let error = |span: Span, message: String, notes: Vec<Note>| Error {
             row: Some(Row::WritesNothing),
             menu: String::new(),
@@ -465,10 +465,7 @@ impl Builder<'_, '_> {
                 return Ok(());
             }
             let value = self.span(k);
-            let shown = one_line(value).map_or_else(
-                || format!("{} …", text(value).lines().next().unwrap_or("").trim_end()),
-                str::to_string,
-            );
+            let shown = first_line(text(value));
             let mut message =
                 format!("Value at the end of an arm of an `if` statement: `{shown}`.");
             // A call may write a port, so `f(x);` may be the statement meant; a value of any

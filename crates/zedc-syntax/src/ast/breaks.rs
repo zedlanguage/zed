@@ -12,6 +12,7 @@
 use super::builder::Builder;
 use super::{Error, Note};
 use crate::lex::Span;
+use zed_kernel::text::prose::first_line;
 use zedc_base::rejection::Row;
 
 /// No node: the root has no stop above it.
@@ -139,13 +140,7 @@ impl Builder<'_, '_> {
         while let Some(k) = around.filter(|&k| !matches!(tree.name(k), "Loop" | "For")) {
             around = self.stop_of(k);
         }
-        let short = |s: Span| {
-            let text = &self.text[s.start..s.end];
-            match text.lines().next() {
-                Some(first) if first.len() < text.len() => format!("{} …", first.trim_end()),
-                _ => text.to_string(),
-            }
-        };
+        let short = |s: Span| first_line(&self.text[s.start..s.end]).into_owned();
         let mut notes = Vec::new();
         let (what, call) = match stop.map(|s| (s, tree.name(s))) {
             Some((s, "Lambda")) => match self.lambda_name(s) {

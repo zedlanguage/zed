@@ -377,8 +377,9 @@ fn text() -> String {
 fn every_form_is_written_as_before_at_each_width() {
     let expected = include_str!("forms.txt");
     let actual = text();
-    for (i, (a, e)) in actual.lines().zip(expected.lines()).enumerate() {
-        assert_eq!(a, e, "line {}", i + 1);
-    }
-    assert_eq!(actual, expected);
+    assert!(
+        actual == expected,
+        "the forms and forms.txt differ at {}",
+        zed_tests::first_difference(&actual, expected)
+    );
 }

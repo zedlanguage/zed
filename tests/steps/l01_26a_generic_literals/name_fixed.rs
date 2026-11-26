@@ -22,7 +22,7 @@ fn one_error(body: &[&str]) -> (usize, String) {
     let (i, _) = info(&src);
     assert_eq!(i.errors.len(), 1, "{src}: {:?}", i.errors);
     let e = &i.errors[0];
-    let line = src[..e.span.start].matches('\n').count() + 1;
+    let (line, _) = zed_kernel::sites::line_col(src.as_bytes(), e.span.start);
     (line, e.message.clone())
 }
 
