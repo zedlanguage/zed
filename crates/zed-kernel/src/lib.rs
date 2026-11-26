@@ -37,12 +37,7 @@ pub mod words;
 
 /// The scaling test of the rule of low complexity, shared with the step tests.
 #[cfg(test)]
-#[path = "../../../tests/src/scaling.rs"]
-#[expect(
-    dead_code,
-    reason = "the kernel's tests use only some of the shared checks"
-)]
-mod scaling;
+use zed_testkit::scaling;
 
 // The meter's `malloc` in this crate's test binary, which `scaling` measures each run with
 // (`zed_alloc_count::metered`, TEST-meter-allocator-bias).
@@ -56,12 +51,7 @@ mod completeness;
 /// The seed and generator of a random test, new on each run and printed, shared with the step
 /// tests.
 #[cfg(test)]
-#[path = "../../../tests/src/seed.rs"]
-#[allow(
-    dead_code,
-    reason = "each crate's tests use only some of the generator's draws"
-)]
-mod seed;
+use zed_testkit::seed;
 
 pub use eval::{Commutes, Evaluator, Global, Globals, Lookup, Schedule, World, eval};
 pub use num::Rat;

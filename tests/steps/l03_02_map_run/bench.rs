@@ -50,7 +50,7 @@ fn sum_term(n: usize) -> Term {
     }
 }
 
-/// Holds the instructions of `run` at n and 8n, the least of three runs each, under
+/// Holds the instructions of `run` at n and 8n ([`Meter::least`] of its runs) under
 /// [`scaling::PREFERRED`] times: `map` and `><` are linear, and a count linear in n stays
 /// near 8.
 fn under_nine(what: &str, n: usize, run: impl Fn(usize)) {
@@ -61,7 +61,7 @@ fn under_nine(what: &str, n: usize, run: impl Fn(usize)) {
     if scaling::ran_alone_in_a_new_process(&meter) {
         return;
     }
-    let mut least = |k: usize| (0..3).map(|_| meter.work(|| run(k)).units).min().unwrap();
+    let mut least = |k: usize| meter.least(|| {}, || run(k)).units;
     let (small, large) = (least(n), least(FACTOR * n));
     hold_linear(what, meter.unit(), small, large);
 }

@@ -32,12 +32,11 @@ cranelift-reader = "=0.137.1"
 # not a triple.
 target-lexicon = "0.13.5"
 
-# The scaling test, `tests/src/scaling.rs`, compiled into the test target, as zed-graph does.
+# The scaling test (zed_testkit::scaling) of the test target, and the meter's `malloc` it measures
+# with (zed-alloc-count's `meter_entry_points!` in calls.rs).
 [dev-dependencies]
-rustix.workspace = true
-stacker.workspace = true
+zed-testkit.workspace = true
 zed-alloc-count.workspace = true
-zed-meter-settings.workspace = true
 # Cranelift's dependencies with the features the other packages give them in the workspace
 # build, so that `run_tests.sh --only zed_clif` builds this package's unit tests as that build
 # does; without these its check refuses the build.
@@ -50,9 +49,6 @@ foldhash.workspace = true
 # log with `alloc` and `std`, as loom gives it in the workspace build (see
 # crates/zed-native/Cargo.toml).
 log = { version = "0.4.34", features = ["alloc", "std"] }
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-perf-event2.workspace = true
 
 # The workspace forbids `unsafe`; the C functions need it at each pointer they read.
 [lints.rust]

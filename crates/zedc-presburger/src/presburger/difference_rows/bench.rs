@@ -11,14 +11,14 @@ use super::*;
 const PIECE: usize = 10_000;
 
 fn piece(k: usize) {
-    let start = std::time::Instant::now();
-    never_refuses(
-        &format!("solve never refuses rows of two unit terms, piece {k}"),
-        PIECE,
-    );
-    eprintln!(
-        "{PIECE} systems of two unit terms, piece {k}, in {:.2?}",
-        start.elapsed()
+    crate::scaling::timed(
+        &format!("{PIECE} systems of two unit terms, piece {k}"),
+        || {
+            never_refuses(
+                &format!("solve never refuses rows of two unit terms, piece {k}"),
+                PIECE,
+            )
+        },
     );
 }
 

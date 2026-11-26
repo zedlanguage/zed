@@ -1,0 +1,37 @@
+[package]
+name = "zed-testkit"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The seed of a random test and the scaling test of the rule of low complexity, shared by the
+# tests of every crate (DRY-testkit-2026-11-26, docs/layout.md "Library DAG"). A dev-dependency
+# only. Until 2026-11-26 the two modules were tests/src/seed.rs and tests/src/scaling.rs,
+# compiled again into each library crate's tests by `#[path]` (11 and 9 inclusions), each
+# crate naming this crate's dependencies again and allowing the dead code of the checks it did
+# not call. It depends on no zed library crate, so any library can take it as a
+# dev-dependency without a cycle. An rlib only, as zed-alloc-count and zed-hash are: a dylib's
+# file name does not change with its build (E0460, DRY-hash-crate-2026-11-26), and `scaling`
+# keeps statics (the outcomes of a test's checks) that must have one copy in a test binary.
+[lib]
+# The module's own tests are zed-tests' `scaling_tests`, which read zed-tests' scratch files.
+test = false
+
+[dependencies]
+zed-alloc-count.workspace = true
+zed-hash.workspace = true
+zed-meter-settings.workspace = true
+stacker.workspace = true
+
+# The scaling test reads perf_event_open on Linux; macOS and Windows have their own counters, in
+# zed-alloc-count (see `scaling`).
+[target.'cfg(target_os = "linux")'.dependencies]
+perf-event2.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+[lints]
+workspace = true

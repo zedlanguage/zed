@@ -54,7 +54,7 @@ fn the_step_from_zero_is_splitmix64() {
 /// one value from one `h`, and no two of many `h` from one word; and it depends on the order of
 /// the words. Negative control: a step that ignores `h` (only the finalizer of `x`) gives one
 /// value for every `h`, which the second check catches; an xor of the words is unordered. A fixed
-/// seed: this crate is below the test seed of `tests/src/seed.rs`, and the identities hold for
+/// seed: this crate is below the test seed of zed-testkit's `seed`, and the identities hold for
 /// every word, so a new draw each run adds little.
 #[test]
 fn the_step_is_one_to_one_in_each_argument_and_depends_on_order() {

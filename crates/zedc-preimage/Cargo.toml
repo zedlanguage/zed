@@ -48,13 +48,9 @@ zedc-solvers = { workspace = true, features = ["counts"] }
 # As for zedc-solvers: this crate with the features `counts` and `preimage-ref` the step tests give
 # it.
 zedc-preimage = { path = ".", features = ["counts", "preimage-ref"] }
-# The generators of tests/src/seed.rs, which the tests compile in by `#[path]`.
+# The fixed xorshift64 streams of some tests (`zed_hash::Xorshift64`).
 zed-hash.workspace = true
-# The scaling test of the rule of low complexity (tests/src/scaling.rs), which preimage's tests use.
-rustix.workspace = true
+# The seed of a random test and the scaling test of the rule of low complexity (zed_testkit),
+# and the meter's `malloc` it measures with (zed-alloc-count's `meter_entry_points!`).
+zed-testkit.workspace = true
 zed-alloc-count.workspace = true
-zed-meter-settings.workspace = true
-stacker.workspace = true
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-perf-event2.workspace = true

@@ -6,7 +6,7 @@
 //! check that a run allocates. The small instances of each are the correctness tests in the
 //! routine's own module.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use crate::fenwick::Fenwick;
 use crate::held::Held;
@@ -26,11 +26,8 @@ fn spread(i: usize) -> u64 {
 }
 
 /// The inputs `make` gives at `N` and `8 * N`.
-fn built<T>(make: impl Fn(usize) -> T) -> BTreeMap<usize, T> {
-    [N, scaling::FACTOR * N]
-        .into_iter()
-        .map(|m| (m, make(m)))
-        .collect()
+fn built<T>(make: impl Fn(usize) -> T) -> HashMap<usize, T> {
+    scaling::inputs(N, make)
 }
 
 /// `m` numbers in 0..m/2, so about half repeat.

@@ -224,7 +224,9 @@ fn pncx_wide_affine_alias_adversarial_scale() {
 /// `8 (ln 32768 / ln 4096)² = 8 × 1.25² = 12.5`, times 1.1 = 13.75 (checked by awk,
 /// 2026-11-24). An n log² n ratio, `8 (ln 8n / ln n)²`, is under 10.5 only from
 /// n = 1,587,343 on (`ln 8 / ln n < 0.1456`). See COMPLEXITY.md row C31b.
-const FIBONACCI_LIMIT: f64 = 13.75;
+fn fibonacci_limit() -> f64 {
+    scaling::n_log2_n_ratio(4096) * 1.1
+}
 
 /// The consecutive Fibonacci numbers `F(n + 1)` and `F(n + 2)`: coprime, and the worst case of
 /// Euclid's algorithm for their width, since every quotient is 1 (Lamé, 1844; Knuth, TAOCP
@@ -239,7 +241,7 @@ fn fibonacci_pair(n: usize) -> (Int, Int) {
 
 /// The extended gcd (`Int::extended_gcd`, zed-kernel `num/fast.rs` `bezout`, the binary
 /// half-GCD) on Fibonacci pairs at 4096 and 32,768 steps (2,843 and 22,747 bits, 45 and 356
-/// words). Held to [`FIBONACCI_LIMIT`], 13.75, not to 10.5 (PERF-negated-chain-unsolved U2,
+/// words). Held to [`fibonacci_limit`], 13.75, not to 10.5 (PERF-negated-chain-unsolved U2,
 /// A165 B). Why: the half-GCD costs O(M(n) log n), M(n) the cost of one product of n-bit
 /// numbers, and no gcd of a lower order is known (Möller, "On Schönhage's algorithm and
 /// subquadratic integer gcd computation", Math. Comp. 77 (2008) 589-607,
@@ -275,7 +277,7 @@ fn pncx_fibonacci_scale() {
         Some(n),
         &format!("half-GCD coefficients on Fibonacci inputs: sizes {n} and {large}"),
         scaling::Bound::Given(
-            FIBONACCI_LIMIT,
+            fibonacci_limit(),
             "the half-GCD is O(M(n) log n), the best order known; its limit is the n log² n \
              prediction at these sizes (QUESTIONS.md A165 B, COMPLEXITY.md C31b)",
         ),

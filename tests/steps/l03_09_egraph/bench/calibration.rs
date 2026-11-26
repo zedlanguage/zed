@@ -7,21 +7,15 @@
 use std::time::Duration;
 
 use zed_kernel::poly::{Carrier, Decision, LIMIT, LIMIT_MS, Verdict};
-use zed_tests::scaling::cpu_time;
+use zed_tests::scaling::least_cpu_ns;
 
 use crate::{decide_sides, sides_of};
 
 /// The decision on `lhs == rhs` over `params`, and the least processor time of `runs` runs.
 fn timed(params: &str, lhs: &str, rhs: &str, runs: usize) -> (Decision, Duration) {
     let s = sides_of(&format!("sides({params}) = ({lhs}, {rhs});\n"), &["sides"]).remove(0);
-    let mut least = Duration::MAX;
-    let mut d = None;
-    for _ in 0..runs {
-        let t = cpu_time();
-        d = Some(decide_sides(&s, Carrier::Int));
-        least = least.min(cpu_time() - t);
-    }
-    (d.expect("one run"), least)
+    let (ns, d) = least_cpu_ns(runs, || decide_sides(&s, Carrier::Int));
+    (d, Duration::from_nanos(ns as u64))
 }
 
 /// Asserts `lhs == rhs` proved, with the predicted time within 2x of the time taken.

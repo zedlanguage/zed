@@ -1,23 +1,21 @@
 //! Hand-run timings of the routines of zed-numtheory against the other forms they were chosen
 //! over (DRY-number-theory, COMPLEXITY.md row DRY-number-theory): `zcargo run -j1 -p
-//! zed-numtheory --example timing`. Each line prints the best of three runs at sizes n and 8n
-//! and their ratio. Not a test: the tests check results, and times depend on the load.
+//! zed-numtheory --example timing`. Each line prints the least processor time of three runs at
+//! sizes n and 8n and their ratio. Not a test: the tests check results, and times depend on the
+//! load.
 //!
 //! A form defined here can be inlined into its loop and a routine of the crate may not be, so
 //! a comparison of two forms of one routine needs both defined in the same place: the trial of
 //! a second loop for `gcd_u64` (lib.rs) went the other way once both were here.
 
 use std::hint::black_box;
-use std::time::Instant;
 
 use zed_numtheory::{
     factor, gcd_u64, gcd_u128, is_prime, least_prime_factors, m61, odd_primes_below,
 };
 
-/// The shared test generator, for its fixed streams.
-#[path = "../../../tests/src/seed.rs"]
-#[allow(dead_code, reason = "the timings draw only words")]
-mod seed;
+/// The shared test generator, for its fixed streams, and the timer of the least of k runs.
+use zed_testkit::{scaling, seed};
 
 /// A fixed stream of words from `s` (`seed::Rng::new`), the same on every run, so two runs time
 /// the same inputs.
@@ -26,15 +24,9 @@ fn words(s: u64) -> impl FnMut() -> u64 {
     move || rng.next_u64()
 }
 
-/// The best of three times of `f(n)`, in milliseconds.
+/// The least processor time of three runs of `f(n)`, in milliseconds.
 fn best(n: usize, f: &dyn Fn(usize)) -> f64 {
-    (0..3)
-        .map(|_| {
-            let t = Instant::now();
-            f(n);
-            t.elapsed().as_secs_f64() * 1e3
-        })
-        .fold(f64::INFINITY, f64::min)
+    scaling::least_cpu_ns(3, || f(n)).0 as f64 / 1e6
 }
 
 /// Prints the times at n and 8n and their ratio.

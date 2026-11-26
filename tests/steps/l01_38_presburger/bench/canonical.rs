@@ -26,11 +26,11 @@ fn refinement_scales() {
 /// `colors_follow_random_namings_and_row_orders_of_random_systems`, 400 shuffles.
 #[test]
 fn colors_follow_4200_random_namings_and_row_orders() {
-    let start = std::time::Instant::now();
-    colors_follow_random_namings_and_row_orders(
-        "colors_follow_4200_random_namings_and_row_orders",
-        420,
-        10,
-    );
-    eprintln!("4200 shuffles in {:.2?}", start.elapsed());
+    scaling::timed("4200 shuffles", || {
+        colors_follow_random_namings_and_row_orders(
+            "colors_follow_4200_random_namings_and_row_orders",
+            420,
+            10,
+        )
+    });
 }

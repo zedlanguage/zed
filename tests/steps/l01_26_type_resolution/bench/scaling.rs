@@ -1,7 +1,7 @@
 //! The time of the checker at the rule of low complexity (DESIGN.md Part G), on the programs and
 //! types of `scaling`, where a small instance of each is checked.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use zed_tests::scaling;
 use zedc::check::ty::{Carrier, Ty};
@@ -27,11 +27,8 @@ fn scales(what: &str, n: usize, text: impl Fn(usize) -> String, want: impl Fn(&R
 
 /// The variables named `{prefix}0` to `{prefix}(m-1)`, for `m` of `n` and `FACTOR * n`, made
 /// before the timing.
-fn variables_at(prefix: &str, n: usize) -> BTreeMap<usize, Vec<Ty>> {
-    [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, variables(prefix, m)))
-        .collect()
+fn variables_at(prefix: &str, n: usize) -> HashMap<usize, Vec<Ty>> {
+    scaling::inputs(n, |m| variables(prefix, m))
 }
 
 /// The statements of `text(m)` and their resolution, at `n` and `FACTOR * n`, made before the
@@ -39,15 +36,12 @@ fn variables_at(prefix: &str, n: usize) -> BTreeMap<usize, Vec<Ty>> {
 fn built(
     n: usize,
     text: impl Fn(usize) -> String,
-) -> BTreeMap<usize, (Vec<zedc::ast::Stmt>, zedc::resolve::Resolution)> {
-    [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| {
-            let stmts = zed_tests::deep::statements(&text(m));
-            let res = zedc::resolve::resolve(&stmts).unwrap();
-            (m, (stmts, res))
-        })
-        .collect()
+) -> HashMap<usize, (Vec<zedc::ast::Stmt>, zedc::resolve::Resolution)> {
+    scaling::inputs(n, |m| {
+        let stmts = zed_tests::deep::statements(&text(m));
+        let res = zedc::resolve::resolve(&stmts).unwrap();
+        (stmts, res)
+    })
 }
 
 #[test]

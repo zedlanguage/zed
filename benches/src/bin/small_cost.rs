@@ -1,9 +1,9 @@
 //! Hand-run benchmark of PRES-small-cost and PRES-small-front, moved out of
 //! `tests/steps/l01_38_presburger/small_cost.rs`, where it was built only under a cfg switch:
-//! prints the least instructions of five calls of `satisfiable` and `decide` on small formulas,
-//! on chains of `max` definitions of growing length, and on ladders of bounds, and asserts
-//! nothing. The tests of that file check the order of the same costs. `small_cost` takes no
-//! arguments.
+//! prints the least instructions of `Meter::least`'s calls of `satisfiable` and `decide` on
+//! small formulas, on chains of `max` definitions of growing length, and on ladders of bounds,
+//! and asserts nothing. The tests of that file check the order of the same costs. `small_cost`
+//! takes no arguments.
 
 use zed_tests::scaling::Meter;
 use zed_tests::step_helpers::l01_38_presburger::small_cost::*;

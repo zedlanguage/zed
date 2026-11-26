@@ -1,9 +1,10 @@
 //! A nest of shared tests whose every path holds a contradiction on one variable
 //! (PRES-nest-empty).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use zed_tests::scaling::{self, Meter};
+use zed_tests::scaling;
 use zedc::store::presburger::extend::Extending;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared, decide, project_each, satisfiable};
 
@@ -257,27 +258,9 @@ fn the_families_of_the_benchmarks_are_answered_false_at_small_depths() {
     }
 }
 
-/// The least instructions of three runs of `decide` on each family member at `sizes`, each
-/// checked to answer `Ok(false)`, printed with the exponent of each step against the size
-/// before, which is half of it.
+/// [`scaling::exponents`] of `decide` on each family member at `sizes`, each built before it is
+/// measured and checked to answer `Ok(false)`.
 pub(super) fn decide_exponents(what: &str, sizes: &[usize], family: fn(usize) -> Formula) {
-    let mut meter = Meter::new();
-    let built: Vec<Formula> = sizes.iter().map(|&k| family(k)).collect();
-    let cost: Vec<u64> = (built.iter())
-        .map(|f| {
-            (0..3)
-                .map(|_| meter.work(|| assert_eq!(decide(f), Ok(false))).units)
-                .min()
-        })
-        .map(|c| c.expect("runs"))
-        .collect();
-    for i in 1..sizes.len() {
-        let e = (cost[i] as f64 / cost[i - 1] as f64).log2();
-        println!(
-            "{what}, depth {}: {} {}, exponent {e:.2}",
-            sizes[i],
-            cost[i],
-            meter.unit()
-        );
-    }
+    let built: BTreeMap<usize, Formula> = sizes.iter().map(|&k| (k, family(k))).collect();
+    scaling::exponents(what, sizes, |k| assert_eq!(decide(&built[&k]), Ok(false)));
 }

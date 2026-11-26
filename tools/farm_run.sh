@@ -67,7 +67,7 @@
 #  - Benchmarks: a VM has no hardware instruction counter (perf_event_open of instructions gives
 #    ENOENT, probed 2026-11-22), so each benchmark counts its instructions in software under
 #    DynamoRIO's client zed_icount, which job.sh's VM setup builds and names in ZED_METER_DRRUN and
-#    ZED_METER_ICOUNT (BENCH-vm-no-instruction-counter; tests/src/scaling.rs). Where that build
+#    ZED_METER_ICOUNT (BENCH-vm-no-instruction-counter; crates/zed-testkit/src/scaling.rs). Where that build
 #    failed (the job's out/icount.log says so), they fall back on the task clock, which is
 #    noisier and held to twice the limit; such a run prints `farm: benchmarks measured processor
 #    time, not instructions, on <VM> ...` and exits 1 (FARM-icount-fallback-silent). A benchmark that fails is run once more on the same VM at once, alone; that

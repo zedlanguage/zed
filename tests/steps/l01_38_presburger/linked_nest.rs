@@ -13,7 +13,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use zed_tests::scaling::Meter;
+use zed_tests::scaling;
 use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::interval::IntervalSet;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, NAMES_AS_WRITTEN, project_each};
@@ -330,24 +330,7 @@ fn the_nests_of_the_benchmarks_are_answered_at_small_depths() {
     for k in [1, 2, 4] {
         assert_twin_answered(&twin(k, &powers_of_two(k), (2, 1), true));
     }
-    exponents("the nest, x[k] odd", &[1, 2, 4], |k| {
+    scaling::exponents("the nest, x[k] odd", &[1, 2, 4], |k| {
         assert_no_way_has_an_odd_top(&nest(k, &even_weights(k), (2, 1), true));
     });
-}
-
-/// The instructions of `run` at each of `sizes`, each with its exponent against the size
-/// before: 1 for work linear in the size.
-pub(super) fn exponents(what: &str, sizes: &[usize], run: impl Fn(usize)) {
-    let mut meter = Meter::new();
-    let mut last: Option<(usize, u64)> = None;
-    for &k in sizes {
-        let units = meter.work(|| run(k)).units;
-        let exponent =
-            last.map(|(k0, u0)| (units as f64 / u0 as f64).ln() / (k as f64 / k0 as f64).ln());
-        println!(
-            "{what}: k = {k}, {units} {}, exponent {exponent:.2?}",
-            meter.unit()
-        );
-        last = Some((k, units));
-    }
 }

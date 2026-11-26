@@ -420,7 +420,7 @@ pub const TIME_RUNS: usize = 5;
 /// It returns the bytes the thread and the threads it started allocated, which count in this
 /// thread's count too, and the elapsed time of `f` in nanoseconds (see [`counted_on_a_thread`]). A
 /// panic in `f` goes on in the caller.
-pub(crate) fn alone(f: &(impl Fn() + Sync)) -> (u64, u64) {
+pub fn alone(f: &(impl Fn() + Sync)) -> (u64, u64) {
     let stack = stacker::remaining_stack().expect("the size of this thread's stack");
     let ((), bytes, ns) = counted_on_a_thread(stack, f);
     (bytes, ns)
@@ -511,27 +511,27 @@ pub fn per_unit_bound(
 }
 
 /// Reads a counter of work.
-pub(crate) type Read = Box<dyn FnMut() -> u64>;
+pub type Read = Box<dyn FnMut() -> u64>;
 
 /// Counts work in the unit the machine offers.
 pub struct Meter {
     /// Reads the counter.
-    pub(crate) read: Read,
+    pub read: Read,
     /// The name of the unit `read` counts in, for the messages.
-    pub(crate) unit: &'static str,
+    pub unit: &'static str,
     /// Whether the count is of instructions, which does not change with load, and not of
     /// processor time or cycles, which do.
-    pub(crate) instructions: bool,
+    pub instructions: bool,
     /// Whether a check by this meter of instructions runs its size 8n in a new process of the
     /// test binary (see [`compare_by`]): true for [`Meter::new`]'s count of instructions; false
     /// for the meters the tests of the harness make, which count the runs of each size in this
     /// process, and for processor time and cycles, which run each size several times.
-    pub(crate) fresh: bool,
+    pub fresh: bool,
     /// Whether the checks by this meter count instructions in new processes of the test, each
     /// run at n and at 8n in one, though this meter reads processor time: [`Meter::new`]'s
     /// meter for a benchmark that runs with other tests where the hardware has no counter and
     /// DynamoRIO's `zed_icount` is named (see [`counts_in_new_processes`]).
-    pub(crate) elsewhere: bool,
+    pub elsewhere: bool,
 }
 
 /// The tests that may hold a measure to a limit though their path holds no `bench::`, each with
@@ -551,7 +551,7 @@ const MEASURED_OUTSIDE_A_BENCH: &[&str] = &[
 /// [`MEASURED_OUTSIDE_A_BENCH`] names it. `bench::` anywhere in the name is what
 /// tools/run_tests.sh reads as a benchmark (`--skip bench::` matches anywhere in a name), so the
 /// two agree on every test.
-pub(crate) fn outside_a_bench(test: Option<&str>) -> bool {
+pub fn outside_a_bench(test: Option<&str>) -> bool {
     test.is_some_and(|t| {
         t != "main"
             && !t.contains("bench::")
@@ -785,7 +785,7 @@ impl Meter {
 
     /// The counter of `event`, of this thread and the threads it starts.
     #[cfg(target_os = "linux")]
-    pub(crate) fn open(event: impl Event, unit: &'static str, instructions: bool) -> Option<Self> {
+    pub fn open(event: impl Event, unit: &'static str, instructions: bool) -> Option<Self> {
         let mut builder = Builder::new(event);
         let mut counter = builder.inherit(true).enabled(true).build().ok()?;
         let read = move || counter.read().expect("reading the counter");
@@ -796,7 +796,7 @@ impl Meter {
     /// it counts instructions. Some virtual machines open the instructions counter and leave it
     /// at 0, and macOS leaves `ri_instructions` at 0 where it does not read the hardware counter,
     /// so a counter that does not move is not used.
-    pub(crate) fn first_that_moves<const N: usize>(
+    pub fn first_that_moves<const N: usize>(
         counters: [(Read, &'static str, bool); N],
     ) -> Option<Self> {
         counters
@@ -930,7 +930,7 @@ pub struct Work {
 
 /// Which measures a check holds to its limit.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Measures {
+pub enum Measures {
     /// The work and the bytes allocated.
     Both,
     /// The work only, for a test whose bytes are known to grow faster: see
@@ -970,7 +970,7 @@ fn stop_unless_the_settings_are_in_effect() {
 
 /// Stops a test that cannot measure work, which would otherwise pass unmeasured.
 #[cfg(target_os = "linux")]
-pub(crate) fn no_counter() -> ! {
+pub fn no_counter() -> ! {
     panic!(
         "this scaling test cannot measure work: perf_event_open opens neither the instructions \
          counter nor the task clock here, and it does not run under DynamoRIO's zed_icount. Run \
@@ -982,7 +982,7 @@ pub(crate) fn no_counter() -> ! {
 
 /// Stops a test that cannot measure work, which would otherwise pass unmeasured.
 #[cfg(target_os = "macos")]
-pub(crate) fn no_counter() -> ! {
+pub fn no_counter() -> ! {
     panic!(
         "this scaling test cannot measure work: proc_pid_rusage counts neither instructions \
          (ri_instructions) nor cycles (ri_cycles) of this process here"
@@ -991,7 +991,7 @@ pub(crate) fn no_counter() -> ! {
 
 /// Stops a test that cannot measure work, which would otherwise pass unmeasured.
 #[cfg(windows)]
-pub(crate) fn no_counter() -> ! {
+pub fn no_counter() -> ! {
     panic!(
         "this scaling test cannot measure work: QueryProcessCycleTime does not count the cycles \
          of this process here"
@@ -1000,7 +1000,7 @@ pub(crate) fn no_counter() -> ! {
 
 /// Stops a test that cannot measure work, which would otherwise pass unmeasured.
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-pub(crate) fn no_counter() -> ! {
+pub fn no_counter() -> ! {
     panic!(
         "this scaling test cannot measure work: the scaling tests read the counters of Linux \
          (perf_event_open), macOS (proc_pid_rusage) and Windows (QueryProcessCycleTime), and this \
@@ -1026,14 +1026,7 @@ fn stop_unless_one_test_at_a_time(system: &str, call: &str) {
 /// `threads` of `RUST_TEST_THREADS`, runs one test at a time. Its option `--test-threads N` or
 /// `--test-threads=N` overrides the variable, and with neither it runs as many tests at once as
 /// the machine has processors.
-#[cfg_attr(
-    not(any(test, target_os = "macos", windows)),
-    expect(dead_code, reason = "only macOS and Windows measure the whole process")
-)]
-pub(crate) fn one_test_at_a_time(
-    args: impl IntoIterator<Item = String>,
-    threads: Option<&str>,
-) -> bool {
+pub fn one_test_at_a_time(args: impl IntoIterator<Item = String>, threads: Option<&str>) -> bool {
     let mut args = args.into_iter();
     let mut option = None;
     while let Some(arg) = args.next() {
@@ -1047,7 +1040,7 @@ pub(crate) fn one_test_at_a_time(
 }
 
 /// `n` passes of a loop that the compiler cannot remove.
-pub(crate) fn spin(n: u64) {
+pub fn spin(n: u64) {
     for i in 0..n {
         black_box(i);
     }
@@ -1336,7 +1329,7 @@ pub fn compare_fresh<T: Send, O: Send>(
 
 /// [`check_order_fresh`] by the given meter, measures, bound and sizes.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn fresh_inputs_by<T: Send, O: Send>(
+pub fn fresh_inputs_by<T: Send, O: Send>(
     meter: &mut Meter,
     measures: Measures,
     n: Option<usize>,
@@ -1420,7 +1413,7 @@ pub(crate) fn fresh_inputs_by<T: Send, O: Send>(
 /// fallback reads an input not built and panics, naming the cause, never measuring a build).
 /// (5) No target and not `fresh`: `at` `None`, both here. `fresh` here is computed as in
 /// [`compare_by_dyn`], from the same meter.
-pub(crate) fn sizes_run_here(fresh: bool) -> (bool, bool) {
+pub fn sizes_run_here(fresh: bool) -> (bool, bool) {
     let thread = std::thread::current();
     let Some(test) = thread.name().filter(|name| *name != "main") else {
         return (true, true);
@@ -1480,6 +1473,53 @@ pub fn n_log_n_ratio(n: usize) -> f64 {
     FACTOR as f64 * (FACTOR as f64 * n).ln() / n.ln()
 }
 
+/// The ratio at sizes n and 8n of work of order n log² n: `8 (ln(8n) / ln(n))²`, 12.5 at
+/// 4,096; under [`LIMIT`] only from n = 1,587,343 on (`ln 8 / ln n < 0.1456`).
+pub fn n_log2_n_ratio(n: usize) -> f64 {
+    let n = n as f64;
+    FACTOR as f64 * ((FACTOR as f64 * n).ln() / n.ln()).powi(2)
+}
+
+/// Runs `f` once and prints `{what} in {wall time}` to stderr: the time of a long correctness
+/// run, for reading in its log. Asserts nothing, so the load does not matter to it.
+pub fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
+    let start = std::time::Instant::now();
+    let out = f();
+    eprintln!("{what} in {:.2?}", start.elapsed());
+    out
+}
+
+/// The load averages over 1, 5 and 15 minutes as `/proc/loadavg` writes them, or `None` where
+/// it cannot be read (a system other than Linux). For printing beside a measurement; the
+/// shell's reader is tools/lib.sh `piece_limit`.
+pub fn load() -> Option<[String; 3]> {
+    let text = std::fs::read_to_string("/proc/loadavg").ok()?;
+    let mut fields = text.split_whitespace().map(str::to_string);
+    Some([fields.next()?, fields.next()?, fields.next()?])
+}
+
+/// Prints the work of `run` at each of `sizes` ([`Meter::least`] of its runs), each with its
+/// exponent against the size before, `ln(w₁ / w₀) / ln(k₁ / k₀)`: 1 for work linear in the size,
+/// whatever the sizes' steps. Returns the exponents, one fewer than the sizes. A printer: it
+/// holds nothing to a limit, so it may run outside a `bench::` path.
+pub fn exponents(what: &str, sizes: &[usize], run: impl Fn(usize)) -> Vec<f64> {
+    let mut meter = Meter::new();
+    let mut last: Option<(usize, u64)> = None;
+    let mut out = Vec::new();
+    for &k in sizes {
+        let units = meter.least(|| {}, || run(k)).units;
+        let exponent =
+            last.map(|(k0, u0)| (units as f64 / u0 as f64).ln() / (k as f64 / k0 as f64).ln());
+        println!(
+            "{what}: k = {k}, {units} {}, exponent {exponent:.2?}",
+            meter.unit()
+        );
+        out.extend(exponent);
+        last = Some((k, units));
+    }
+    out
+}
+
 /// [`check`] for a pass whose cost is proved O(n log n) at the code: the work and the bytes at
 /// 8n are held to [`n_log_n_ratio`]`(n)` times those at n where that is under [`LIMIT`], and to
 /// [`LIMIT`] otherwise, so the bound is never wider than [`check`]'s. A pass of order n log n
@@ -1490,7 +1530,7 @@ pub fn check_n_log_n(what: &str, n: usize, run: impl Fn(usize) + Sync) {
 }
 
 /// [`check_n_log_n`] with the meter and the measures given, for the harness's own tests.
-pub(crate) fn check_n_log_n_by(
+pub fn check_n_log_n_by(
     meter: &mut Meter,
     measures: Measures,
     what: &str,
@@ -1525,7 +1565,7 @@ pub fn check_proved_cost(
 }
 
 /// [`check_proved_cost`] with the meter and the measures given, for the harness's own tests.
-pub(crate) fn check_proved_cost_by(
+pub fn check_proved_cost_by(
     meter: &mut Meter,
     measures: Measures,
     what: &str,
@@ -1571,7 +1611,7 @@ fn check_bound_by(
 /// optimized again after any edit that moves a line of the test file (BUILD-study: 11 to 16 s
 /// of LLVM per such edit of l01_26, about 4 s with one copy). The call through `&dyn` costs
 /// one indirect call per run, which no measured ratio can see.
-pub(crate) fn check_by(
+pub fn check_by(
     meter: &mut Meter,
     measures: Measures,
     what: &str,
@@ -1670,7 +1710,7 @@ pub fn compare_costs_work_only(
 
 /// What a comparison holds the ratio of its two runs to.
 #[derive(Clone, Copy)]
-pub(crate) enum Bound<'a> {
+pub enum Bound<'a> {
     /// A pass at n and 8n of order `n^power`: under [`limit`]`(power)`, with the note of
     /// [`hold`] from [`PREFERRED`] up.
     Order(u32),
@@ -1851,7 +1891,7 @@ fn note_panic(test: &str, j: usize, payload: &(dyn std::any::Any + Send)) {
 ///
 /// Test: scaling_tests::a_fresh_child_ends_when_its_parent_is_killed (a child of a parent
 /// killed with SIGKILL ends within 5 s; it failed before this).
-pub(crate) fn fresh_command(exe: &std::path::Path) -> std::process::Command {
+pub fn fresh_command(exe: &std::path::Path) -> std::process::Command {
     let mut command = std::process::Command::new(exe);
     zed_meter_settings::kill_with_parent(&mut command);
     command
@@ -2041,7 +2081,7 @@ fn replay_or_measure(
 /// a test's (one the test named itself), or with no name, and a meter of processor time or
 /// cycles, which takes the least of several runs, keep both runs in this process and the hole.
 /// The body is [`compare_measured`], compiled once for the reason [`check_by`] gives.
-pub(crate) fn compare_by(
+pub fn compare_by(
     meter: &mut Meter,
     measures: Measures,
     n: Option<usize>,
@@ -2346,7 +2386,7 @@ pub fn bench_limit_ms(t1_ns: u64) -> u64 {
 /// [`bench_limit_ms`]`(t1)`; given none, a phase with the runner's limit, for what follows a run
 /// at 8n (the next check's inputs and its run at n). The runner reads it at its next look,
 /// within 0.1 s; tools/test_bench_limit.sh tests its side.
-pub(crate) fn start_bench_phase(t1: Option<Duration>) {
+pub fn start_bench_phase(t1: Option<Duration>) {
     let Some(path) = std::env::var_os(BENCH_LIMIT_FILE) else {
         return;
     };
@@ -2362,7 +2402,7 @@ pub(crate) fn start_bench_phase(t1: Option<Duration>) {
 /// since 1970 (the clock tools/bench_limit.sh reads as `EPOCHREALTIME`) and `ms` the limit the
 /// phase asks for, 0 for the runner's. It is written to `<path>.new` and renamed over `path`, so
 /// the runner never reads the file empty or half written.
-pub(crate) fn write_bench_phase(path: &std::path::Path, start: std::time::SystemTime, ms: u64) {
+pub fn write_bench_phase(path: &std::path::Path, start: std::time::SystemTime, ms: u64) {
     let start = start
         .duration_since(std::time::UNIX_EPOCH)
         .expect("a clock past 1970")

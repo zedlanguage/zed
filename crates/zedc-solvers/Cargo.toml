@@ -35,6 +35,6 @@ counts = []
 path = "."
 features = ["counts"]
 
-# The generators of tests/src/seed.rs, which the tests compile in by `#[path]`.
-[dev-dependencies.zed-hash]
+# The seed and generator of a random test (zed_testkit::seed).
+[dev-dependencies.zed-testkit]
 workspace = true

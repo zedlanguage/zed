@@ -1752,7 +1752,7 @@ export -f piece trace_reads piece_limit
 # from the build failed: in kernel25's --bench run of l01_23 (2026-11-20, logs
 # 20261120T191416.628139286Z-3209242) 124 pieces ended with exit 127, "error while loading
 # shared libraries: libzed_kernel-1d3f0a86d9cd61e6.so: cannot open shared object file", in the
-# run at 8n, a new process of the test binary (tests/src/scaling.rs, run_in_a_new_process),
+# run at 8n, a new process of the test binary (crates/zed-testkit/src/scaling.rs, run_in_a_new_process),
 # while kernel25 built zed-kernel again in the same checkout. After the link ends, a binary
 # not linked again loads the new library instead ("symbol lookup error", see zrun), and a new
 # process of a test binary linked again is the new build (current_exe names "<path>

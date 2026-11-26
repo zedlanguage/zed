@@ -31,10 +31,10 @@ fn a_part_held_by_both_arms_of_nested_ifs_is_read_once() {
 const PIECE: usize = 10_000;
 
 fn piece(k: usize) {
-    let start = std::time::Instant::now();
     let name = format!("200,000 random terms built in two orders, piece {k}");
-    random_build_orders_read_and_stage_alike(&name, PIECE);
-    eprintln!("{name}, in {:.2?}", start.elapsed());
+    scaling::timed(&name, || {
+        random_build_orders_read_and_stage_alike(&name, PIECE)
+    });
 }
 
 /// The 20 pieces, one test each.

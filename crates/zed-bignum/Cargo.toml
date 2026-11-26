@@ -28,17 +28,13 @@ zed-collections.workspace = true
 zed-numtheory.workspace = true
 
 [dev-dependencies]
-# The scaling tests (tests/src/scaling.rs) and the seeded generators (tests/src/seed.rs, which
-# uses zed-hash). zed-alloc-count, zed-meter-settings and zed-hash depend on no crate of the
-# workspace, so these add no cycle.
-rustix.workspace = true
+# The seed of the random tests and the scaling tests (zed_testkit), the meter's `malloc` they
+# measure with (zed-alloc-count's `meter_entry_points!` in src/lib.rs), and the fixed streams of
+# coprime.rs's tests (zed-hash). None depends on a library crate of the workspace, so these add
+# no cycle.
+zed-testkit.workspace = true
 zed-alloc-count.workspace = true
-zed-meter-settings.workspace = true
 zed-hash.workspace = true
-stacker.workspace = true
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-perf-event2.workspace = true
 
 [lints]
 workspace = true

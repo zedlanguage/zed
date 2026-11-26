@@ -24,13 +24,16 @@ pub mod oracle;
 pub mod readme;
 #[cfg(test)]
 mod run_copy_tests;
-pub mod scaling;
+/// The scaling test of the rule of low complexity, the crate zed-testkit's
+/// (DRY-testkit-2026-11-26).
+pub use zed_testkit::scaling;
 #[cfg(test)]
 mod scaling_tests;
 pub mod scratch;
 #[cfg(test)]
 mod scratch_tests;
-pub mod seed;
+/// The seed and generator of a random test, the crate zed-testkit's (DRY-testkit-2026-11-26).
+pub use zed_testkit::seed;
 pub mod spec;
 pub mod step_helpers;
 pub mod tables;

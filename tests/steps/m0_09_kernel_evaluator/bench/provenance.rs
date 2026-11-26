@@ -6,6 +6,8 @@
 //! besides its ratio is checked at small sizes by
 //! `provenance::the_origins_of_each_benchmark_run_are_found_at_small_sizes`.
 
+use std::collections::HashMap;
+
 use zed_kernel::{Provenance, Term, Value};
 use zed_tests::scaling;
 
@@ -15,20 +17,8 @@ use crate::provenance::{
 };
 
 /// The provenance of the run of `make(m)` at `n` and at `FACTOR·n`, recorded before timing.
-fn recorded(n: usize, make: impl Fn(usize) -> Term) -> Vec<(usize, Provenance)> {
-    [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, trace(&make(m)).1))
-        .collect()
-}
-
-/// The provenance recorded at `m`.
-fn at(runs: &[(usize, Provenance)], m: usize) -> &Provenance {
-    &runs
-        .iter()
-        .find(|(size, _)| *size == m)
-        .expect("recorded")
-        .1
+fn recorded(n: usize, make: impl Fn(usize) -> Term) -> HashMap<usize, Provenance> {
+    scaling::inputs(n, |m| trace(&make(m)).1)
 }
 
 #[test]
@@ -66,7 +56,7 @@ fn the_origins_of_a_failure_built_one_reading_at_a_time_scale() {
         "the origins of a chain of n missing readings, by n",
         n,
         1,
-        |m| has_origins(at(&runs, m), m),
+        |m| has_origins(&runs[&m], m),
     );
 }
 
@@ -82,7 +72,7 @@ fn the_check_for_repeated_addresses_on_a_chain_of_products_scales() {
         "the check for repeated addresses on a chain of n products, by n",
         n,
         1,
-        |m| assert!(at(&runs, m).repeated().is_empty()),
+        |m| assert!(runs[&m].repeated().is_empty()),
     );
 }
 
@@ -108,7 +98,7 @@ fn shared_levels_scale(n: usize) {
         "the origins of a failure read out of shared levels, by depth",
         n,
         1,
-        |m| has_origins(at(&runs, m), 1),
+        |m| has_origins(&runs[&m], 1),
     );
 }
 
@@ -125,7 +115,7 @@ fn the_origins_of_a_failure_under_deep_replacements_scale() {
         "the origins of a failure under 32 replacements d levels deep, by d",
         d,
         1,
-        |m| has_origins(at(&runs, m), 33),
+        |m| has_origins(&runs[&m], 33),
     );
 }
 
@@ -143,7 +133,7 @@ fn the_origins_of_a_table_of_growing_entries_scale() {
         "the origins of a failure read out of n growing entries, by n",
         n,
         1,
-        |m| has_origins(at(&runs, m), m),
+        |m| has_origins(&runs[&m], m),
     );
 }
 
@@ -162,7 +152,7 @@ fn the_origins_of_a_failure_read_through_a_wide_tuple_scale() {
         n,
         1,
         |m| {
-            let p = at(&runs, m);
+            let p = &runs[&m];
             assert_eq!(p.origins(p.result()).len(), m);
         },
     );
@@ -182,7 +172,7 @@ fn the_origins_of_a_set_every_row_holds_scale() {
         n,
         1,
         |m| {
-            let p = at(&runs, m);
+            let p = &runs[&m];
             assert_eq!(p.origins(p.result()).len(), m);
         },
     );
@@ -200,6 +190,6 @@ fn the_origins_of_a_failure_read_beside_a_table_holding_none_cost_nothing_for_th
         "the origins of a failure read beside a table of n rows holding none, by n",
         n,
         0,
-        |m| has_origins(at(&runs, m), 1),
+        |m| has_origins(&runs[&m], 1),
     );
 }

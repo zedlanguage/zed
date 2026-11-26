@@ -57,10 +57,10 @@ fn reading_a_term_built_into_freed_blocks_scales() {
 /// correctness test `ends::random_shared_terms_read_as_their_trees` reads 200.
 #[test]
 fn three_thousand_random_shared_terms_read_as_their_trees() {
-    let start = std::time::Instant::now();
-    shared_and_tree_terms_read_alike(
-        "three_thousand_random_shared_terms_read_as_their_trees",
-        3000,
-    );
-    eprintln!("3000 shared terms read in {:.2?}", start.elapsed());
+    scaling::timed("3000 shared terms read", || {
+        shared_and_tree_terms_read_alike(
+            "three_thousand_random_shared_terms_read_as_their_trees",
+            3000,
+        )
+    });
 }

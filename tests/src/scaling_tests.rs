@@ -1,10 +1,9 @@
-//! The tests of [`crate::scaling`], the harness of the scaling tests, compiled into this crate's
-//! unit tests only. The harness itself is compiled, by `#[path]`, into the unit tests of
-//! zed-kernel, zed-rt, zedc-preimage and zedc-presburger too, and while these tests lay inside it
-//! they ran again in each of those binaries, where `cargo test -p <crate>` gives no
+//! The tests of [`crate::scaling`] (the zed-testkit crate's `scaling`), the harness of the
+//! scaling tests, compiled into this crate's unit tests only. The harness is a dev-dependency of
+//! zed-kernel, zed-rt, zedc-preimage, zedc-presburger and others, and while these tests lay
+//! inside it they ran again in each of those binaries, where `cargo test -p <crate>` gives no
 //! `GLIBC_TUNABLES` and `malloc_keeps_no_state_from_earlier_threads` failed
-//! (TEST-scaling-module-tests-once). They test the harness's private items, which it gives this
-//! crate as `pub(crate)`.
+//! (TEST-scaling-module-tests-once). zed-testkit's own unit tests are off (`test = false`).
 
 use std::hint::black_box;
 use std::sync::atomic::AtomicU64;
@@ -194,11 +193,22 @@ fn the_limit_is_10_5_times_8_to_the_power_less_one() {
         (limit(0), limit(1), limit(2), limit(3)),
         (1.3125, 10.5, 84.0, 672.0)
     );
-    let n_log_n = |n: f64| 8.0 * (8.0 * n).ln() / n.ln();
-    assert!(n_log_n(777.0) < limit(1) && n_log_n(776.0) > limit(1));
+    assert!(n_log_n_ratio(777) < limit(1) && n_log_n_ratio(776) > limit(1));
     assert!(8f64.powf(1.14) > limit(1) && 8f64.powf(1.13) < limit(1));
-    let n_log2_n = |n: f64| n_log_n(n).powi(2) / 8.0;
-    assert!(n_log2_n(1_587_343.0) < limit(1) && n_log2_n(1_587_342.0) > limit(1));
+    assert!(n_log2_n_ratio(1_587_343) < limit(1) && n_log2_n_ratio(1_587_342) > limit(1));
+    assert_eq!(format!("{:.2}", n_log2_n_ratio(4096)), "12.50");
+}
+
+/// [`exponents`] gives one exponent a step, whatever the step: work linear in the size measures
+/// near 1 at steps of 2 and of 3, and work of order n² near 2. The bounds are wide enough for
+/// processor time under load.
+#[test]
+fn exponents_are_one_a_step_against_the_size_before() {
+    let linear = exponents("linear", &[2_000, 4_000, 12_000], |n| work(n, 1, 2_000));
+    assert_eq!(linear.len(), 2);
+    assert!(linear.iter().all(|e| (0.7..1.3).contains(e)), "{linear:?}");
+    let square = exponents("square", &[200, 600], |n| work(n, 2, 20));
+    assert!((1.6..2.4).contains(&square[0]), "{square:?}");
 }
 
 /// [`n_log_n_ratio`] is `8 ln(8n) / ln(n)`, and [`check_n_log_n_by`] holds work to it. Work of

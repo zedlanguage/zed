@@ -21,22 +21,18 @@ crate-type = ["rlib", "dylib"]
 [dependencies]
 num-bigint.workspace = true
 zed-numtheory.workspace = true
-# splitmix64, the words of a fixed draw of priority.rs (`ZED_TREAP_SEED`), and the generators of
-# tests/src/seed.rs, which the tests compile in by `#[path]`. zed-hash depends on no crate.
+# splitmix64, the words of a fixed draw of priority.rs (`ZED_TREAP_SEED`). zed-hash depends on no
+# crate.
 zed-hash.workspace = true
 
 # Only the tests: the exactness test of the midpoints in search.rs checks them against BigInt.
 [dev-dependencies]
 num-integer.workspace = true
-# The scaling benchmarks of bench.rs (tests/src/scaling.rs). zed-alloc-count and
-# zed-meter-settings depend on no crate of the workspace, so these add no cycle.
-rustix.workspace = true
+# The seed of the random tests and the scaling benchmarks of bench.rs (zed_testkit), and the
+# meter's `malloc` they measure with (zed-alloc-count's `meter_entry_points!` in src/lib.rs).
+# Neither depends on a library crate of the workspace, so these add no cycle.
+zed-testkit.workspace = true
 zed-alloc-count.workspace = true
-zed-meter-settings.workspace = true
-stacker.workspace = true
-
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-perf-event2.workspace = true
 
 [lints]
 workspace = true

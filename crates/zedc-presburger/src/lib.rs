@@ -768,12 +768,7 @@ pub mod upper_hull;
 
 /// The scaling test of the rule of low complexity, shared with the step tests.
 #[cfg(test)]
-#[path = "../../../tests/src/scaling.rs"]
-#[expect(
-    dead_code,
-    reason = "presburger's tests use only some of the shared checks"
-)]
-mod scaling;
+use zed_testkit::scaling;
 
 /// The reference searches for a potential, shared with the solvers' and the step tests.
 #[cfg(test)]
@@ -792,9 +787,4 @@ zed_alloc_count::meter_entry_points!();
 /// The seed and generator of a random test, new on each run and printed, shared with the step
 /// tests.
 #[cfg(test)]
-#[path = "../../../tests/src/seed.rs"]
-#[allow(
-    dead_code,
-    reason = "each crate's tests use only some of the generator's draws"
-)]
-mod seed;
+use zed_testkit::seed;
