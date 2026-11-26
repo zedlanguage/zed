@@ -546,7 +546,7 @@ fn the_merges_of_kept_powers_scale_with_their_atoms() {
     crate::scaling::check_order("Rat::shared_wide of n atoms, 64 times", 4096, 1, |n| {
         let [x, y] = &rats[&n];
         for _ in 0..64 {
-            let s = std::hint::black_box(&x).shared_wide(std::hint::black_box(&y));
+            let s = std::hint::black_box(x).shared_wide(std::hint::black_box(y));
             assert_eq!(s.map(|s| s.wide.len()), Some(n / 2));
         }
     });

@@ -135,8 +135,10 @@ fn hold_per_unit(
 #[test]
 fn is_subset_scales_with_the_edits_not_the_size() {
     // `d` and `8d` keys removed from 2^16 keys: `O(d log k)`, linear in `d`.
+    // Instructions only: since faa55acd0 the walk keeps its stack inline and allocates nothing,
+    // so `check_order` refused the run (0 bytes at both sizes; VM l43, 2026-11-26).
     let by_edits: HashMap<usize, _> = crate::scaling::inputs(64, |d| edited(1 << 16, d as i64));
-    crate::scaling::check_order(
+    crate::scaling::check_instructions_only(
         "is_subset of 2^16 keys with d removed against the 2^16 keys",
         64,
         1,
