@@ -27,7 +27,7 @@
 //! proof which uses the invertibility of the Vandermonde matrix also works with finite
 //! fields"). Checked 2026-11-19 against both papers' text (Seidel and Aragon sections 3, 4 and
 //! 6; Wegman and Carter section 1) and Crossref. Tested by
-//! `priority::tests::p_is_the_largest_prime_below_2_to_the_64` (the field) and
+//! zed-numtheory's `tests::m64_59::p_is_the_largest_prime_below_2_to_the_64` (the field) and
 //! `a_priority_is_the_polynomial_at_the_key` (the evaluation); no test measures independence.
 //!
 //! Degree 7, for the treaps whose set operations are joins of two treaps (`set::union_if_agree`,
@@ -201,29 +201,8 @@
 
 use std::sync::OnceLock;
 
-/// The prime `2^64 - 59`, the largest below `2^64`.
-pub const P: u64 = 0xffff_ffff_ffff_ffc5;
-
-/// `a * b mod P`, for `a, b < P`. `2^64 = 59 (mod P)`, so the product `hi * 2^64 + lo` is
-/// `hi * 59 + lo`; `hi < 2^64`, so that is below `2^70`. A second fold, of a high part below
-/// 60, leaves it below `2^64 + 60 * 59 < 2P`, which one subtraction brings below `P`.
-fn mul(a: u64, b: u64) -> u64 {
-    let x = u128::from(a) * u128::from(b);
-    let x = (x >> 64) * 59 + (x & u128::from(u64::MAX));
-    let x = (x >> 64) * 59 + (x & u128::from(u64::MAX));
-    reduce(x)
-}
-
-/// `x mod P` for `x < 2 * P`.
-fn reduce(x: u128) -> u64 {
-    let p = u128::from(P);
-    (if x >= p { x - p } else { x }) as u64
-}
-
-/// `a + b mod P`, for `a, b < P`.
-fn add(a: u64, b: u64) -> u64 {
-    reduce(u128::from(a) + u128::from(b))
-}
+// The field of `p = 2^64 - 59`: its arithmetic is zed-numtheory's (DRY-num-words-2026-11-26).
+use zed_numtheory::m64_59::{P, add, mul};
 
 /// The draw of one use of treap priorities: the coefficients of `q`, highest first (the first
 /// `degree + 1` of `q` are used), and the point `r` of the hash of longer keys.

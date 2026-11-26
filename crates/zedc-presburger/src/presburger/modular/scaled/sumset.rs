@@ -263,15 +263,18 @@ fn word_or_max(v: &Int) -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-/// `(a + b) mod r` for `a, b <= r`, without overflow at any word `r`: the way back passes
-/// `b = r - v`, which is `r` when `v = 0` (XR-presburger4 round 4 P4-D, Codex).
+// `zed_numtheory::add_mod` and `mul_add_mod` on the `usize` coordinates of the tuples (a
+// `usize` is 64 bits on every target the crate builds for, so `as` is exact both ways; the
+// result is below `r`). The way back passes `b = r - v`, which is `r` when `v = 0`
+// (XR-presburger4 round 4 P4-D, Codex); the library allows it.
+#[inline]
 fn add_mod(a: usize, b: usize, r: usize) -> usize {
-    ((a as u128 + b as u128) % r as u128) as usize
+    zed_numtheory::add_mod(a as u64, b as u64, r as u64) as usize
 }
 
-/// `(a b + c) mod r` for words, without overflow.
+#[inline]
 fn mul_add_mod(a: usize, b: usize, c: usize, r: usize) -> usize {
-    ((a as u128 * b as u128 + c as u128) % r as u128) as usize
+    zed_numtheory::mul_add_mod(a as u64, b as u64, c as u64, r as u64) as usize
 }
 
 /// Charges `steps` steps of this path to the meter of the cover's question running, if any

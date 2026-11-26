@@ -416,12 +416,10 @@ fn an_affine_preimage_matches_enumeration() {
     }
 }
 
+/// `gcd(|a|, |b|)` by zed-numtheory's word gcd (DRY-num-words-2026-11-26); the moduli here are
+/// far below `2^63`, the one gcd that does not fit an `i64`.
 fn num_gcd(a: i64, b: i64) -> i64 {
-    let (mut a, mut b) = (a.abs(), b.abs());
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a
+    i64::try_from(zed_numtheory::gcd_u64(a.unsigned_abs(), b.unsigned_abs())).expect("below 2^63")
 }
 
 #[test]

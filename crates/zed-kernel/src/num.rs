@@ -41,7 +41,6 @@ use num_integer::Integer;
 use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 use zed_collections::sorted::{self, Joined, sorted_get};
 
-use crate::machine_int::BitLen;
 use bound::{Format, Product};
 use coprime::coprime_base_exponents;
 use dec::Dec;
@@ -62,6 +61,7 @@ pub use room::{
     fixed_room, machine_memory, memory_clause, room,
 };
 use room::{least_bits, least_log2};
+use zed_numtheory::BitLen;
 use zed_numtheory::m61::{self, P as MERSENNE_61};
 use zed_numtheory::{Montgomery64, factor, is_prime, mul_mod, pow_mod_big, rem_big_u64};
 
@@ -2728,7 +2728,7 @@ pub fn nth_root_rem_uint(a: &BigUint, k: u32) -> (BigUint, BigUint) {
 fn nth_root_near(a: &BigUint, k: u32) -> BigUint {
     let k64 = u64::from(k);
     let wide = a.bits().div_ceil(k64);
-    if wide <= u64::from(u32::BITS - k.leading_zeros()) + 64 {
+    if wide <= u64::from(k.bit_len()) + 64 {
         // Step 7.
         return match a.to_u64() {
             Some(w) => BigUint::from(num_integer::Roots::nth_root(&w, k)),
@@ -2743,7 +2743,7 @@ fn nth_root_near(a: &BigUint, k: u32) -> BigUint {
         };
     }
     // Step 5: `c + 4` guard bits.
-    let c = u64::from(u32::BITS - (k - 1).leading_zeros());
+    let c = u64::from((k - 1).bit_len());
     let h = (wide - c - 4) / 2;
     // Step 1.
     let s = nth_root_near(&(a >> (k64 * h)), k) + 1u32;
@@ -2868,7 +2868,7 @@ pub fn read_radix(text: &str, radix: u32) -> Result<Option<BigUint>, TooLarge> {
     // bits a digit at radix 36. An estimate scaled from the decimal measurement, not measured
     // itself.
     let len = BigUint::from(text.len());
-    let bits = u64::from(radix.next_power_of_two().trailing_zeros());
+    let bits = u64::from(radix.ceil_log2());
     room(&len * bits, &len * (8 + 16 * bits))?;
     let digits: Vec<u8> = text
         .bytes()
@@ -3704,7 +3704,7 @@ impl Rat {
     fn log2_span(&self) -> BigInt {
         let mut s = BigInt::from(self.num.bits() + self.den.bits());
         for (p, e) in self.pows.iter() {
-            s += e.abs() * (p.ilog2() + 1);
+            s += e.abs() * p.bit_len();
         }
         s
     }

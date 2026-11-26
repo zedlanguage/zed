@@ -75,10 +75,85 @@ stein!(
     u128
 );
 
+// `#[inline]` on the three word routines below: zed-kernel and the compiler crates call them
+// in loops, and both sides are dylibs, so without it each is a call out of line (the reason
+// given at `m61`).
+
 /// `a * b mod m`, for `m > 0`. The operands need not be below `m`.
+#[inline]
 pub const fn mul_mod(a: u64, b: u64, m: u64) -> u64 {
     // `as` here is exact: the remainder is below `m`, a `u64` (`try_from` is not `const`).
     ((a as u128) * (b as u128) % (m as u128)) as u64
+}
+
+/// `(a + b) mod m`, for `m > 0`. The operands need not be below `m`: the sum is taken in 128
+/// bits, so it never overflows, and a caller may pass `b = m` (zedc-presburger's sumset walks
+/// back by `b = r - v`, which is `r` at `v = 0`; XR-presburger4 round 4 P4-D).
+#[inline]
+pub const fn add_mod(a: u64, b: u64, m: u64) -> u64 {
+    // `as` is exact: the remainder is below `m`.
+    ((a as u128 + b as u128) % (m as u128)) as u64
+}
+
+/// `(a b + c) mod m`, for `m > 0`. The operands need not be below `m`: `a b + c <= (2^64 - 1)^2
+/// + 2^64 - 1 < 2^128`, so the 128-bit sum never overflows.
+#[inline]
+pub const fn mul_add_mod(a: u64, b: u64, c: u64, m: u64) -> u64 {
+    // `as` is exact: the remainder is below `m`.
+    ((a as u128 * b as u128 + c as u128) % (m as u128)) as u64
+}
+
+/// `a^-1 mod m`, the `x` in `0..m` with `a x = 1 (mod m)`, for `m > 0`; `None` when `a` and `m`
+/// share a factor (`a = 0` among them, for `m > 1`). Modulo 1 every number is 0, the inverse of
+/// every `a`, so it is `Some(0)`. The one routine for a word modulus (DRY-num-words-2026-11-26):
+/// it replaced two copies of Fermat's `a^(m - 2)` (zed-numtheory `siqs`, zed-kernel
+/// `num::fast`'s Garner constants), which were right only for a prime `m` and gave 0 for
+/// `a = 0`, and an extended Euclid in i128 (zed-kernel `types::empty`).
+///
+/// The extended Euclidean algorithm on `(m, a mod m)`, keeping the cofactor `s_i` of `a` with
+/// `s_i a = r_i (mod m)`: `(r_0, s_0) = (m, 0)`, `(r_1, s_1) = (a mod m, 1)`, then
+/// `r_(i+1) = r_(i-1) - q_i r_i`, `s_(i+1) = s_(i-1) - q_i s_i` for `q_i = floor(r_(i-1) / r_i)`,
+/// until `r_(k+1) = 0`; `r_k = gcd(a, m)`, and when it is 1, `s_k a = 1 (mod m)`.
+///
+/// Proof that the cofactors fit an `i128` and that `s_k` reduces by one addition. The `s_i`
+/// from `s_1` on alternate in sign (`s_2 = -q_1`, and `s_(i+1) = s_(i-1) - q_i s_i` adds two
+/// terms of the sign of `s_(i-1)`), so `|s_(i+1)| = |s_(i-1)| + q_i |s_i|`. By induction
+/// `|s_i| r_(i-1) + |s_(i-1)| r_i = m` for `i >= 1`: at `i = 1` it is `1 · m + 0 = m`, and
+/// `|s_(i+1)| r_i + |s_i| r_(i+1) = |s_(i-1)| r_i + q_i |s_i| r_i + |s_i| (r_(i-1) - q_i r_i)`,
+/// which is the case `i`. So for `r_i >= 1`, `q_i |s_i| <= |s_(i+1)| <= m / r_i <= m < 2^64`:
+/// every product and sum fits an `i128` with room. At the end `r_k = 1`, and for `m >= 2`,
+/// `r_(k-1) >= 2` (the remainders fall strictly, and `r_0 = m >= 2`), so `|s_k| <= m / 2 < m`
+/// and `s_k + m` is in `0..m` when `s_k < 0`; for `m = 1` the loop does not run and
+/// `s_0 = 0`.
+///
+/// Tests: `tests::inverses_modulo_a_word`, against `a x mod m` and, for a prime `m`, against
+/// Fermat's `a^(m - 2)`, the copies it replaced.
+// Complexity tradeoff: Fermat's `a^(m - 2)` is up to 128 products modulo `m`, each a 128-bit
+// remainder (a call into `__umodti3`); Euclid's algorithm takes O(log m) steps, each one 64-bit
+// hardware division, and needs no prime modulus. The step count is at most 91 for a word: n
+// steps need `m >= F_(n+2)`, the Fibonacci number (G. Lamé, 1844; D. E. Knuth, The Art of
+// Computer Programming, vol. 2, 3rd ed., sec. 4.5.3, from memory, not checked), and
+// `F_94 > 2^64`. zed-numtheory's `bezout_i128` gives the same cofactor
+// but divides in 128 bits at every step.
+#[inline]
+pub const fn inverse_mod_u64(a: u64, m: u64) -> Option<u64> {
+    assert!(m > 0, "a modulus above 0");
+    let (mut r0, mut r1) = (m, a % m);
+    let (mut s0, mut s1) = (0i128, 1i128);
+    while r1 != 0 {
+        let q = r0 / r1;
+        (r0, r1) = (r1, r0 - q * r1);
+        (s0, s1) = (s1, s0 - q as i128 * s1);
+    }
+    if r0 != 1 {
+        return None;
+    }
+    // `as` is exact: `s0` is in `-m..m` (proof above), so the sum is in `0..m`.
+    Some(if s0 < 0 {
+        (s0 + m as i128) as u64
+    } else {
+        s0 as u64
+    })
 }
 
 /// `a^e mod m`, for `m > 0`, by squaring over the bits of `e`: O(log e) products. `0^0 = 1`,
@@ -180,6 +255,8 @@ pub(crate) fn root_exact_u128(v: u128, k: u32) -> Option<u128> {
 // Complexity tradeoff: the seed `x` (right in 3 bits, since `x^2 = 1 mod 8`) needs five steps
 // to pass 64 bits and the seed 1 needs six; this seed costs one product and saves one or two
 // steps of two products each. The extended Euclid algorithm is O(64) divisions.
+// `#[inline]`: zed-kernel's binary gcd (`num::fast`) calls it once per step of its inner loop.
+#[inline]
 pub const fn inverse_mod_2_64(x: u64) -> u64 {
     debug_assert!(x % 2 == 1, "an odd number");
     let mut y = x.wrapping_mul(3) ^ 2;
@@ -189,6 +266,18 @@ pub const fn inverse_mod_2_64(x: u64) -> u64 {
         i += 1;
     }
     y
+}
+
+/// `x^-1 mod 2^128` for an odd `x`: [`inverse_mod_2_64`] of the low word, right in 64 bits
+/// (the inverse modulo `2^64` depends only on `x mod 2^64`), and one more Newton step, which
+/// doubles the right bits to 128 (the argument at [`inverse_mod_2_64`]). The one copy
+/// (DRY-num-words-2026-11-26): zed-numtheory's `Montgomery` on `u128` and zed-kernel's binary
+/// gcd step (`num::fast::step`) each wrote the step out. Test:
+/// `tests::inverses_modulo_2_128_are_inverses`.
+#[inline]
+pub const fn inverse_mod_2_128(x: u128) -> u128 {
+    let y = inverse_mod_2_64(x as u64) as u128;
+    y.wrapping_mul(2u128.wrapping_sub(x.wrapping_mul(y)))
 }
 
 /// `prime[i]` holds when `2 i + 1` is prime, for `i < ceil(n / 2)`: every odd number below `n`,

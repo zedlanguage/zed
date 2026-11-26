@@ -19176,7 +19176,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if ints.contains(0) {
                 return;
             }
-            let m = 64 - lo.unsigned_abs().max(hi.unsigned_abs()).leading_zeros();
+            let m = lo.unsigned_abs().max(hi.unsigned_abs()).bit_len();
             let Some(bits) = r.sum_least_beside(m) else {
                 return;
             };

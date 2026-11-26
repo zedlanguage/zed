@@ -20,7 +20,6 @@ pub(crate) mod idset;
 pub mod limits;
 pub mod lines;
 mod local;
-pub mod machine_int;
 pub mod num;
 pub mod paths;
 pub mod poly;

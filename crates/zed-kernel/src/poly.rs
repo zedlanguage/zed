@@ -35,10 +35,10 @@ use zed_collections::sorted::{self, Joined};
 use zed_graph::MinHeap;
 
 use crate::digest::{Digest, step};
-use crate::machine_int::BitLen;
 use crate::num::{gcd_uint, mul_cost, mul_int, mul_uint, pow_uint, squares_by_transform};
 use crate::term::{Prim, Term};
 use crate::value::Value;
+use zed_numtheory::BitLen;
 use zed_numtheory::m61::{self, P};
 use zed_numtheory::next_prime;
 

@@ -78,8 +78,8 @@ impl Lift {
         );
         // Enough levels that `2^levels > deepest`, so a rise of up to `deepest` is a sum of
         // the kept powers; at least one, the parent. `BITS - leading_zeros` is
-        // `zed_kernel::bits::BitLen::bit_len`, written out because zed-graph sits below
-        // zed-kernel (DRY-numeric-shared).
+        // `zed_numtheory::BitLen::bit_len`, written out because zed-graph depends on no crate
+        // (DRY-numeric-shared, DRY-num-words-2026-11-26).
         let levels = (usize::BITS - deepest.leading_zeros()).max(1) as usize;
         let mut up = vec![0; (n + 1) * levels];
         up[n * levels..].fill(n as u32);

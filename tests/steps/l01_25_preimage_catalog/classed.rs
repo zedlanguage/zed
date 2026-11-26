@@ -128,9 +128,10 @@ fn a_remainder_over_many_periods_is_one_class_exact() {
     );
 }
 
-/// The gcd of `a` and `b`, both not negative.
+/// The gcd of `a` and `b`, both not negative, by zed-numtheory's word gcd
+/// (DRY-num-words-2026-11-26).
 fn gcd(a: i64, b: i64) -> i64 {
-    if b == 0 { a } else { gcd(b, a % b) }
+    i64::try_from(zed_numtheory::gcd_u64(a.unsigned_abs(), b.unsigned_abs())).expect("below 2^63")
 }
 
 /// `Classed::plain(set)` checked against the one form worked out from the members of `set`,

@@ -32,10 +32,10 @@ use crate::num::{Rat, TooLarge};
 use crate::term::Prim;
 use crate::value::Value;
 
-/// Defined in [`crate::machine_int`], which imports nothing of the crate, so `num` and `value`
-/// can use it without an import cycle through this module; re-exported here for the path
-/// other crates use.
-pub use crate::machine_int::BitLen;
+/// Defined in zed-numtheory (DRY-num-words-2026-11-26); re-exported here for the path other
+/// crates use. `num` and `value` import it from zed-numtheory, not from here, which would close
+/// an import cycle through this module (FAIL-kernel-import-cycle-bits).
+pub use zed_numtheory::BitLen;
 
 /// Whether `p` is a bit word or an integer machine operation.
 pub fn is_bit_word(p: Prim) -> bool {

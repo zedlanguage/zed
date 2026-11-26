@@ -489,6 +489,7 @@ mod small {
     use num_bigint::BigInt;
     use num_integer::Integer;
     use num_traits::Zero;
+    use zed_numtheory::BitLen;
 
     /// The bound on the coefficients and the points of the proof above: `2^60`.
     pub(super) const BOUND: i128 = 1 << 60;
@@ -506,7 +507,7 @@ mod small {
     /// `super::capped_pow` in `i128`: `x^g` where it is at most `cap`, and `cap + 1` where it
     /// is above. `x >= 2`. The power fits (proof at the module).
     fn capped_pow(x: &i128, g: u64, cap: &i128) -> i128 {
-        let bits = |v: &i128| u64::from(128 - v.unsigned_abs().leading_zeros());
+        let bits = |v: &i128| u64::from(v.unsigned_abs().bit_len());
         if (bits(x) - 1).checked_mul(g).is_none_or(|b| b >= bits(cap)) {
             return cap + 1;
         }

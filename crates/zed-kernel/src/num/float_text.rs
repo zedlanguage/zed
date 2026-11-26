@@ -43,9 +43,9 @@
 //! from Schubfach's steps.
 
 use super::LiteralRounding;
-use crate::machine_int::BitLen;
 use num_bigint::{BigInt, BigUint};
 use std::cmp::Ordering;
+use zed_numtheory::BitLen;
 
 mod pow5;
 use pow5::POW5;
@@ -411,7 +411,7 @@ fn high_product(t: u128, w: u64) -> u128 {
 #[inline]
 fn round(n: u64, e: i64, inexact: bool, format: FloatFormat) -> Result<u64, Edge> {
     let p = format.precision();
-    let top = e + 63 - i64::from(n.leading_zeros());
+    let top = e + i64::from(n.bit_len()) - 1;
     // The exponent of the result's last bit, before rounding.
     let mut last = (top - (p - 1)).max(format.tiny());
     let shift = last - e;

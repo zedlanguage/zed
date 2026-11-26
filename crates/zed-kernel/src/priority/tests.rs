@@ -17,58 +17,6 @@ fn fixed(q: &[u64], r: u64) -> Priorities {
     p
 }
 
-/// `P` is prime, so `0..P` is a field and the values of `q` at distinct points are independent
-/// (module comment), and it is the largest prime below `2^64`, as its doc says. Red when `P` is
-/// changed to `2^64 - 57` (composite) or to `2^64 - 83` (a smaller prime): checked 2026-11-19.
-#[test]
-fn p_is_the_largest_prime_below_2_to_the_64() {
-    assert!(zed_numtheory::is_prime(P));
-    for n in P + 1..=u64::MAX {
-        assert!(!zed_numtheory::is_prime(n), "{n} is prime");
-    }
-}
-
-#[test]
-fn the_field_operations_agree_with_division_by_p() {
-    let p = u128::from(P);
-    // P - 60 times P - 1 or P - 2 makes the second fold of the product carry
-    // past 2^64: a reduction that folds the high word twice in 64-bit
-    // arithmetic and drops that carry gives a wrong product there, and on no
-    // other pair of this test (found by the cross-review XR-xor-shape-round-7-high).
-    let edges = [
-        0,
-        1,
-        2,
-        58,
-        59,
-        60,
-        P - 60,
-        P - 2,
-        P - 1,
-        1 << 32,
-        (1 << 63) + 5,
-    ];
-    let mut rng = crate::seed::Rng::new(1);
-    let mut values: Vec<u64> = edges.to_vec();
-    for _ in 0..2000 {
-        values.push(rng.below_u64(P));
-    }
-    for &a in &values {
-        for &b in &values[..40] {
-            assert_eq!(
-                u128::from(mul(a, b)),
-                u128::from(a) * u128::from(b) % p,
-                "{a} * {b}"
-            );
-            assert_eq!(
-                u128::from(add(a, b)),
-                (u128::from(a) + u128::from(b)) % p,
-                "{a} + {b}"
-            );
-        }
-    }
-}
-
 #[test]
 fn a_priority_is_the_polynomial_at_the_key() {
     let fours: &[u64] = &[3, P - 1, 0, 1 << 40, 7];

@@ -241,7 +241,7 @@ impl Dec {
     /// digits: `x^(10 a + d) = (x^a)^10 x^d`, O(n) products modulo `m` (four squarings and at
     /// most two products for the tenth power, and one table lookup for `x^d`).
     pub fn pow_mod(&self, base: u64, m: u64) -> u64 {
-        let mul = |a: u64, b: u64| (u128::from(a) * u128::from(b) % u128::from(m)) as u64;
+        let mul = |a: u64, b: u64| zed_numtheory::mul_mod(a, b, m);
         let mut table = [1u64 % m; 10];
         for d in 1..10 {
             table[d] = mul(table[d - 1], base % m);

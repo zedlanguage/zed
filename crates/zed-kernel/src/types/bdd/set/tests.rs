@@ -82,7 +82,7 @@ fn check(family: &str, atoms: Vec<Row>, taken: impl Fn(usize) -> bool) -> (usize
     let mut points: crate::digest::DigestMap<(bool, u64), usize> = Default::default();
     for k in &keys {
         *points
-            .entry((k.1, k.0.digest() % crate::priority::P))
+            .entry((k.1, k.0.digest() % zed_numtheory::m64_59::P))
             .or_default() += 1;
     }
     let forced: usize = points.values().filter(|&&k| k > 1).sum();

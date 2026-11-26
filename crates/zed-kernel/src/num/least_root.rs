@@ -10,8 +10,8 @@ use zed_numtheory::{
     rem_big_u64,
 };
 
-use crate::bits::BitLen;
 use crate::num::{fast, mul_uint, pow_uint, trees};
+use zed_numtheory::BitLen;
 
 /// `(s, r)` with `s = floor(sqrt(a))` and `r = a - s^2`, so `0 <= r <= 2s`, for integers held
 /// outside a `Rat`: Zimmermann's Karatsuba square root (P. Zimmermann, "Karatsuba Square

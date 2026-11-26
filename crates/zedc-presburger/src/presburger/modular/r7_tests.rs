@@ -777,9 +777,9 @@ fn check_regime(lo: Option<i64>, hi: Option<i64>, units: &Lits, clauses: &[Lits]
     want
 }
 
-/// The gcd of two positive integers.
+/// The gcd of two positive integers, by zed-numtheory's word gcd (DRY-num-words-2026-11-26).
 fn gcd_i64(a: i64, b: i64) -> i64 {
-    if b == 0 { a } else { gcd_i64(b, a % b) }
+    i64::try_from(zed_numtheory::gcd_u64(a.unsigned_abs(), b.unsigned_abs())).expect("below 2^63")
 }
 
 /// The next draw below `n` of a small linear congruential generator (Knuth's MMIX constants,

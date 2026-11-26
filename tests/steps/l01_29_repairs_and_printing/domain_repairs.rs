@@ -478,7 +478,7 @@ pub(super) fn a_wide_bit_not(n: usize) -> String {
 pub(super) fn a_width_repair(src: &str, n: usize) {
     let out = rejected(src);
     let first = out.lines().next().expect("a message");
-    let digits = usize::BITS - n.leading_zeros();
+    let digits = zed_numtheory::BitLen::bit_len(n);
     assert!(
         first.ends_with(&format!(", width: {digits})` instead.")),
         "{}",

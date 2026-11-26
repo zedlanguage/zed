@@ -133,6 +133,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 
+use zed_numtheory::BitLen;
 use zedc_int::int::Int;
 
 use super::formula::{Atom, Con, Factor, Lin, Rel};
@@ -1618,8 +1619,7 @@ impl<'a> Joint<'a> {
             root: std::array::from_fn(|_| vec![0; nr]),
             tn: vec![(0, 0), (1, 1)],
             tid: HashMap::new(),
-            th: u8::try_from(usize::BITS - nv.max(1).leading_zeros())
-                .expect("a bit count fits in u8"),
+            th: u8::try_from(nv.max(1).bit_len()).expect("a bit count fits in u8"),
             rel,
             tested: vec![[(0, 0); 3]; np],
             memo: HashMap::new(),
@@ -2145,7 +2145,7 @@ fn cone(v: Vec<usize>, p: &Prob, bad: bool, work: &mut u64) -> Vec<usize> {
     let half = |a: &Dir| !(a.1.is_positive() || (a.1.is_zero() && a.0.is_positive()));
     for (_, mut vs) in planes {
         let n = vs.len();
-        *work += n as u64 * (u64::from(usize::BITS - n.leading_zeros()) + 1);
+        *work += n as u64 * (u64::from(n.bit_len()) + 1);
         vs.sort_by(|a, b| {
             (half(a).cmp(&half(b)))
                 .then_with(|| Int::ZERO.cmp(&cross(a, b)))

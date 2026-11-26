@@ -78,7 +78,7 @@ use std::sync::{Arc, Mutex};
 
 use num_bigint::{BigInt, BigUint};
 use zed_collections::sorted::Joined;
-use zed_numtheory::{factor, gcd_u64};
+use zed_numtheory::{factor, gcd_u64, inverse_mod_u64, mul_mod};
 
 use super::bdd::{Bdd, Form, Part};
 use super::bes::{Answer, Bes, Decision, Kind, decide};
@@ -3013,11 +3013,11 @@ fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> BigUint {
     let (mut n, mut m) = (BigUint::ZERO, BigUint::from(1u32));
     for (&(_, q, _, _), &d) in primes.iter().zip(&chosen) {
         let below = |x: &BigUint| u64::try_from(x % q).expect("a residue is below q");
-        let inv = inverse(below(&m), q).expect("m is a product of other primes' powers");
+        let inv = inverse_mod_u64(below(&m), q).expect("m is a product of other primes' powers");
         let (x, y) = (d % q, below(&n));
         let gap = if x >= y { x - y } else { x + (q - y) };
-        let step = u128::from(gap) * u128::from(inv) % u128::from(q);
-        n += &m * u64::try_from(step).expect("a residue is below q");
+        let step = mul_mod(gap, inv, q);
+        n += &m * step;
         m *= q;
     }
     if n == BigUint::ZERO { m } else { n }
@@ -3203,23 +3203,6 @@ fn meeting_pair(classes: &[(u64, u64)]) -> Option<(usize, usize)> {
         }
     }
     None
-}
-
-/// The inverse of `a` modulo `m`, by the extended Euclidean algorithm: `None` when `a` and `m`
-/// share a factor. Modulo 1 it is 0.
-fn inverse(a: u64, m: u64) -> Option<u64> {
-    let (mut r0, mut r1) = (i128::from(m), i128::from(a % m));
-    let (mut s0, mut s1) = (0i128, 1i128);
-    while r1 != 0 {
-        let q = r0 / r1;
-        (r0, r1) = (r1, r0 - q * r1);
-        (s0, s1) = (s1, s0 - q * s1);
-    }
-    match r0 {
-        1 => u64::try_from(s0.rem_euclid(i128::from(m))).ok(),
-        _ if m == 1 => Some(0),
-        _ => None,
-    }
 }
 
 /// A length in all the classes of `all` and in none of `none`: the one `greedy_length` picks on

@@ -52,6 +52,7 @@ use num_traits::{One, Zero};
 
 use super::fast::rem as rem_uint;
 use super::{fast, mul_uint};
+use zed_numtheory::BitLen;
 
 /// The levels of the product tree of `leaves` above the leaves themselves: the products of
 /// pairs of leaves first, then of pairs of those, up to the one product of all, a node with no
@@ -180,7 +181,7 @@ pub fn remainders<L: Borrow<BigUint>>(
 /// ask.
 fn guard_bits(depth: usize) -> u64 {
     let l = (depth + 1) as u64;
-    let guard = (8 * l).next_power_of_two().trailing_zeros() as u64;
+    let guard = u64::from((8 * l).ceil_log2());
     debug_assert!(1u64 << guard >= 8 * l);
     guard
 }

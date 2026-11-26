@@ -79,6 +79,7 @@ use num_traits::{One, ToPrimitive, Zero};
 
 use super::fast::{div_rem as div_rem_uint, gcd_uint, rem as rem_uint};
 use super::{mul_uint, trees};
+use zed_numtheory::BitLen;
 
 /// The natural coprime base of some positive integers and each one written over it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -354,7 +355,7 @@ fn factor_words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
         .map(|x| x.borrow().to_u64())
         .collect::<Option<_>>()?;
     let top = ws.iter().copied().max().unwrap_or(0);
-    (top.checked_ilog2().map_or(0, |l| l + 1) <= FACTOR_BITS).then_some(ws)
+    (top.bit_len() <= FACTOR_BITS).then_some(ws)
 }
 
 /// The fewest inputs for which [`shares_a_factor`] tests whether every input is a prime word
@@ -1439,7 +1440,7 @@ mod tests {
             let mut m = 0u64;
             for _ in 0..1 + rng.below(4) {
                 let y = rng.pick(&smalls);
-                let b = u64::from(64 - y.leading_zeros());
+                let b = u64::from(y.bit_len());
                 if y > 1 && m + b > 12 {
                     continue;
                 }
@@ -1768,7 +1769,7 @@ mod tests {
             for ws in [distinct, pairs] {
                 let bx: Vec<BigUint> = ws.iter().map(|&w| big(w)).collect();
                 let at = format!("b {b}, {} .. {}, seed {seed}", ws[0], ws[k - 1]);
-                let top = ws.iter().map(|w| 64 - w.leading_zeros()).max().unwrap_or(0);
+                let top = ws.iter().map(|w| w.bit_len()).max().unwrap_or(0);
                 assert_eq!(factor_words(&bx).is_some(), top <= FACTOR_BITS, "{at}");
                 assert_eq!(factor_words(&bx[1..]), None, "{at}");
                 assert_eq!(

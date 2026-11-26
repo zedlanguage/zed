@@ -2,17 +2,20 @@
 //! the author, 2026-11-19: "create a `numtheory` crate and move and combine all number theory
 //! code into that crate", one routine per job; named `zed-numtheory` by the author the same day).
 //! The greatest common divisor of words and of a
-//! big integer with a word, products and powers modulo a word, arithmetic modulo the Mersenne
-//! prime `2^61 - 1`, the inverse modulo `2^64`, primality, factoring, the next prime, and the
+//! big integer with a word, sums, products, powers and inverses modulo a word, arithmetic
+//! modulo the Mersenne prime `2^61 - 1` and modulo the prime `2^64 - 59`, the inverse modulo
+//! `2^64`, the bit length of a word ([`BitLen`]), primality, factoring, the next prime, and the
 //! sieves.
 //!
 //! The gcd, inverse and Bezout coefficients of big integers stay in zed-kernel (`num::gcd_uint`,
 //! `num::inverse_mod_uint`, `num::bezout_int`), since their half gcd is built on the kernel's
 //! fast multiplication (`num/fast.rs`); for a word operand they call [`gcd_big_u64`] here.
 
+mod bits;
 mod ecm;
 mod factor;
 mod factored;
+pub mod m64_59;
 mod pratt;
 mod siqs;
 mod wide;
@@ -20,13 +23,14 @@ mod word;
 
 use num_bigint::BigUint;
 
+pub use bits::BitLen;
 pub use factor::{Montgomery64, factor, is_prime};
 pub use factored::{coprime_base_by_factoring, shares_a_factor_by_factoring};
 pub use pratt::{PSI_13, PrattCertificate, PrattError, PrattFactor};
 pub use wide::{factor_u128, is_prime_u128};
 pub use word::{
-    cbrt_floor, gcd_u64, gcd_u128, inverse_mod_2_64, mul_mod, odd_primes_below, pow_mod,
-    sqrt_exact_u128,
+    add_mod, cbrt_floor, gcd_u64, gcd_u128, inverse_mod_2_64, inverse_mod_2_128, inverse_mod_u64,
+    mul_add_mod, mul_mod, odd_primes_below, pow_mod, sqrt_exact_u128,
 };
 
 /// `(g, s, t)` with `g = gcd(a, b) >= 0` and `s a + t b = g`, by the extended Euclidean

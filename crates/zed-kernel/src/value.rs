@@ -40,10 +40,10 @@ use std::slice;
 use std::sync::{Arc, LazyLock, OnceLock};
 
 use crate::btree::{self, Hole};
-use crate::machine_int::BitLen;
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, ToPrimitive, Zero};
 use zed_collections::search::{first_true, last_true};
+use zed_numtheory::BitLen;
 
 use crate::deep::{self, Queue};
 use crate::digest::Digest;
@@ -3199,7 +3199,7 @@ impl Family {
     pub(crate) fn extend(&mut self, entries: impl IntoIterator<Item = (Value, Value)>) {
         let mut added: Vec<(Value, Value)> = entries.into_iter().collect();
         let n = self.0.built_map().len();
-        let log = (usize::BITS - n.leading_zeros()) as usize;
+        let log = n.bit_len() as usize;
         if added.len().saturating_mul(log) > n + added.len() {
             // Of two added entries with one key the first is kept, as the inserts keep it: the
             // sort is stable, and `dedup_by` drops the later of two equal neighbors.

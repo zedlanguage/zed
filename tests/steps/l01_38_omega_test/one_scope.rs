@@ -4027,8 +4027,10 @@ pub(super) fn nonunit_persist_chain(n: usize) -> String {
     src
 }
 
+/// `gcd(|a|, |b|)` by zed-numtheory's gcd (DRY-num-words-2026-11-26).
 fn num_gcd(a: i128, b: i128) -> i128 {
-    if b == 0 { a } else { num_gcd(b, a % b) }
+    i128::try_from(zed_numtheory::gcd_u128(a.unsigned_abs(), b.unsigned_abs()))
+        .expect("below 2^127")
 }
 
 /// The steps of `steps` in turn, `H` the link below, one question `h{i}(x: x) == 9` for each

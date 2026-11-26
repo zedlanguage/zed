@@ -46,7 +46,7 @@ use std::collections::HashMap;
 use zed_hash::Xorshift64;
 
 use crate::factor::{Montgomery, Word};
-use crate::{gcd_u128, mul_mod, odd_primes_below, pow_mod};
+use crate::{gcd_u128, inverse_mod_u64, mul_mod, odd_primes_below, pow_mod};
 
 /// The parameters of one size of `kN`.
 #[derive(Clone, Copy, Debug)]
@@ -232,11 +232,6 @@ pub(crate) fn sqrt_mod_prime(x: u64, p: u64) -> u64 {
         m = i;
     }
     r
-}
-
-/// `x^-1 mod p` for a prime `p` not dividing `x`: Fermat, `x^(p-2)`.
-fn inv_mod_prime(x: u64, p: u64) -> u64 {
-    pow_mod(x, p - 2, p)
 }
 
 /// The factor base. Column 0 is the sign; column `1 + i` is `primes[i]`: `primes[0] = 2`, then the
@@ -466,7 +461,8 @@ impl<'b> Sieve<'b> {
             // `gamma = t (a / q)^-1 mod q`, taken as the smaller of `gamma` and `q - gamma`.
             let mut gamma = mul_mod(
                 u64::from(base.root[i]),
-                inv_mod_prime((aq % u128::from(q)) as u64, q),
+                inverse_mod_u64((aq % u128::from(q)) as u64, q)
+                    .expect("a is squarefree, so q does not divide a / q"),
                 q,
             );
             if gamma > q / 2 {
@@ -484,7 +480,8 @@ impl<'b> Sieve<'b> {
                 continue;
             }
             let p = u64::from(base.primes[j]);
-            let ainv = inv_mod_prime((a % u128::from(p)) as u64, p);
+            let ainv =
+                inverse_mod_u64((a % u128::from(p)) as u64, p).expect("p is not a factor of a");
             for (l, bl) in self.big_b.iter().enumerate() {
                 let blp = (*bl as u128 % u128::from(p)) as u64;
                 self.bainv[l][j] = mul_mod(2 * blp, ainv, p) as u32;

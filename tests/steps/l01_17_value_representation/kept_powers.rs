@@ -321,7 +321,7 @@ fn kept_side(side: &[(u128, u64)]) -> Rat {
 /// `log2` of the side and the bits of the built side, at most.
 fn side_size(side: &[(u128, u64)]) -> (f64, u64) {
     side.iter().fold((0.0, 0), |(l, n), (b, e)| {
-        let bits = 128 - u64::from(b.leading_zeros());
+        let bits = u64::from(zed_numtheory::BitLen::bit_len(*b));
         (l + *e as f64 * (*b as f64).log2(), n + bits * e)
     })
 }

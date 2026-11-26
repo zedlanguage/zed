@@ -256,7 +256,7 @@ fn class(size: usize, align: usize) -> Option<(usize, usize, usize)> {
             return Some((i, 16 * (i + 1), 16));
         }
         // `size` in (2^k, 2^(k+1)], k >= 6; `size <= isize::MAX` gives k <= 62.
-        let k = (usize::BITS - 1 - (size - 1).leading_zeros()) as usize;
+        let k = (size - 1).ilog2() as usize;
         let step = 1usize << (k - 2);
         let j = (size - (1 << k)).div_ceil(step);
         return Some((4 + (k - 6) * 4 + (j - 1), (1 << k) + j * step, 16));

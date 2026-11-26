@@ -615,7 +615,7 @@ pub fn pncx_crt_bits(n: usize) -> zedc::store::presburger::Formula {
     // `F(2k + 1) = F(k)^2 + F(k + 1)^2`; `a = F(n + 1)`, `b = F(n + 2)`.
     let (mut a, mut b) = (Int::ZERO, Int::ONE);
     let k = n + 1;
-    for i in (0..usize::BITS - k.leading_zeros()).rev() {
+    for i in (0..zed_numtheory::BitLen::bit_len(k)).rev() {
         let two_b = &b + &b;
         let c = &a * &(&two_b - &a);
         let d = &(&a * &a) + &(&b * &b);

@@ -166,20 +166,13 @@ fn classes_join_under_a_tuple_part_outside_its_types_and_merge_the_nodes_of_a_ty
     assert_eq!(classes, vec![vec![0, 1], vec![2], vec![3]]);
 }
 
-/// `inverse` against a scan, and `residue_length` against a scan of the lengths from 1 on
-/// every choice of at most two classes of `all` and four of `none` with periods 1 to 6,
-/// from a fixed sequence: a length it gives is in every class of `all` and in none of
-/// `none`; it gives one whenever the rule (`residues_meet`) finds that one exists; and it
-/// gives one only when the scan finds one.
+/// `residue_length` against a scan of the lengths from 1 on every choice of at most two classes
+/// of `all` and four of `none` with periods 1 to 6, from a fixed sequence: a length it gives is
+/// in every class of `all` and in none of `none`; it gives one whenever the rule
+/// (`residues_meet`) finds that one exists; and it gives one only when the scan finds one. The
+/// inverse it uses is zed-numtheory's, tested there by `tests::inverses_modulo_a_word`.
 #[test]
 fn the_residue_length_agrees_with_a_scan() {
-    for m in 1..40u64 {
-        for a in 0..m {
-            let found = inverse(a, m);
-            let scanned = (0..m).find(|&x| a * x % m == 1 % m);
-            assert_eq!(found, scanned, "the inverse of {a} modulo {m}");
-        }
-    }
     let (mut rng, _) = Rng::fresh("the_residue_length_agrees_with_a_scan");
     let mut next = |below: u64| rng.below_u64(below);
     let (mut exists, mut given) = (0, 0);

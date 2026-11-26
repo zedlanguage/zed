@@ -16,6 +16,7 @@
 //! and their measured costs are at `split_u128`. Parts below `2^64` go to
 //! [`factor`](crate::factor()).
 
+use crate::bits::BitLen;
 use crate::ecm::{self, Primes};
 use crate::factor::{Montgomery, rho_within};
 use crate::pratt::{PSI_13, PrattCertificate, PrattFactor, is_prime_below_psi_13, passes_13_bases};
@@ -252,7 +253,7 @@ fn split_u128(n: u128) -> u128 {
         return g;
     }
     let primes = Primes::up_to(LAST_B1);
-    let short = short_curves(128 - n.leading_zeros());
+    let short = short_curves(n.bit_len());
     for sigma in 6..6 + u64::from(short) {
         if let Some(d) = ecm::curve(&mont, sigma, SHORT_B1, 100 * SHORT_B1, &primes) {
             return d;

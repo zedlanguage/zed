@@ -1356,7 +1356,7 @@ impl Lits {
 
     fn max(&self) -> Option<i64> {
         let w = self.words.last()?;
-        Some(64 * (self.end() - 1) + 63 - i64::from(w.leading_zeros()))
+        Some(64 * (self.end() - 1) + i64::from(w.bit_len()) - 1)
     }
 
     /// The keys from `lo` (at least 0) below `hi`, in increasing order: the words from the one

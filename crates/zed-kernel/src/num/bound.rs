@@ -15,7 +15,7 @@ use num_traits::{One, ToPrimitive, Zero};
 
 use super::fast::{self, built};
 use super::room::{LiteralRounding, TooLarge, room};
-use crate::machine_int::BitLen;
+use zed_numtheory::BitLen;
 
 /// `coef * prod p^e * prod q^f`, every exponent positive, `q` the wide atoms of a `Rat` (each
 /// wider than 64 bits); the coefficient and the atoms are borrowed from the number it bounds

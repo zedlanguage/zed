@@ -1,20 +1,12 @@
-//! Arithmetic on machine integers that needs nothing else of the crate: the binary size of an
-//! unsigned integer. The midpoints of two `i128` values that were here (`floor_midpoint`,
-//! `ceil_midpoint`) served only binary searches, which now call
-//! `zed_collections::search::{first_true, last_true}`; its `Midpoint` is the one copy.
-//!
-//! This module imports nothing from the crate, so every module may import it without closing an
-//! import cycle (FAIL-kernel-import-cycle-bits, 2026-11-19). These items were in `bits`, which
-//! imports `num` and `value`; when `num` and `value` imported them from there, the cycles
-//! bits -> num -> bits and bits -> value -> bits joined 19 files (test
-//! `s_01f_import_graph::no_crate_has_an_import_cycle_but_the_known_ones`). `bits` re-exports
-//! them, so the path `zed_kernel::bits::BitLen` that other crates use still works.
+//! The binary size of an unsigned machine integer, defined once for every crate. Moved from
+//! zed-kernel's `machine_int` (DRY-num-words-2026-11-26), so that the crates below zed-kernel
+//! and zed-numtheory itself can use it too.
 
-/// The binary size of an unsigned machine integer, defined once for every crate
-/// (DRY-numeric-shared): before, 31 sites wrote `BITS - leading_zeros()` (or the floor log,
-/// one less) by hand and three wrote `ilog2() + !is_power_of_two()`, which panics at 0. One
-/// copy stays written out, in `zed_graph::Lift::with_depth`: zed-graph sits below zed-kernel
-/// and cannot call this.
+/// The binary size of an unsigned machine integer (DRY-numeric-shared): before, 31 sites wrote
+/// `BITS - leading_zeros()` (or the floor log, one less) by hand and three wrote
+/// `ilog2() + !is_power_of_two()`, which panics at 0. For the floor log of a number above 0,
+/// std's `ilog2` is the one routine. One copy stays written out, in `zed_graph::Lift::with_depth`:
+/// zed-graph depends on no crate, and the one expression does not pay for a dependency.
 pub trait BitLen: Copy {
     /// The number of binary digits: 0 for 0, and `floor(log2 x) + 1` otherwise.
     fn bit_len(self) -> u32;
@@ -24,12 +16,16 @@ pub trait BitLen: Copy {
     fn ceil_log2(self) -> u32;
 }
 
+// `#[inline]`: one or two instructions each, called from zed-kernel's and the compiler's loops
+// through a dylib boundary (the reason given at `m61`).
 macro_rules! bit_len {
     ($($t:ty),*) => {$(
         impl BitLen for $t {
+            #[inline]
             fn bit_len(self) -> u32 {
                 <$t>::BITS - self.leading_zeros()
             }
+            #[inline]
             fn ceil_log2(self) -> u32 {
                 if self <= 1 { 0 } else { (self - 1).bit_len() }
             }

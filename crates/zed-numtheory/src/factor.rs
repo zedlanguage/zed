@@ -109,7 +109,7 @@ pub fn factor(n: u64) -> Vec<(u64, u64)> {
     out
 }
 
-use crate::{gcd_u64, gcd_u128, inverse_mod_2_64};
+use crate::{gcd_u64, gcd_u128, inverse_mod_2_64, inverse_mod_2_128};
 
 /// A machine word that [`Montgomery`] works modulo: `u64`, for [`factor`] and [`is_prime`], and
 /// `u128`, for `factor_u128` and `is_prime_u128` (FACTOR-u128, PRIME-u128). One generic form, not
@@ -256,13 +256,9 @@ impl Word for u128 {
     fn overflowing_sub(self, b: u128) -> (u128, bool) {
         u128::overflowing_sub(self, b)
     }
-    /// Newton's step `y (2 - x y)` from the inverse modulo `2^64` ([`inverse_mod_2_64`] on the
-    /// low word, right in 64 bits) doubles the right bits once more, to 128 (the argument at
-    /// [`inverse_mod_2_64`]).
     #[inline]
     fn inverse_mod_r(self) -> u128 {
-        let y = u128::from(inverse_mod_2_64(self as u64));
-        y.wrapping_mul(2u128.wrapping_sub(self.wrapping_mul(y)))
+        inverse_mod_2_128(self)
     }
     #[inline]
     fn gcd(self, b: u128) -> u128 {

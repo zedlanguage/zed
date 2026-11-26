@@ -117,7 +117,7 @@ fn the_most_one_digits_of_a_range_agree_with_the_count_over_its_members() {
         let got = Num::from(hi as i128).most_ones_from(&Num::from(lo as i128));
         // The upper end has the most digits, so the answer is its digits less one unless it is
         // all ones.
-        let d = 128 - hi.leading_zeros();
+        let d = zed_numtheory::BitLen::bit_len(hi);
         let want = if (hi + 1).is_power_of_two() { d } else { d - 1 };
         assert_eq!(got, Num::from(i64::from(want)), "{lo} ..= {hi}");
     }

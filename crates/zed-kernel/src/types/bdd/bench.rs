@@ -275,8 +275,10 @@ fn joining_chains_to_lists_scales() {
         (0..SHAPES)
             .map(|j| {
                 let mut xs: Vec<Row> = (0..m as u64).map(|i| atom(j * SHAPE_STRIDE + i)).collect();
-                let points: std::collections::BTreeSet<u64> =
-                    xs.iter().map(|r| r.digest() % crate::priority::P).collect();
+                let points: std::collections::BTreeSet<u64> = xs
+                    .iter()
+                    .map(|r| r.digest() % zed_numtheory::m64_59::P)
+                    .collect();
                 assert_eq!(points.len(), m, "atoms at one priority point");
                 xs.sort();
                 xs.into_iter().map(Part::literal).collect::<Vec<_>>()
@@ -355,7 +357,7 @@ fn parity_built_a_literal_at_a_time_scales() {
                     .collect();
                 let points: std::collections::BTreeSet<u64> = rows
                     .iter()
-                    .map(|r| r.digest() % crate::priority::P)
+                    .map(|r| r.digest() % zed_numtheory::m64_59::P)
                     .collect();
                 assert_eq!(points.len(), m, "atoms at one priority point");
                 rows.into_iter().map(Part::literal).collect::<Vec<_>>()

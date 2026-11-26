@@ -304,10 +304,10 @@ use std::rc::{Rc, Weak};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
-use zed_numtheory::{gcd_big_u64, inverse_mod_2_64};
+use zed_numtheory::{gcd_big_u64, inverse_mod_2_64, inverse_mod_u64};
 
 use super::TooLarge;
-use crate::machine_int::BitLen;
+use zed_numtheory::BitLen;
 
 /// The 64-bit words at or below which the narrower factor goes to num-bigint's
 /// multiplication, the other methods' costs not computed. Measured on 2026-11-07 at load 34
@@ -680,13 +680,7 @@ struct Field {
 
 impl Field {
     const fn new(p: u64, root: u64) -> Field {
-        // Newton's iteration doubles the correct low bits of `p^-1`: 1, 2, 4, ..., 64.
-        let mut inv = 1u64;
-        let mut i = 0;
-        while i < 6 {
-            inv = inv.wrapping_mul(2u64.wrapping_sub(p.wrapping_mul(inv)));
-            i += 1;
-        }
+        let inv = inverse_mod_2_64(p);
         let r = (1u128 << 64) % p as u128;
         Field {
             p,
@@ -1221,8 +1215,14 @@ const GARNER: Garner = {
     let [p0, p1, p2] = [FIELDS[0].p, FIELDS[1].p, FIELDS[2].p];
     let p01 = p0 as u128 * p1 as u128;
     Garner {
-        inv01: mont_of(inv_mod(p0 % p1, p1), p1),
-        inv012: mont_of(inv_mod((p01 % p2 as u128) as u64, p2), p2),
+        inv01: mont_of(
+            inverse_mod_u64(p0 % p1, p1).expect("the primes are distinct"),
+            p1,
+        ),
+        inv012: mont_of(
+            inverse_mod_u64((p01 % p2 as u128) as u64, p2).expect("the primes are distinct"),
+            p2,
+        ),
         p0_in_2: mont_of(p0 % p2, p2),
         p01,
     }
@@ -1471,7 +1471,7 @@ const KARATSUBA_TOP: usize = 400;
 /// the slicing in [`karatsuba_words`], which panics on a shorter scratch, in test
 /// `karatsuba_products_agree_with_num_bigint`.
 fn karatsuba_scratch(n: usize) -> usize {
-    12 * n + 8 * (usize::BITS - n.leading_zeros()) as usize
+    12 * n + 8 * n.bit_len() as usize
 }
 
 /// The buffers of [`karatsuba_mul`], kept for the thread: the two factors' words, the product's
@@ -2065,11 +2065,6 @@ fn sparse_mul(a: &BigUint, b: &BigUint) -> BigUint {
         }
     }
     from_words(out)
-}
-
-/// `x^-1 mod p` for a prime `p` and `x` not a multiple of it, by Fermat: `x^(p - 2)`.
-const fn inv_mod(x: u64, p: u64) -> u64 {
-    zed_numtheory::pow_mod(x, p - 2, p)
 }
 
 /// `a * b` of signed numbers, by [`mul`].
@@ -3459,11 +3454,9 @@ fn step(a: &BigInt, b: &BigInt, j: u64) -> (BigInt, BigInt, BigInt) {
     let b1 = b >> j;
     let w = j + 1;
     let q = match w < 128 {
-        // In 128-bit registers: `b1^-1 mod 2^128` by one more Newton step from 64 bits.
+        // In 128-bit registers: `b1^-1 mod 2^128`.
         true => {
-            let y = low128(&b1);
-            let inv = u128::from(inverse_mod_2_64(y as u64));
-            let inv = inv.wrapping_mul(2u128.wrapping_sub(y.wrapping_mul(inv)));
+            let inv = zed_numtheory::inverse_mod_2_128(low128(&b1));
             let t = low128(a).wrapping_neg().wrapping_mul(inv) & ((1u128 << w) - 1);
             match t >> j {
                 0 => BigInt::from(t),
@@ -3836,10 +3829,7 @@ fn stein_odd(a: &BigUint, za: u64, b: &BigUint, zb: u64) -> BigUint {
             }
             let y1 = y >> tz;
             let y1_64 = y1 as u64;
-            let mut inv = 1u64;
-            for _ in 0..6 {
-                inv = inv.wrapping_mul(2u64.wrapping_sub(y1_64.wrapping_mul(inv)));
-            }
+            let inv = inverse_mod_2_64(y1_64);
             let mask = (1u64 << (tz + 1)) - 1;
             let t = (x as u64).wrapping_neg().wrapping_mul(inv) & mask;
             let q = if t > (1u64 << tz) {

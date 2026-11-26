@@ -1561,3 +1561,160 @@ fn log2_bounds_hold_and_are_tight() {
         );
     }
 }
+
+/// `inverse_mod_u64` against its definition: for every `a < m <= 40`, the least `x` with
+/// `a x = 1 (mod m)` by a scan (moved from zed-kernel's `types::empty` test, whose copy it
+/// replaced), so `None` exactly when `gcd(a, m) > 1` and `Some(0)` modulo 1; then at the edge
+/// words, with random `a` and `m`, against `a x mod m = 1` and `x < m` when it gives one and
+/// against `gcd(a, m) > 1` when it does not; and for a prime `m` against Fermat's `a^(m - 2)`,
+/// the copies of `siqs` and zed-kernel's `num::fast` it replaced.
+#[test]
+fn inverses_modulo_a_word() {
+    for m in 1..=40u64 {
+        for a in 0..m + 3 {
+            let scanned = (0..m).find(|&x| a * x % m == 1 % m);
+            assert_eq!(
+                inverse_mod_u64(a, m),
+                scanned,
+                "the inverse of {a} modulo {m}"
+            );
+        }
+    }
+    let mut next = words("inverses_modulo_a_word");
+    let mut ms: Vec<u64> = EDGES.iter().copied().filter(|&m| m > 0).collect();
+    ms.extend((0..300).map(|_| next() | 1));
+    ms.extend((0..300).map(|_| next() >> (next() % 64)).filter(|&m| m > 0));
+    let mut found = 0;
+    for &m in &ms {
+        let mut aa: Vec<u64> = EDGES.to_vec();
+        aa.extend([m - 1, m / 2, m.wrapping_add(1)]);
+        aa.extend((0..20).map(|_| next()));
+        for &a in &aa {
+            match inverse_mod_u64(a, m) {
+                Some(x) => {
+                    found += 1;
+                    assert!(x < m, "{a}^-1 mod {m} = {x}");
+                    assert_eq!(mul_mod(a, x, m), 1 % m, "{a}^-1 mod {m} = {x}");
+                }
+                None => assert!(gcd_u64(a, m) > 1, "{a} mod {m} has no inverse"),
+            }
+        }
+    }
+    assert!(found > 1000, "{found} inverses found");
+    for m in [2, 3, 5, 65_537, (1 << 61) - 1, 18_446_744_073_709_551_557] {
+        for a in [1, 2, m - 1, m / 2, next() % m]
+            .into_iter()
+            .filter(|&a| a % m != 0)
+        {
+            assert_eq!(
+                inverse_mod_u64(a, m),
+                Some(pow_mod(a, m - 2, m)),
+                "{a} mod {m}"
+            );
+        }
+    }
+}
+
+/// `inverse_mod_2_128` at the edges and on random odd numbers: `x y = 1 (mod 2^128)`.
+#[test]
+fn inverses_modulo_2_128_are_inverses() {
+    let mut next = words("inverses_modulo_2_128_are_inverses");
+    let mut xs: Vec<u128> = vec![
+        1,
+        3,
+        u128::MAX,
+        u128::MAX - 2,
+        (1 << 127) + 1,
+        (1 << 64) + 1,
+    ];
+    xs.extend((0..10_000).map(|_| (u128::from(next()) << 64 | u128::from(next())) | 1));
+    for x in xs {
+        assert_eq!(x.wrapping_mul(inverse_mod_2_128(x)), 1, "{x}");
+    }
+}
+
+/// `add_mod` and `mul_add_mod` against 128-bit arithmetic, at the edge words (operands at and
+/// above the modulus among them, as the sumset of zedc-presburger passes `b = m`) and on random
+/// ones.
+#[test]
+fn sums_and_products_modulo_a_word_agree_with_128_bits() {
+    let mut next = words("sums_and_products_modulo_a_word_agree_with_128_bits");
+    let mut xs: Vec<u64> = EDGES.to_vec();
+    xs.extend((0..30).map(|_| next()));
+    for &m in xs.iter().filter(|&&m| m > 0) {
+        for &a in &xs {
+            for &b in &xs[..20] {
+                let (a1, b1, m1) = (u128::from(a), u128::from(b), u128::from(m));
+                assert_eq!(
+                    u128::from(add_mod(a, b, m)),
+                    (a1 + b1) % m1,
+                    "{a} + {b} mod {m}"
+                );
+                assert_eq!(u128::from(add_mod(a, m, m)), a1 % m1, "{a} + {m} mod {m}");
+                assert_eq!(
+                    u128::from(mul_add_mod(a, b, a, m)),
+                    (a1 * b1 + a1) % m1,
+                    "{a} {b} + {a} mod {m}"
+                );
+            }
+        }
+    }
+}
+
+mod m64_59 {
+    use crate::m64_59::{P, add, mul};
+
+    /// `P` is prime, so `0..P` is a field and the values of zed-kernel's priority polynomials at
+    /// distinct points are independent (the module comment of `zed_kernel::priority`), and it is
+    /// the largest prime below `2^64`, as its doc says. Red when `P` is changed to `2^64 - 57`
+    /// (composite) or to `2^64 - 83` (a smaller prime): checked 2026-11-19, in zed-kernel, before
+    /// the move.
+    #[test]
+    fn p_is_the_largest_prime_below_2_to_the_64() {
+        assert!(crate::is_prime(P));
+        for n in P + 1..=u64::MAX {
+            assert!(!crate::is_prime(n), "{n} is prime");
+        }
+    }
+
+    #[test]
+    fn the_field_operations_agree_with_division_by_p() {
+        let p = u128::from(P);
+        // P - 60 times P - 1 or P - 2 makes the second fold of the product carry
+        // past 2^64: a reduction that folds the high word twice in 64-bit
+        // arithmetic and drops that carry gives a wrong product there, and on no
+        // other pair of this test (found by the cross-review XR-xor-shape-round-7-high).
+        let edges = [
+            0,
+            1,
+            2,
+            58,
+            59,
+            60,
+            P - 60,
+            P - 2,
+            P - 1,
+            1 << 32,
+            (1 << 63) + 5,
+        ];
+        let mut rng = crate::seed::Rng::new(1);
+        let mut values: Vec<u64> = edges.to_vec();
+        for _ in 0..2000 {
+            values.push(rng.below_u64(P));
+        }
+        for &a in &values {
+            for &b in &values[..40] {
+                assert_eq!(
+                    u128::from(mul(a, b)),
+                    u128::from(a) * u128::from(b) % p,
+                    "{a} * {b}"
+                );
+                assert_eq!(
+                    u128::from(add(a, b)),
+                    (u128::from(a) + u128::from(b)) % p,
+                    "{a} + {b}"
+                );
+            }
+        }
+    }
+}

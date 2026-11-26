@@ -105,7 +105,7 @@ impl<'a> Curve<'a> {
     /// `11 log2 k` products.
     fn mul(&self, p: Point, k: u64) -> Point {
         let (mut r0, mut r1) = (p, self.double(p));
-        for bit in (0..63 - k.leading_zeros()).rev() {
+        for bit in (0..k.ilog2()).rev() {
             if k >> bit & 1 == 1 {
                 r0 = self.add(r1, r0, p);
                 r1 = self.double(r1);
