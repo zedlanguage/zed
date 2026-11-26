@@ -952,6 +952,32 @@ fn a_hold_in_phases_counts_at_8n_in_a_phase_of_its_own() {
     );
 }
 
+/// [`ran_alone_in_a_new_process`] runs a test whose meter counts no instructions again, alone, in
+/// a new process of this binary, and the caller measures only there
+/// (FAIL-casts-difference-of-processor-times). Run with the binary's other tests, or under a
+/// filter, the body below runs in the new process; run alone with `--exact`, it runs here.
+/// Negative control: without the call, a run of the whole binary measures in this process, beside
+/// the other tests, and the assertion fails.
+#[test]
+fn a_meter_of_processor_time_measures_only_in_a_process_running_the_test_alone() {
+    let meter = Meter {
+        read: Box::new(|| 0),
+        unit: "ns of processor time",
+        instructions: false,
+        fresh: false,
+        elsewhere: false,
+    };
+    if ran_alone_in_a_new_process(&meter) {
+        return;
+    }
+    let thread = std::thread::current();
+    let test = thread.name().expect("a test's thread has its name");
+    assert!(
+        runs_alone(test),
+        "{test} measured in a process that may run other tests"
+    );
+}
+
 /// Runs the benchmark `scaling_tests::bench::<test>` of this binary alone, with
 /// `ZED_BENCH_LIMIT_FILE` and [`PHASE_SEEN`] naming one file, and gives its standard output and
 /// standard error once it has passed.

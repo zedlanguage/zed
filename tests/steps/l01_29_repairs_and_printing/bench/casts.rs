@@ -62,6 +62,11 @@ fn a_cast_menu_costs_the_same_in_a_larger_program() {
     // (`scaling::hold_in_phases`; FAIL-bench-first-phase-past-20s-l0126-l0129).
     const R: usize = 100;
     let meter = &mut Meter::new();
+    // The difference of two counts needs instructions: beside other tests on a machine with no
+    // counter, the test runs again alone (FAIL-casts-difference-of-processor-times).
+    if scaling::ran_alone_in_a_new_process(meter) {
+        return;
+    }
     let unit = meter.unit();
     let m = 30_000;
     scaling::hold_in_phases(
@@ -95,6 +100,9 @@ fn the_menus_of_calls_literals_and_comparisons_cost_the_same_in_a_larger_program
     // same scan per offered repair did 1.91 times the work at m = 30,000.
     const R: usize = 100;
     let meter = &mut Meter::new();
+    if scaling::ran_alone_in_a_new_process(meter) {
+        return;
+    }
     let unit = meter.unit();
     let m = 30_000;
     let make = |m: usize, r: usize| padded_with(m, &called(r));

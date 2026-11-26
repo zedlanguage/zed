@@ -282,6 +282,64 @@ pub fn hold_in_phases(
     hold(what, measure, small, large, power)
 }
 
+/// For a benchmark that counts its measure itself from `meter` ([`Meter::work`]), as the callers
+/// of [`hold_in_phases`] do, and not through a check: true when this process does not count
+/// instructions for `meter` and the test therefore ran again here, alone, in a new process of this
+/// test binary (`<test> --exact`), which passed; the caller then returns. False when `meter`
+/// counts instructions, when this process runs the test alone already, when this is a process
+/// started for one run of a check, or on a thread that is not a test's; the caller measures here.
+///
+/// Why (FAIL-casts-difference-of-processor-times, dry-num, 2026-11-26): a check
+/// ([`compare_by`]) beside other tests, where the hardware has no counter of instructions, counts
+/// each of its runs in a new process under DynamoRIO ([`counts_in_new_processes`]), but a count a
+/// benchmark makes itself stays in this process, in processor time. The casts benchmarks of
+/// l01_29_repairs_and_printing take the difference of two such counts, the check of a program
+/// with R rejections less the check without; beside the binary's other tests, on Colab, the
+/// difference came out negative ("the rejections add work", both benchmarks, on the branch and on
+/// main), so it measured nothing. A process that runs the test alone starts under DynamoRIO
+/// (`zed_meter_settings::start_under_dynamorio`, from [`Meter::new`]) and counts instructions,
+/// which the other tests' allocations and load do not change. Where neither the hardware nor
+/// DynamoRIO counts, the new process counts processor time alone, the least load the machine
+/// offers.
+///
+/// Complexity tradeoff: one more process start and one more run of the test's set-up, against a
+/// count that cannot measure the work.
+pub fn ran_alone_in_a_new_process(meter: &Meter) -> bool {
+    let thread = std::thread::current();
+    let Some(test) = thread.name().filter(|t| *t != "main") else {
+        return false;
+    };
+    if meter.instructions || runs_alone(test) || fresh_target().is_some() {
+        return false;
+    }
+    let exe = std::env::current_exe().expect("this test binary");
+    let mut command = fresh_command(&exe);
+    command.args([test, "--exact", "--test-threads=1", "--nocapture"]);
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with(FRESH_VAR) {
+            command.env_remove(key);
+        }
+    }
+    let out = command
+        .output()
+        .unwrap_or_else(|e| panic!("{test}: starting {} alone: {e}", exe.display()));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    eprint!("{stdout}{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{test}: run alone in a new process of this test binary, since this process counts {} \
+         and not instructions: {}",
+        meter.unit,
+        out.status
+    );
+    assert!(
+        stdout.lines().any(|line| line == "running 1 test"),
+        "{test}: the new process ran no test, since `{test}`, this thread's name, is not that of \
+         a test of this binary; call this on the test's own thread"
+    );
+    true
+}
+
 /// Where the limit of a test of order `n^power` comes from, for the messages.
 fn why(power: u32) -> String {
     let limit = limit(power);
@@ -1568,7 +1626,7 @@ fn fresh_target() -> Option<&'static (usize, bool, String, String)> {
 /// how many threads run the tests selected, and none of them selects a test. A false answer
 /// where the process does run the test alone costs one more process start (see
 /// [`compare_measured`]), never a wrong count.
-fn runs_alone(test: &str) -> bool {
+pub(crate) fn runs_alone(test: &str) -> bool {
     let (mut exact, mut named) = (false, false);
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
