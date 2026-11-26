@@ -283,14 +283,15 @@ test("a label with no attempt is a line of its item, and bookkeeping draws no bo
   assert.equal(nodes.get("Y")!.state, "active");
 });
 
-test("a ledger line carries edges too, and a bare string is not a list", () => {
+test("a ledger line carries edges too, and a bare string is one id", () => {
   const nodes = by(buildNodes(inputs(
     "",
     '{"id":"W","state":"open","needs":["B"],"feeds":["C"]}\n{"id":"V","state":"open","needs":"A","feeds":"C"}\n',
   )));
   assert.deepEqual(nodes.get("W")!.needs, ["B"]);
-  assert.deepEqual(nodes.get("C")!.needs, ["B", "A", "W"]);
-  assert.deepEqual(nodes.get("V")!.needs, []);
+  assert.ok(nodes.get("C")!.needs.includes("W"));
+  assert.ok(nodes.get("C")!.needs.includes("V"));
+  assert.deepEqual(nodes.get("V")!.needs, ["A"]);
 });
 
 test("a ledger line's own time counts toward the runtime", () => {

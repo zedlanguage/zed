@@ -472,8 +472,10 @@ export function buildGraph(inp: Inputs): BoardState {
   };
   const own = new Map<string, string[]>();
   const fed = new Map<string, string[]>();
-  // An agent may write a bare string; only a list of ids is read.
-  const list = (x: unknown): string[] => (Array.isArray(x) ? x.filter((s) => typeof s === "string") : []);
+  // An agent may write a bare string for one id; it is read as that id, not dropped (29 ledger
+  // lines had one by 2026-11-25, and five of their edges were missing from the graph).
+  const list = (x: unknown): string[] =>
+    typeof x === "string" ? [x] : Array.isArray(x) ? x.filter((s) => typeof s === "string") : [];
   for (const [id, es] of ledger) {
     if (!nodeIds.has(id)) continue;
     // The item's needs and feeds after its lines in order, each unneeds or unfeeds taking back what
