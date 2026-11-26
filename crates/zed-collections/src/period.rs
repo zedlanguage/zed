@@ -13,9 +13,9 @@
 //! `f[j] - 1` is the length of the longest proper border of the first `j - 1` letters; the
 //! prefix function below is that value, indexed from 0. Their definition of a period, p. 333,
 //! (5): "We say that p is a period of α if α\[i\] = α\[i + p\] for 1 ≤ i ≤ |α| − p". The fact
-//! used, with its proof
-//! here so that nothing rests on the citation: let `b = f[n - 1]` be the length of the longest
-//! proper border of `s` (a prefix that is also a suffix, shorter than `s`), and `q = n - b`.
+//! used, with its proof here so that nothing rests on the citation: let `b = f[n - 1]` be the
+//! length of the longest proper border of `s` (a prefix that is also a suffix, shorter than
+//! `s`), and `q = n - b`.
 //! (1) `q` is the least period of `s` as a word, `s[i] == s[i + q]` for all `i + q < n`: a border
 //! of length `b` is the same thing as a period `n - b` (the prefix `s[..b]` equals the suffix
 //! `s[q..]` exactly when `s[i] == s[i + q]` for every `i < b`), so the longest border gives the

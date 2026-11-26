@@ -78,19 +78,19 @@ pub struct Classed {
 /// b-recognisable sets: a quasilinear procedure", arXiv:1301.2691 (paperclip full text, read
 /// 2026-11-26), lines 10 and 24: "A set of numbers is recognisable if, and only if it is
 /// ultimately periodic (UP)", and "Rational sets of \mathbb{N}^d have been characterised by
-/// Ginsburg and Spanier as sets definable in the Presburger arithmetic". In dimension 1 a semilinear set is a finite union
-/// of progressions `{a + k·p : k >= 0}`, so past the largest `a` it agrees with the residues
-/// modulo the lcm of the `p`; on the integers each direction is one such set read on `v` or on
-/// `-v`. So a finite part between two such
-/// tails holds every projection exactly, which a finite union of ranges met with one class does
-/// not (the even integers, `#k0 == 9 * t`). The table is kept at its least period
-/// ([`Tail::new`]), as granularities are kept at their minimal period in C. Bettini, S.
-/// Mascetti and X. S. Wang, "Supporting temporal reasoning by mapping calendar expressions to
-/// minimal periodic sets", arXiv:1110.2213 (paperclip full text, read 2026-11-26), line 256:
-/// "each granularity can have different periodical representations and, for a given
-/// granularity, it is possible to identify a set of representations that are minimal i.e.
-/// adopting the smallest period length"; here the minimal one is what makes the form one for
-/// each set (proof at [`Classed::tailed`]).
+/// Ginsburg and Spanier as sets definable in the Presburger arithmetic". In dimension 1 a
+/// semilinear set is a finite union of progressions `{a + k·p : k >= 0}`, so past the largest
+/// `a` it agrees with the residues modulo the lcm of the `p`; on the integers each direction is
+/// one such set read on `v` or on `-v`. So a finite part between two such tails holds every
+/// projection exactly, which a finite union of ranges met with one class does not (the even
+/// integers, `#k0 == 9 * t`). The table is kept at its least period ([`Tail::new`]), as
+/// granularities are kept at their minimal period in C. Bettini, S. Mascetti and X. S. Wang,
+/// "Supporting temporal reasoning by mapping calendar expressions to minimal periodic sets",
+/// arXiv:1110.2213 (paperclip full text, read 2026-11-26), line 256: "each granularity can have
+/// different periodical representations and, for a given granularity, it is possible to
+/// identify a set of representations that are minimal i.e. adopting the smallest period
+/// length"; here the minimal one is what makes the form one for each set (proof at
+/// [`Classed::tailed`]).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Tail {
     /// For the tail above, the least value from which it holds, or `-inf` where it holds
