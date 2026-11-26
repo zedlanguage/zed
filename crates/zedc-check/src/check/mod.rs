@@ -675,6 +675,15 @@ pub struct Info {
     /// sec:type_language, the `m[k]` row). A read checked more than once is such a read only
     /// if it is one each time.
     pub dense: HashMap<Span, bool>,
+    /// Each read `v[k]` of a family whose keys are not one integer interval, at a key that
+    /// may be an atom, by the read's span (a read on a parameter whose type is not written
+    /// records at its site, met at each call): the atoms of the key the family takes as keys,
+    /// which the read looks up as data, and those it passes through, as every primitive
+    /// passes its atoms (DESIGN.md sec:failure; plan row KERNEL-atom-key-read). So
+    /// `x.tag(#a)[#a]` reads the entry at `#a`, where the kernel's `Get` gave `#a` back. A read
+    /// recorded here has a receiver whose every piece is a data family or atoms; the
+    /// elaborator writes [`Prim::GetAtomKey`] where it takes an atom.
+    pub atom_keys: HashMap<Span, (KType, KType)>,
     /// Each bracket `v[k]` whose receiver may be a function that is no family, by the
     /// bracket's span: the number of parameters that function takes. A bracket gives it one
     /// argument, the first, so with one parameter it is an application, and with more it is

@@ -225,10 +225,17 @@ const HANDLED: &[(&str, &str, &str)] = &[
          m.stdout <- a;\n}\n",
         "none\n",
     ),
+    // The key `int(m.args[0])` may be `#outOfBounds` or `#invalid`, and both pass through the
+    // read of `t` (KERNEL-atom-key-read, 2026-11-26: before, the checker dropped them from the
+    // read's type where the int part of the key meets `t`'s keys, so an argument that is not a
+    // number reached the write as `#invalid` unseen; test
+    // `an_atom_of_an_index_key_the_list_does_not_take_reaches_the_write`); `#invalid` is
+    // handled in the key, as in `bubble_callee`, and `#outOfBounds` after the read.
     (
         "bubble_index_key",
         "main(m: MainArgs) {\n  t = [\"a\", \"b\"];\n  \
-         a = t[int(m.args[0])] else #outOfBounds -> \"none\";\n  m.stdout <- a;\n}\n",
+         a = t[int(m.args[0]) else #invalid -> 0] else #outOfBounds -> \"none\";\n  \
+         m.stdout <- a;\n}\n",
         "none\n",
     ),
     (
@@ -349,6 +356,18 @@ fn the_forms_that_pass_an_atom_on_or_hold_it_as_data() {
     for (name, src, want) in HANDLED {
         prints(name, src, want);
     }
+}
+
+/// `bubble_index_key` without the `else` in the key: `#invalid`, which `int` of an argument that
+/// is not a number gives, passes through the read of the list and reaches the write.
+#[test]
+fn an_atom_of_an_index_key_the_list_does_not_take_reaches_the_write() {
+    let src = "main(m: MainArgs) {\n  t = [\"a\", \"b\"];\n  \
+               a = t[int(m.args[0])] else #outOfBounds -> \"none\";\n  m.stdout <- a;\n}\n";
+    let expected = "A `Lines` port takes a `String` or a family of strings: \
+                    `m.stdout <- a : \"a\" | \"b\" | \"none\" | #invalid`. \
+                    Try `m.stdout <- a else #invalid -> \"\";` instead. [a]";
+    assert_eq!(type_errors(src), [expected], "{src}");
 }
 
 #[test]

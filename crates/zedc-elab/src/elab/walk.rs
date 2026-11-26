@@ -3571,10 +3571,46 @@ impl<'a> Elab<'a> {
                 // several (`Info::brackets`; the kernel reads a tuple or a family applied to
                 // one key, so a value that may be either is applied too).
                 let count = self.info.brackets.get(&span).copied();
+                // A read of a family at a key that may be an atom the family takes reads it
+                // as a key (`Info::atom_keys`; plan row KERNEL-atom-key-read): `GetAtomKey`,
+                // which looks the atom up as data; where the key may also be an atom it passes
+                // through, the key is tested first, and such an atom is applied as before.
+                let info = self.info;
+                let atom_keys = match (dense, count) {
+                    (false, None) => info.atom_keys.get(&span).filter(|(t, _)| !t.is_empty()),
+                    _ => None,
+                };
                 let t = all(m.got()).map(|ts| {
                     let [v, i]: [Term; 2] = ts.try_into().expect("two terms");
                     match (&k.kind, count) {
                         _ if dense => Term::Prim(Prim::At, vec![v, i]),
+                        _ if let Some((taken, passed)) = atom_keys => {
+                            if passed.is_empty() {
+                                return Term::Prim(Prim::GetAtomKey, vec![v, i]);
+                            }
+                            let (f, x) = (self.temp(), self.temp());
+                            let read = Term::Match(
+                                Shared::new(Term::Var(x.clone())),
+                                vec![
+                                    (
+                                        KPattern::Is(taken.clone()),
+                                        Term::Prim(
+                                            Prim::GetAtomKey,
+                                            vec![Term::Var(f.clone()), Term::Var(x.clone())],
+                                        ),
+                                    ),
+                                    (
+                                        KPattern::Wild,
+                                        Term::App(
+                                            Shared::new(Term::Var(f.clone())),
+                                            vec![Term::Var(x.clone())],
+                                        ),
+                                    ),
+                                ],
+                            );
+                            let read = Term::Let(x, Shared::new(i), Shared::new(read));
+                            Term::Let(f, Shared::new(v), Shared::new(read))
+                        }
                         (_, Some(n)) if n > 1 => self.bracket_section(v, i, n),
                         (_, Some(_)) => Term::App(Shared::new(v), vec![i]),
                         (ExprKind::Int { .. }, None) => Term::Prim(Prim::TupleGet, vec![v, i]),

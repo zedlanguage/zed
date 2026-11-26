@@ -2008,6 +2008,8 @@ impl<'g> Machine<'g, '_> {
                     return Some(k);
                 }
                 match k {
+                    // A key the checker proved the family takes, an atom too, is read.
+                    Mv::Data(k, _) if p == Prim::GetAtomKey => Some(k.clone()),
                     Mv::Data(k @ Value::Atom(_), _) => return Some(self.fresh(k.clone())),
                     Mv::Data(k, _) => Some(k.clone()),
                     _ => return None,
@@ -2521,7 +2523,12 @@ fn held_entries<'g>(ins: &[Mv<'g>]) -> Option<(HeldFamily, Vec<Mv<'g>>)> {
 /// The position in `ins` of the held family primitive `p` reads, when it reads one.
 fn family_at(p: Prim, ins: &[Mv<'_>]) -> Option<usize> {
     let (at, n) = match p {
-        Prim::Get | Prim::TupleGet | Prim::At | Prim::EntryAfter | Prim::EntryBefore => (0, 2),
+        Prim::Get
+        | Prim::TupleGet
+        | Prim::At
+        | Prim::GetAtomKey
+        | Prim::EntryAfter
+        | Prim::EntryBefore => (0, 2),
         Prim::Has => (1, 2),
         Prim::Count | Prim::FirstEntry | Prim::LastEntry | Prim::First | Prim::Last => (0, 1),
         _ => return None,

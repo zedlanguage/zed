@@ -2557,8 +2557,10 @@ impl<'t> Machine<'_, 't> {
     // native code (DRY-misc-A5); this reads the key, and makes the entry tuple of a part.
     fn held_family(&mut self, p: Prim, h: Rc<Held<'t>>, args: &[V<'t>]) -> R<Step<'t>> {
         let key = match p {
-            Prim::Get | Prim::TupleGet | Prim::At | Prim::Has => {
+            Prim::Get | Prim::TupleGet | Prim::At | Prim::Has | Prim::GetAtomKey => {
                 match &args[usize::from(p != Prim::Has)] {
+                    // A key the checker proved the family takes, an atom too, is read.
+                    V::Data(k) if p == Prim::GetAtomKey => Some(k),
                     V::Data(k @ Value::Atom(_)) => return give(k.clone()),
                     V::Data(k) => Some(k),
                     k if held_atom(k) => return Ok(Step::Give(k.clone())),
@@ -2632,14 +2634,16 @@ impl<'t> Machine<'_, 't> {
             return give(unbound());
         }
         // `f[k]` on the family a definedness fix is building.
-        if p == Prim::Get && matches!(args[0], V::Partial(_)) {
+        if matches!(p, Prim::Get | Prim::GetAtomKey) && matches!(args[0], V::Partial(_)) {
             let Ok([V::Partial(part), k]) = <[V<'t>; 2]>::try_from(args) else {
                 unreachable!("`Get` takes two arguments, the first matched above")
             };
             let V::Data(k) = k else {
                 return type_err("a key must be data");
             };
-            if let Value::Atom(_) = k {
+            if let Value::Atom(_) = k
+                && p == Prim::Get
+            {
                 return give(k);
             }
             let fix = &part.of;
@@ -2656,7 +2660,9 @@ impl<'t> Machine<'_, 't> {
             };
         }
         // `fs[k]` on a lookup port: the world answers once, and the answer is kept.
-        if matches!(p, Prim::Get | Prim::TupleGet) && matches!(args[0], V::Source(_)) {
+        if matches!(p, Prim::Get | Prim::TupleGet | Prim::GetAtomKey)
+            && matches!(args[0], V::Source(_))
+        {
             let Ok([V::Source(port), k]) = <[V<'t>; 2]>::try_from(args) else {
                 unreachable!("`Get` and `TupleGet` take two arguments, the first matched above")
             };
@@ -2664,7 +2670,9 @@ impl<'t> Machine<'_, 't> {
             let V::Data(k) = k else {
                 return type_err("a key must be data");
             };
-            if let Value::Atom(_) = k {
+            if let Value::Atom(_) = k
+                && p != Prim::GetAtomKey
+            {
                 return give(k);
             }
             return self.ask_port(&port, as_key(&k));
@@ -2704,10 +2712,20 @@ impl<'t> Machine<'_, 't> {
         // type, atoms included; every other primitive passes its atoms through, merged. A
         // keypath holds them too: a key may be an atom held as data, and a `reindex` reads which
         // keys a keypath above an empty level binds from where its own `unbound` atom lands.
-        if !matches!(
-            p,
-            Prim::Tuple | Prim::Path | Prim::Entries | Prim::Atom | Prim::Eq | Prim::Ne
-        ) && vals.iter().any(|v| matches!(v, Value::Atom(_)))
+        // `GetAtomKey` reads its atom key as data, and passes an atom family through.
+        if p == Prim::GetAtomKey
+            && let Some(Value::Atom(_)) = vals.first()
+        {
+            let out = vals.swap_remove(0);
+            self.spare(vals);
+            return give(out);
+        }
+        if p != Prim::GetAtomKey
+            && !matches!(
+                p,
+                Prim::Tuple | Prim::Path | Prim::Entries | Prim::Atom | Prim::Eq | Prim::Ne
+            )
+            && vals.iter().any(|v| matches!(v, Value::Atom(_)))
         {
             let atoms = vals.drain(..).filter(|v| matches!(v, Value::Atom(_)));
             let out = Value::merge_failures(atoms);
@@ -3816,6 +3834,7 @@ fn family_operand(p: Prim) -> Option<usize> {
         Prim::Get
         | Prim::TupleGet
         | Prim::At
+        | Prim::GetAtomKey
         | Prim::Count
         | Prim::FirstEntry
         | Prim::LastEntry
@@ -4226,9 +4245,10 @@ pub trait HeldFamilyAt: Sized {
 
 /// What primitive `p` gives on the held family `at`, as `prim_on` reads a data family: for
 /// `Get`, `TupleGet`, `At` and `Has` at `key` (data, not an atom: an atom key passes through,
-/// which each machine does before this), the entry, `#notFound` (`#outOfBounds` for `At`) or
-/// whether it is there; for `Count` the number of entries; for an entry step the entry tuple
-/// `(k, v)` (`()` past the end), from `key`, the key of the entry tuple given, for
+/// which each machine does before this; for `GetAtomKey` an atom too), the entry, `#notFound`
+/// (`#outOfBounds` for `At`) or whether it is there; for `Count` the number of entries; for an
+/// entry step the entry tuple `(k, v)` (`()` past the end), from `key`, the key of the entry
+/// tuple given, for
 /// `EntryAfter` and `EntryBefore`; and for `First` and `Last` the leaf at the least (greatest)
 /// keypath, descending into each part that is a held family and each data family
 /// ([`leaf_at_end`]), `#none` at an empty level. Shared by the kernel's `Machine::held_family`,
@@ -4257,7 +4277,7 @@ pub fn held_family_got<N: HeldFamilyAt>(
     };
     let none = || FamilyGot::Data(Value::tuple(Vec::new()));
     Ok(match p {
-        Prim::Get | Prim::TupleGet | Prim::At | Prim::Has => {
+        Prim::Get | Prim::TupleGet | Prim::At | Prim::Has | Prim::GetAtomKey => {
             match (p, f.get(key.expect("a key"))) {
                 (Prim::Has, e) => FamilyGot::Data(Value::Bool(e.is_some())),
                 (_, Some(e)) => entry(e),
@@ -4565,7 +4585,7 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         (Prim::Or, [Bool(a), Bool(b)]) => Bool(*a || *b),
         (Prim::Not, [Bool(a)]) => Bool(!a),
         // `v[0]` elaborates to `tupleGet` before types tell a family from a tuple (L1.22).
-        (Prim::Get | Prim::TupleGet, [Value::Family(f), k]) => {
+        (Prim::Get | Prim::TupleGet | Prim::GetAtomKey, [Value::Family(f), k]) => {
             f.lookup(k).unwrap_or_else(|| Value::atom("notFound"))
         }
         (Prim::Count, [Value::Family(f)]) => f.count(),

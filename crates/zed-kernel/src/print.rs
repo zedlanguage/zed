@@ -210,6 +210,7 @@ fn name(p: Prim) -> &'static str {
         FunnelShl => "funnelShl",
         FunnelShr => "funnelShr",
         At => "at",
+        GetAtomKey => "getAtomKey",
         Entries => "entries",
         Has => "has",
         Range => "range",
@@ -259,7 +260,7 @@ impl Prim {
             Prim::Tuple => "(..)",
             Prim::TupleGet => "[i]",
             Prim::Get => "[k]",
-            Prim::At => "[k]",
+            Prim::At | Prim::GetAtomKey => "[k]",
             Prim::Count => ".count",
             Prim::Union => ".union",
             Prim::Entries => "{..}",
@@ -613,10 +614,15 @@ impl<'a> Pieces<'a> {
             // A chain `t[0][1]` is one `Cat` of its receiver and its indices, gathered by a loop,
             // so that `fits` meets the receiver's text first rather than after walking down the
             // chain, which made a broken layout quadratic in the chain's length.
-            Term::Prim(Prim::TupleGet | Prim::Get | Prim::At, args) if args.len() == 2 => {
+            Term::Prim(Prim::TupleGet | Prim::Get | Prim::At | Prim::GetAtomKey, args)
+                if args.len() == 2 =>
+            {
                 let mut keys = vec![&args[1]];
                 let mut receiver = &args[0];
-                while let Term::Prim(Prim::TupleGet | Prim::Get | Prim::At, inner) = receiver
+                while let Term::Prim(
+                    Prim::TupleGet | Prim::Get | Prim::At | Prim::GetAtomKey,
+                    inner,
+                ) = receiver
                     && inner.len() == 2
                 {
                     keys.push(&inner[1]);
@@ -865,7 +871,7 @@ fn prim_fn(p: Prim) -> Cow<'static, str> {
     match p {
         Prim::Neg | Prim::Not => format!("(x -> {}x)", p.written()).into(),
         Prim::TupleGet => "((t, i) -> t[i])".into(),
-        Prim::Get | Prim::At => "((f, k) -> f[k])".into(),
+        Prim::Get | Prim::At | Prim::GetAtomKey => "((f, k) -> f[k])".into(),
         _ => match infix(p) {
             Some(op) => format!("({})", op.trim()).into(),
             None => name(p).into(),

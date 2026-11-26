@@ -4856,6 +4856,36 @@ impl<'t, 'a> Ck<'t, 'a> {
         (open && params.first().is_some_and(|p| p.ty.is_none())).then(|| self.word_entries(x, span))
     }
 
+    /// Whether the lambda `f` reads, at any depth, a name bound outside it that is not a
+    /// declared function: a parameter or a binding of an enclosing scope, whose type may be
+    /// a class met only at each call. A declared function's type is its signature, the same
+    /// at every call, and a binder inside `f` has its span inside `f`; this is the test of
+    /// [`Self::remap_free_names`]. `false` where `f` is not a lambda.
+    // Complexity tradeoff: one walk of `f`, O(s) for s nodes, stopped at the first such name,
+    // once per call site of the quantifier; the walk of the lambda itself is O(s) already.
+    fn reads_outer_name(&self, f: &Expr) -> bool {
+        let ExprKind::Lambda { body, .. } = &f.kind else {
+            return false;
+        };
+        let mut stack = vec![&**body];
+        while let Some(x) = stack.pop() {
+            if let (ExprKind::Name(_), Some(Ref::Bound(b))) =
+                (&x.kind, self.t.res.uses.get(&x.span))
+                && b.iter().any(|&id| {
+                    let at = self.t.res.binders[id].span;
+                    !self.t.funcs.contains_key(&id)
+                        && !(f.span.start <= at.start && at.end <= f.span.end)
+                })
+            {
+                return true;
+            }
+            zedc_syntax::ast::expr_kids(&x.kind, zedc_syntax::ast::Blocks::Enter, &mut |k| {
+                stack.push(k)
+            });
+        }
+        false
+    }
+
     /// Records, for a note on it, that `word` on the receiver `of` of type `x` gives the first
     /// parameter of `f` the entries of `x`, where `f` is a lambda whose first parameter has no
     /// written type: generic in it, or of the class of the entries of a receiver whose class
@@ -12176,9 +12206,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 },
                 // The quantifiers of step L3.15a, built in as `map` is.
                 Some(_) if let Some(q) = Quantifier::of(name) => match (positional, named, curry) {
+                    // A lambda that reads a name bound outside it is tied to the entries, as
+                    // at `map` (row FAIL-any-lambda-calls-param); one that reads only its own
+                    // names stays generic, so a refusal at a call names the quantifier's
+                    // function, not the enclosing one.
                     ([f], [], false) => {
+                        let first = match self.reads_outer_name(f) {
+                            true => self.lambda_entries(&x.ty, f, span),
+                            false => None,
+                        };
                         m.k(Frame::Quantify(x.ty, q, span));
-                        m.job(Job::Arg(f, Want::default()));
+                        self.word_fn(m, f, first);
                     }
                     _ => {
                         let s = self.subject_text(Some(of.span));
@@ -24062,8 +24100,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The atoms of `v` are kept apart from those the read makes, which a read written in
         // the program records for [`Self::outside_of`] ([`Self::indexed_at`]).
         let passed = self.passing(v, "a call", span, of);
+        // The atoms of the key a family takes, and those it passes through
+        // ([`Info::atom_keys`]), where every piece of `v` but its atoms is a data family, its
+        // keys not one interval, and the key's atoms are known: the elaborator writes a read
+        // that takes an atom as `GetAtomKey`, so the kernel reads it as the check did.
+        let pieces = v.pieces();
+        let keyed = !dense
+            && !x.ty.dynamic
+            && x.ty.vars.is_empty()
+            && (pieces.iter()).any(|p| matches!(p, Piece::Fn(_)))
+            && (pieces.iter()).all(|p| match p {
+                Piece::Fn(sig) => sig.data,
+                p => p.is_atoms(),
+            });
+        let mut atom_keys = keyed.then(|| (KType::empty(), KType::empty()));
         let mut out = Ty::empty();
-        for p in v.pieces() {
+        for p in pieces {
             match p {
                 Piece::Tuple(cs) => {
                     let r = self.tuple_at(&cs, &x, span);
@@ -24126,7 +24178,40 @@ impl<'t, 'a> Ck<'t, 'a> {
                             Some(span),
                         );
                     }
-                    let r = match self.key_overlaps(&sig, &x.ty) {
+                    // As [`Self::apply`] passes the key's atoms: those every arrow omits pass
+                    // by (rule 6; DESIGN.md sec:failure, "Where a loose atom stops": the key
+                    // of an index), where the key was written or a need gave it, and the rest
+                    // select an arrow, read as keys.
+                    let loose = x.ty.loose();
+                    let from_need =
+                        (self.need_args.as_ref()).is_some_and(|n| n.first() == Some(&true));
+                    let by = match !loose.is_empty() && (x.at.is_some() || from_need) {
+                        true => self.refused(&sig, 0, &loose),
+                        false => KType::empty(),
+                    };
+                    // A key that meets the family's keys without lying inside them, the atoms
+                    // it passes by aside, gives its entries or `#notFound`
+                    // ([`Self::key_overlaps`]), each atom it keeps read as a key, and the atoms
+                    // it passes by, as [`Self::apply`] passes them. Before (KERNEL-atom-key-read,
+                    // 2026-11-26), every atom of such a key was read as a key, so in
+                    // `m = { #a -> 1, 3 -> 2 }` a key `#a | 10 | #none` gave `#notFound` for
+                    // `#none`, where a key `#a | 3 | #none` passed it. Test: l08_02_remaps tag
+                    // `a_key_that_meets_the_keys_passes_the_atoms_it_does_not_take`.
+                    let overlaps = match by.is_empty() {
+                        true => self.key_overlaps(&sig, &x.ty),
+                        false => self.key_overlaps(&sig, &x.ty.without(&by)).map(|r| {
+                            match x.at {
+                                Some(at) => self.pass_at(span, at, &by),
+                                None => self.refused.push(("this function".into(), 0, by.clone())),
+                            }
+                            r.union(&x.ty.of_piece(&Piece::Set(by.clone())))
+                        }),
+                    };
+                    if let Some((taken, passed_by)) = &mut atom_keys {
+                        *taken = &*taken | &(&x.ty.atoms() - &by);
+                        *passed_by = &*passed_by | &by;
+                    }
+                    let r = match overlaps {
                         Some(r) => r,
                         None => {
                             self.apply(
@@ -24175,10 +24260,51 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
+        if let Some(keys) = atom_keys {
+            let at = if of.is_some() { Some(span) } else { site };
+            if let Some(at) = at {
+                self.atom_keys_met(v, keys, at, span);
+            }
+        }
         if of.is_some() {
             self.indexed_at(span, out.loose());
         }
         out.union(&passed)
+    }
+
+    /// Records at the read at `at` the atoms `taken` of its key that the family `v` read at
+    /// `span` takes as keys, and those `passed` it passes through ([`Info::atom_keys`]). The
+    /// read is one term for every check of it, at each call of a function whose parameter it
+    /// reads, so an atom one check takes and another passes is an error, as a miss met with
+    /// two atoms is ([`Self::dense_met_both`]). While trying a repair, nothing is recorded,
+    /// since the types of a try may not be those the check keeps. O(atoms of the key).
+    fn atom_keys_met(&mut self, v: &Ty, (taken, passed): (KType, KType), at: Span, span: Span) {
+        if self.trying || (taken.is_empty() && passed.is_empty()) {
+            return;
+        }
+        let (taken, passed) = match self.info.atom_keys.remove(&at) {
+            Some((t, p)) => (&t | &taken, &p | &passed),
+            None => (taken, passed),
+        };
+        let both = &taken & &passed;
+        if !both.is_empty() {
+            let t = self.text(v);
+            let atoms = self.text(&Ty::set(both));
+            self.error_offering(
+                span,
+                format!(
+                    "this read of {t} takes the key {atoms} as a key of the family here, and \
+                     another check of the same read passes it through: the read is one for \
+                     every call, so it cannot do both"
+                ),
+                [
+                    "repair: write the parameter's type, so that every call passes one kind of \
+                     value"
+                        .to_string(),
+                ],
+            );
+        }
+        self.info.atom_keys.insert(at, (taken, passed));
     }
 
     /// The error of `v[x]` at `span`, `x` no literal, of a value of the type shown as `shown`,
@@ -24514,6 +24640,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn dense_of_alike(&mut self, left: Span, kept: Span) {
         if let Some(&d) = self.info.dense.get(&kept) {
             self.info.dense.insert(left, d);
+        }
+        // So are the atoms of its key the calls took and passed ([`Self::atom_keys_met`]).
+        if let Some(keys) = self.info.atom_keys.get(&kept).cloned() {
+            self.info.atom_keys.insert(left, keys);
         }
     }
 

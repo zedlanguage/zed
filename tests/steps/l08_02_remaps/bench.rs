@@ -1120,6 +1120,25 @@ fn map_of_a_parameter_by_a_lambda_calling_a_parameter_runs_in_linear_time() {
     );
 }
 
+/// Row FAIL-any-lambda-calls-param: `any` of n entries of a parameter by a lambda calling a
+/// parameter, as `map` above. Small instances:
+/// `empty::the_quantifiers_by_a_lambda_calling_a_parameter_run`.
+#[test]
+fn any_of_a_parameter_by_a_lambda_calling_a_parameter_runs_in_linear_time() {
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "h(positional f, positional m) = m.any(x -> f(x));\na = h(x -> x > {n}, {});\n",
+            list(n)
+        )
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), "false");
+    scaling::check(
+        "any of n entries of a parameter by a lambda calling a parameter, whole path",
+        N_ENTRIES,
+        run,
+    );
+}
+
 /// Row FAIL-group-key-function: n families nested, each keyed by a call of the parameter `f`:
 /// the call meets each key's data need once, no longer deferred as a lambda's parameter.
 /// Small instances: `empty::a_key_made_by_a_function_is_data_at_each_call`.
@@ -1383,9 +1402,6 @@ fn a_remap_reading_n_free_names_is_checked_in_linear_time() {
     );
 }
 
-// The bench of `xs.tag(#a)` over n entries, folded through `x[#a]`, is parked in
-// wt/failing-tests/KERNEL-atom-key-read.rs with the tests that read by an atom key.
-
 /// A chain of n tags, `[1].tag(#a).tag(#a)…`, n levels deep (plan row TAG-run): each tag's type
 /// holds the one before it shared, so the check is linear in n, not quadratic. Whole path.
 #[test]
@@ -1399,6 +1415,27 @@ fn a_chain_of_n_tags_runs_in_linear_time() {
     scaling::check(
         "a chain of n `.tag(#a)` calls on `[1]`, whole path",
         N_LEVELS,
+        run,
+    );
+}
+
+/// `xs.tag(#a)` over n entries (plan row TAG-run), then the tagged list read and folded through
+/// its new key (plan row KERNEL-atom-key-read). Whole path; the tag itself is one entry over
+/// `xs` shared, O(1).
+#[test]
+fn a_tag_of_n_entries_runs_in_linear_time() {
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "xs = {};\nx = xs.tag(#a);\nt = x[#a] as (i -> v) into (i >< (+) -> v);\n",
+            list(n)
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "t"), (n * (n - 1) / 2).to_string());
+    };
+    scaling::check(
+        "`xs.tag(#a)` over n entries, then folded through `#a`, whole path",
+        N_ENTRIES,
         run,
     );
 }

@@ -273,6 +273,11 @@ pub enum Prim {
     /// sec:corner_cases, "Casts are domain proofs", QUESTIONS A110; plan row PARSE-int-base).
     /// The checker proves `b` in `2..=36` (a declared range of the parameter `base`).
     CastIntBase,
+    /// `f[k]` at a read the checker proved is of a family that takes the atom `k` as a key, as
+    /// `x.tag(#a)[#a]` (plan row KERNEL-atom-key-read; DESIGN.md sec:order, `tag`): the entry
+    /// at `k`, or `#notFound`. Where `Get` passes an atom key through, as every primitive
+    /// passes its atoms, this reads it as data; an atom family still passes through.
+    GetAtomKey,
 }
 
 impl Prim {
@@ -295,7 +300,7 @@ impl Prim {
     /// (test `every_primitive_is_listed_once_in_code_order`). The one list of them (row
     /// DRY-ast-walkers, REPORT-dryA5 row 11): the ZIR binary form numbers primitives by it
     /// (`zedc::zir::text::PRIMS` is this list), and the kernel's arrow tests walk it.
-    pub const ALL: [Prim; 90] = {
+    pub const ALL: [Prim; 91] = {
         use Prim::*;
         [
             Add,
@@ -388,6 +393,7 @@ impl Prim {
             AwayFromZero,
             FloatMod,
             CastIntBase,
+            GetAtomKey,
         ]
     };
 
@@ -489,6 +495,7 @@ impl Prim {
             AwayFromZero => 87,
             FloatMod => 88,
             CastIntBase => 89,
+            GetAtomKey => 90,
         }
     }
 
@@ -713,7 +720,7 @@ impl Prim {
             | TrailingZeros | Rotl | Rotr | F64Bits | Utf8 | FromUtf8 | MulHi | BitReverse
             | ByteSwap | Pdep | Pext | FunnelShl | FunnelShr | At | Entries | Has | Range
             | FirstEntry | LastEntry | EntryAfter | EntryBefore | First | Last | Split | Lines
-            | Join | RangeFrom | ListConcat | Place | CallNamed => return None,
+            | Join | RangeFrom | ListConcat | Place | CallNamed | GetAtomKey => return None,
         })
     }
 }

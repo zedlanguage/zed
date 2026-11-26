@@ -1596,6 +1596,33 @@ fn the_other_words_by_a_lambda_calling_a_parameter_run() {
     );
 }
 
+/// Row FAIL-any-lambda-calls-param: `any`, `all` and `find` of a parameter by a lambda that
+/// passes each entry to a parameter `f` run at each call, as `map` does, and a function that
+/// does not take the entries is rejected at the call, naming the entry's type. A lambda that
+/// reads only its own names keeps the quantifier's message
+/// (`each_one_level_word_is_decided_at_each_call_of_a_generic_function`).
+#[test]
+fn the_quantifiers_by_a_lambda_calling_a_parameter_run() {
+    let any = "g(positional m, positional f) = m.any(x -> f(x));\n";
+    prints(&format!("{any}t = g([1, 5], w -> w > 2);\n"), "t", "true");
+    prints(
+        "g(positional m, positional f) = m.all(x -> f(x));\n\
+         t = (g([3, 5], w -> w > 2), g({\"a\" -> 1}, w -> w > 2));\n",
+        "t",
+        "(true, false)",
+    );
+    prints(
+        "g(positional m, positional f) = m.find(x -> f(x));\n\
+         t = (g([1, 5], w -> w > 2) == 1, g([0], w -> w > 2) == #none);\n",
+        "t",
+        "(true, true)",
+    );
+    rejected(
+        &format!("{any}t = g([\"a\"], w -> w + 1 > 2);\n"),
+        &["`f` does not take (\"a\")"],
+    );
+}
+
 /// Row FAIL-group-key-function: what the function of `group` gives is a key, so data, whether
 /// the function is written, a parameter, or the receiver is a parameter too; and a key a
 /// display makes from a parameter's call is data at each call. Each passed the checker and

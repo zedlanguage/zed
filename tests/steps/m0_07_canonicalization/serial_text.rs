@@ -265,6 +265,7 @@ pub(super) mod m07 {
             AwayFromZero => "`awayFromZero`",
             FloatMod => "`floatMod`",
             CastIntBase => "`int(s, base: b)`",
+            GetAtomKey => "`f[k]` on a family that takes the atom `k` as a key",
         }
     }
 

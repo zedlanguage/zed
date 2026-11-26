@@ -224,6 +224,7 @@ pub(super) fn info_text(info: &Info) -> String {
         follows_own,
         witness,
         dense,
+        atom_keys,
         brackets,
         reduce,
         reducers,
@@ -289,6 +290,12 @@ pub(super) fn info_text(info: &Info) -> String {
     let _ = follows_own;
     field(&mut out, "witness", entries(witness, |v| debug(v)));
     field(&mut out, "dense", entries(dense, |v| debug(v)));
+    // `atom_keys` (row KERNEL-atom-key-read) came after E: a check that records no read of
+    // an atom key prints as E's text did; one recorded still prints, so E's output differs
+    // from D's wherever D records one.
+    if !atom_keys.is_empty() {
+        field(&mut out, "atom_keys", entries(atom_keys, |v| debug(v)));
+    }
     field(&mut out, "brackets", entries(brackets, |v| debug(v)));
     field(&mut out, "reduce", entries(reduce, |v| debug(v)));
     field(&mut out, "reducers", entries(reducers, |v| debug(v)));

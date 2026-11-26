@@ -158,6 +158,7 @@ fn info_eq_full(label: &str, e: &Info, d: &Info) -> Result<(), String> {
         follows_own: _,
         witness: _,
         dense: _,
+        atom_keys: _,
         brackets: _,
         reduce: _,
         reducers: _,

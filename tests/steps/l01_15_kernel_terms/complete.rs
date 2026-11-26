@@ -15,7 +15,7 @@ use super::deep::every_variant;
 /// one, an entry or component as an index, `.count`, `.first` and `.last` after their
 /// receiver, an atom with no literal name as `#_(..)`, and every other primitive as its
 /// prelude word called.
-const WRITTEN: [(Prim, &str); 90] = [
+const WRITTEN: [(Prim, &str); 91] = [
     (Prim::Add, "(a + b)"),
     (Prim::Sub, "(a - b)"),
     (Prim::Mul, "(a * b)"),
@@ -106,6 +106,7 @@ const WRITTEN: [(Prim, &str); 90] = [
     (Prim::AwayFromZero, "awayFromZero(a)"),
     (Prim::FloatMod, "floatMod(a, b)"),
     (Prim::CastIntBase, "intBase(a, b)"),
+    (Prim::GetAtomKey, "a[b]"),
 ];
 
 #[test]

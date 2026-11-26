@@ -1123,7 +1123,12 @@ fn held_entries(s: &mut Run, ins: &[Word]) -> Result<Option<HeldObj>, String> {
 /// The position in `ins` of the held family primitive `p` reads, when it reads one.
 fn family_at(s: &Run, p: Prim, ins: &[Word]) -> Result<Option<usize>, String> {
     let (at, n) = match p {
-        Prim::Get | Prim::TupleGet | Prim::At | Prim::EntryAfter | Prim::EntryBefore => (0, 2),
+        Prim::Get
+        | Prim::TupleGet
+        | Prim::At
+        | Prim::GetAtomKey
+        | Prim::EntryAfter
+        | Prim::EntryBefore => (0, 2),
         Prim::Has => (1, 2),
         Prim::Count | Prim::FirstEntry | Prim::LastEntry | Prim::First | Prim::Last => (0, 1),
         _ => return Ok(None),
@@ -1224,6 +1229,8 @@ fn family_read(s: &mut Run, p: Prim, ins: &[Word]) -> Result<Option<Word>, Strin
                 return Ok(None);
             }
             match s.heap.value(k)? {
+                // A key the checker proved the family takes, an atom too, is read.
+                k if p == Prim::GetAtomKey => Some(k),
                 k @ Value::Atom(_) => return s.heap.fresh(&k).map(Some),
                 k => Some(k),
             }

@@ -569,7 +569,7 @@ impl W {
                 self.tag(10);
                 // `PRIMS` is in the order of the codes (`Prim::ALL`), so the code is the
                 // position, read in O(1) where a search of the list took up to 90 steps.
-                self.tag(u8::try_from(p.code()).expect("a code below 90"));
+                self.tag(u8::try_from(p.code()).expect("a code below 91"));
             }
             Op::Apply => self.tag(11),
             Op::Lambda => self.tag(12),

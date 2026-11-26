@@ -48,7 +48,8 @@ const WORDS: &[(&str, Prim)] = &[
     ("fma", Prim::Fma),
     ("floatMod", Prim::FloatMod),
     // `round(x, ties: #away)` elaborates to `RoundTiesAway`, which no word names; so does
-    // `int(s, base: b)` to `CastIntBase`.
+    // `int(s, base: b)` to `CastIntBase`, and a read of a family that takes an atom as a key
+    // to `GetAtomKey`.
     ("round", Prim::Round),
     ("floor", Prim::Floor),
     ("ceil", Prim::Ceil),

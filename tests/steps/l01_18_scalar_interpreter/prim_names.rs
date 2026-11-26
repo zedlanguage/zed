@@ -19,7 +19,7 @@ use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 /// "The function called places the arguments"), or as `round(x, ties: #away)` and
 /// `int(s, base: b)`, calls of the words `round` and `int` with a named argument. A refusal
 /// names them by the form DESIGN.md writes, or else as the kernel's printer writes them.
-const UNNAMED: [Prim; 26] = [
+const UNNAMED: [Prim; 27] = [
     Prim::Entries,
     Prim::Tuple,
     Prim::TupleGet,
@@ -46,6 +46,7 @@ const UNNAMED: [Prim; 26] = [
     Prim::CallNamed,
     Prim::RoundTiesAway,
     Prim::CastIntBase,
+    Prim::GetAtomKey,
 ];
 
 /// `f` applied to `n` functions where data is needed: the one refusal every primitive has.
