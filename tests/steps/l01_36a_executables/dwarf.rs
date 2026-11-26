@@ -339,6 +339,23 @@ fn next_visits_a_functions_lines_in_source_order() {
 }
 
 #[test]
+fn the_lines_after_a_family_body_are_their_own() {
+    // `map` is a `fam` node, whose body's nodes the generated code does not hold; the lines
+    // after it are found by the numbers of their nodes, so `next` still visits 3, 4 and 5.
+    let src = CHAIN.replacen("String(m.args)", "String(m.args.map((a) -> a ++ \"x\"))", 1);
+    let (_, exe) = executable_of("family", &src);
+    let out = under_gdb(
+        &exe,
+        &["break family.zed:2", "run", "next", "next", "next"],
+    );
+    let visited: Vec<u32> = out
+        .lines()
+        .filter_map(|l| l.split_once('\t')?.0.parse().ok())
+        .collect();
+    assert_eq!(visited, [2, 3, 4, 5], "{out}");
+}
+
+#[test]
 fn a_conditioned_breakpoint_stops_only_when_its_condition_holds() {
     // zed/DEBUGGING.md section 6: `break file.zed:12 if zed_debug_task == 17`. The serial
     // runtime runs only task 0, so the breakpoint on task 17 never stops, nor the one whose

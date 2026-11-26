@@ -269,6 +269,30 @@ fn a_node_two_expressions_share_takes_the_first_site() {
     );
 }
 
+#[test]
+fn a_node_after_a_family_body_takes_its_own_site() {
+    // `map` is a `fam` node, whose body's nodes the generated code does not hold: they have
+    // numbers in the graph and no entry in the code's tables, so a node after them is placed
+    // by its number, not by its index among the nodes the code holds.
+    let src = doubled().replacen(
+        "d0 = String(m.args);",
+        "d0 = String(m.args.map((a) -> a ++ \"x\"));",
+        1,
+    ) + "    d63 = d62 ++ d62;\n    m.stdout <- String(len(d63));\n}\n";
+    stops(
+        "family",
+        &src,
+        1,
+        "",
+        "FILE:65:11: String too long: `d62 ++ d62` would join strings of 8.0 EiB and 8.0 EiB, \
+         16 EiB in all; a string holds at most 2^64 - 1 bytes. Keep the parts apart, as a list \
+         of strings written out one at a time, or join fewer of them.\n  \
+         [1] 65:11: the run stopped here\n      \
+         65 |     d63 = d62 ++ d62;\n         \
+            |           ^^^^^^^^^^\n",
+    );
+}
+
 /// A program whose `main` joins `n` strings in turn, laid out with `pad` before each line.
 pub(super) fn chain(n: usize, pad: &str) -> String {
     let mut src = format!("main(m: MainArgs) {{\n{pad}s0 = String(m.args);\n");
