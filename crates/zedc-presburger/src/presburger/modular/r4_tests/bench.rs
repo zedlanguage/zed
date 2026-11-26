@@ -5,7 +5,7 @@
 //! The graph-coloring benchmarks scale the coloring at [`COLORS`] (8,000) without the CRT
 //! that joins its witness, and measure the whole question against its coloring and its CRT
 //! ([`against_its_crt`], PNCX-coloring-crt-scale). The witness is one integer built by
-//! `combine_crt_tree` from one prime modulus per vertex, O(M(N) log k) for `k` moduli of `N`
+//! `Int::crt` from one prime modulus per vertex, O(M(N) log k) for `k` moduli of `N`
 //! bits in all, with `N` about `k log k`; that grows faster than the limit of 10.5 at 8n allows
 //! once the integers are wide, and no smaller witness exists in general (the product of the
 //! moduli is its period). Measured 2026-11-14 with the CRT (instructions at 8n): 8.4 to 8.9 at

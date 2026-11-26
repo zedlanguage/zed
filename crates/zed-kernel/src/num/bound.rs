@@ -13,8 +13,8 @@ use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{One, ToPrimitive, Zero};
 
-use super::fast::{self, built};
-use super::room::{LiteralRounding, TooLarge, room};
+use super::fast;
+use super::room::{LiteralRounding, TooLarge, built, room};
 use zed_numtheory::BitLen;
 
 /// `coef * prod p^e * prod q^f`, every exponent positive, `q` the wide atoms of a `Rat` (each

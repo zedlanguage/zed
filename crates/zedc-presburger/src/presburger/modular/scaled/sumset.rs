@@ -99,7 +99,7 @@
 //!
 //! A point is rebuilt from the last tuple backward: each block's `t` is that of a tuple `w` of
 //! `W_b` with `s - w` in the set before the block, and `t_0` that of the start tuple reached;
-//! the Chinese remainder theorem ([`combine_crt_tree`]) on the `t`s gives `x`, checked with
+//! the Chinese remainder theorem ([`Int::crt`]) on the `t`s gives `x`, checked with
 //! [`Formula::holds`].
 //!
 //! What the path declines (`None`, the other paths then decide `f`), in the order checked:
@@ -325,7 +325,7 @@ fn charge(steps: u64) -> bool {
 // (`tests::coordinates_moved_by_the_end_blocks_are_not_copied`, which counts them).
 // The step counts charged to the meter are these without the log factors. A model keeps the ids
 // before each block, O(sum_b R_b) words, and pays O(|W_b| U_b) a block to find the way back
-// and the Chinese remainder theorem on the blocks' `t`s ([`combine_crt_tree`], O(M(B') log k)
+// and the Chinese remainder theorem on the blocks' `t`s ([`Int::crt`], O(M(B') log k)
 // for the `B'` bits of `M prod_b m_b`). The cost of the two paths is compared in saturating word
 // arithmetic, O(C + k) (XR-presburger4 round 3 P3: built in big integers it was Θ(k²) bit work
 // before the first charge). Where a block's `W_b` misses one value of its group, the pairs were
@@ -1323,7 +1323,7 @@ pub(super) fn solve_by_sums(
     }
     let t0 = *t0_of.get(&s).expect("a start tuple");
     pairs.push((Int::from(t0), lcm_t));
-    let (x_value, _) = combine_crt_tree(pairs)?;
+    let (x_value, _) = Int::crt(pairs)?;
     let model = point_with_sums(rows, sums, x, &x_value);
     // By (2) of the theorem this is a point of `f`; a failure here is a defect of this module,
     // and declining leaves `f` to the other paths.

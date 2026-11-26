@@ -1718,3 +1718,45 @@ mod m64_59 {
         }
     }
 }
+
+/// `prime_powers` and `divisors` (moved from zed-kernel `types/empty.rs`,
+/// DRY-bignum-crate-2026-11-26) against trial division, for 0 to 5,000, the highly composite
+/// 720720 (240 divisors), a prime power, and a 64-bit prime and semiprime, whose divisors are
+/// checked by their product of prime powers.
+#[test]
+fn prime_powers_and_divisors_agree_with_trial_division() {
+    for n in 0u64..=5000 {
+        let mut want = Vec::new();
+        let mut m = n;
+        let mut p = 2;
+        while n > 1 && p * p <= m {
+            if m % p == 0 {
+                let mut q = 1;
+                while m % p == 0 {
+                    m /= p;
+                    q *= p;
+                }
+                want.push((p, q));
+            }
+            p += 1;
+        }
+        if n > 1 && m > 1 {
+            want.push((m, m));
+        }
+        assert_eq!(crate::prime_powers(n), want, "{n}");
+        if n > 0 {
+            let all: Vec<u64> = (1..=n).filter(|d| n % d == 0).collect();
+            assert_eq!(crate::divisors(n), all, "{n}");
+        }
+    }
+    assert_eq!(crate::divisors(720_720).len(), 240);
+    assert_eq!(crate::prime_powers(3u64.pow(40)), vec![(3, 3u64.pow(40))]);
+    let prime = 18_446_744_073_709_551_557u64;
+    assert_eq!(crate::prime_powers(prime), vec![(prime, prime)]);
+    assert_eq!(crate::divisors(prime), vec![1, prime]);
+    let semi = 4_294_967_291u64 * 4_294_967_279;
+    assert_eq!(
+        crate::divisors(semi),
+        vec![1, 4_294_967_279, 4_294_967_291, semi]
+    );
+}

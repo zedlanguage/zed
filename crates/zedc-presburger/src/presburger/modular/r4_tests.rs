@@ -398,7 +398,7 @@ pub(super) const CRT_SHARE: f64 = 1.5;
 
 /// Panics unless `run`, a whole question over `system` whose witness is the coloring's, takes
 /// at most [`CRT_SHARE`] times the work of its coloring ([`graph_coloring_choices`]) and of
-/// [`combine_crt_tree`] on the residues it chooses. The witness is one integer modulo the
+/// [`Int::crt`] on the residues it chooses. The witness is one integer modulo the
 /// product of all the moduli, `N` bits for `k` moduli, which no point avoids: the product of
 /// the moduli is its period, and a point of a system whose moduli are all needed has no
 /// smaller representative in general. Its CRT costs `O(M(N) log k)`, which grows faster than the
@@ -422,7 +422,7 @@ pub(super) fn against_its_crt(what: &str, system: &Coloring, run: impl Fn() + Sy
     let (info, allowed, clauses) = system;
     let parts = || {
         let choices = graph_coloring_choices(info, allowed, clauses).expect("a coloring");
-        std::hint::black_box(combine_crt_tree(choices));
+        std::hint::black_box(Int::crt(choices));
     };
     scaling::compare_costs_work_only(
         &format!("{what}: the whole question against its coloring and its CRT"),
@@ -647,7 +647,7 @@ fn color_formula(n: usize, connected: bool, square: bool) -> (Formula, Model) {
     let choices = (info.iter().enumerate())
         .map(|(i, b)| (Int::from(i as i64 % 3), b.max_q.clone()))
         .collect();
-    let (witness, _) = combine_crt_tree(choices).expect("coprime primes");
+    let (witness, _) = Int::crt(choices).expect("coprime primes");
     let mut model = Model::from([(xa, witness.clone())]);
     let (mut parts, mut remainders) = (Vec::new(), Vec::new());
     for (i, base) in info.iter().enumerate() {
@@ -957,7 +957,7 @@ fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
     }
 }
 
-/// `combine_crt_tree` on pairwise coprime moduli (the tree path: odd counts carry a node up)
+/// `Int::crt` on pairwise coprime moduli (the tree path: odd counts carry a node up)
 /// and on moduli sharing a factor (the pairwise path), against the congruences themselves;
 /// a conflicting pair gives `None`.
 #[test]
@@ -983,7 +983,7 @@ fn the_crt_tree_solves_its_congruences() {
             let pairs: Vec<(Int, Int)> = (ms.iter().enumerate())
                 .map(|(i, m)| (Int::from(i as i64 * 7 + 1).mod_floor(m), m.clone()))
                 .collect();
-            let (x, m) = combine_crt_tree(pairs.clone()).expect("coprime");
+            let (x, m) = Int::crt(pairs.clone()).expect("coprime");
             assert_eq!(m, ms.iter().fold(Int::ONE, |a, v| &a * v), "k {k}");
             assert!(!x.is_negative() && x < m, "k {k}");
             for (r, mi) in &pairs {
@@ -1004,19 +1004,16 @@ fn the_crt_tree_solves_its_congruences() {
     let pairs: Vec<(Int, Int)> = (ms.iter().enumerate())
         .map(|(i, m)| (Int::from(i as i64 * 7 + 1).mod_floor(m), m.clone()))
         .collect();
-    let (x, m) = combine_crt_tree(pairs.clone()).expect("distinct primes");
+    let (x, m) = Int::crt(pairs.clone()).expect("distinct primes");
     assert_eq!(m, ms.iter().fold(Int::ONE, |a, v| &a * v), "3,001 primes");
     assert!(!x.is_negative() && x < m, "3,001 primes");
     for (r, mi) in &pairs {
         assert_eq!(x.mod_floor(mi), *r, "3,001 primes, modulus {mi}");
     }
     let shared = vec![(Int::from(1), Int::from(6)), (Int::from(3), Int::from(10))];
-    assert_eq!(
-        combine_crt_tree(shared),
-        Some((Int::from(13), Int::from(30)))
-    );
+    assert_eq!(Int::crt(shared), Some((Int::from(13), Int::from(30))));
     let conflict = vec![(Int::from(1), Int::from(6)), (Int::from(2), Int::from(10))];
-    assert_eq!(combine_crt_tree(conflict), None);
+    assert_eq!(Int::crt(conflict), None);
 }
 
 /// The kernel's trees as this file uses them, on wide values (40 words each): remainders of
@@ -1335,7 +1332,7 @@ fn verdict_and_model_paths_agree_exhaustively_and_on_edge_forms() {
     ));
 }
 
-/// `combine_crt_tree` agrees with a left fold of `Int::crt_pair` on moduli that are not
+/// `Int::crt` agrees with a left fold of `Int::crt_pair` on moduli that are not
 /// pairwise coprime: equal moduli, powers of 2 and of 3 out of order, a divisibility chain with
 /// duplicates, repeated coprime moduli and moduli sharing factors without a chain, each also
 /// with a conflict. Taken unchanged from the R2 Gemini seat of XR-negated-chain-crt-tree
@@ -1375,11 +1372,7 @@ fn crt_tree_chain_and_repeated_moduli_match_pairwise() {
             .iter()
             .map(|&(r, m)| (Int::from(r), Int::from(m)))
             .collect();
-        assert_eq!(
-            combine_crt_tree(pairs.clone()),
-            ref_crt(&pairs),
-            "raw={raw:?}"
-        );
+        assert_eq!(Int::crt(pairs.clone()), ref_crt(&pairs), "raw={raw:?}");
     }
 }
 

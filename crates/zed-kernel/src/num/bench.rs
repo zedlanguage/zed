@@ -369,19 +369,6 @@ fn kth_roots_scale() {
     }
 }
 
-/// Item PERF-wide-odd-base-ratio-9: [`sqrt_rem_uint`] of a number of n words, O(M(n)) (proof
-/// at the function), against num-bigint's `sqrt`, 34.5 times from 1.66M to 13.3M bits.
-/// 8192 words puts every level from the top down to about 512 words on the transforms.
-#[test]
-fn square_roots_scale() {
-    let n = 1 << 13;
-    let numbers = crate::scaling::inputs(n, |m| bench_number(m, 11));
-    crate::scaling::check_order("the square root of a number of n words", n, 1, |m| {
-        let (s, r) = sqrt_rem_uint(&numbers[&m]);
-        assert!(!s.is_zero() && r <= &s << 1u32);
-    });
-}
-
 /// TEST-dry-shared-units: [`rem_uint`] and [`div_rem_uint`] of a number of n words by one odd
 /// word, at or below `DIV_LEAF`, so num-bigint's long division, O(n); and [`gcd_uint`] of the
 /// same pair, whose odd part of 64 bits sends it to `gcd_big_u64`, one pass over the words
@@ -495,6 +482,101 @@ fn fingerprint_instructions() {
             "bench FINGERPRINT words={w} m61={} division={} montgomery={} (instructions for 64) \
              ns_each m61={:.1} division={:.1} montgomery={:.1}",
             old.units, div.units, mont.units, ns[0], ns[1], ns[2]
+        );
+    }
+}
+
+/// DRY-bignum-crate-2026-11-26, numeric.md group 6: the two powers by squaring with the fast
+/// product, zed-bignum `fast::pow` (right to left: squares of the base, and a product of the
+/// running result by each square whose exponent bit is set) and zedc-int's `expand_pow` (left
+/// to right: squares of the running result, and a product by the base at each set bit), at a
+/// result of n and 8n words, for a one-word base and a base of n / 16 words, each with the
+/// exponent's bits all set (the most products). Prints the instructions of each. Neither had
+/// fewer at both shapes (numbers at `fast::pow`), so `fast::pow` now goes left to right for a
+/// one-word base and right to left otherwise, and should print a ratio near 1 for the one-word
+/// base and above 1 for the wide one.
+#[test]
+fn powers_right_to_left_and_left_to_right() {
+    fn left_to_right(base: &BigUint, e: u64) -> BigUint {
+        let mut m = BigUint::one();
+        for i in (0..64 - e.leading_zeros()).rev() {
+            m = mul_uint(&m, &m);
+            if e >> i & 1 == 1 {
+                m = mul_uint(&m, base);
+            }
+        }
+        m
+    }
+    let mut meter = crate::scaling::Meter::new();
+    for n in [1usize << 12, 1 << 15] {
+        let narrow = BigUint::from(3u32);
+        // 2^k - 1 with 3^(2^k - 1) of about n words: k = floor(log2(64 n / log2 3)).
+        let k = (64.0 * n as f64 / 3f64.log2()).log2().floor() as u32;
+        let wide = bench_number(n / 16, 29);
+        for (what, base, e) in [
+            ("one word", &narrow, (1u64 << k) - 1),
+            ("n/16 words", &wide, 15),
+        ] {
+            let want = pow_uint(base, e);
+            let rl = meter.least(|| {}, || assert_eq!(pow_uint(base, e).bits(), want.bits()));
+            let lr = meter.least(
+                || {},
+                || assert_eq!(left_to_right(base, e).bits(), want.bits()),
+            );
+            assert_eq!(left_to_right(base, e), want);
+            eprintln!(
+                "pow n={n} base={what} e={e}: pow_uint instr={} left_to_right instr={} ratio={:.3}",
+                rl.units,
+                lr.units,
+                lr.units as f64 / rl.units as f64
+            );
+        }
+    }
+}
+
+/// DRY-bignum-crate-2026-11-26, numeric.md group 8: lower bounds on `log2 prod p^e` for `m`
+/// primes near 2^40 with exponents near 2^100, at `m` and `8m`: the kernel's `room::least_log2`
+/// (`f64` `log2 p` in units of 2^-32, less 32 units), the exact one, zed-numtheory
+/// `log2_bounds(p, 32)` (directed rounding, proved), and zedc-int `Core::least_log2`'s
+/// `e (bits(p) - 1)`. Prints the instructions of each and how far each falls below the exact
+/// bound, in bits; the exact one is shared only if its cost is near the `f64` one's.
+#[test]
+fn log2_lower_bounds_of_products_of_powers() {
+    let mut meter = crate::scaling::Meter::new();
+    for m in [1usize << 10, 1 << 13] {
+        let pows: Vec<(u64, BigUint)> = (0..m as u64)
+            .map(|i| {
+                let p = zed_numtheory::next_prime((1 << 40) + i * 1_000_003).expect("a prime");
+                (p, (BigUint::one() << 100u32) + i * 7919)
+            })
+            .collect();
+        let coef = BigInt::one();
+        let f64_way = || room::least_log2(&coef, pows.iter().map(|(p, e)| (*p, e)));
+        let exact_way = || {
+            (pows.iter())
+                .map(|(p, e)| e * zed_numtheory::log2_bounds(&BigUint::from(*p), 32).0)
+                .sum::<BigUint>()
+                >> 32u32
+        };
+        let bits_way = || {
+            (pows.iter())
+                .map(|(p, e)| e * (64 - p.leading_zeros() - 1))
+                .sum::<BigUint>()
+        };
+        let (a, b, c) = (f64_way(), exact_way(), bits_way());
+        assert!(a <= b && c <= b);
+        let wa = meter.least(|| {}, || assert!(f64_way() <= b));
+        let wb = meter.least(|| {}, || assert!(exact_way() == b));
+        let wc = meter.least(|| {}, || assert!(bits_way() <= b));
+        let gap = |x: &BigUint| (&b - x).bits();
+        eprintln!(
+            "log2 m={m}: f64 instr={} (below exact by a number of {} bits), exact instr={}, \
+             bits-1 instr={} (below exact by a number of {} bits)",
+            wa.units,
+            gap(&a),
+            wb.units,
+            wc.units,
+            gap(&c)
         );
     }
 }

@@ -39,7 +39,7 @@ fn eight_value(word: u64) -> u64 {
 // O(n): one word test for each eight bytes, then at most seven byte tests. The byte at a time
 // test costs 2 to 5 times as many instructions (0.48 at 19 digits, 0.20 at 1024 and 0.19 at
 // 10^6, EXP-swar-digits, 2026-11-12).
-pub(super) fn all_digits(text: &[u8]) -> bool {
+pub fn all_digits(text: &[u8]) -> bool {
     let (eights, rest) = text.as_chunks::<8>();
     eights.iter().all(|e| eight_digits(u64::from_le_bytes(*e)))
         && rest.iter().all(u8::is_ascii_digit)
@@ -81,7 +81,7 @@ fn chunk_value(chunk: &[u8]) -> u64 {
 // each chunk the carry of one multiply-and-add pass, was 0.53 times at 1024 digits but 0.70 at
 // 19, against 0.21 here, since it builds its own vector and then the number from it; taking it
 // would need a switch on the length, so it is not used.
-pub(super) fn read_whole(text: &[u8]) -> BigUint {
+pub fn read_whole(text: &[u8]) -> BigUint {
     let head = match text.len() % CHUNK_DIGITS {
         0 => CHUNK_DIGITS.min(text.len()),
         left => left,

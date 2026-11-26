@@ -35,7 +35,7 @@ use zed_collections::sorted::{self, Joined};
 use zed_graph::MinHeap;
 
 use crate::digest::{Digest, step};
-use crate::num::{gcd_uint, mul_cost, mul_int, mul_uint, pow_uint, squares_by_transform};
+use crate::num::{gcd_uint, mul_cost, mul_int, mul_uint, pow_uint, squares_by_transform, trees};
 use crate::term::{Prim, Term};
 use crate::value::Value;
 use zed_numtheory::BitLen;
@@ -1233,7 +1233,7 @@ impl<'t> Identity<'t> {
             parts[s][0].push(pow_uint(&num, d));
             parts[s][1].push(pow_uint(&den, d));
         }
-        let [[ln, ld], [rn, rd]] = parts.map(|p| p.map(product));
+        let [[ln, ld], [rn, rd]] = parts.map(|p| p.map(|v| trees::product_of(&v)));
         mul_uint(&ln, &rd) == mul_uint(&rn, &ld)
     }
 
@@ -2777,26 +2777,6 @@ impl SupportSetup {
 /// The primes tried for each round of [`coefficients`], the one that leaves the most indices alone
 /// for its size taken.
 const CANDIDATES: u32 = 4;
-
-/// The product of `v`, 1 when it is empty.
-///
-/// Complexity tradeoff: multiplying in turn costs `O(m B)` word products for `m` numbers of
-/// `B` words in all, the running product being up to `B` words long at each step; multiplying
-/// pairs, then pairs of those, costs `O(M(B) log m)`, `M` the cost of one product of `B` words.
-fn product(mut v: Vec<BigUint>) -> BigUint {
-    while v.len() > 1 {
-        let mut next = Vec::with_capacity(v.len().div_ceil(2));
-        let mut it = v.into_iter();
-        while let Some(a) = it.next() {
-            next.push(match it.next() {
-                Some(b) => mul_uint(&a, &b),
-                None => a,
-            });
-        }
-        v = next;
-    }
-    v.pop().unwrap_or_else(BigUint::one)
-}
 
 /// The cost of a product of `words` 32-bit words by the number-theoretic transform, in the
 /// sparse product's unit of one word product: `w log2 w` in its `w` 64-bit words.

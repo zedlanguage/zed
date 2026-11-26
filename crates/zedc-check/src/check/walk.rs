@@ -31239,9 +31239,10 @@ impl Built {
                 // The wide atoms (`Rat::wide`) are kept as the primes are, never built, and
                 // are coprime to them and to each other, so their bases join the product.
                 let kept = kept.unwrap_or_else(|| {
-                    let primes: Vec<u64> = pows.iter().map(|(p, _)| *p).collect();
-                    let wide = r.wide().iter().map(|(q, _)| q);
-                    roots.leaf(wide.fold(product_of(&primes), |m, q| m * q))
+                    let factors: Vec<BigUint> = (pows.iter().map(|(p, _)| BigUint::from(*p)))
+                        .chain(r.wide().iter().map(|(q, _)| q.clone()))
+                        .collect();
+                    roots.leaf(zed_kernel::num::trees::product_of(&factors))
                 });
                 Built {
                     parts,
@@ -31260,18 +31261,6 @@ impl Built {
             .iter()
             .filter(|c| !c.one)
             .fold(Num::ZERO, |sum, c| &sum + &c.bits)
-    }
-}
-
-/// The product of `ps`, by halves: 1 for none.
-fn product_of(ps: &[u64]) -> BigUint {
-    match ps {
-        [] => BigUint::from(1u8),
-        [p] => BigUint::from(*p),
-        _ => {
-            let (a, b) = ps.split_at(ps.len() / 2);
-            product_of(a) * product_of(b)
-        }
     }
 }
 

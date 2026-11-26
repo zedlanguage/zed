@@ -16,7 +16,7 @@ use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 use zed_collections::intervals;
 use zed_graph::{Compression, Keep, Linking, MinHeap, Offset, Signed, UnionFind};
-use zed_kernel::num::{coprime, rem_uint, trees};
+use zed_kernel::num::{coprime, trees};
 use zedc_int::int::Int;
 
 use super::formula::{Atom, Con, Formula, Id, Lin, Model, Rel};
@@ -845,7 +845,7 @@ pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
 /// solved. If no conflict occurs, CRT gives an x satisfying the retained powers because
 /// powers from distinct bases are coprime. This x gives all the independent quotients above.
 ///
-/// Complexity tradeoff: naive, build the CRT integer of all rows (`combine_crt_tree`), which
+/// Complexity tradeoff: naive, build the CRT integer of all rows (`Int::crt`), which
 /// costs O(M(B) log k) for `k` rows of `B` modulus bits in all and measured 23.3 times work
 /// for 8 times the rows (bench `pncx_crt_tree_scale`, deferred, plan row
 /// PERF-negated-chain-unsolved). A Boolean answer needs only whether the integer exists. Used:
@@ -2903,7 +2903,7 @@ const SWEEP_SWITCHOVER: u128 = 400_000;
 /// primes split into 3 groups of 3 primes has `sum p_i` of 105 + 2,431 + 12,673 in place of
 /// `p` = 3,234,846,615. Finding the groups costs one coprime base of the moduli
 /// ([`coprime_factorization`]) and one union a literal; the CRT one product tree
-/// ([`combine_crt_tree`]). What is given up: nothing is answered differently; a regime whose
+/// ([`Int::crt`]). What is given up: nothing is answered differently; a regime whose
 /// groups are each small is swept where the whole was above the switchover. Tests:
 /// `r7_tests::a_regime_over_nine_primes_the_base_cannot_write_is_decided` (past 60 s before,
 /// coupled and in groups), `r7_tests::groups_of_moduli_are_decided_as_testing_each_point_does`
@@ -2952,9 +2952,9 @@ fn sweep_unwritten(
             }
         }
         // The moduli `p_i` are pairwise coprime (proved above), so the congruences never
-        // conflict and `combine_crt_tree` gives `Some`; `Undecided` is not reached. Its second
+        // conflict and `Int::crt` gives `Some`; `Undecided` is not reached. Its second
         // value is the product of the `p_i`, which is `p`.
-        let Some((r, p)) = combine_crt_tree(pairs) else {
+        let Some((r, p)) = Int::crt(pairs) else {
             return RegimeOut::Undecided;
         };
         return RegimeOut::Found(match (lo, hi) {
@@ -4523,27 +4523,6 @@ fn common_factorization(ms: &[Int]) -> Option<ModBase> {
     )
 }
 
-/// Balanced binary product; multiplication costs are included in the bit cost.
-fn prod_slice(items: &[Int]) -> Int {
-    if items.is_empty() {
-        return Int::ONE;
-    }
-    let mut cur: Vec<Int> = items.to_vec();
-    while cur.len() > 1 {
-        let mut next = Vec::with_capacity(cur.len().div_ceil(2));
-        let mut it = cur.into_iter();
-        while let Some(a) = it.next() {
-            if let Some(b) = it.next() {
-                next.push(&a * &b);
-            } else {
-                next.push(a);
-            }
-        }
-        cur = next;
-    }
-    cur.pop().unwrap_or(Int::ONE)
-}
-
 enum ConsolidateOut {
     Ok(BaseInfo, ResidueSet),
     Empty,
@@ -4718,7 +4697,7 @@ fn solve_coprime_system(
     // Tests: pncx_connected_colors_scale, pncx_coloring_relabelings.
     if allow_split {
         if let Some(point) = score_witness(bases_info, &allowed, &clauses) {
-            let period = prod_slice(
+            let period = Int::product(
                 &bases_info
                     .iter()
                     .map(|b| b.max_q.clone())
@@ -4731,7 +4710,7 @@ fn solve_coprime_system(
         if let Some(point) = graph_coloring_witness(bases_info, &allowed, &clauses) {
             // A bounded interval may include a representative of the coloring's
             // period. Test that representative; missing it gives no verdict.
-            let period = prod_slice(
+            let period = Int::product(
                 &bases_info
                     .iter()
                     .map(|b| b.max_q.clone())
@@ -4833,7 +4812,7 @@ fn score_witness(
             .or_else(|| allowed[i].first().map(|p| &p.0))?;
         choices.push((base.r_from_z(value), base.max_q.clone()));
     }
-    combine_crt_tree(choices).map(|p| p.0)
+    Int::crt(choices).map(|p| p.0)
 }
 
 /// A sufficient coloring witness, invariant under independent relabeling of each
@@ -4859,11 +4838,11 @@ fn graph_coloring_witness(
     allowed: &[ResidueSet],
     clauses: &[BTreeMap<usize, ResidueSet>],
 ) -> Option<Int> {
-    combine_crt_tree(graph_coloring_choices(info, allowed, clauses)?).map(|(x, _)| x)
+    Int::crt(graph_coloring_choices(info, allowed, clauses)?).map(|(x, _)| x)
 }
 
 /// The residue [`graph_coloring_witness`] takes modulo each base, as `(residue, modulus)`
-/// pairs for [`combine_crt_tree`]: the coloring without the one integer that joins them, so
+/// pairs for [`Int::crt`]: the coloring without the one integer that joins them, so
 /// that its cost is measured apart from the CRT's (PNCX-coloring-crt-scale,
 /// `pncx_connected_colors_scale` and the other coloring benchmarks).
 fn graph_coloring_choices(
@@ -5125,7 +5104,7 @@ fn independent_component_witness(
             choices.push((point.mod_floor(&base.max_q), base.max_q));
         }
     }
-    combine_crt_tree(choices).map(|(point, _)| point)
+    Int::crt(choices).map(|(point, _)| point)
 }
 
 fn solve_coprime_connected(
@@ -5213,7 +5192,7 @@ fn solve_coprime_connected(
         }
 
         // Combine all fixed bases `fixed_base[i] == Some(z_i)` and any lower-power strides
-        // `(bases_info[i].u, bases_info[i].stride)` via CRT ([`combine_crt_tree`]).
+        // `(bases_info[i].u, bases_info[i].stride)` via CRT ([`Int::crt`]).
         let mut crt_pairs: Vec<(Int, Int)> = Vec::new();
         for i in 0..t {
             if let Some(z) = &fixed_base[i] {
@@ -5222,7 +5201,7 @@ fn solve_coprime_connected(
                 crt_pairs.push((bases_info[i].u.clone(), bases_info[i].stride.clone()));
             }
         }
-        let Some((r0, m0)) = combine_crt_tree(crt_pairs) else {
+        let Some((r0, m0)) = Int::crt(crt_pairs) else {
             return RegimeOut::Empty;
         };
 
@@ -5507,7 +5486,7 @@ fn find_point_by_conditional_expectations(
             let z_i = chosen.get(i)?.as_ref()?;
             pairs.push((bases_info[i].r_from_z(z_i), bases_info[i].max_q.clone()));
         }
-        if let Some((r_full, m_full)) = combine_crt_tree(pairs)
+        if let Some((r_full, m_full)) = Int::crt(pairs)
             && let Some(x_val) = pick_in_span(lo, hi, &r_full, &m_full)
         {
             return Some(x_val);
@@ -5642,149 +5621,6 @@ fn elementary_intervals(
         }
     }
     out
-}
-
-/// The solution `(r, m)` of `x == r_i (mod m_i)` for all `(r_i, m_i)` in `pairs`, `m` the lcm
-/// of the `m_i`, or `None` when the congruences conflict. When the moduli are pairwise coprime
-/// (always so for the bases of `solve_regime_step`), by the product and remainder trees:
-/// `x = sum_i c_i M / m_i mod M` with `c_i = r_i (M / m_i)^-1 mod m_i`, the sum built up the
-/// product tree as `v = v_left P_right + v_right P_left`, O(M(N) log k) for `k` moduli of `N`
-/// bits, plus one inverse modulo each `m_i` ([`Int::inverse_mod`], O(M(n) log n) for `n` bits).
-///
-/// When one modulus is not coprime to the product of the others, the pairs are combined two
-/// at a time up a tree, each by a gcd, exact quotients and an inverse on the merged moduli
-/// ([`Int::crt_pair`]), O(M(N) log N) at each level of the tree. Tests:
-/// `r4_tests::the_crt_tree_solves_its_congruences`; bench `pncx_fibonacci_crt_scale`
-/// (tests/steps/l01_38_presburger/bench/pncx_probe.rs).
-///
-/// The coprime path (PERF-crt-tree-scaled-remainder, 2026-11-21): the cofactors
-/// `(M / m_i) mod m_i` come from the kernel's `trees::cofactors_mod_leaves` (the cofactor sum
-/// `S = sum_i M / m_i` up the tree, then Bernstein's scaled remainder tree down it, handing over
-/// to the exact descent at nodes of 128 words), the inverses are one word inverse each, and the
-/// sum goes up by `trees::linear_combination_up`. Every phase is O(M(N) log k).
-///
-/// Cost argument and its limit: each level of the product tree holds at most `N + k` bits, so
-/// any method that builds the tree costs at least one multiplication of the level's width a
-/// level, `sum_levels M(N) = M(N) log k`. Only the output size, Omega(N), is a proved lower bound
-/// for CRT; no O(M(N)) method for `k` moduli of similar size is known. Searched 2026-11-21 with
-/// allpapers (keyword and semantic, `-n 250`, saved and read): R. P. Brent and P. Zimmermann,
-/// *Modern Computer Arithmetic*, arXiv:1004.4710, §2.7 (CRT by subproduct tree, O(M(N) log k));
-/// D. Harvey and A. V. Sutherland, arXiv:1402.3246 and arXiv:1410.5222 (the remainder forest,
-/// which lowers the memory and not the order); D. J. Bernstein, "Scaled remainder trees" (2004)
-/// and "Fast multiplication and its applications" (2008), §§12, 18, 23 (not in the corpus,
-/// read from the author's PDFs); van der Hoeven's "Faster Chinese remaindering" (2016) saves a
-/// factor `log log` for fixed moduli and is not in the corpus. Conditional lower bounds
-/// Omega(n log n) for multiplication itself (Afshani, Freksen, Kamma and Larsen, "Lower bounds
-/// for multiplication via network coding", ICALP 2019, arXiv:1902.10935; Harvey and van der
-/// Hoeven, "Integer multiplication is at least as hard as matrix transposition") bound below
-/// even one product of the root's width.
-///
-/// Measured on the first 2,048 / 16,384 odd primes (`N` 25,546 / 259,803 bits, 10.17 times;
-/// remainders 0 and 1; release constants, instructions, load 56; the deferred bench
-/// `pncx_crt_tree_scale`): 20.45 M / 335.8 M, 16.42x, bytes 1.63 MB / 25.1 MB, 15.44x; on main
-/// before this change 23.28x and 31.10x. By phase (load 10 to 29): the product tree 1.24 M /
-/// 30.2 M (24.4x), the cofactors 10.2 M / 188.1 M (18.4x), the step up 2.93 M / 61.3 M (20.9x),
-/// the last remainder 0.10 M / 1.04 M (10.4x). The model with `M(N) = N log N` predicts
-/// `10.17 * (ln 259,803 / ln 25,546) * (14 / 11) = 15.9`; the larger phase ratios come from
-/// the multiplication, whose balanced products cost 3.1x a doubling from 64 to 256 words
-/// (num-bigint's Karatsuba and Toom-3, below `MUL_LEAF`, then 459 words and 400 since
-/// 2026-11-22, where the transforms cost more) and 2.0x to 2.2x from 1,024 words on: the
-/// tree's top node is 400 words at 2,048 primes and 4,059 at 16,384, so the two sizes sit on
-/// different parts of that curve. So the
-/// limit 10.5 at these sizes is out of reach of every known method; the bench stays in the
-/// deferred file (the author decision BENCH-crt-tree-size-by-bits holds the sizing).
-///
-/// Above the crossover (PERF-crt-tree-bytes-growth, 2026-11-21, load 75 to 114): at 16,384 and
-/// 131,072 primes the top node is 4,059 words and more, past `MUL_LEAF`, and one product of two
-/// equal numbers measured n log n there (1.596 M instructions at 1,024 words, 13.66 M at
-/// 4,096, 119.3 M at 32,768 and 258.1 M at 65,536: 8.73x and 9.44x at 8 times the words). Still
-/// 335.3 M / 5,579 M instructions, 16.64x, and 25.1 MB / 362.5 MB, 14.43x; by phase the tree
-/// 18.16x (bytes 13.31x), the cofactors 17.97x (14.62x), the step up 18.87x (15.13x), the leaf
-/// inverses 9.12x (8.00x), the last remainder 22.6x (20.96x). So the excess is not a fixed
-/// crossover: it is the method's `M(N) log k` with `N` growing 9.5 times for 8 times the primes
-/// (the `n`-th prime has about `log2(n ln n)` bits) and three more levels, at the top where the
-/// cost of a level is highest. With `c(s) = M(s) / s` the cost of a level is `N c(s_l)`, and
-/// with `c(s) = log s` the ratio is `8 (N'/8N) ((L + 3) / L)^2`, 11.1 at `L` = 17 and under
-/// 10.5 only from `L` about 20.6, so the ratio of `N log^2 N` passes 10.5 at every size the
-/// tests can run.
-///
-/// The bytes, proved for every method that keeps the levels of the product tree (the remainder
-/// tree reads every level on its way down, so all are held at once): a level's nodes multiply
-/// to `M`, and `bits(a b) <= bits(a) + bits(b)`, so a level holds at least `bits(M)` bits, and
-/// the `L` levels above the leaves at least `L bits(M)`. On this bench, sized by the count of
-/// primes, `bits(M)` grows 10.12 times (26,537 to 268,427) and `L` from 11 to 14, so the held
-/// levels alone grow at least `10.12 * 14 / 11 = 12.9` times, over 10.5, whatever the code
-/// around them does. Sized by bits instead (2,048 to 13,266 primes, `bits(M)` 8 times, 14
-/// levels), the same bound is `8 * 14 / 11 = 10.18`, under 10.5 and over 9, so it does not rule
-/// out a pass there; that sizing is the author decision BENCH-crt-tree-size-by-bits.
-/// A method that does not keep the levels recomputes them, which costs time
-/// (the remainder forest of Harvey and Sutherland, cited above, trades in that way); none is
-/// known that keeps the order `M(N) log k` and holds `o(N log k)` bits. Not proved: that every
-/// method in `O(M(N) log k)` time must hold `Omega(N log k)` bits.
-///
-/// No refusal (PROOF-crt-refusal-exact-class, 2026-11-21). The author's order allows a refusal
-/// only for a class of inputs that provably degrades, defined by the moduli. To prove that a
-/// class needs more than O(n log n) work one needs a lower bound above `n log n` for CRT on that
-/// class. None is known in any model: the only proved lower bound is the output, Omega(N), and
-/// the conditional Omega(N log N) bounds cited above are for one multiplication, which every
-/// method also pays. So no nonempty class can be shown to degrade, the exact refusal class is
-/// empty, and every input is solved, at O(M(N) log k). This is a limit of what is known, not a
-/// proof that no faster method exists: the gap between Omega(N) and O(M(N) log k) is open in
-/// the literature searched above. A class defined by the moduli where a linear method is proved
-/// is taken instead where one exists: moduli that are all prime words, for the coprime base
-/// (zed-kernel `num::coprime::prime_words`, PERF-private-quotient-wide-moduli); for CRT itself
-/// the product `M` is the output, so no such class lowers its order.
-fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
-    if pairs.is_empty() {
-        return Some((Int::ZERO, Int::ONE));
-    }
-    pairs.retain(|(_, m)| *m != Int::ONE);
-    if pairs.is_empty() {
-        return Some((Int::ZERO, Int::ONE));
-    }
-    // The moduli are above 1 here, so their magnitudes are the moduli.
-    let leaves: Vec<BigUint> = pairs.iter().map(|(_, m)| m.magnitude()).collect();
-    let levels = trees::product_tree(&leaves);
-    let cof = trees::cofactors_mod_leaves(&leaves, &levels);
-    let mut vals: Option<Vec<BigUint>> = Some(Vec::with_capacity(pairs.len()));
-    for ((r, m), e) in pairs.iter().zip(cof) {
-        let Some(inv) = from_uint(e).inverse_mod(m) else {
-            vals = None;
-            break;
-        };
-        if let Some(v) = vals.as_mut() {
-            // `mod_floor` by `m > 0` is in `[0, m)`, so its magnitude is the value.
-            v.push((&r.mod_floor(m) * &inv).mod_floor(m).magnitude());
-        }
-    }
-    if let Some(vals) = vals {
-        // Up the tree by `trees::linear_combination_up` (each node `v0 P_1 + v1 P_0`, the two
-        // products summed in the transform domain past `MUL_LEAF`), then one remainder modulo
-        // `M`. By the cofactor identity at `trees::cofactors_mod_leaves`, the sum `S = sum_i
-        // c_i M / m_i` is `c_j M / m_j = r_j (mod m_j)` for each `j`, as `m_j` divides every
-        // other term, so `S mod M` is the solution (the moduli are pairwise coprime here, which
-        // the inverses above proved: each exists only when `m_j` is coprime to `M / m_j`).
-        // Complexity tradeoff: O(M(N) log k) for `k` moduli of `N` bits in all, the order of
-        // the product tree itself; the cost argument, the bound below which no product tree
-        // can go, and the measurements are in this function's doc comment.
-        let total = trees::linear_combination_up(vals, &leaves, &levels);
-        let big_m = trees::tree_product(&leaves, &levels).into_owned();
-        let x = rem_uint(&total, &big_m);
-        return Some((from_uint(x), from_uint(big_m)));
-    }
-    while pairs.len() > 1 {
-        let mut next = Vec::with_capacity(pairs.len().div_ceil(2));
-        let mut it = pairs.into_iter();
-        while let Some((r1, m1)) = it.next() {
-            if let Some((r2, m2)) = it.next() {
-                next.push(Int::crt_pair(&r1, &m1, &r2, &m2)?);
-            } else {
-                next.push((r1, m1));
-            }
-        }
-        pairs = next;
-    }
-    pairs.pop()
 }
 
 fn y_span(lo: &Option<Int>, hi: &Option<Int>, r0: &Int, m0: &Int) -> Option<Span> {
@@ -6101,7 +5937,7 @@ fn separate_pair_witness(
             choices.push((pick(a, sa)?.mod_floor(a), (*a).clone()));
             choices.push((pick(b, sb)?.mod_floor(b), (*b).clone()));
         }
-        let (r, m) = combine_crt_tree(choices)?;
+        let (r, m) = Int::crt(choices)?;
         let x = pick_in_span(lo, hi, &r, &m)?;
         holds_modular_point(&x, unit_mods, clauses).then_some(x)
     };

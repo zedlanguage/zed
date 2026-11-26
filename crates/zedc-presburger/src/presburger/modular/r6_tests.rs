@@ -125,7 +125,7 @@ fn pncx_coprime_base_exhaustive_small_inputs() {
                 }
                 for m in &inputs {
                     assert_eq!(
-                        prod_slice(&fs[m].iter().map(|(_, q)| q.clone()).collect::<Vec<_>>()),
+                        Int::product(&fs[m].iter().map(|(_, q)| q.clone()).collect::<Vec<_>>()),
                         *m
                     );
                 }

@@ -303,10 +303,9 @@ use std::rc::{Rc, Weak};
 
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
-use num_traits::{One, Signed, ToPrimitive, Zero};
+use num_traits::{One, Signed, Zero};
 use zed_numtheory::{gcd_big_u64, inverse_mod_2_64, inverse_mod_u64};
 
-use super::TooLarge;
 use zed_numtheory::BitLen;
 
 /// The 64-bit words at or below which the narrower factor goes to num-bigint's
@@ -1664,7 +1663,7 @@ fn add_slice(a: &mut [u64], b: &[u64]) -> bool {
 /// the points of such a product (see [`Field::spectrum`]) when that costs less than [`mul`]:
 /// each product then transforms only the other factor and the result, two of the three
 /// transforms of [`transform_mul`].
-pub(crate) struct Factor {
+pub struct Factor {
     x: BigUint,
     other: usize,
     spectra: Option<([Vec<u64>; 3], Rc<Roots>)>,
@@ -1672,7 +1671,7 @@ pub(crate) struct Factor {
 
 impl Factor {
     /// `x`, for `uses` products with numbers of at most `other` words.
-    pub(crate) fn new(x: BigUint, other: usize, uses: usize) -> Factor {
+    pub fn new(x: BigUint, other: usize, uses: usize) -> Factor {
         let (points, _) = self::points(words(&x), other);
         // Complexity tradeoff: the spectra cost one of a product's three transforms, once, and
         // each product by them then costs `cached_cost` (the other two, measured as
@@ -1702,7 +1701,7 @@ impl Factor {
 
     /// `y * x`, for `y` of at most `other` words, by the spectra when they are kept and cost
     /// less than [`mul`] for `y`'s width; the product is the same.
-    pub(crate) fn mul(&self, y: &BigUint) -> BigUint {
+    pub fn mul(&self, y: &BigUint) -> BigUint {
         let wy = words(y);
         match &self.spectra {
             Some((s, tw)) if self.takes_spectra(s[0].len(), wy) => self.spectra_mul(y, s, tw),
@@ -1752,7 +1751,7 @@ impl Factor {
     }
 
     /// The factor itself.
-    pub(crate) fn value(&self) -> &BigUint {
+    pub fn value(&self) -> &BigUint {
         &self.x
     }
 }
@@ -1809,7 +1808,7 @@ fn dense_cost(a: usize, b: usize) -> f64 {
 /// [`toom_cost`] and the transforms' [`transform_plan`], as [`mul_method`] chooses. Rows over
 /// nonzero words are not counted, so a factor with many zero words costs less than this.
 /// Infinite when the product's words do not fit in a `usize` with room to round up.
-pub(crate) fn mul_cost(a: usize, b: usize) -> f64 {
+pub fn mul_cost(a: usize, b: usize) -> f64 {
     // Complexity tradeoff: `O(log)` in the sizes, as `transform_plan`; counting the rows over
     // nonzero words would read the factors, `O(L)`. It would not mend `crossover poly-wide 8`
     // (POLY-mul-cost-gaps, 2026-11-22): there the dense product took up to 1.50 times the
@@ -1835,7 +1834,7 @@ pub(crate) fn mul_cost(a: usize, b: usize) -> f64 {
 /// transform fewer than a product of two numbers, which [`mul_cost`] does not count. num-bigint's
 /// product and the rows over nonzero words square no faster than they multiply. `O(log n)`, as
 /// [`transform_plan`].
-pub(crate) fn squares_by_transform(n: usize) -> bool {
+pub fn squares_by_transform(n: usize) -> bool {
     // Past `usize::MAX / 4` words the product's length does not fit, as in [`mul_cost`].
     if n <= MUL_LEAF || n > usize::MAX / 4 {
         return false;
@@ -2082,7 +2081,7 @@ pub fn mul_int(a: &BigInt, b: &BigInt) -> BigInt {
 /// 2026-11-20 against the author's PDF; no DOI); otherwise
 /// [`mul`] is called twice. Both give the same sum. Test:
 /// `num::fast::tests::mul_add_pair_agrees_with_separate_products`.
-pub(super) fn mul_add_pair(v0: &BigUint, p1: &BigUint, v1: &BigUint, p0: &BigUint) -> BigUint {
+pub fn mul_add_pair(v0: &BigUint, p1: &BigUint, v1: &BigUint, p0: &BigUint) -> BigUint {
     if v0.is_zero() || p1.is_zero() {
         return mul(v1, p0);
     }
@@ -2135,7 +2134,7 @@ pub(super) fn mul_add_pair(v0: &BigUint, p1: &BigUint, v1: &BigUint, p0: &BigUin
 
 /// Keeps the thread-local NTT root table alive for the lifetime of the returned guard so a tree
 /// traversal builds the table once.
-pub(super) fn hold_roots() -> HoldRoots {
+pub fn hold_roots() -> HoldRoots {
     HoldRoots::open()
 }
 
@@ -2149,7 +2148,7 @@ pub(super) fn hold_roots() -> HoldRoots {
 /// gives `X` with `p' X < 2^(2k) <= p' (X + 2)`, so `0 < 2^(f + n + 2) / p - X <= 2`; then
 /// `S = floor(u X / 2^(n + 2))` satisfies `0 <= S < 2^f` (as `u < p` implies `u X < 2^(f + n + 2)`)
 /// and `0 <= u * 2^f / p - S < 2 u / 2^(n + 2) + 1 < 2 p / 2^(n + 2) + 1 < 1.5`.
-pub(super) fn scaled_root(u: &BigUint, p: &BigUint, f: u64) -> BigUint {
+pub fn scaled_root(u: &BigUint, p: &BigUint, f: u64) -> BigUint {
     if u.is_zero() {
         return BigUint::zero();
     }
@@ -2180,7 +2179,7 @@ pub(super) fn scaled_root(u: &BigUint, p: &BigUint, f: u64) -> BigUint {
 /// Both methods satisfy Bernstein (2004) Theorems 2.1/2.2; the choice compares the existing cost
 /// model's `(TRANSFORM_COST + CACHED_COST) * m log2(m)` (one shared forward transform plus two
 /// cached cyclic products on `m` points) against `mul_cost(fw, words(a)) + mul_cost(fw, words(b))`.
-pub(super) fn scaled_node_precision(
+pub fn scaled_node_precision(
     v: &BigUint,
     a: &BigUint,
     b: &BigUint,
@@ -2195,8 +2194,8 @@ pub(super) fn scaled_node_precision(
 /// [`TRANSFORM_COST`] (one word product): the cheaper of the shared transform and the two
 /// products, for [`trees::remainders`]'s choice of method node by node. O(log) in the widths.
 ///
-/// [`trees::remainders`]: super::trees::remainders
-pub(super) fn scaled_node_plan(
+/// [`trees::remainders`]: crate::trees::remainders
+pub fn scaled_node_plan(
     v: &BigUint,
     a: &BigUint,
     b: &BigUint,
@@ -2225,7 +2224,7 @@ pub(super) fn scaled_node_plan(
 /// [`RECIP_LEAF`], a word product for each quotient word and divisor word; else
 /// [`approx_reciprocal`], about 5/3 of a product of `f` bits (as [`newton_cost`] counts it),
 /// and its product by `u`. O(log) in the widths.
-pub(super) fn scaled_root_cost(uw: usize, pw: usize, f: u64) -> f64 {
+pub fn scaled_root_cost(uw: usize, pw: usize, f: u64) -> f64 {
     let fw = usize::try_from(f.div_ceil(64)).expect("words fit in memory");
     match f <= RECIP_LEAF {
         true => (uw + fw).saturating_sub(pw).max(1) as f64 * pw as f64,
@@ -2347,7 +2346,7 @@ fn rounded_window_words(y: &[u64], f: u64, e: u64) -> BigUint {
 /// Tests: `num::fast::tests::scaled_root_and_children_preserve_precision`,
 /// `num::trees::tests::the_remainders_agree_with_one_division_a_leaf`,
 /// `num::trees::tests::the_scaled_remainders_and_cofactors_agree_past_ntt_width`.
-pub(super) fn scaled_children(
+pub fn scaled_children(
     sv: &BigUint,
     f: u64,
     use_ntt: bool,
@@ -2399,7 +2398,7 @@ pub(super) fn scaled_children(
 
 /// Leaf recovery for a scaled remainder tree: `round(m * s / 2^e)` (half up), wrapping `m` to
 /// `0`, for `m >= 2` and `e >= 1`. Evaluates in `u128` registers when `m` and `s` fit in 64 bits.
-pub(super) fn scaled_leaf_rem(m: &BigUint, s: &BigUint, e: u64) -> BigUint {
+pub fn scaled_leaf_rem(m: &BigUint, s: &BigUint, e: u64) -> BigUint {
     if m.bits() < 2 || s.is_zero() {
         return BigUint::zero();
     }
@@ -2428,8 +2427,27 @@ fn rounded_div_pow2(x: &BigUint, e: u64) -> BigUint {
     q
 }
 
-/// `b^e`, by squaring with [`mul`].
+/// `b^e`, by squaring with [`mul`]: left to right for a base of one word, so each step is a
+/// square and a product by that word, and right to left otherwise, so the squarings are of the
+/// base's powers and the products only at the exponent's ones.
+// Complexity tradeoff (DRY-bignum-crate-2026-11-26, numeric.md group 6): this and zedc-int's
+// `expand_pow` (left to right) were the two copies; both are O(M(n)) for an `n`-word result,
+// with different constants. zed-kernel bench `powers_right_to_left_and_left_to_right` (hm1,
+// 2026-11-26, instructions, right to left / left to right): base 3 and `e = 2^k - 1`, 11.41M /
+// 7.14M at 4096 words and 125.1M / 70.4M at 32768; a base of `n/16` words and `e = 15`, 11.93M
+// / 14.09M and 115.7M / 142.2M. Neither order is cheaper at both, so each takes the case it
+// won; a base between one word and `n/16` words was not measured, and keeps right to left.
 pub fn pow(b: &BigUint, mut e: u64) -> BigUint {
+    if b.bits() <= 64 {
+        let mut r = BigUint::one();
+        for i in (0..64 - e.leading_zeros()).rev() {
+            r = mul(&r, &r);
+            if (e >> i) & 1 == 1 {
+                r = mul(&r, b);
+            }
+        }
+        return r;
+    }
     let mut b = Cow::Borrowed(b);
     let mut r = BigUint::one();
     while e > 0 {
@@ -2454,7 +2472,7 @@ pub fn pow(b: &BigUint, mut e: u64) -> BigUint {
 /// most a few off, and the remainder, found by a cyclic product ([`Level::div_rem`]), corrects
 /// it. O(M(n)): about four squarings of the quotient's width (4.0 at 4096 to 65,536 words,
 /// 2026-11-09), and the same for `2w` by `w` words through [`div_rem_blocks`].
-pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
+pub fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     assert!(!b.is_zero(), "a division by zero");
     if a < b {
         return (BigUint::zero(), a.clone());
@@ -2629,7 +2647,7 @@ fn div_rem_by_reciprocal(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
 /// `a mod b` for `b` not zero, as [`div_rem`] finds it. A quotient wider than `b` is not built:
 /// [`Divisor::rem`] reads `a` block by block and keeps only the remainder. Panics with "a
 /// division by zero" for `b` zero, as [`div_rem`] does.
-pub(crate) fn rem(a: &BigUint, b: &BigUint) -> BigUint {
+pub fn rem(a: &BigUint, b: &BigUint) -> BigUint {
     // A zero `b` has 0 bits, so it went to num-bigint's `%` below, which panics with "attempt
     // to divide by zero": the same refusal as `div_rem`'s, worded differently
     // (TEST-dry-shared-units, `units::refused`). One message for both, checked first.
@@ -2657,9 +2675,9 @@ pub(crate) fn rem(a: &BigUint, b: &BigUint) -> BigUint {
 /// [`rem_cost_past_leaf`]. O(1) below the leaf, inlined into the loop over a level's nodes
 /// (`trees::descent_cost`, one call a node); O(words(b)) past it.
 ///
-/// [`trees::remainders`]: super::trees::remainders
+/// [`trees::remainders`]: crate::trees::remainders
 #[inline]
-pub(super) fn rem_cost(aw: usize, b: &BigUint) -> f64 {
+pub fn rem_cost(aw: usize, b: &BigUint) -> f64 {
     let bits = b.bits();
     let bw = bits.div_ceil(64) as usize;
     if aw < bw {
@@ -3149,7 +3167,7 @@ fn newton(a: &BigUint, p: u64, xh: BigUint, h: u64, tw: &Roots) -> BigUint {
 /// `floor(a / m)` for `m` not zero, by [`div_rem`] on the magnitudes: O(M(n)) past the
 /// measured crossover, num-bigint's division below it. A quotient of operands of opposite
 /// signs with a remainder rounds down, one below the negated quotient of the magnitudes.
-pub(crate) fn div_floor(a: &BigInt, m: &BigInt) -> BigInt {
+pub fn div_floor(a: &BigInt, m: &BigInt) -> BigInt {
     let (q, r) = div_rem(a.magnitude(), m.magnitude());
     if a.is_negative() == m.is_negative() {
         BigInt::from(q)
@@ -3162,7 +3180,7 @@ pub(crate) fn div_floor(a: &BigInt, m: &BigInt) -> BigInt {
 
 /// `a - m floor(a / m)` for `m` not zero, the remainder of [`div_floor`], which has the sign
 /// of `m`, by [`rem`] on the magnitudes (no quotient built when it would be wider than `m`).
-pub(crate) fn mod_floor(a: &BigInt, m: &BigInt) -> BigInt {
+pub fn mod_floor(a: &BigInt, m: &BigInt) -> BigInt {
     let r = rem(a.magnitude(), m.magnitude());
     let r = match a.is_negative() != m.is_negative() && !r.is_zero() {
         true => m.magnitude() - r,
@@ -3172,7 +3190,7 @@ pub(crate) fn mod_floor(a: &BigInt, m: &BigInt) -> BigInt {
 }
 
 /// The Euclidean quotient `floor`-like `a div m`, the remainder in `[0, |m|)`, `m` not zero.
-pub(crate) fn div_euclid(a: &BigInt, m: &BigInt) -> BigInt {
+pub fn div_euclid(a: &BigInt, m: &BigInt) -> BigInt {
     let (q, r) = div_rem(a.magnitude(), m.magnitude());
     let q = match (a.is_negative(), r.is_zero()) {
         (true, false) => q + 1u32,
@@ -3932,7 +3950,7 @@ pub fn gcd_uint(a: &BigUint, b: &BigUint) -> BigUint {
 /// The greatest common divisor of `a` and `b`. The powers of 2 are taken out first; the odd
 /// parts then go through the binary gcd, half of what is left at a time by [`half`], whose
 /// steps keep the odd part of the gcd. O(M(n) log n).
-pub(crate) fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
+pub fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
     gcd_using(a, b, GCD_LEAF, LIFT_BITS)
 }
 
@@ -3988,7 +4006,7 @@ fn gcd_using(a: &BigUint, b: &BigUint, leaf: u64, lift: u64) -> BigUint {
 /// part `o` of `m` by [`inverse_mod_odd`], the power `2^e` by [`inverse_mod_pow2`], joined by
 /// the Chinese remainder theorem: `x = x1 + o ((x2 - x1) o^-1 mod 2^e)`, below `o 2^e = m`.
 /// O(M(n) log n). Panics with "a modulus above 0" for `m` zero.
-pub(crate) fn inverse_mod(a: &BigUint, m: &BigUint) -> Option<BigUint> {
+pub fn inverse_mod(a: &BigUint, m: &BigUint) -> Option<BigUint> {
     // `m = 0` had `trailing_zeros` give `None`, so the answer was `None` for every `a`: wrong
     // for `a = 1`, which is its own inverse in the integers (the ring modulo 0), and silent.
     // No caller passes it (the one in zedc-presburger, `modular::inverse_mod`, reduces `a` by
@@ -4079,7 +4097,7 @@ fn inverse_mod_odd(a: &BigUint, b: &BigUint) -> Option<BigUint> {
 // `bezout_with`, step 6). Tests: pncx_fast_bezout_matches_euclid and
 // bezout_coefficients_with_unequal_widths; pncx_fibonacci_scale is deferred to plan row
 // PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
-pub(super) fn bezout(a: &BigUint, b: &BigUint) -> (BigUint, BigInt, BigInt) {
+pub fn bezout(a: &BigUint, b: &BigUint) -> (BigUint, BigInt, BigInt) {
     bezout_with(a, b, LIFT_BITS)
 }
 
@@ -4234,7 +4252,7 @@ fn bezout_with(a: &BigUint, b: &BigUint, lift: u64) -> (BigUint, BigInt, BigInt)
 /// or costs least, long division over its nonzero words when that costs less than the
 /// reciprocal, else a [`Level`]: its reciprocal and itself transformed once, with the roots for
 /// every product.
-pub(crate) struct Divisor<'a> {
+pub struct Divisor<'a> {
     d: Cow<'a, BigUint>,
     /// The words of `d`.
     len: usize,
@@ -4286,7 +4304,7 @@ fn divisor_way(d: &BigUint, a_bits: u64) -> Way {
 /// keeps, the most of its [`level_points`], or `None` when it divides without them (see
 /// [`Way`]). Its memory is a multiple of these points (`num::Rat::rem_euclid` and
 /// `num::Rat::div_euclid` ask for it).
-pub(crate) fn reciprocal_points(d: &BigUint, a_bits: u64) -> Option<usize> {
+pub fn reciprocal_points(d: &BigUint, a_bits: u64) -> Option<usize> {
     match divisor_way(d, a_bits) {
         Way::Reciprocal(points) => Some(points),
         Way::Leaf | Way::Sparse => None,
@@ -4295,7 +4313,7 @@ pub(crate) fn reciprocal_points(d: &BigUint, a_bits: u64) -> Option<usize> {
 
 impl<'a> Divisor<'a> {
     /// `d`, for dividends of at most `a_bits` bits.
-    pub(crate) fn new(d: Cow<'a, BigUint>, a_bits: u64) -> Divisor<'a> {
+    pub fn new(d: Cow<'a, BigUint>, a_bits: u64) -> Divisor<'a> {
         assert!(!d.is_zero(), "a division by zero");
         let way = divisor_way(&d, a_bits);
         Divisor::with_way(d, way)
@@ -4320,14 +4338,14 @@ impl<'a> Divisor<'a> {
     }
 
     /// `(a / d, a mod d)`, by [`Divisor::blocks`].
-    pub(crate) fn div_rem(&self, a: &BigUint) -> (BigUint, BigUint) {
+    pub fn div_rem(&self, a: &BigUint) -> (BigUint, BigUint) {
         let mut quotient = vec![0u64; words(a)];
         let r = self.blocks(a, |at, q| quotient[at..at + q.len()].copy_from_slice(q));
         (from_words(quotient), from_words(r))
     }
 
     /// `a mod d`, by [`Divisor::blocks`], its memory that of `d` whatever the size of `a`.
-    pub(crate) fn rem(&self, a: &BigUint) -> BigUint {
+    pub fn rem(&self, a: &BigUint) -> BigUint {
         from_words(self.blocks(a, |_, _| {}))
     }
 
@@ -4453,7 +4471,7 @@ thread_local! {
 /// else holds it. Measured, `reading_a_rat_of_two_wide_parts_scales` at 640,000 digits:
 /// 7,620 M instructions without it, 7,558 M with it (that test is deferred to plan row
 /// RADIX-nlog2-10_5 in wt/scratch/deferred-tests/RADIX-nlog2-10_5.rs).
-pub(super) struct HoldRoots;
+pub struct HoldRoots;
 
 impl HoldRoots {
     fn open() -> HoldRoots {
@@ -5106,43 +5124,6 @@ fn add_around(x: &mut [u64], mut c: u128) {
     }
 }
 
-/// `prod p^e`, built. A power of 2 is a shift, done last, so `2^e` costs its `e` bits and
-/// not the squarings of a multiplication. [`TooLarge`] when an exponent is 2^64 or more: the
-/// power has at least that many bits, more than any memory holds, and it names a lower bound
-/// on the bits of the whole product as its size, and `sum e * ceil(log2 p)`, an upper bound,
-/// as the memory asked for. Every other build asks
-/// the system for its memory before calling this.
-///
-/// Complexity tradeoff (NUM-no-panic-built): the exponents are read once before the build,
-/// O(terms) word operations, to refuse an exponent of 2^64 or more as an error; before, such
-/// an exponent stopped zedc at an `expect`, when a message printed the digits of `2^2^100`.
-pub(super) fn built(pows: &[(u64, BigUint)]) -> Result<BigInt, TooLarge> {
-    let small: Option<Vec<(u64, u64)>> = (pows.iter())
-        .map(|(p, e)| e.to_u64().map(|e| (*p, e)))
-        .collect();
-    let Some(small) = small else {
-        let bits: BigUint = (pows.iter()).map(|(p, e)| e * p.ceil_log2()).sum();
-        // The size named is a lower bound on the product's bits (`super::room::least_bits`), the
-        // memory asked the upper bound (row CONST-least-refusal-size).
-        let one = BigInt::one();
-        return Err(TooLarge {
-            size: super::room::least_bits(&one, pows.iter().map(|(p, e)| (*p, e))),
-            ask: bits,
-        });
-    };
-    let mut out = BigUint::one();
-    let mut twos = 0;
-    for (p, e) in small {
-        match (p, e) {
-            (_, 0) => {}
-            (2, _) => twos = e,
-            _ => out = mul(&out, &pow(&BigUint::from(p), e)),
-        }
-    }
-    out <<= twos;
-    Ok(BigInt::from(out))
-}
-
 /// The digits `read_decimal` reads whole, with no split. The value read does not depend on it.
 //
 // Complexity tradeoff: a timed crossover of two algorithms with identical results, nothing
@@ -5179,14 +5160,14 @@ pub(super) fn built(pows: &[(u64, BigUint)]) -> Result<BigInt, TooLarge> {
 // On the C library's heap with its per-thread cache the same benchmark gives 1.0296 against a
 // spread of 1.0106, so both heaps put the leaf at 2048. To be measured again at the Zed port,
 // where both sides of the crossover change.
-pub(super) const LEAF_DIGITS: usize = 2048;
+pub const LEAF_DIGITS: usize = 2048;
 
-/// [`super::read_digits`] with texts of at most `leaf` digits read whole; `leaf` is at least 1.
+/// zed-kernel `num::read_digits` with texts of at most `leaf` digits read whole; `leaf` is at least 1.
 ///
 /// It is here, beside the products it is built from, and not in `num`, which reads through it:
 /// the module `crossover` below also names it, and a name of `num` from this file would put the
 /// two files in an import cycle, which Zed forbids between files (DESIGN.md sec:units).
-pub(super) fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
+pub fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
     // Complexity tradeoff: reading by halves costs one widest product per level, `log2(n /
     // leaf)` levels, O(M(n) log n) = O(n log^2 n), a log factor above a product, accepted
     // because no faster radix conversion is known: the subquadratic method (Brent and
@@ -5215,12 +5196,12 @@ pub(super) fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
     // of parts and no power of ten: building `10^leaf` alone cost about 9,500 instructions
     // (EXP-swar-digits, 2026-11-12), 70% to 84% of reading a literal of 1 to 25 digits.
     if text.len() <= leaf {
-        return super::digit_text::read_whole(text);
+        return crate::digit_text::read_whole(text);
     }
     let parts: Vec<BigUint> = (0..text.len().div_ceil(leaf))
         .map(|i| {
             let end = text.len() - i * leaf;
-            super::digit_text::read_whole(&text[end.saturating_sub(leaf)..end])
+            crate::digit_text::read_whole(&text[end.saturating_sub(leaf)..end])
         })
         .collect();
     join_levels(parts, BigUint::from(10u32).pow(leaf as u32))
@@ -5241,7 +5222,7 @@ pub(super) fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
 // instructions at 8n, over the limit of 10.5 that n log^2 n meets only from about 1.6 million
 // words; they are deferred to plan row RADIX-nlog2-10_5 with the other radix readings, in
 // wt/scratch/deferred-tests/RADIX-nlog2-10_5.rs.
-pub(super) fn read_radix_by(digits: &[u8], radix: u32, leaf: usize) -> BigUint {
+pub fn read_radix_by(digits: &[u8], radix: u32, leaf: usize) -> BigUint {
     assert!(!digits.is_empty(), "a nonempty list of digits");
     let leaf_of = |d: &[u8]| BigUint::from_radix_be(d, radix).expect("digits below the radix");
     if digits.len() <= leaf {
@@ -5305,7 +5286,7 @@ pub mod crossover {
     pub const GCD_LEAF: u64 = super::GCD_LEAF;
     /// `super::LIFT_BITS` as built, in bits.
     pub const LIFT_BITS: u64 = super::LIFT_BITS;
-    /// The digits [`crate::num::read_digits`] reads whole, as built.
+    /// The digits zed-kernel `num::read_digits` reads whole, as built.
     pub const LEAF_DIGITS: usize = super::LEAF_DIGITS;
     /// `super::DIV_COST` as built.
     pub const DIV_COST: f64 = super::DIV_COST;
@@ -5558,13 +5539,13 @@ pub mod crossover {
         super::gcd_using(a, b, leaf, lift)
     }
 
-    /// The value of a nonempty text of ASCII decimal digits, as [`crate::num::read_digits`]
+    /// The value of a nonempty text of ASCII decimal digits, as zed-kernel `num::read_digits`
     /// reads it but with texts of at most `leaf` digits read whole; `leaf` at least 1.
     pub fn read_digits(digits: &str, leaf: usize) -> BigUint {
         super::read_digits_by(digits, leaf)
     }
 
-    /// Digit values below `radix`, most significant first, as [`crate::num::read_radix`]
+    /// Digit values below `radix`, most significant first, as zed-kernel `num::read_radix`
     /// reads them but with leaves of at most `leaf` digits; `leaf` at least 1.
     pub fn read_radix(digits: &[u8], radix: u32, leaf: usize) -> BigUint {
         super::read_radix_by(digits, radix, leaf)
@@ -5579,6 +5560,7 @@ pub mod crossover {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use num_traits::ToPrimitive;
 
     /// `newton_floor` is a lower bound on `newton_cost` at every width pair up to 600 words of
     /// quotient and 256 of divisor, across each power of two, where `points` changes its count.

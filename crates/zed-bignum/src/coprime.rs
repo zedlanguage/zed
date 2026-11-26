@@ -77,8 +77,9 @@ use std::borrow::{Borrow, Cow};
 use num_bigint::BigUint;
 use num_traits::{One, ToPrimitive, Zero};
 
-use super::fast::{div_rem as div_rem_uint, gcd_uint, rem as rem_uint};
-use super::{mul_uint, trees};
+use crate::fast::mul as mul_uint;
+use crate::fast::{div_rem as div_rem_uint, gcd_uint, rem as rem_uint};
+use crate::trees;
 use zed_numtheory::BitLen;
 
 /// The natural coprime base of some positive integers and each one written over it.
@@ -155,7 +156,7 @@ pub fn coprime_base<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
     // `pow_uint` by squaring, O(M(n)) for each of the at most `m` elements of the wide input,
     // `m` the bits of the others (proved at `with_one_wide`).
     out.factors[w] = (ks.into_iter())
-        .map(|(e, k)| (e, super::pow_uint(&out.elements[e as usize], k)))
+        .map(|(e, k)| (e, crate::fast::pow(&out.elements[e as usize], k)))
         .collect();
     out
 }
@@ -295,7 +296,7 @@ fn two_inputs<L: Borrow<BigUint>>(xs: &[L]) -> Option<(Vec<BigUint>, Vec<Vec<u32
 /// one test of the path, so by `coprime_base` and `coprime_base_exponents`. Its first caller
 /// is zedc-int `Core::same`, whose roots are mostly a few small integers (l01_24
 /// `equal_cores_scale_with_the_bits_of_the_exponent`, roots 9 and 3, and 6, 2 and 3).
-pub(super) const WORD_INPUTS: usize = 12;
+pub const WORD_INPUTS: usize = 12;
 
 /// The inputs as words when there are at most [`WORD_INPUTS`] of them and each is below
 /// `2^64`; otherwise `None`.
@@ -339,10 +340,10 @@ fn words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
 /// holds the methods equal on both sides. Used by `factor_words`, the one test of the path,
 /// so by `coprime_base`, `coprime_base_exponents` and `shares_a_factor`. Run the axis again for
 /// each target platform and after a change to code generation or to `zed_numtheory::factor`.
-pub(super) const FACTOR_BITS: u32 = 44;
+pub const FACTOR_BITS: u32 = 44;
 
 /// The fewest inputs that take the factoring path: see [`FACTOR_BITS`], where both are measured.
-pub(super) const FACTOR_INPUTS: usize = 4096;
+pub const FACTOR_INPUTS: usize = 4096;
 
 /// The inputs as words when there are at least [`FACTOR_INPUTS`] of them, each is below `2^64`
 /// and the largest has at most [`FACTOR_BITS`] bits; otherwise `None`.
@@ -390,7 +391,7 @@ fn factor_words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
 /// answers of the other methods (proved there; `tests::the_prime_word_path_agrees` holds them
 /// equal). Run the measurement again for each target platform and after a change to
 /// `zed_numtheory::is_prime`.
-pub(super) const PRIME_INPUTS: usize = 256;
+pub const PRIME_INPUTS: usize = 256;
 
 /// The inputs as words when there are at least [`PRIME_INPUTS`] of them and every one is a
 /// prime below `2^64`; otherwise `None`. Stops at the first input that is not a prime word.
@@ -506,7 +507,7 @@ fn multiplicity(mut q: BigUint, e: &BigUint) -> u64 {
 // and `equality_over_a_wide_base_scales_with_its_bits`, `m` = 4): see `with_one_wide`. Both
 // sides of the condition are measured by `num::bench::the_one_wide_crossover_axis` (author
 // decision A96).
-pub(super) fn one_wide<L: Borrow<BigUint>>(xs: &[L]) -> Option<usize> {
+pub fn one_wide<L: Borrow<BigUint>>(xs: &[L]) -> Option<usize> {
     let mut wide: Option<(usize, u64)> = None;
     let mut all = 0u64;
     for (i, x) in xs.iter().enumerate() {
@@ -589,10 +590,7 @@ pub(super) fn one_wide<L: Borrow<BigUint>>(xs: &[L]) -> Option<usize> {
 /// the limit 10.5 (DRY-coprime-bases-one, 2026-11-20); factor refinement, zedc-int's copy
 /// before PERF-coprime-base-wide-few, took the same strips and gcds against each element, which
 /// is O(M(n)) here too, but O(k^2) gcds for `k` elements on the general inputs.
-pub(super) fn with_one_wide<L: Borrow<BigUint>>(
-    xs: &[L],
-    w: usize,
-) -> (CoprimeBase, Vec<(u32, u64)>) {
+pub fn with_one_wide<L: Borrow<BigUint>>(xs: &[L], w: usize) -> (CoprimeBase, Vec<(u32, u64)>) {
     let x = xs[w].borrow();
     let others: Vec<usize> = (0..xs.len()).filter(|&i| i != w).collect();
     let p = (others.iter())
@@ -646,7 +644,7 @@ pub(super) fn with_one_wide<L: Borrow<BigUint>>(
 /// shares none is its own element, its one factor itself. Only the others go through the
 /// halves (Algorithm 18.1, `base_by_halves`) and are then split over their base (Algorithm
 /// 15.3, `split`) to get their factors.
-pub(super) fn by_halves<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
+pub fn by_halves<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
     let mut out = CoprimeBase {
         elements: Vec::new(),
         factors: vec![Vec::new(); xs.len()],
@@ -921,7 +919,7 @@ pub fn dense_values<L: Borrow<BigUint>>(xs: &[L]) -> Option<(Vec<u32>, u32)> {
 /// [`shares_a_factor`] by one product tree and one remainder tree: `gcd(x, (P / x) mod x)` for
 /// the product `P` of all values ([`trees::cofactors_mod_leaves`]; for a lone value it is
 /// `1 mod x`, so it shares none). O(M(B) log k).
-pub(super) fn shares_a_factor_by_tree<L: Borrow<BigUint>>(xs: &[L]) -> Vec<bool> {
+pub fn shares_a_factor_by_tree<L: Borrow<BigUint>>(xs: &[L]) -> Vec<bool> {
     let cof = trees::cofactors_mod_leaves(xs, &trees::product_tree(xs));
     (xs.iter().zip(&cof))
         .map(|(v, c)| !gcd_uint(v.borrow(), c).is_one())
@@ -1372,7 +1370,7 @@ mod tests {
                 assert_eq!(e, *f, "{xs:?}");
                 assert!(k >= 1, "{xs:?}");
                 let c = &cb.elements[e as usize];
-                assert_eq!(&crate::num::pow_uint(c, k), q, "{xs:?}: {c} ^ {k}");
+                assert_eq!(&crate::fast::pow(c, k), q, "{xs:?}: {c} ^ {k}");
             }
         }
     }
@@ -1391,14 +1389,14 @@ mod tests {
         // `with_one_wide` itself, as `coprime_base` may take the word path on word inputs.
         let (mut one, ks) = with_one_wide(xs, w);
         one.factors[w] = (ks.into_iter())
-            .map(|(e, k)| (e, crate::num::pow_uint(&one.elements[e as usize], k)))
+            .map(|(e, k)| (e, crate::fast::pow(&one.elements[e as usize], k)))
             .collect();
         assert_eq!(by_value(&one), general, "{xs:?}");
         exponents_are_the_factors(xs);
     }
 
     fn pow(p: u64, k: u64) -> BigUint {
-        crate::num::pow_uint(&big(p), k)
+        crate::fast::pow(&big(p), k)
     }
 
     /// PERF-coprime-base-wide-few: the one-wide path against the general path on the inputs
@@ -1687,7 +1685,7 @@ mod tests {
             factors: (exponents.into_iter())
                 .map(|ks| {
                     (ks.into_iter())
-                        .map(|(e, n)| (e, crate::num::pow_uint(&big(elements[e as usize]), n)))
+                        .map(|(e, n)| (e, crate::fast::pow(&big(elements[e as usize]), n)))
                         .collect()
                 })
                 .collect(),

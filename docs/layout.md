@@ -132,7 +132,7 @@ types or ZIR. The libraries form a DAG; each sits as low as its dependencies all
 | zed-graph | | reach, SCC, Kahn, worklists (plain, priority, keyed), union-find, BFS paths, Knuth's least derivation, functional-graph cycles |
 | zed-alloc-count | | the counting allocator |
 | zed-collections | numtheory, hash | sorted lists (merge, merge with values, subset, disjoint, `sort_dedup`), intervals, gallop search, interners, min-add segment tree, persistent treap with a lazy tag, join-based AVL, Patricia trie, priority search tree |
-| zed-bignum (new) | numtheory, num-bigint | big-integer algorithms: product and remainder trees, fast division and gcd, roots, prime powers, coprime bases, CRT trees, directed-rounding `m * 2^e` bounds |
+| zed-bignum (new) | numtheory, collections, num-bigint | big-integer algorithms: product and remainder trees, fast division and gcd, roots, prime powers, coprime bases, CRT trees, directed-rounding `m * 2^e` bounds |
 | zed-testkit (new, dev only) | hash, alloc-count, meter-settings | `seed` and `scaling` (timers, n/8n ratios, inputs, load), now included by `#[path]` in 20 places |
 
 Above the libraries, two compiler crates are shared by the rest and hold the generic parts that

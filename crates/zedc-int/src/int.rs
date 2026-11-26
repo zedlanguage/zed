@@ -12,13 +12,16 @@ use std::sync::{Arc, Mutex};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
+use zed_bignum::coprime::coprime_base_exponents;
+use zed_bignum::fast::{
+    div_floor as div_floor_int, gcd_uint, inverse_mod as inverse_mod_uint,
+    mod_floor as mod_floor_int, mul as mul_uint, mul_int, pow as pow_uint, to_decimal,
+};
+use zed_bignum::least_root::{least_root, nth_root_rem_uint};
+use zed_bignum::trees::{crt_coprime, product_of};
 use zed_collections::sorted::{Joined, merge_join, merge_with};
 use zed_kernel::bits::BitLen;
-use zed_kernel::num::coprime::coprime_base_exponents;
-use zed_kernel::num::{
-    TooLarge, div_floor_int, gcd_uint, inverse_mod_uint, least_root, mod_floor_int, mul_int,
-    mul_uint, nth_root_rem_uint, read_digits, room, to_decimal,
-};
+use zed_kernel::num::{TooLarge, read_digits, room};
 use zed_numtheory::{
     bezout_i128, gcd_big_u64, gcd_u64, gcd_u128, inverse_mod_u64, log2_bounds, next_prime, pow_mod,
 };
@@ -154,6 +157,28 @@ impl Int {
     /// Whether the value is 1 or -1.
     pub fn is_unit(&self) -> bool {
         matches!(self.0, Repr::Small(1 | -1))
+    }
+
+    /// The product of `xs`, 1 for none: a running `i128` product while it fits, else the
+    /// magnitudes by pairs, then pairs of those (zed-bignum `trees::product_of`, O(M(B) log m)
+    /// for `m` factors of `B` words in all, where a running product is O(m B)), with the sign
+    /// of the count of negative factors. Was zedc-presburger `prod_slice`
+    /// (DRY-bignum-crate-2026-11-26). Test: `tests::products_agree_with_a_running_product`.
+    pub fn product(xs: &[Int]) -> Int {
+        let small = (xs.iter()).try_fold(1i128, |p, x| x.to_i128().and_then(|v| p.checked_mul(v)));
+        if let Some(p) = small {
+            return Int::from(p);
+        }
+        if xs.iter().any(Int::is_zero) {
+            return Int::ZERO;
+        }
+        let m = BigInt::from(product_of(
+            &xs.iter().map(Int::magnitude).collect::<Vec<_>>(),
+        ));
+        match xs.iter().filter(|x| x.is_negative()).count() % 2 {
+            1 => Int::from(-m),
+            _ => Int::from(m),
+        }
     }
 
     /// The absolute value.
@@ -344,6 +369,129 @@ impl Int {
         let step = (&diff.div_floor(&g) * &u).mod_floor(&m2_g);
         let r = (r1 + &(m1 * &step)).mod_floor(&lcm);
         Some((r, lcm))
+    }
+
+    /// The solution `(r, m)` of `x == r_i (mod m_i)` for all `(r_i, m_i)` in `pairs`, `m` the lcm
+    /// of the `m_i`, or `None` when the congruences conflict. When the moduli are pairwise coprime
+    /// (always so for the bases of zedc-presburger `solve_regime_step`), by the product and
+    /// remainder trees:
+    /// `x = sum_i c_i M / m_i mod M` with `c_i = r_i (M / m_i)^-1 mod m_i`, the sum built up the
+    /// product tree as `v = v_left P_right + v_right P_left`, O(M(N) log k) for `k` moduli of `N`
+    /// bits, plus one inverse modulo each `m_i` ([`Int::inverse_mod`], O(M(n) log n) for `n` bits).
+    ///
+    /// When one modulus is not coprime to the product of the others, the pairs are combined two
+    /// at a time up a tree, each by a gcd, exact quotients and an inverse on the merged moduli
+    /// ([`Int::crt_pair`]), O(M(N) log N) at each level of the tree. Tests:
+    /// zedc-presburger `modular::r4_tests::the_crt_tree_solves_its_congruences` and
+    /// `tests::crts_agree_with_pairs`; bench `pncx_fibonacci_crt_scale`
+    /// (tests/steps/l01_38_presburger/bench/pncx_probe.rs).
+    ///
+    /// The coprime path (PERF-crt-tree-scaled-remainder, 2026-11-21): the cofactors
+    /// `(M / m_i) mod m_i` come from the kernel's `trees::cofactors_mod_leaves` (the cofactor sum
+    /// `S = sum_i M / m_i` up the tree, then Bernstein's scaled remainder tree down it, handing over
+    /// to the exact descent at nodes of 128 words), the inverses are one word inverse each, and the
+    /// sum goes up by `trees::linear_combination_up`. Every phase is O(M(N) log k).
+    ///
+    /// Cost argument and its limit: each level of the product tree holds at most `N + k` bits, so
+    /// any method that builds the tree costs at least one multiplication of the level's width a
+    /// level, `sum_levels M(N) = M(N) log k`. Only the output size, Omega(N), is a proved lower bound
+    /// for CRT; no O(M(N)) method for `k` moduli of similar size is known. Searched 2026-11-21 with
+    /// allpapers (keyword and semantic, `-n 250`, saved and read): R. P. Brent and P. Zimmermann,
+    /// *Modern Computer Arithmetic*, arXiv:1004.4710, §2.7 (CRT by subproduct tree, O(M(N) log k));
+    /// D. Harvey and A. V. Sutherland, arXiv:1402.3246 and arXiv:1410.5222 (the remainder forest,
+    /// which lowers the memory and not the order); D. J. Bernstein, "Scaled remainder trees" (2004)
+    /// and "Fast multiplication and its applications" (2008), §§12, 18, 23 (not in the corpus,
+    /// read from the author's PDFs); van der Hoeven's "Faster Chinese remaindering" (2016) saves a
+    /// factor `log log` for fixed moduli and is not in the corpus. Conditional lower bounds
+    /// Omega(n log n) for multiplication itself (Afshani, Freksen, Kamma and Larsen, "Lower bounds
+    /// for multiplication via network coding", ICALP 2019, arXiv:1902.10935; Harvey and van der
+    /// Hoeven, "Integer multiplication is at least as hard as matrix transposition") bound below
+    /// even one product of the root's width.
+    ///
+    /// Measured on the first 2,048 / 16,384 odd primes (`N` 25,546 / 259,803 bits, 10.17 times;
+    /// remainders 0 and 1; release constants, instructions, load 56; the deferred bench
+    /// `pncx_crt_tree_scale`): 20.45 M / 335.8 M, 16.42x, bytes 1.63 MB / 25.1 MB, 15.44x; on main
+    /// before this change 23.28x and 31.10x. By phase (load 10 to 29): the product tree 1.24 M /
+    /// 30.2 M (24.4x), the cofactors 10.2 M / 188.1 M (18.4x), the step up 2.93 M / 61.3 M (20.9x),
+    /// the last remainder 0.10 M / 1.04 M (10.4x). The model with `M(N) = N log N` predicts
+    /// `10.17 * (ln 259,803 / ln 25,546) * (14 / 11) = 15.9`; the larger phase ratios come from
+    /// the multiplication, whose balanced products cost 3.1x a doubling from 64 to 256 words
+    /// (num-bigint's Karatsuba and Toom-3, below `MUL_LEAF`, then 459 words and 400 since
+    /// 2026-11-22, where the transforms cost more) and 2.0x to 2.2x from 1,024 words on: the
+    /// tree's top node is 400 words at 2,048 primes and 4,059 at 16,384, so the two sizes sit on
+    /// different parts of that curve. So the
+    /// limit 10.5 at these sizes is out of reach of every known method; the bench stays in the
+    /// deferred file (the author decision BENCH-crt-tree-size-by-bits holds the sizing).
+    ///
+    /// Above the crossover (PERF-crt-tree-bytes-growth, 2026-11-21, load 75 to 114): at 16,384 and
+    /// 131,072 primes the top node is 4,059 words and more, past `MUL_LEAF`, and one product of two
+    /// equal numbers measured n log n there (1.596 M instructions at 1,024 words, 13.66 M at
+    /// 4,096, 119.3 M at 32,768 and 258.1 M at 65,536: 8.73x and 9.44x at 8 times the words). Still
+    /// 335.3 M / 5,579 M instructions, 16.64x, and 25.1 MB / 362.5 MB, 14.43x; by phase the tree
+    /// 18.16x (bytes 13.31x), the cofactors 17.97x (14.62x), the step up 18.87x (15.13x), the leaf
+    /// inverses 9.12x (8.00x), the last remainder 22.6x (20.96x). So the excess is not a fixed
+    /// crossover: it is the method's `M(N) log k` with `N` growing 9.5 times for 8 times the primes
+    /// (the `n`-th prime has about `log2(n ln n)` bits) and three more levels, at the top where the
+    /// cost of a level is highest. With `c(s) = M(s) / s` the cost of a level is `N c(s_l)`, and
+    /// with `c(s) = log s` the ratio is `8 (N'/8N) ((L + 3) / L)^2`, 11.1 at `L` = 17 and under
+    /// 10.5 only from `L` about 20.6, so the ratio of `N log^2 N` passes 10.5 at every size the
+    /// tests can run.
+    ///
+    /// The bytes, proved for every method that keeps the levels of the product tree (the remainder
+    /// tree reads every level on its way down, so all are held at once): a level's nodes multiply
+    /// to `M`, and `bits(a b) <= bits(a) + bits(b)`, so a level holds at least `bits(M)` bits, and
+    /// the `L` levels above the leaves at least `L bits(M)`. On this bench, sized by the count of
+    /// primes, `bits(M)` grows 10.12 times (26,537 to 268,427) and `L` from 11 to 14, so the held
+    /// levels alone grow at least `10.12 * 14 / 11 = 12.9` times, over 10.5, whatever the code
+    /// around them does. Sized by bits instead (2,048 to 13,266 primes, `bits(M)` 8 times, 14
+    /// levels), the same bound is `8 * 14 / 11 = 10.18`, under 10.5 and over 9, so it does not rule
+    /// out a pass there; that sizing is the author decision BENCH-crt-tree-size-by-bits.
+    /// A method that does not keep the levels recomputes them, which costs time
+    /// (the remainder forest of Harvey and Sutherland, cited above, trades in that way); none is
+    /// known that keeps the order `M(N) log k` and holds `o(N log k)` bits. Not proved: that every
+    /// method in `O(M(N) log k)` time must hold `Omega(N log k)` bits.
+    ///
+    /// No refusal (PROOF-crt-refusal-exact-class, 2026-11-21). The author's order allows a refusal
+    /// only for a class of inputs that provably degrades, defined by the moduli. To prove that a
+    /// class needs more than O(n log n) work one needs a lower bound above `n log n` for CRT on that
+    /// class. None is known in any model: the only proved lower bound is the output, Omega(N), and
+    /// the conditional Omega(N log N) bounds cited above are for one multiplication, which every
+    /// method also pays. So no nonempty class can be shown to degrade, the exact refusal class is
+    /// empty, and every input is solved, at O(M(N) log k). This is a limit of what is known, not a
+    /// proof that no faster method exists: the gap between Omega(N) and O(M(N) log k) is open in
+    /// the literature searched above. A class defined by the moduli where a linear method is proved
+    /// is taken instead where one exists: moduli that are all prime words, for the coprime base
+    /// (zed-kernel `num::coprime::prime_words`, PERF-private-quotient-wide-moduli); for CRT itself
+    /// the product `M` is the output, so no such class lowers its order.
+    ///
+    /// Moved from zedc-presburger `modular.rs` `combine_crt_tree` (DRY-bignum-crate-2026-11-26);
+    /// the coprime path is zed-bignum `trees::crt_coprime`.
+    pub fn crt(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
+        pairs.retain(|(_, m)| *m != Int::ONE);
+        if pairs.is_empty() {
+            return Some((Int::ZERO, Int::ONE));
+        }
+        // The moduli are above 1 here, so their magnitudes are the moduli, and `mod_floor` by
+        // `m > 0` is in `[0, m)`, so its magnitude is the residue.
+        let moduli: Vec<BigUint> = pairs.iter().map(|(_, m)| m.magnitude()).collect();
+        let residues: Vec<BigUint> = (pairs.iter())
+            .map(|(r, m)| r.mod_floor(m).magnitude())
+            .collect();
+        if let Some((x, m)) = crt_coprime(&residues, &moduli) {
+            return Some((Int::from(BigInt::from(x)), Int::from(BigInt::from(m))));
+        }
+        while pairs.len() > 1 {
+            let mut next = Vec::with_capacity(pairs.len().div_ceil(2));
+            let mut it = pairs.into_iter();
+            while let Some((r1, m1)) = it.next() {
+                next.push(match it.next() {
+                    Some((r2, m2)) => Int::crt_pair(&r1, &m1, &r2, &m2)?,
+                    None => (r1, m1),
+                });
+            }
+            pairs = next;
+        }
+        pairs.pop()
     }
 
     /// The least `t >= 0` with `self · t == b (mod m)`, for `m` above zero, and the period
@@ -1136,16 +1284,16 @@ impl Approx {
     }
 }
 
-/// `base ^ exp`, written out: its cost is that of the value's digits.
+/// `base ^ exp`, written out by zed-bignum `fast::pow` (DRY-bignum-crate-2026-11-26: this was a
+/// second power by squaring with the same product): its cost is that of the value's digits.
+/// For a base above 1 an exponent of 2^64 or more makes a value of more than 2^64 bits, which no
+/// memory holds, so the panic stops only a build that could not finish.
 fn expand_pow(base: &BigUint, exp: &BigUint) -> BigUint {
-    let mut m = BigUint::from(1u32);
-    for i in (0..exp.bits()).rev() {
-        m = mul_uint(&m, &m);
-        if exp.bit(i) {
-            m = mul_uint(&m, base);
-        }
+    match (u64::try_from(exp), base.bits()) {
+        (Ok(e), _) => pow_uint(base, e),
+        (Err(_), 0 | 1) => base.clone(),
+        (Err(_), _) => panic!("a power of more than 2^64 bits written out"),
     }
-    m
 }
 
 impl Atom {
@@ -1404,9 +1552,11 @@ impl Core {
     /// The value, written out: its cost is that of the value's digits, and for a root that of
     /// a root of the radicand's digits.
     fn expand(&self) -> BigUint {
-        self.0.iter().fold(BigUint::one(), |r, (a, e)| {
-            mul_uint(&r, &expand_pow(&a.expand(), e))
-        })
+        // The powers multiplied by pairs (`product_of`), not in turn (DRY-bignum-crate-2026-11-26).
+        let powers: Vec<BigUint> = (self.0.iter())
+            .map(|(a, e)| expand_pow(&a.expand(), e))
+            .collect();
+        product_of(&powers)
     }
 
     /// Bounds on the bits of the value and of the widest number [`Core::expand`] builds: each
@@ -1477,7 +1627,7 @@ fn balance(v: BigInt, b: &BigUint, g: &BigUint) -> (BigInt, BigInt) {
     else {
         return (v, BigInt::ZERO);
     };
-    let m = BigInt::from(expand_pow(b, &BigUint::from(g)));
+    let m = BigInt::from(pow_uint(b, g));
     let mut r = Integer::mod_floor(&v, &m);
     if (&r << 1u32) > m {
         r -= &m;
@@ -3665,6 +3815,47 @@ mod tests {
         }
     }
 
+    /// `Int::product` against a running product of num-bigint's, on no factor, one, products
+    /// within i128, products that pass i128 by one factor, zeros, signs, and 1 to 40 random
+    /// factors of up to 320 bits.
+    #[test]
+    fn products_agree_with_a_running_product() {
+        let running = |xs: &[Int]| Int::from(xs.iter().fold(BigInt::from(1), |p, x| p * &*x.big()));
+        let big = Int::from(BigInt::from(3u8).pow(100));
+        let mut cases: Vec<Vec<Int>> = vec![
+            vec![],
+            vec![Int::from(-7)],
+            vec![Int::from(6), Int::from(-7), Int::from(11)],
+            vec![Int::from(i128::MAX), Int::from(2)],
+            vec![Int::from(i128::MIN), Int::from(-1)],
+            vec![Int::from(i64::MAX), Int::from(i64::MAX), Int::from(-3)],
+            vec![big.clone(), Int::ZERO, Int::from(5)],
+            vec![-&big, big.clone(), Int::from(-1)],
+        ];
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            x
+        };
+        for len in 1..=40 {
+            let xs = (0..len)
+                .map(|_| {
+                    let words = (next() % 5) as usize;
+                    let mag = (0..=words).fold(BigInt::from(next() >> (next() % 64)), |m, _| {
+                        (m << 64) + next()
+                    });
+                    Int::from(if next() & 1 == 1 { -mag } else { mag })
+                })
+                .collect();
+            cases.push(xs);
+        }
+        for xs in cases {
+            assert_eq!(Int::product(&xs), running(&xs), "{xs:?}");
+        }
+    }
+
     /// `Int::gcd` past i128 agrees with num-bigint's for every sign, for operands of one word
     /// against many, with shared powers of 2 and odd factors, and with zero.
     #[test]
@@ -3820,6 +4011,34 @@ mod tests {
             }
         }
         assert!(solved >= 100, "only {solved} pairs solved");
+    }
+
+    /// `Int::crt` against a left fold of `Int::crt_pair`, on no pair, moduli of 1, coprime
+    /// moduli (the tree path), moduli that share factors (the pairwise path), conflicts, and
+    /// negative residues.
+    #[test]
+    fn crts_agree_with_pairs() {
+        let fold = |pairs: &[(Int, Int)]| {
+            (pairs.iter()).try_fold((Int::ZERO, Int::ONE), |(r, m), (r2, m2)| {
+                Int::crt_pair(&r, &m, r2, m2)
+            })
+        };
+        let p = |r: i64, m: i64| (Int::from(r), Int::from(m));
+        let big = Int::from(BigInt::from(2u8).pow(127) - 1);
+        let cases: Vec<Vec<(Int, Int)>> = vec![
+            vec![],
+            vec![p(5, 1), p(0, 1)],
+            vec![p(2, 3), p(3, 5), p(2, 7)],
+            vec![p(-1, 4), p(4, 9), p(-7, 25), p(1, 1)],
+            vec![p(2, 6), p(5, 9)],
+            vec![p(1, 6), p(5, 9), p(1, 4)],
+            vec![p(3, 12), p(7, 8), p(1, 18)],
+            vec![(Int::from(-5), big.clone()), p(10, 1 << 40), p(3, 5)],
+            vec![(Int::from(9), big.clone()), (Int::from(10), big.clone())],
+        ];
+        for pairs in cases {
+            assert_eq!(Int::crt(pairs.clone()), fold(&pairs), "{pairs:?}");
+        }
     }
 
     /// `Int::solve_linear_congruence` against a scan of `0..m` for every `m` up to 30 and `a`,

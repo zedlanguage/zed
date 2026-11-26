@@ -24,7 +24,7 @@ mod word;
 use num_bigint::BigUint;
 
 pub use bits::BitLen;
-pub use factor::{Montgomery64, factor, is_prime};
+pub use factor::{Montgomery64, divisors, factor, is_prime, prime_powers};
 pub use factored::{coprime_base_by_factoring, shares_a_factor_by_factoring};
 pub use pratt::{PSI_13, PrattCertificate, PrattError, PrattFactor};
 pub use wide::{factor_u128, is_prime_u128};
@@ -131,8 +131,9 @@ pub fn pow_mod_2_64(mut b: u64, mut e: u64) -> u64 {
 /// `o` are both odd), so six steps give 2, 4, 8, 16, 32, 64.
 // Complexity tradeoff: a search over the 2^63 odd residues is out of the question; lifting one
 // bit at a time is 63 steps; Newton's six steps each cost a power, O(log p) products, and one
-// inverse ([`inverse_mod_2_64`]). The wide roots built on this one (zedc-int `int.rs`
-// `odd_root_mod_pow2`) stay in zedc-int, since they need zed-kernel's fast products.
+// inverse ([`inverse_mod_2_64`]). The wide roots built on this one (zed-bignum `least_root.rs`
+// `odd_root_mod_pow2`, moved there from zedc-int on 2026-11-23 and from zed-kernel by
+// DRY-bignum-crate-2026-11-26) stay outside this crate, since they need the fast products.
 pub fn odd_root_mod_2_64(o: u64, p: u64) -> u64 {
     debug_assert!(o % 2 == 1 && p % 2 == 1, "an odd residue and an odd index");
     let mut x = 1u64;

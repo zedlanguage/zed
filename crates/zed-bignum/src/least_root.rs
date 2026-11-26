@@ -1,6 +1,6 @@
 //! The least root of an integer, `b == r ^ m` with `r` no perfect power, and the residues of a
 //! number modulo many words by one remainder tree. Moved here from zedc-int (`int.rs`) on
-//! 2026-11-23 so that the kernel's printer of integers ([`crate::Rat::integer_text`], plan row
+//! 2026-11-23 so that the kernel's printer of integers (zed-kernel `Rat::integer_text`, plan row
 //! KEPT-power-form-print) and zedc-int's kept integers share one routine.
 
 use num_bigint::BigUint;
@@ -10,7 +10,8 @@ use zed_numtheory::{
     rem_big_u64,
 };
 
-use crate::num::{fast, mul_uint, pow_uint, trees};
+use crate::fast::{self, mul as mul_uint, pow as pow_uint};
+use crate::trees;
 use zed_numtheory::BitLen;
 
 /// `(s, r)` with `s = floor(sqrt(a))` and `r = a - s^2`, so `0 <= r <= 2s`, for integers held
@@ -353,7 +354,7 @@ impl OddPart {
 }
 
 /// `x mod m` for each `m` of `ms`, every `m` above 0, by the kernel's product and remainder
-/// trees ([`crate::num::trees`]): the `ms` are multiplied in pairs up to one product `P`,
+/// trees ([`crate::trees`]): the `ms` are multiplied in pairs up to one product `P`,
 /// `x` is reduced modulo `P` once, and each remainder modulo the two products below it. For
 /// `B` the bits of `P` the cost is that of the one division and O(M(B) log k) for `k` moduli,
 /// where one division of `x` a modulus costs O(bits of `x`) each.
@@ -425,6 +426,132 @@ fn pow_mod_pow2(x: &BigUint, e: u64, mask: &BigUint) -> BigUint {
         }
     }
     out
+}
+
+/// `(r, a - r^k)` with `r = floor(a^(1/k))`, for `k >= 1`, for integers held outside a
+/// zed-kernel `Rat` (moved here from zed-kernel `num.rs`, DRY-bignum-crate-2026-11-26):
+/// [`sqrt_rem_uint`] for `k = 2`; for `k >= 3`, `nth_root_near`, `r` or `r + 1`, and
+/// one check: `r` is `y = nth_root_near(a, k)` when `y^k <= a`, else `y - 1`, and the remainder
+/// is `a` less the power checked last.
+///
+/// Complexity tradeoff: num-bigint's `nth_root` at every size, whose divisions are schoolbook
+/// (`O(n R)` for a quotient of `R` bits): from 4,096 to 32,768 words, 19.3 times the time for
+/// `k = 3`, 32.6 for `k = 5`, 36.3 for `k = 64` (2026-11-20, load 95). Its start (num-bigint
+/// 0.4.8 `biguint.rs`, `nth_root`: an `f64` guess, from the top 1,023 bits when wider, else
+/// `2^(bits / k + 1)`) holds few right bits for a large `k`, and Newton's iteration from far
+/// above falls only by about `(k - 1) / k` a turn: about `k` turns of a power of `n` bits.
+/// Here: `nth_root_near`, O(M(n)) for a fixed `k`, then one power `y^k` of at most `n + k`
+/// bits, O(M(n)) by squarings whose sizes double, and at most one power more. So O(M(n)) for a
+/// fixed `k` (bench `num::bench::kth_roots_scale`). Callers: zedc-int `Num::root_big` and
+/// `Atom::expand`, and `poly::roots::positive_roots` (item PERF-wide-odd-base-ratio-9).
+pub fn nth_root_rem_uint(a: &BigUint, k: u32) -> (BigUint, BigUint) {
+    assert!(k >= 1, "a root of index 0");
+    match k {
+        1 => return (a.clone(), BigUint::ZERO),
+        2 => return sqrt_rem_uint(a),
+        _ => {}
+    }
+    let k64 = u64::from(k);
+    let y = nth_root_near(a, k);
+    let t = pow_uint(&y, k64);
+    if t <= *a {
+        return (y, a - t);
+    }
+    let r = y - 1u32;
+    let rem = a - pow_uint(&r, k64);
+    (r, rem)
+}
+
+/// `r` or `r + 1` for `r = floor(a^(1/k))` and `k >= 3`: the root of the top bits by
+/// recursion, then one turn of Newton's iteration on the integers from above (R. P. Brent and
+/// P. Zimmermann, Modern Computer Arithmetic, Cambridge University Press, 2010, section 1.5,
+/// the integer k-th root by Newton's method), on the kernel's power and division.
+///
+/// With `R = ceil(n / k)` for `a` of `n` bits (so `2^(R - 1) <= rho = a^(1/k) < 2^R`), `c` the
+/// bits of `k - 1`, and `h = floor((R - c - 4) / 2)`: `s = nth_root_near(a >> kh, k)`, `x = (s
+/// + 1) 2^h`, `A = a >> (k - 1) h`, `P = (s + 1)^(k-1)`, `Q` the bits of `A` less those of `P`,
+/// plus 1, `d` the bits of `P` less `Q + 2` (0 if fewer), `q' = floor((A >> d) / (P >> d))`,
+/// and the result is `y' = floor(((k - 1) x + q') / k)`.
+///
+/// Proof, every step (checked through [`nth_root_rem_uint`] by `kth_roots_agree_with_num_bigint`
+/// against num-bigint's `nth_root`, for `k` from 3 to 9 at every width up to 1,500 bits,
+/// `k = 64` up to 24,000 bits and `k = 1000` at 64,000, at `r^k - 1`, `r^k` and `r^k + 1`):
+/// 1. Start: `r0 = floor((a >> kh)^(1/k))`, and `s` is `r0` or `r0 + 1` by recursion (or
+///    `r0` from the leaf, step 7). `(r0 + 1)^k >= (a >> kh) + 1`, so `x^k >= (r0 + 1)^k
+///    2^(kh) >= ((a >> kh) + 1) 2^(kh) > a`, and `x > rho`. And `(r0 2^h)^k <= (a >> kh)
+///    2^(kh) <= a`, so `rho >= r0 2^h` and `e = x - rho <= (r0 + 2) 2^h - r0 2^h = 2^(h + 1)`.
+/// 2. The quotient: `x^(k-1) = P 2^((k - 1) h)`, and `floor(floor(a / 2^m) / P) = floor(a /
+///    (2^m P))` for integers `P >= 1` (both are the greatest `q` with `q P 2^m <= a`), so `q =
+///    floor(A / P) = floor(a / x^(k-1))`, from a power of `s + 1`, about `R / 2` bits, not of
+///    `x`, about `R`.
+/// 3. The truncated quotient: `q <= q' <= q + 1`. With `A = A' 2^d + A''` and `P = P' 2^d +
+///    P''`, `0 <= A'', P'' < 2^d`: `A / P < (A' + 1) / P'`, so `q <= q'` (if `(A' + 1) / P'` is
+///    an integer `j`, `q <= j - 1 = q'`, else `q <= floor((A' + 1) / P') = q'`). And `A / P >=
+///    A' / (P' + 1) = A' / P' - A' / (P' (P' + 1)) > A' / P' - 1`, as `P'` has `Q + 2` bits
+///    (when `d > 0`; else `q' = q`), `P' >= 2^(Q + 1)`, and `A' < 2^(Q + 2 + Q - 1) <= P'^2`;
+///    so `q >= q' - 1`. The division is then `2Q + 1` bits by `Q + 2`, near balanced, at every
+///    `k`.
+/// 4. `y' >= r`: `q' >= q` gives `y' >= y = floor(((k - 1) x + q) / k)`, and `floor((j +
+///    floor(u)) / k) = floor((j + u) / k)` for an integer `j`, so `y = floor(((k - 1) x + a /
+///    x^(k-1)) / k)`; by the inequality of the arithmetic and geometric means on `k - 1` copies
+///    of `x` and one of `a / x^(k-1)`, the inside is at least `(x^(k-1) a / x^(k-1))^(1/k) =
+///    rho`; so `y >= floor(rho) = r`.
+/// 5. `y' <= r + 1`: the inside of step 4 is the real Newton step `N(x) = x - (x^k - a) / (k
+///    x^(k-1))`, and `k x^(k-1) (N(x) - rho) = (k - 1) x^k - k rho x^(k-1) + rho^k = G(x)`, with
+///    `G(rho) = 0` and `G'(t) = k (k - 1) t^(k-2) (t - rho)`, so `G(x)`, the integral of `G'`
+///    from `rho` to `x`, is at most `k (k - 1) x^(k-2) e^2 / 2`, and `N(x) - rho <= (k - 1) e^2
+///    / (2 x) <= (k - 1) 2^(2h + 2) / 2^R` (step 1, `x > rho >= 2^(R - 1)`). `k - 1 < 2^c` and
+///    `2h <= R - c - 4`, so `N(x) < rho + 1/4`. `q' <= q + 1 <= a / x^(k-1) + 1` (step 3), so
+///    `y' <= floor(N(x) + 1 / k)`, and `N(x) + 1 / k < rho + 1/4 + 1/3 < r + 2` for `k >= 3`.
+/// 6. So `y'` is `r` or `r + 1`, which is what the recursion of step 1 needs of `s`.
+/// 7. The recursion stops at `R <= b + 64` with `b` the bits of `k`; above it `R - c - 4 >=
+///    61`, so `h >= 30` and `a >> kh` is shorter than `a`. There the root is found exactly, bit
+///    by bit from the top, `R` turns that keep the greatest `t` with `t^k <= a` (each turn sets
+///    the next bit when the power stays at most `a`); a value within 64 bits takes the word root
+///    of num-integer instead.
+///
+/// Complexity tradeoff: a level is one power of `k - 1` of `s + 1`, about `n / 2` bits, O(M(n))
+/// by squarings whose sizes double, and one division of about `2R` bits by `R`, O(M(R)); the
+/// level below has `a >> kh`, about `n / 2` bits, so the sum is O(M(n)) above the leaf; the
+/// leaf is `b + 64` powers of at most `k (b + 64)` bits. Three versions before this one, all
+/// measured by `kth_roots_scale` from 2,048 to 8,192 words for `k` 3 and 64 (2026-11-20):
+/// `h = floor(R / 2)` and turns until `y >= x`, 2 or 3 turns a level, the last only to
+/// confirm, and `T(8n) / T(n)` from 8.9 to 12.8 as the turn count changed between sizes; one
+/// turn and a check at every level, with powers of `x` itself, about half the work but still
+/// 9.3 to 12.3, as each level below the top cost nearly as much as the top; no check below the
+/// top and powers of `s + 1`, half again, 9.3 to 11.6 with the exact quotient `q`, whose `R`
+/// bits by `n / 2` went to num-bigint's schoolbook division at `n` and to the reciprocal at
+/// `8n` for `k = 64` (27 times the work of that division alone at 2,048 words).
+fn nth_root_near(a: &BigUint, k: u32) -> BigUint {
+    let k64 = u64::from(k);
+    let wide = a.bits().div_ceil(k64);
+    if wide <= u64::from(k.bit_len()) + 64 {
+        // Step 7.
+        return match a.to_u64() {
+            Some(w) => BigUint::from(num_integer::Roots::nth_root(&w, k)),
+            None => (0..wide).rev().fold(BigUint::ZERO, |r, i| {
+                let mut t = r.clone();
+                t.set_bit(i, true);
+                match pow_uint(&t, k64) <= *a {
+                    true => t,
+                    false => r,
+                }
+            }),
+        };
+    }
+    // Step 5: `c + 4` guard bits.
+    let c = u64::from((k - 1).bit_len());
+    let h = (wide - c - 4) / 2;
+    // Step 1.
+    let s = nth_root_near(&(a >> (k64 * h)), k) + 1u32;
+    // Steps 2 and 3.
+    let big_a = a >> ((k64 - 1) * h);
+    let p = pow_uint(&s, k64 - 1);
+    let wq = (big_a.bits() + 1).saturating_sub(p.bits());
+    let d = p.bits().saturating_sub(wq + 2);
+    let (q, _) = fast::div_rem(&(big_a >> d), &(p >> d));
+    // Steps 4 to 6.
+    ((s << h) * (k - 1) + q) / k
 }
 
 #[cfg(test)]

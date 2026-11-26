@@ -78,7 +78,7 @@ use std::sync::{Arc, Mutex};
 
 use num_bigint::{BigInt, BigUint};
 use zed_collections::sorted::Joined;
-use zed_numtheory::{factor, gcd_u64, inverse_mod_u64, mul_mod};
+use zed_numtheory::{divisors, gcd_u64, inverse_mod_u64, mul_mod, prime_powers};
 
 use super::bdd::{Bdd, Form, Part};
 use super::bes::{Answer, Bes, Decision, Kind, decide};
@@ -2485,19 +2485,6 @@ struct ChainGroup {
     multi_target: bool,
 }
 
-/// The prime powers of `n`: `(p, p^k)` for each prime `p` dividing `n` exactly `k` times, in
-/// increasing order of `p`; empty for 0 and 1.
-// Complexity tradeoff: trial division up to `sqrt n` was O(sqrt n), 2^32 divisions for a 64-bit
-// prime period; [`factor`] (Pollard's rho with Miller-Rabin, whose sources are cited at
-// `zed_numtheory::factor`) is O(n^(1/4)) expected products.
-fn prime_powers(n: u64) -> Vec<(u64, u64)> {
-    // `p.pow(k)` cannot overflow: `p^k` divides `n`.
-    factor(n)
-        .into_iter()
-        .map(|(p, k)| (p, p.pow(u32::try_from(k).expect("k <= 63"))))
-        .collect()
-}
-
 /// A list type made of pure cycles of one item, as the rule on pure cycles reads it: its
 /// lengths are those equal to `at` modulo `period` for each of `all`, for one of `any` when
 /// `any` is not empty, and for none of `none`, and 0 when `bare`.
@@ -2544,8 +2531,10 @@ impl Meet {
 ///
 /// Complexity tradeoff: the naive form tests each class of `any` with every class of `all`,
 /// O(|any| × |all|). Used: one pass over `all` and one lookup for each prime of each class of
-/// `any`, O(n log n) in the classes and their periods, with a trial division of each distinct
-/// period, O(sqrt p) for a period of `p` definitions. Nothing is given up. Tests:
+/// `any`, O(n log n) in the classes and their periods, with a factorization of each distinct
+/// period (zed-numtheory `prime_powers`, Pollard's rho: O(p^(1/4)) expected products for a
+/// period of `p` definitions; the trial division this doc once named was replaced). Nothing
+/// is given up. Tests:
 /// `l01_23_subtyping::witnesses::a_union_of_cycles_less_one_is_decided` (the pairs, whose
 /// lists are met with the class taken out) and `a_union_of_cycles_less_one_scales`.
 fn meet_union(all: &[(u64, u64)], any: &[(u64, u64)]) -> (Lengths, Vec<(u64, u64)>) {
@@ -2584,26 +2573,6 @@ fn meet_union(all: &[(u64, u64)], any: &[(u64, u64)]) -> (Lengths, Vec<(u64, u64
     (Lengths::None, Vec::new())
 }
 
-/// The divisors of `n`, from its prime powers, in increasing order.
-fn divisors(n: u64) -> Vec<u64> {
-    let mut out = vec![1];
-    for (r, q) in prime_powers(n) {
-        let below = out.len();
-        let mut power = r;
-        loop {
-            for i in 0..below {
-                out.push(out[i] * power);
-            }
-            if power == q {
-                break;
-            }
-            power *= r;
-        }
-    }
-    out.sort_unstable();
-    out
-}
-
 /// The lengths equal to `at` modulo `period` for one class of `any` and for none of `none`,
 /// with the class a length is sought in when some are left. They are none when each class of
 /// `any` lies inside one class of `none`; when a class of `any` lies inside none of them,
@@ -2627,8 +2596,9 @@ fn divisors(n: u64) -> Vec<u64> {
 /// `p` per class, which is not O(log n) (720720 has 240). Used: each `covered(d)` costs `d`
 /// for each prime of `d`, and the divisors `d` of `p` sum to O(p log log p), so a period `p`
 /// costs O(p log p) time and O(p log log p) memory, a class of `any` one lookup and a class of
-/// `none` one mark: O(n log n) time and memory in all, the trial division of each period
-/// O(sqrt p) besides; on the family of the scaling test it took 8.2 times the work at 8.5
+/// `none` one mark: O(n log n) time and memory in all, the factorization of each period,
+/// O(p^(1/4)) expected (zed-numtheory `prime_powers`), besides; on the family of the scaling
+/// test it took 8.2 times the work at 8.5
 /// times `n`, where the naive form took 11.5. What is given up: a class of `any` that only
 /// several classes of `none` cover together is not decided here (the naive form decides it
 /// when one prime split does, at the cost above; the caller keeps its other rules). Tests:

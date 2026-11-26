@@ -16,7 +16,7 @@ short-addresses = []
 # Counts the calls of `num::fast::div_rem` and `num::fast::mul` by method and operand words
 # (`num::fast::method_counts`), for the table at `l01_39_reduced_product::roots::bench`. Off
 # in every other build.
-method-counts = []
+method-counts = ["zed-bignum/method-counts"]
 
 # Also a dylib, so that a build with `-C prefer-dynamic` (the local zrun builds) links each test
 # binary against one shared copy instead of a static copy per binary.
@@ -34,6 +34,7 @@ zed-graph.workspace = true
 zed-hash.workspace = true
 zed-collections.workspace = true
 zed-numtheory.workspace = true
+zed-bignum.workspace = true
 # The stack of `treap_set::Iter`, kept inline to a depth of 16 so that walking or comparing a
 # small set allocates nothing (`sharing_tied_sets_scales`). The version and `union` are those
 # zed-rt names, which the workspace build gives smallvec through cranelift-codegen.

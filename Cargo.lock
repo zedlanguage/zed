@@ -1271,6 +1271,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed-bignum"
+version = "0.0.0"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "perf-event2",
+ "rustix",
+ "stacker",
+ "zed-alloc-count",
+ "zed-collections",
+ "zed-meter-settings",
+ "zed-numtheory",
+]
+
+[[package]]
 name = "zed-cert"
 version = "0.0.0"
 
@@ -1350,6 +1366,7 @@ dependencies = [
  "smallvec",
  "stacker",
  "zed-alloc-count",
+ "zed-bignum",
  "zed-collections",
  "zed-graph",
  "zed-hash",
@@ -1565,6 +1582,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "zed-bignum",
  "zed-collections",
  "zed-graph",
  "zed-hash",

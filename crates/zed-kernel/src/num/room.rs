@@ -8,7 +8,9 @@ use std::cell::Cell;
 use std::sync::OnceLock;
 
 use num_bigint::{BigInt, BigUint};
-use num_traits::{ToPrimitive, Zero};
+use num_traits::{One, ToPrimitive, Zero};
+use zed_bignum::fast;
+use zed_numtheory::BitLen;
 
 /// A number the evaluator must build, read or compare, for which the system refused the memory
 /// (DESIGN.md sec:domains): the number is a value of the language, and building it is the
@@ -367,6 +369,43 @@ pub(super) fn least_bits<'a>(
         true => BigUint::zero(),
         false => least_log2(coef, pows) + 1u32,
     }
+}
+
+/// `prod p^e`, built. A power of 2 is a shift, done last, so `2^e` costs its `e` bits and
+/// not the squarings of a multiplication. [`TooLarge`] when an exponent is 2^64 or more: the
+/// power has at least that many bits, more than any memory holds, and it names a lower bound
+/// on the bits of the whole product as its size, and `sum e * ceil(log2 p)`, an upper bound,
+/// as the memory asked for. Every other build asks
+/// the system for its memory before calling this.
+///
+/// Complexity tradeoff (NUM-no-panic-built): the exponents are read once before the build,
+/// O(terms) word operations, to refuse an exponent of 2^64 or more as an error; before, such
+/// an exponent stopped zedc at an `expect`, when a message printed the digits of `2^2^100`.
+pub(super) fn built(pows: &[(u64, BigUint)]) -> Result<BigInt, TooLarge> {
+    let small: Option<Vec<(u64, u64)>> = (pows.iter())
+        .map(|(p, e)| e.to_u64().map(|e| (*p, e)))
+        .collect();
+    let Some(small) = small else {
+        let bits: BigUint = (pows.iter()).map(|(p, e)| e * p.ceil_log2()).sum();
+        // The size named is a lower bound on the product's bits (`least_bits`), the
+        // memory asked the upper bound (row CONST-least-refusal-size).
+        let one = BigInt::one();
+        return Err(TooLarge {
+            size: least_bits(&one, pows.iter().map(|(p, e)| (*p, e))),
+            ask: bits,
+        });
+    };
+    let mut out = BigUint::one();
+    let mut twos = 0;
+    for (p, e) in small {
+        match (p, e) {
+            (_, 0) => {}
+            (2, _) => twos = e,
+            _ => out = fast::mul(&out, &fast::pow(&BigUint::from(p), e)),
+        }
+    }
+    out <<= twos;
+    Ok(BigInt::from(out))
 }
 
 #[cfg(test)]

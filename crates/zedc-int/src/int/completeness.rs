@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use zed_kernel::num::coprime::{CoprimeExponents, coprime_base, strip};
+use zed_bignum::coprime::{CoprimeExponents, coprime_base, strip};
 use zed_kernel::num::remainders;
 
 use super::*;

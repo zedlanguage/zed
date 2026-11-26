@@ -642,13 +642,19 @@ fn a_square_is_charged_two_of_its_three_transforms() {
         let span = (a.terms.len() + b.terms.len() - 1) as f64;
         plan.dense - CHOICE_UNIT * (DENSE_COST + SLOT_COST * span)
     };
-    // 1000 terms at every index: 500 words packed, past the test build's leaf of 48 and with
-    // more word products by rows than by transforms, so the square goes to the transforms. `-3` has
-    // the bits of `3`, so the two products pack alike.
-    let every: Vec<u128> = (0..1000).collect();
+    // `n` terms at every index, half a word each packed, for the least `n = 1000 * 2^i` whose
+    // square `mul` takes by transforms (`squares_by_transform`): the production leaves apply
+    // here since the fast products moved to zed-bignum (DRY-bignum-crate-2026-11-26), where the
+    // test build's leaf of 48 put 1000 terms past it. `-3` has the bits of `3`, so the two
+    // products pack alike.
+    let n = (0..12)
+        .map(|i| 1000usize << i)
+        .find(|&n| crate::num::squares_by_transform(n / 2 + 1))
+        .expect("a size squared by transforms");
+    let every: Vec<u128> = (0..n as u128).collect();
     let (a, b) = (packed(&every, 3), packed(&every, -3));
     let ratio = transforms(&a, &a) / transforms(&a, &b);
-    assert!((ratio - SQUARE_SHARE).abs() < 1e-12, "{ratio}");
+    assert!((ratio - SQUARE_SHARE).abs() < 1e-12, "{n} terms: {ratio}");
     assert_eq!(transforms(&a, &a.clone()), transforms(&a, &a));
     // 16 terms pack into 8 words, which num-bigint multiplies, and 200 into 100, which rows
     // multiply: neither is faster for a square.
@@ -941,10 +947,13 @@ fn a_chain_of_sums_is_one_sum() {
 
 #[test]
 fn a_square_is_chosen_at_its_share() {
-    // 64 terms about every `g` indices, squared. The test build squares from 48 packed words
-    // by transforms, so each of these is charged two thirds of a product of two numbers.
-    let square = |g: u128| {
-        let at: Vec<u128> = (0..64).map(|i| g * i + (i * 7) % g).collect();
+    // `t` terms about every `g` indices, squared. `t` is searched from 64 up: the test build
+    // squared from 48 packed words by transforms, but since the fast products moved to
+    // zed-bignum (DRY-bignum-crate-2026-11-26) the production leaves apply here, and a square
+    // goes to the transforms, and is charged two thirds of a product of two numbers, only at
+    // larger sizes (`num::squares_by_transform`).
+    let square_of = |t: u128, g: u128| {
+        let at: Vec<u128> = (0..t).map(|i| g * i + (i * 7) % g).collect();
         packed(&at, 3)
     };
     // Some spacing takes the dense product at its share where the whole cost would have taken
@@ -955,8 +964,8 @@ fn a_square_is_chosen_at_its_share() {
     // a square: one coefficient 2 in place of 3 keeps every size, so the packed integers
     // too, and charges it at the whole `mul_cost`. Were the plan to charge the square
     // its whole cost too, no spacing would differ.
-    let shared = |g: u128| {
-        let a = square(g);
+    let shared = |t: u128, g: u128| {
+        let a = square_of(t, g);
         let plan = a.plan(&a).expect("packed keys");
         let mut b = a.clone();
         b.terms[0].1 = BigInt::from(2);
@@ -966,15 +975,16 @@ fn a_square_is_chosen_at_its_share() {
         };
         plan.takes_dense && !whole.takes_dense()
     };
-    let g = (2..256)
-        .find(|&g| shared(g))
+    let (t, g) = (6..14)
+        .flat_map(|i| (2..256).map(move |g| (1u128 << i, g)))
+        .find(|&(t, g)| shared(t, g))
         .expect("a square taken dense at its share");
-    let a = square(g);
+    let a = square_of(t, g);
     let plan = a.plan(&a).expect("packed keys");
     let sparse = a.sparse_mul(&a, true);
     assert_eq!(a.dense_mul(&a, plan.slot, plan.step), sparse);
     // About every 256 indices: past the crossover even at the share, the sparse product.
-    let a = square(256);
+    let a = square_of(64, 256);
     let plan = a.plan(&a).expect("packed keys");
     assert!(!plan.takes_dense, "{:?}", plan.choice);
     assert_eq!(

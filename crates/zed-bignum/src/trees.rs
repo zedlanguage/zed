@@ -50,8 +50,8 @@ use std::borrow::{Borrow, Cow};
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
 
-use super::fast::rem as rem_uint;
-use super::{fast, mul_uint};
+use crate::fast::rem as rem_uint;
+use crate::fast::{self, mul as mul_uint};
 use zed_numtheory::BitLen;
 
 /// The levels of the product tree of `leaves` above the leaves themselves: the products of
@@ -93,6 +93,36 @@ pub fn tree_product<'a, L: Borrow<BigUint>>(
         (None, Some(leaf)) => Cow::Borrowed(leaf.borrow()),
         (None, None) => Cow::Owned(BigUint::from(1u32)),
     }
+}
+
+/// The product of `xs`, 1 for none: the products of pairs, then of pairs of those, as
+/// [`product_tree`] builds them, with each level dropped once the next is built.
+///
+/// Complexity tradeoff: multiplying in turn costs `O(m B)` word products for `m` numbers of
+/// `B` words in all, the running product being up to `B` words long at each step; multiplying
+/// pairs, then pairs of those, costs `O(M(B) log m)`, `M` the cost of one product of `B` words
+/// ([`fast::mul`]). One routine for the four copies that were in zed-kernel `poly.rs` and
+/// `Rat::from_kept`, zedc-check `walk.rs` (which used num-bigint's product, Toom-3 at most)
+/// and zedc-presburger `modular.rs` (DRY-bignum-crate-2026-11-26).
+pub fn product_of<L: Borrow<BigUint>>(xs: &[L]) -> BigUint {
+    match xs {
+        [] => return BigUint::one(),
+        [x] => return x.borrow().clone(),
+        _ => {}
+    }
+    let _hold = fast::hold_roots();
+    let mut level: Vec<BigUint> = (xs.chunks(2))
+        .map(|c| pair(c[0].borrow(), c.get(1).map(Borrow::borrow)))
+        .collect();
+    while level.len() > 1 {
+        level = level.chunks(2).map(|c| pair(&c[0], c.get(1))).collect();
+    }
+    level.pop().expect("two or more factors leave one product")
+}
+
+/// The product of the words `ps`, 1 for none, by [`product_of`].
+pub fn product_of_words(ps: &[u64]) -> BigUint {
+    product_of(&ps.iter().map(|&p| BigUint::from(p)).collect::<Vec<_>>())
 }
 
 /// `sum_i vals[i] * (P / leaves[i])`, built bottom-up along `levels`, the [`product_tree`] of
@@ -528,6 +558,33 @@ pub fn cofactors_mod_leaves<L: Borrow<BigUint>>(
     remainders(&s, leaves, levels)
 }
 
+/// `(x, M)` with `x == residues[i] (mod moduli[i])` for every `i`, `x` in `0..M`, `M` the
+/// product of the moduli, for moduli above 1 and each residue below its modulus; `None` when a
+/// modulus is not coprime to the product of the others. The Chinese remainder theorem by the
+/// trees (moved here from zedc-presburger `modular.rs` `combine_crt_tree`, whose `Int` part is
+/// now zedc-int `Int::crt`, DRY-bignum-crate-2026-11-26): `x = sum_i c_i M / m_i mod M` with
+/// `c_i = r_i (M / m_i)^-1 mod m_i`, the cofactors `(M / m_i) mod m_i` by
+/// [`cofactors_mod_leaves`], one inverse modulo each `m_i` ([`fast::inverse_mod`], which exists
+/// exactly when `m_i` is coprime to `M / m_i`), and the sum up the tree by
+/// [`linear_combination_up`] (each node `v0 P_1 + v1 P_0`). By the cofactor identity at
+/// [`cofactors_mod_leaves`], `S = sum_i c_i M / m_i` is `c_j M / m_j = r_j (mod m_j)` for each
+/// `j`, as `m_j` divides every other term, so `S mod M` is the solution.
+///
+/// Complexity tradeoff: O(M(N) log k) for `k` moduli of `N` bits in all, the order of the
+/// product tree itself, plus the inverses, O(M(n) log n) each for `n` bits; the cost argument
+/// and its measurements are at zedc-int `Int::crt`. Test: `crt_agrees_with_a_scan`.
+pub fn crt_coprime(residues: &[BigUint], moduli: &[BigUint]) -> Option<(BigUint, BigUint)> {
+    debug_assert_eq!(residues.len(), moduli.len());
+    let levels = product_tree(moduli);
+    let cofactors = cofactors_mod_leaves(moduli, &levels);
+    let vals = (residues.iter().zip(moduli).zip(cofactors))
+        .map(|((r, m), c)| Some(rem_uint(&mul_uint(r, &fast::inverse_mod(&c, m)?), m)))
+        .collect::<Option<Vec<BigUint>>>()?;
+    let total = linear_combination_up(vals, moduli, &levels);
+    let big_m = tree_product(moduli, &levels).into_owned();
+    Some((rem_uint(&total, &big_m), big_m))
+}
+
 /// `top mod m` for each leaf `m`, `leaves` holding at least two, when `top` is below their
 /// product: each node's value is its parent's value `mod` the node.
 fn descend<L: Borrow<BigUint>>(
@@ -562,6 +619,78 @@ mod tests {
 
     fn big(v: u64) -> BigUint {
         BigUint::from(v)
+    }
+
+    /// [`product_of`] and [`product_of_words`] against a running product of num-bigint's and
+    /// against the root of [`product_tree`], for every count from 0 to 40 (each carried node),
+    /// a zero factor, and factors past the transform's leaf; the uses of the four former copies
+    /// (lists of primes, of BigUints, of wide magnitudes).
+    #[test]
+    fn products_agree_with_a_running_product() {
+        let mut rng =
+            crate::seed::Rng::new(crate::seed::seed("products_agree_with_a_running_product"));
+        for len in 0..=40usize {
+            let words: Vec<u64> = (0..len).map(|_| rng.next_u64() | 1).collect();
+            let want = words.iter().fold(BigUint::one(), |p, &w| p * w);
+            assert_eq!(product_of_words(&words), want, "{len} words");
+            let wide: Vec<BigUint> = (0..len)
+                .map(|i| {
+                    let ds: Vec<u32> = (0..(1 + 97 * (i % 13)))
+                        .map(|_| rng.next_u64() as u32)
+                        .collect();
+                    BigUint::from_slice(&ds)
+                })
+                .collect();
+            let want = wide.iter().fold(BigUint::one(), |p, x| p * x);
+            assert_eq!(product_of(&wide), want, "{len} wide");
+            let levels = product_tree(&wide);
+            assert_eq!(*tree_product(&wide, &levels), want);
+        }
+        assert!(product_of(&[big(5), big(0), big(7)]).is_zero());
+    }
+
+    /// [`crt_coprime`] against a scan of `0..M` for small moduli, every count from 1 to 6, and
+    /// against the conditions themselves for wide coprime moduli (odd counts carry a node up);
+    /// `None` when two moduli share a factor.
+    #[test]
+    fn crt_agrees_with_a_scan() {
+        let moduli = [3u64, 5, 7, 11, 13, 4];
+        for k in 1..=moduli.len() {
+            let ms: Vec<BigUint> = moduli[..k].iter().map(|&m| big(m)).collect();
+            let rs: Vec<BigUint> = (0..k)
+                .map(|i| big((i as u64 * 7 + 2) % moduli[i]))
+                .collect();
+            let (x, m) = crt_coprime(&rs, &ms).expect("coprime");
+            assert_eq!(m, ms.iter().product::<BigUint>());
+            let want =
+                (0u64..).find(|x| (0..k).all(|i| x % moduli[i] == (i as u64 * 7 + 2) % moduli[i]));
+            assert_eq!(x, big(want.expect("a solution")));
+        }
+        // `2^a - 1` and `2^b - 1` have gcd `2^gcd(a, b) - 1`, so distinct prime exponents give
+        // pairwise coprime moduli, past the transform's leaf at the larger exponents.
+        let mut rng = crate::seed::Rng::new(crate::seed::seed("crt_agrees_with_a_scan"));
+        let exps = [61u32, 607, 1279, 2203, 2281, 3217, 4253, 4423, 9689];
+        for k in [1usize, 2, 5, 9] {
+            let ms: Vec<BigUint> = exps[..k]
+                .iter()
+                .map(|&e| (BigUint::one() << e) - 1u32)
+                .collect();
+            let rs: Vec<BigUint> = (ms.iter())
+                .map(|m| {
+                    let ds: Vec<u32> = (0..m.bits() / 32 + 1)
+                        .map(|_| rng.next_u64() as u32)
+                        .collect();
+                    BigUint::from_slice(&ds) % m
+                })
+                .collect();
+            let (x, m) = crt_coprime(&rs, &ms).expect("coprime");
+            assert_eq!(m, ms.iter().product::<BigUint>());
+            assert!(x < m);
+            for (r, mi) in rs.iter().zip(&ms) {
+                assert_eq!(&x % mi, *r);
+            }
+        }
+        assert_eq!(crt_coprime(&[big(1), big(2)], &[big(6), big(9)]), None);
     }
 
     /// The leaf sets: none, one, ones, equal, every count from 2 to 17 (a carried node at some
