@@ -40,6 +40,11 @@ export interface LedgerEntry {
   // no plan row.
   needs?: string[];
   feeds?: string[];
+  // Take back an edge an earlier line of the same item gave in needs or feeds (the ledger is
+  // append-only, so this is how a redundant or wrong ledger edge is removed). Lines apply in ledger
+  // order: a later needs or feeds gives the edge again.
+  unneeds?: string[];
+  unfeeds?: string[];
   // Not a step of Zed (the viewer, the test harness, an edit to the plan): no box is drawn and no
   // edge names it, while its ledger and log lines stay as history. The last of the item's own lines
   // (its id, not a label such as "A:merge") that says true or false decides.
@@ -471,19 +476,26 @@ export function buildGraph(inp: Inputs): BoardState {
   const list = (x: unknown): string[] => (Array.isArray(x) ? x.filter((s) => typeof s === "string") : []);
   for (const [id, es] of ledger) {
     if (!nodeIds.has(id)) continue;
+    // The item's needs and feeds after its lines in order, each unneeds or unfeeds taking back what
+    // the lines before it gave. Sets keep this linear in the number of ids the lines name.
+    const needSet = new Set<string>();
+    const feedSet = new Set<string>();
     for (const e of es) {
-      if (!own.has(id)) own.set(id, []);
-      own.get(id)!.push(...list(e.needs));
-      for (const f of list(e.feeds)) {
-        const to = replaced(f);
-        if (to !== null && dropped(to)) continue;
-        if (to === null) {
-          problems.push(`FEED INTO OUTSIDE ITEM: ${id} feeds ${f} (give ${f} a replacedBy in a ledger line of its own, or remove the feed)`);
-          continue;
-        }
-        if (!fed.has(to)) fed.set(to, []);
-        fed.get(to)!.push(id);
+      for (const n of list(e.needs)) needSet.add(n);
+      for (const n of list(e.unneeds)) needSet.delete(n);
+      for (const f of list(e.feeds)) feedSet.add(f);
+      for (const f of list(e.unfeeds)) feedSet.delete(f);
+    }
+    own.set(id, [...needSet]);
+    for (const f of feedSet) {
+      const to = replaced(f);
+      if (to !== null && dropped(to)) continue;
+      if (to === null) {
+        problems.push(`FEED INTO OUTSIDE ITEM: ${id} feeds ${f} (give ${f} a replacedBy in a ledger line of its own, or remove the feed)`);
+        continue;
       }
+      if (!fed.has(to)) fed.set(to, []);
+      fed.get(to)!.push(id);
     }
   }
   for (let i = 0; i < rows.length; i++) {

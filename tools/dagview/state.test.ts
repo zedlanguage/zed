@@ -206,6 +206,16 @@ test("the needs of an item's ledger lines add up", () => {
   assert.ok(nodes.get("B")!.needs.includes("X"));
 });
 
+test("a later line's unneeds and unfeeds take back an earlier line's edge, and a still later line gives it again", () => {
+  const taken = inputs("", '{"id":"X","state":"open","needs":["A","LR2"],"feeds":["B","C"]}\n{"id":"X","state":"note","unneeds":["LR2"],"unfeeds":["C"]}\n');
+  const nodes = by(buildNodes(taken));
+  assert.deepEqual(nodes.get("X")!.needs, ["A"]);
+  assert.ok(nodes.get("B")!.needs.includes("X"));
+  assert.ok(!nodes.get("C")!.needs.includes("X"));
+  const again = inputs("", '{"id":"X","state":"open","feeds":["C"]}\n{"id":"X","state":"note","unfeeds":["C"]}\n{"id":"X","state":"note","feeds":["C"]}\n');
+  assert.ok(by(buildNodes(again)).get("C")!.needs.includes("X"));
+});
+
 test("an item outside Zed draws no box, whether a plan row, the ledger or the log names it, and no edge names it", () => {
   const inp = inputs(
     "2026-11-02 10:00:00 | X:impl#1 | start\n2026-11-02 10:00:01 | V:impl#1 | start\n",
