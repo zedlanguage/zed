@@ -21,7 +21,7 @@ crates/               the Rust-hosted toolchain, kept permanently as the bootstr
                       their old paths (`zedc::check`, `zedc::store::presburger`, ...)
   zedc-base/          source text, addresses, rejections, costs, the definitional interpreter
   zedc-syntax/        lexer, parser, syntax tree, formatter
-  zedc-int/           the unbounded integers of the constraint store
+  zedc-int/           the unbounded integers of the constraint store and their rationals `Q`
   zedc-lattice/       the store's lattices: intervals, affine, floats, cells, iteration orders
   zedc-solvers/       linear programs, two-variable and UTVPI systems, shortest paths
   zedc-presburger/    the Presburger decision procedure, conjuncts, hulls

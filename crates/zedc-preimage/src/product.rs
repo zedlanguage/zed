@@ -109,6 +109,7 @@ use super::spans::Spans;
 use super::threshold;
 use zed_collections::search::first_true;
 use zedc_int::int::{Int, IntRange, meet_range, row_bound, row_range};
+use zedc_int::q::Q;
 use zedc_lattice::affine::Bounds;
 use zedc_lattice::cell::{Cell, Entry, Premise, Premises};
 use zedc_lattice::class_union::ClassUnion;
@@ -120,7 +121,6 @@ use zedc_presburger::conjuncts::{self, BlockId, Conjuncts, Edge, Uses, extreme_b
 use zedc_presburger::hull::Hull;
 use zedc_presburger::presburger::{self, Atom, Con, Factor, Formula, Lin, Rel};
 use zedc_presburger::upper_hull::UpperHull;
-use zedc_solvers::linear::Q;
 use zedc_stage::defs::written_name;
 use zedc_stage::stage;
 

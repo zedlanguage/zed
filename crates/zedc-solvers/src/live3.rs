@@ -38,9 +38,10 @@
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 
-use super::linear::{Q, Term};
+use super::linear::Term;
 use super::twovar;
 use zedc_int::int::Int;
+use zedc_int::q::Q;
 
 /// A row `a·x + k >= 0` over three variables.
 pub type Row3 = ([Int; 3], Int);
@@ -557,11 +558,11 @@ fn sign_on(f: &Lin2, r: &Region) -> Option<Ordering> {
     if r.along.as_ref().is_some_and(|w| !dot2(&f.g, w).is_zero()) {
         return None;
     }
-    let at = f.at(&r.at).n.cmp(&Int::ZERO);
+    let at = f.at(&r.at).numer().cmp(&Int::ZERO);
     let rays: Vec<Ordering> = r
         .rays
         .iter()
-        .map(|d| dot2(&f.g, d).n.cmp(&Int::ZERO))
+        .map(|d| dot2(&f.g, d).numer().cmp(&Int::ZERO))
         .collect();
     for s in [Ordering::Greater, Ordering::Less] {
         let all = at != s.reverse() && rays.iter().all(|r| *r != s.reverse());
@@ -838,10 +839,10 @@ fn cross(a: &[Q; 3], b: &[Q; 3]) -> [Q; 3] {
 /// The integer multiple of `v`, not zero, whose entries have no common factor.
 fn primitive(v: &[Q; 3]) -> [Int; 3] {
     let l = v.iter().fold(Int::ONE, |l, c| {
-        let g = l.gcd(&c.d);
-        &l.div_floor(&g) * &c.d
+        let g = l.gcd(c.denom());
+        &l.div_floor(&g) * c.denom()
     });
-    let n = v.clone().map(|c| &c.n * &l.div_floor(&c.d));
+    let n = v.clone().map(|c| c.numer() * &l.div_floor(c.denom()));
     let g = n.iter().fold(Int::ZERO, |g, c| g.gcd(c));
     n.map(|c| c.div_floor(&g))
 }
@@ -1055,8 +1056,9 @@ fn reduce(rows: &[Row3], s: &[[Q; 3]; 4]) -> Shape {
         t = sub3(&t, &asq(&b[i]).map(|x| x.mul(&Q::of(c.clone()))));
     }
     let z = sub3(&center, &t).map(|x| {
-        debug_assert!(x.d == Int::ONE, "a lattice point");
-        x.n
+        let (n, d) = x.into_parts();
+        debug_assert!(d == Int::ONE, "a lattice point");
+        n
     });
     if holds(rows, &z) {
         return Shape::Point(z);
@@ -1068,8 +1070,9 @@ fn reduce(rows: &[Row3], s: &[[Q; 3]; 4]) -> Shape {
     let cols = [0, 1, 2].map(|i| asq(&b[i]));
     let inv = inverse(&cols);
     let u = inv[2].clone().map(|x| {
-        debug_assert!(x.d == Int::ONE, "a unimodular basis");
-        x.n
+        let (n, d) = x.into_parts();
+        debug_assert!(d == Int::ONE, "a unimodular basis");
+        n
     });
     let wide = q(25);
     let at: Vec<Q> = s

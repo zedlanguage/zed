@@ -3,6 +3,7 @@
 //! (`zedc::store::int`).
 
 pub mod int;
+pub mod q;
 
 /// The seed and generator of a random test, new on each run and printed, shared with the step
 /// tests.

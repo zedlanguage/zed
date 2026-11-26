@@ -115,9 +115,10 @@ use zed_graph::UnionFind;
 use zed_kernel::refine::Refine;
 use zed_kernel::value::fresh_id;
 use zedc_int::int::{Int, IntRange, meet_range, range_meet, row_range};
+use zedc_int::q::Q;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::lattice::Congruence;
-use zedc_solvers::linear::{Q, Term};
+use zedc_solvers::linear::Term;
 use zedc_solvers::{live3, twovar, utvpi};
 
 mod absorbing;

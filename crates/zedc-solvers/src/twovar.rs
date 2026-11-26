@@ -14,9 +14,10 @@
 //! constant, one period of the two lines, past which the counts repeat. A point is found by
 //! bisection on the counts of the prefixes of a range with points.
 
-use super::linear::{Q, Term};
+use super::linear::Term;
 use zed_collections::search::{first_true, last_true};
 use zedc_int::int::{Int, IntRange, meet_range, row_range};
+use zedc_int::q::Q;
 
 /// The line `(p·x + q) / r`, with `r` above zero.
 #[derive(Clone)]
@@ -327,7 +328,7 @@ fn piece(
         }
     }
     // An unbounded range cut to a bounded one with a point exactly when it has one.
-    let period = || &ua.slope().d - &Int::ONE;
+    let period = || ua.slope().denom() - &Int::ONE;
     let past_one = || Q::of(Int::ONE).sub(&g0).div(&dg);
     let (s, t) = match range {
         (Some(s), Some(t)) => (s, t),
@@ -508,7 +509,7 @@ pub fn project_convex(rows: &[(&[Term], &Int)], x: usize, y: Option<usize>) -> T
                     } else {
                         // Parallel lines with `0 <= g0 < 1`: `n(x) in {0, 1}` is periodic with
                         // period `d = ua.slope().d`.
-                        let d = ua.slope().d;
+                        let d = ua.slope().into_parts().1;
                         let count = |s: &Int, n: &Int| -> Int {
                             &(&ua.floor_sum(s, n) + &lb.neg().floor_sum(s, n)) + n
                         };
