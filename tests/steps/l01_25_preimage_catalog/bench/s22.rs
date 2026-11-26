@@ -503,8 +503,9 @@ fn forward_sets_of_a_chain_share_the_holes_scale() {
 /// 60 times (negative control, not committed), where this reads 245 and 2693, 11 times.
 /// The size is 32, not 8: the count, of order `k log(16k)` with `16k` holes, is 10.99 times
 /// at 8 to 64, past the 10.5 allowed to power 1, as `k log(16k)` itself is there
-/// (`8 log2(1024) / log2(128)` is 11.43), while from 32 to 256 it reads 1290 and 8724 pieces, 6.76 times (and 6.04, 5.96 and 4.34
-/// times from 64, 128 and 256; b22-scale1, batch b26, 2026-11-25, Colab hm3, 11.7 s at 32).
+/// (`8 log2(1024) / log2(128)` is 11.43), while from 32 to 256 it reads 1290 and 8724
+/// pieces, 6.76 times (and 6.04, 5.96 and 4.34 times from 64, 128 and 256; b22-scale1, batch
+/// b26, 2026-11-25, Colab hm3, 11.7 s at 32).
 #[test]
 fn class_ranges_read_the_holes_once() {
     on_big_stack(|| {
