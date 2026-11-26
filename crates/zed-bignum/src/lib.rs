@@ -1,9 +1,12 @@
 //! Algorithms on wide integers (`BigUint`, `BigInt`) that every crate shares: products,
 //! division, gcd, printing and reading in [`fast`]; product and remainder trees in [`trees`];
-//! Bernstein's coprime base in [`coprime`]; least roots in [`least_root`]. Moved down from
-//! zed-kernel's `num` (DRY-bignum-crate-2026-11-26), which re-exports them, so that zedc-int
-//! and the kernel call one copy and the kernel's build does not compile them.
+//! Bernstein's coprime base in [`coprime`]; least roots in [`least_root`]; outward-rounded
+//! bounds of `m * 2^e` in [`approx`]. Moved down from zed-kernel's `num`
+//! (DRY-bignum-crate-2026-11-26), which re-exports them, and from zedc-int
+//! (DRY-bignum-bound-type), so that zedc-int and the kernel call one copy and the kernel's build
+//! does not compile them.
 
+pub mod approx;
 pub mod coprime;
 pub mod digit_text;
 pub mod fast;

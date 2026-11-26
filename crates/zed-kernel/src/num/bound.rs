@@ -1,10 +1,17 @@
 //! Rigorous bounds on a product of prime powers, for ordering exact numbers and rounding them
 //! to floats without building their digits.
 //!
-//! A bound is `m * 2^e` with `m` kept to `k` bits and `e` unbounded, rounded down for a lower
-//! bound and up for an upper one at every step, so it bounds the product whatever `k` is; a
-//! larger `k` only makes it tighter. A power `p^e` is bounded by squaring, `2 log e` products
-//! of `k`-bit numbers, so `10^(10^9)` costs about 60 products and not its billion digits.
+//! The bounds are zed-bignum's [`Approx`], `lo * 2^shift ..= hi * 2^shift` with the ends kept
+//! to `k` bits and `shift` unbounded, `lo` rounded down and `hi` up at every step, so they hold
+//! the product whatever `k` is; a larger `k` only makes them tighter. A power `p^e` is bounded
+//! by squaring, `2 log e` products of `k`-bit numbers, so `10^(10^9)` costs about 60 products
+//! and not its billion digits. This file keeps what is the kernel's own: the order and the
+//! rounding of products, and the memory each precision asks of the system (`room`).
+//!
+//! DRY-bignum-bound-type: the positive `Bound { m, e }` here, one end at a time, and zedc-int's
+//! `Approx` were two types for one thing; `Approx` moved down to zed-bignum and is used here.
+//! Its power keeps the shift out of the squaring loop, where `Bound`'s added a `BigInt`
+//! exponent at every step (PERF-fold-power-of-huge-exponent), and one run gives both ends.
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -13,6 +20,7 @@ use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{One, ToPrimitive, Zero};
 
+use super::bignum::approx::Approx;
 use super::fast;
 use super::room::{LiteralRounding, TooLarge, built, room};
 use zed_numtheory::BitLen;
@@ -26,119 +34,27 @@ pub(super) struct Product<'a> {
     pub(super) wide: Vec<(Cow<'a, BigUint>, BigUint)>,
 }
 
-/// The positive number `m * 2^e`.
-struct Bound {
-    m: BigUint,
-    e: BigInt,
-}
-
-impl Bound {
-    fn exact(m: BigUint) -> Bound {
-        Bound {
-            m,
-            e: BigInt::zero(),
-        }
-    }
-
-    /// `m` kept to `k` bits, rounded toward zero or away from it, reading only the bits kept
-    /// and the lowest nonzero one: a wide coefficient is not copied in full at each precision.
-    fn of(m: &BigUint, k: u64, up: bool) -> Bound {
-        let bits = m.bits();
-        if bits <= k {
-            return Bound::exact(m.clone());
-        }
-        let drop = bits - k;
-        // Unreachable: `bits > k >= 0` here, so `m` is not zero and has a lowest set bit.
-        let inexact = m.trailing_zeros().expect("a bound is positive") < drop;
-        let mut kept = m >> drop;
-        if up && inexact {
-            kept += 1u32;
-        }
-        Bound {
-            m: kept,
-            e: BigInt::from(drop),
-        }
-    }
-
-    /// Kept to `k` bits, rounded toward zero, or away from it when `up`.
-    fn round(mut self, k: u64, up: bool) -> Bound {
-        let bits = self.m.bits();
-        if bits <= k {
-            return self;
-        }
-        let drop = bits - k;
-        // Unreachable: `bits > k >= 0` here, so `self.m` is not zero.
-        let inexact = self.m.trailing_zeros().expect("a bound is positive") < drop;
-        self.m >>= drop;
-        if up && inexact {
-            self.m += 1u32;
-        }
-        self.e += drop;
-        self
-    }
-
-    fn mul(&self, other: &Bound, k: u64, up: bool) -> Bound {
-        Bound {
-            m: fast::mul(&self.m, &other.m),
-            e: &self.e + &other.e,
-        }
-        .round(k, up)
-    }
-
-    /// `self / other`, to `k` bits, rounded toward zero or away from it.
-    fn div(&self, other: &Bound, k: u64, up: bool) -> Bound {
-        let shift = k + other.m.bits();
-        let (q, r) = (&self.m << shift).div_rem(&other.m);
-        let m = if up && !r.is_zero() { q + 1u32 } else { q };
-        Bound {
-            m,
-            e: &self.e - &other.e - shift,
-        }
-        .round(k, up)
-    }
-
-    /// `floor(log2(self))`.
-    fn log2(&self) -> BigInt {
-        &self.e + (self.m.bits() - 1)
-    }
-
-    fn cmp(&self, other: &Bound) -> Ordering {
-        self.log2().cmp(&other.log2()).then_with(|| {
-            // With the leading bit in one place, the exponents differ by the difference of the
-            // mantissas' widths. Unreachable: equal `log2` gives `e1 + bits1 = e2 + bits2`, so
-            // `d = bits2 - bits1`, and no mantissa in memory has `2^63` bits.
-            let d = (&self.e - &other.e)
-                .to_i64()
-                .expect("bounds with one leading place have exponents a mantissa apart");
-            if d >= 0 {
-                (&self.m << d as u64).cmp(&other.m)
-            } else {
-                self.m.cmp(&(&other.m << d.unsigned_abs()))
+/// `floor(m * 2^(e + s))` for an end `m * 2^e` of a bound, `m >= 0`, and whether that is
+/// `m * 2^(e + s)` exactly.
+fn floor_scaled(m: &BigUint, e: &BigInt, s: &BigInt) -> (BigUint, bool) {
+    let x = e + s;
+    match x.to_u64() {
+        // Unreachable: the one caller, `round_with`, takes `s = prec - t` with `t` the top of
+        // `log2 q` clamped to the format and lowered only while the scaled value keeps at most
+        // `prec` bits, so the scaled bound has at most a few bits more than `prec` and `up`,
+        // below it, fits in a `usize`.
+        Some(up) => (
+            m << usize::try_from(up).expect("a scaled bound near a float's mantissa"),
+            true,
+        ),
+        None => {
+            let down = (-x).to_u64().unwrap_or(u64::MAX);
+            if down >= m.bits() {
+                return (BigUint::zero(), false);
             }
-        })
-    }
-
-    /// `floor(self * 2^s)`, and whether that is `self * 2^s` exactly.
-    fn floor_scaled(&self, s: &BigInt) -> (BigUint, bool) {
-        let x = &self.e + s;
-        match x.to_u64() {
-            // Unreachable: the one caller, `round_with`, takes `s = prec - t` with `t` the top of
-            // `log2 q` clamped to the format and lowered only while the scaled value keeps at most
-            // `prec` bits, so the scaled bound has at most a few bits more than `prec` and `up`,
-            // below it, fits in a `usize`.
-            Some(up) => (
-                &self.m << usize::try_from(up).expect("a scaled bound near a float's mantissa"),
-                true,
-            ),
-            None => {
-                let down = (-x).to_u64().unwrap_or(u64::MAX);
-                if down >= self.m.bits() {
-                    return (BigUint::zero(), false);
-                }
-                // Unreachable: `down < self.m.bits()`, so `self.m` is not zero.
-                let exact = self.m.trailing_zeros().expect("a bound is positive") >= down;
-                (&self.m >> down, exact)
-            }
+            // Unreachable: `down < m.bits()`, so `m` is not zero.
+            let exact = m.trailing_zeros().expect("a bound is positive") >= down;
+            (m >> down, exact)
         }
     }
 }
@@ -180,32 +96,24 @@ impl Product<'_> {
             .unwrap_or(0)
     }
 
-    /// A lower bound, or an upper one when `up`, kept to `k` bits.
-    fn bound(&self, k: u64, up: bool) -> Bound {
-        /// `base^e` by squaring from 1, each product rounded to `k` bits.
-        fn power(base: &Bound, e: &BigUint, k: u64, up: bool) -> Bound {
-            let mut power = Bound::exact(BigUint::one());
-            for i in (0..e.bits()).rev() {
-                power = power.mul(&power, k, up);
-                if e.bit(i) {
-                    power = power.mul(base, k, up);
-                }
-            }
-            power
-        }
-        let mut b = Bound::of(&self.coef, k, up);
+    /// Bounds on the product, both ends kept to `k` bits: each power by [`Approx::pow`] (by
+    /// squaring from 1, each product rounded outward), times the coefficient, each product
+    /// rounded outward. Every value is positive, so the ends of a product are the products of
+    /// the ends.
+    fn approx(&self, k: u64) -> Approx {
+        let mut b = Approx::of_uint(&self.coef, k);
         for (p, e) in &self.pows {
             if *p == 2 {
-                // `2^e` is a bound exactly: the exponent moves and nothing is rounded or squared.
-                b.e += BigInt::from(e.clone());
+                // `2^e` is a bound exactly: the shift moves and nothing is rounded or squared.
+                b.shift += BigInt::from(e.clone());
                 continue;
             }
-            b = b.mul(&power(&Bound::exact(BigUint::from(*p)), e, k, up), k, up);
+            b = b.mul(&Approx::exact(BigInt::from(*p)).pow(e, k), k);
         }
-        // A wide atom's base is itself rounded to `k` bits first, in the bound's direction, so
-        // the power bounds `q^f` the same way ([`cap`] counts this rounding).
+        // A wide atom's base is itself rounded outward to `k` bits first, so the power holds
+        // `q^f` ([`cap`] counts this rounding).
         for (q, f) in &self.wide {
-            b = b.mul(&power(&Bound::of(q, k, up), f, k, up), k, up);
+            b = b.mul(&Approx::of_uint(q, k).pow(f, k), k);
         }
         b
     }
@@ -443,26 +351,34 @@ pub(super) fn laurent_bits(n: &Product<'_>, d: &Product<'_>) -> Option<u64> {
 }
 
 /// A precision `k` at which the rounds of [`cmp`] must tell `n` and `d` apart, when
-/// [`laurent_bits`] gives `P`: `P + eb + 9`, `eb` the widest exponent in bits, at least 1.
+/// [`laurent_bits`] gives `P`: `P + eb + 10`, `eb` the widest exponent in bits, at least 1.
 ///
-/// Proof. A rounding to `k` bits ([`Bound::of`], [`Bound::round`]) keeps `m >= 2^(k - 1)` units
-/// of `2^drop` and moves the value `v` by less than one unit, so by less than `δ v` with `δ =
-/// 2^(1 - k)`; in logarithms by at most `ln(1 + δ) <= δ` up and `-ln(1 - δ) <= 2δ` down, so
-/// `2^(2 - k)` either way. A power `p^e` by squaring from 1 rounds twice a step at most, so its
-/// error in logarithms after step `j` is `E_j <= 2 E_(j-1) + 2^(3 - k)`, `E_0 = 0`, hence
-/// `E_t <= 2^(3 - k) (2^t - 1) < 2^(4 - k) e` for `t` the bits of `e`. A wide atom's base is
-/// rounded once first, by at most `2^(2 - k)` in logarithms, which its power multiplies by `e`:
-/// `2^(2 - k) e` more, so a power is within `2^(4 - k) e + 2^(2 - k) e < 2^(5 - k) e`. The
-/// coefficient adds one rounding and the product of the two one more. So each side's bound is
-/// within `2^(3 - k) + 2^(5 - k) e <= 2^(6 + eb - k)` of the side in logarithms, up and down
-/// alike, and its interval `[low, high]` has `ln(high / low) <= 2^(7 + eb - k)`. When neither
-/// `low_n > high_d` nor `high_n < low_d`, the two intervals meet, so `|ln n - ln d| <=
-/// ln(high_n / low_n) + ln(high_d / low_d) <= 2^(8 + eb - k)`, which at `k >= P + eb + 9` is
-/// below `2^-P <= |ln n - ln d|`, a contradiction. A power of 2 is bounded exactly and only
-/// tightens this.
+/// Proof. The bounds are [`Approx`] intervals of positive values, and a rounding to `k` bits
+/// ([`Approx::of_uint`], [`Approx::truncate`]) drops the same `t` bits of both ends, `t` chosen
+/// so that the upper end keeps `k` bits. The upper end keeps at least `2^(k - 1)` units of
+/// `2^t` and moves up by less than one unit, so by less than `δ v` with `δ = 2^(1 - k)`, at
+/// most `δ` in logarithms. The lower end may have fewer bits than the upper. While the
+/// interval's ends are within a factor 2, `lo >= hi / 2`, it keeps at least `2^(k - 2)` units
+/// and moves down by less than one, so by less than `2δ v`, at most `-ln(1 - 2δ) <= 4δ =
+/// 2^(3 - k)` in logarithms for `k >= 3`. So a rounding moves either end by at most `2^(3 - k)`
+/// in logarithms. A power `p^e` by squaring from 1 rounds twice a step at most, so its error
+/// in logarithms after step `j` is `E_j <= 2 E_(j-1) + 2^(4 - k)`, `E_0 = 0`, hence `E_t <=
+/// 2^(4 - k) (2^t - 1) < 2^(5 - k) e` for `t` the bits of `e`. A wide atom's base is rounded
+/// once first, by at most `2^(3 - k)` in logarithms, which its power multiplies by `e`: `2^(3 -
+/// k) e` more, so a power is within `2^(5 - k) e + 2^(3 - k) e < 2^(6 - k) e`. The coefficient
+/// adds one rounding and the product of the two one more. So each side's bound is within
+/// `2^(4 - k) + 2^(6 - k) e <= 2^(7 + eb - k)` of the side in logarithms, up and down alike,
+/// and its interval `[low, high]` has `ln(high / low) <= 2^(8 + eb - k)`. That is below
+/// `ln 2` at every precision tried, `k >= 64 + eb` ([`start`]), and every interval met on the
+/// way is narrower, so the factor 2 assumed above holds at each rounding, by induction on the
+/// steps. When neither `low_n > high_d` nor `high_n < low_d`, the two intervals meet, so
+/// `|ln n - ln d| <= ln(high_n / low_n) + ln(high_d / low_d) <= 2^(9 + eb - k)`, which at
+/// `k >= P + eb + 10` is below `2^-P <= |ln n - ln d|`, a contradiction. A power of 2 is
+/// bounded exactly and only tightens this. (With each end rounded on its own to `k` bits, the
+/// type this replaced, the lower end lost at most `2^(2 - k)` and the cap was `P + eb + 9`.)
 fn cap(n: &Product<'_>, d: &Product<'_>) -> Option<u64> {
     let eb = n.exp_bits().max(d.exp_bits()).max(1);
-    laurent_bits(n, d).map(|p| p + eb + 9)
+    laurent_bits(n, d).map(|p| p + eb + 10)
 }
 
 /// `n` and `d` with every exponent divided by `g`, the greatest common divisor of all the
@@ -614,12 +530,11 @@ fn cmp_at(n: &Product<'_>, d: &Product<'_>) -> Result<(Ordering, u64), TooLarge>
         // told the two apart, so no round runs at twice the cap or more.
         debug_assert!(cap.is_none_or(|c| k == start(n, d) || k < 2 * c));
         room(BigUint::from(k) << 1u32, BigUint::from(k) << 3u32)?;
-        let (nl, nu) = (n.bound(k, false), n.bound(k, true));
-        let (dl, du) = (d.bound(k, false), d.bound(k, true));
-        if nl.cmp(&du) == Ordering::Greater {
+        let (a, b) = (n.approx(k), d.approx(k));
+        if b.below(&a) {
             return Ok((Ordering::Greater, k));
         }
-        if nu.cmp(&dl) == Ordering::Less {
+        if a.below(&b) {
             return Ok((Ordering::Less, k));
         }
         k *= 2;
@@ -638,8 +553,10 @@ pub(super) struct Format {
 
 /// What the rounding reads of `q = n / d`.
 enum Quotient {
-    /// Bounds on `q`.
-    Bounds { low: Bound, high: Bound },
+    /// Bounds on `q`. Its lower end is above zero: the bounds of `n` and `d` are within a
+    /// factor 2 of their ends (the proof at [`cap`]), and [`Approx::div_positive`] keeps `k`
+    /// bits, `k >= 64`, in the upper end of their quotient, which is then within a factor 4.
+    Bounds(Approx),
     /// `n` and `d` themselves.
     Exact { n: BigUint, d: BigUint },
 }
@@ -648,7 +565,7 @@ impl Quotient {
     /// Bounds on `floor(log2 q)`.
     fn log2(&self) -> (BigInt, BigInt) {
         match self {
-            Quotient::Bounds { low, high } => (low.log2(), high.log2()),
+            Quotient::Bounds(q) => q.log2_ends(),
             Quotient::Exact { n, d } => {
                 let t = BigInt::from(n.bits()) - BigInt::from(d.bits());
                 (&t - 1, t)
@@ -664,9 +581,9 @@ impl Quotient {
         is: &dyn Fn(&BigInt, &BigUint) -> bool,
     ) -> Option<(BigUint, bool)> {
         match self {
-            Quotient::Bounds { low, high } => {
-                let (wl, at_wl) = low.floor_scaled(s);
-                let (wh, _) = high.floor_scaled(s);
+            Quotient::Bounds(q) => {
+                let (wl, at_wl) = floor_scaled(q.lo.magnitude(), &q.shift, s);
+                let (wh, _) = floor_scaled(q.hi.magnitude(), &q.shift, s);
                 if wl == wh {
                     // `q * 2^s >= low * 2^s`, past `wl` unless the bound is on it.
                     let whole = at_wl && is(s, &wl);
@@ -724,7 +641,8 @@ pub(super) fn round(
             // Complexity tradeoff: a round asks for `32k` bits, a measured bound, not a proved
             // one: the peak heap of the rounds of a number just below a rounding boundary was
             // 1.30 to 1.39 times `16k` for parts of 2^12 to 2^18 words, the rise from num-bigint's
-            // Burnikel-Ziegler division (`Bound::div`), which a sum of the parts, `12k`, missed;
+            // Burnikel-Ziegler division (then `Bound::div`, now [`Approx::div_positive`], the
+            // same two divisions of a `3k`-bit dividend), which a sum of the parts, `12k`, missed;
             // asking `16k` let a round start and abort the compiler on a literal of 2^24 digits
             // under a limit 128 MiB above its holdings. So a round needing less is refused when
             // the free memory lies between the two. Tested by
@@ -733,12 +651,7 @@ pub(super) fn round(
             // allocated once, its size known by construction.
             room(BigUint::from(k) << 1u32, BigUint::from(k) << 5u32)
                 .map_err(LiteralRounding::TooLarge)?;
-            let (nl, nu) = (n.bound(k, false), n.bound(k, true));
-            let (dl, du) = (d.bound(k, false), d.bound(k, true));
-            Quotient::Bounds {
-                low: nl.div(&du, k, false),
-                high: nu.div(&dl, k, true),
-            }
+            Quotient::Bounds(n.approx(k).div_positive(&d.approx(k), k))
         };
         if let Some(r) = round_with(&q, f, is) {
             return r;

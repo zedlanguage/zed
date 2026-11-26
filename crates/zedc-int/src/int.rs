@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
+use zed_bignum::approx::{Approx, below_zero, floor_shr, scaled_cmp};
 use zed_bignum::coprime::coprime_base_exponents;
 use zed_bignum::fast::{
     div_floor as div_floor_int, gcd_uint, inverse_mod as inverse_mod_uint,
@@ -1006,287 +1007,6 @@ impl Ord for Memo {
 /// and every `e_i >= 1`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct Core(Vec<(Atom, BigUint)>);
-
-/// The sign of `x`, as a `bool` that holds for values below zero.
-fn below_zero(x: &BigInt) -> bool {
-    x.sign() == Sign::Minus
-}
-
-/// `x * 2^sx` against `y * 2^sy`, for magnitudes.
-fn mag_scaled_cmp(x: &BigUint, sx: &BigInt, y: &BigUint, sy: &BigInt) -> Ordering {
-    match (x.bits(), y.bits()) {
-        (0, 0) => return Ordering::Equal,
-        (0, _) => return Ordering::Less,
-        (_, 0) => return Ordering::Greater,
-        _ => {}
-    }
-    let (tx, ty) = (sx + x.bits(), sy + y.bits());
-    if tx != ty {
-        return tx.cmp(&ty);
-    }
-    // The totals are equal, so the difference of the shifts is at most the bits of x or y.
-    if sx >= sy {
-        let d = u64::try_from(&(sx - sy)).expect("at most the bits of y");
-        (x << d).cmp(y)
-    } else {
-        let d = u64::try_from(&(sy - sx)).expect("at most the bits of x");
-        x.cmp(&(y << d))
-    }
-}
-
-/// `x * 2^sx` against `y * 2^sy`.
-fn scaled_cmp(x: &BigInt, sx: &BigInt, y: &BigInt, sy: &BigInt) -> Ordering {
-    match x.sign().cmp(&y.sign()) {
-        Ordering::Equal => {}
-        o => return o,
-    }
-    let o = mag_scaled_cmp(x.magnitude(), sx, y.magnitude(), sy);
-    if below_zero(x) { o.reverse() } else { o }
-}
-
-/// `floor(x / 2^s)` for `s >= 0`. A shift past the bits of `x` gives -1 or 0 without
-/// shifting, so `s` may be far larger than `x`.
-fn floor_shr(x: &BigInt, s: &BigInt) -> BigInt {
-    match u64::try_from(s) {
-        Ok(s) if s <= x.bits() => x >> s,
-        _ => BigInt::from(-i32::from(below_zero(x))),
-    }
-}
-
-/// `ceil(x / 2^s)` for `s >= 0`.
-fn ceil_shr(x: &BigInt, s: &BigInt) -> BigInt {
-    -floor_shr(&-x, s)
-}
-
-/// A value to `bits` bits: it lies in `lo * 2^shift ..= hi * 2^shift`. It is exact when
-/// `lo == hi`.
-#[derive(Clone, Debug)]
-struct Approx {
-    lo: BigInt,
-    hi: BigInt,
-    shift: BigInt,
-}
-
-impl Approx {
-    fn exact(v: BigInt) -> Approx {
-        Approx {
-            lo: v.clone(),
-            hi: v,
-            shift: BigInt::ZERO,
-        }
-    }
-
-    /// `v` to `bits` bits: exact when `v` has at most `bits` bits. It reads only the bits it
-    /// keeps, so its cost does not grow with the bits of `v`.
-    fn of(v: &BigInt, bits: u64) -> Approx {
-        let have = v.bits();
-        if have <= bits {
-            return Approx::exact(v.clone());
-        }
-        let t = have - bits;
-        let lo = v >> t;
-        let hi = if v.trailing_zeros().is_some_and(|z| z < t) {
-            &lo + 1u32
-        } else {
-            lo.clone()
-        };
-        Approx {
-            lo,
-            hi,
-            shift: BigInt::from(t),
-        }
-    }
-
-    fn is_exact(&self) -> bool {
-        self.lo == self.hi
-    }
-
-    /// Drops the low bits past `bits`, rounding `lo` down and `hi` up.
-    fn truncate(mut self, bits: u64) -> Approx {
-        let have = self.lo.bits().max(self.hi.bits());
-        if have <= bits {
-            return self;
-        }
-        let t = have - bits;
-        let up = self.hi.trailing_zeros().is_some_and(|z| z < t);
-        self.lo >>= t;
-        self.hi >>= t;
-        if up {
-            self.hi += 1u32;
-        }
-        self.shift += t;
-        self
-    }
-
-    /// The product, to `bits` bits.
-    fn mul(&self, o: &Approx, bits: u64) -> Approx {
-        let (lo, hi) = if !below_zero(&self.lo) && !below_zero(&o.lo) {
-            (mul_int(&self.lo, &o.lo), mul_int(&self.hi, &o.hi))
-        } else {
-            let mut ps = [
-                mul_int(&self.lo, &o.lo),
-                mul_int(&self.lo, &o.hi),
-                mul_int(&self.hi, &o.lo),
-                mul_int(&self.hi, &o.hi),
-            ];
-            ps.sort();
-            let [lo, _, _, hi] = ps;
-            (lo, hi)
-        };
-        Approx {
-            lo,
-            hi,
-            shift: &self.shift + &o.shift,
-        }
-        .truncate(bits)
-    }
-
-    /// The sum, to `bits` bits. When the shifts differ by at most `bits`, the operand with the
-    /// larger shift is moved down to the other exactly; otherwise the one with the smaller
-    /// shift is rounded outward to the larger, so a small term beside a huge one costs no
-    /// more than the huge one's `bits`.
-    fn add(&self, o: &Approx, bits: u64) -> Approx {
-        let (a, b) = if self.shift >= o.shift {
-            (self, o)
-        } else {
-            (o, self)
-        };
-        let diff = &a.shift - &b.shift;
-        match u64::try_from(&diff) {
-            Ok(d) if d <= bits => Approx {
-                lo: (&a.lo << d) + &b.lo,
-                hi: (&a.hi << d) + &b.hi,
-                shift: b.shift.clone(),
-            },
-            _ => Approx {
-                lo: &a.lo + floor_shr(&b.lo, &diff),
-                hi: &a.hi + ceil_shr(&b.hi, &diff),
-                shift: a.shift.clone(),
-            },
-        }
-        .truncate(bits)
-    }
-
-    /// The quotient by `den >= 1`, to `bits` bits; exact when `self` is an exact multiple of
-    /// `den`.
-    fn div(self, den: &BigUint, bits: u64) -> Approx {
-        if den.is_one() {
-            return self;
-        }
-        let den = BigInt::from(den.clone());
-        if self.is_exact() && self.shift.is_zero() && self.lo.is_multiple_of(&den) {
-            return Approx::exact(self.lo / den);
-        }
-        let t = bits + den.bits();
-        Approx {
-            lo: Integer::div_floor(&(self.lo << t), &den),
-            hi: Integer::div_ceil(&(self.hi << t), &den),
-            shift: self.shift - t,
-        }
-        .truncate(bits)
-    }
-
-    /// `self ^ exp`, for `self >= 0`, by squaring: `O(bits of exp)` products. Each product
-    /// adds a relative error of at most `2^-bits`, and a power multiplies the relative error
-    /// by its exponent (to first order; this says only how precise the result is). The result
-    /// holds the true power whatever the error: `r` starts exact at 1, and each step is a
-    /// [`Approx::mul`] of two intervals of values at least 0, whose ends are the products of
-    /// the ends (both `lo` at least 0, so `lo * lo'` is the least product and `hi * hi'` the
-    /// greatest), and whose [`Approx::truncate`] rounds `lo` down and `hi` up. So by induction
-    /// on the steps, `r.lo * 2^r.shift <= self^e <= r.hi * 2^r.shift` for the exponent `e`
-    /// read so far.
-    ///
-    /// The shift is kept out of the loop (item PERF-fold-power-of-huge-exponent). Squaring an
-    /// `Approx` that carried its shift doubled a BigInt of about `b` bits, for the `b` bits of
-    /// `exp`, at each of the `b` steps: O(b^2) bit operations for shifts alone, where the ends
-    /// stay at `bits` bits. `2 ^ (2^(2^20))` took 11 s in a dev build to fold, all of it in
-    /// those additions. Now the ends are computed with shifts of zero, and the shift once at
-    /// the end. Proof that the result is the same `Approx`, end for end and shift for shift:
-    ///
-    /// 1. [`Approx::mul`] and [`Approx::truncate`] read only `lo` and `hi` to compute the new
-    ///    `lo`, `hi` and the bits `t` dropped; the shift of the product is the sum of the
-    ///    shifts plus `t`. So the ends at every step are those of the loop above whatever the
-    ///    shifts, and starting from shifts of zero, each step's product has the shift `t` of
-    ///    that step alone, a `u64` since it is at most the bits of the product's ends.
-    /// 2. In the loop above, write `s` for `self.shift`, `S_i` for `r.shift` after the step of
-    ///    bit `i`, and `c_i` for the bits dropped in that step's square and product together.
-    ///    Then `S_i = 2 S_{i+1} + c_i + s * bit_i(exp)`, with `S = 0` above the top bit.
-    /// 3. Unrolled from the top bit down to bit 0, each term entered at bit `i` is doubled by
-    ///    the `i` squarings below it: `S_0 = sum_i (c_i + s * bit_i(exp)) * 2^i
-    ///    = s * exp + sum_i c_i 2^i`.
-    /// 4. The sum `sum_i c_i 2^i`, with each `c_i` below `2^64`, is written in one pass from
-    ///    bit 0 up with a carry: after position `i` the carry is below `2^65` (by induction:
-    ///    `(carry + c_i) / 2 < (2^65 + 2^64) / 2 < 2^65`), so a `u128` holds it.
-    ///
-    /// Cost: the `b` steps of products of `bits`-bit ends, O(b) words to keep the `c_i`, one
-    /// O(b) pass for their sum, and one product `s * exp`: linear in `b` for a fixed `bits`.
-    /// Tested by `tests::a_power_keeps_its_shift_out_of_the_loop` (against the loop above,
-    /// shifts of zero and not, exact and not, exponents of 0 to 300 bits) and timed by
-    /// l01_29 `bench::too_large::folding_a_power_of_a_huge_exponent_scales`. What the test
-    /// cannot catch: a `bits` so large that the dropped bits of one step pass `2^64`, which
-    /// would need ends of `2^63` bits.
-    fn pow(&self, exp: &BigUint, bits: u64) -> Approx {
-        let base = Approx {
-            lo: self.lo.clone(),
-            hi: self.hi.clone(),
-            shift: BigInt::ZERO,
-        };
-        let mut r = Approx::exact(BigInt::from(1u32));
-        // Step 1: `dropped[i]` is `c_i`, the bits dropped at bit `i` of `exp`.
-        let mut dropped = vec![0u64; usize::try_from(exp.bits()).expect("an exponent in memory")];
-        let take = |r: Approx| -> (Approx, u64) {
-            let t = u64::try_from(&r.shift).expect("step 1: the bits one product drops");
-            (
-                Approx {
-                    shift: BigInt::ZERO,
-                    ..r
-                },
-                t,
-            )
-        };
-        for i in (0..exp.bits()).rev() {
-            let (sq, t) = take(r.mul(&r, bits));
-            r = sq;
-            let mut c = t;
-            if exp.bit(i) {
-                let (p, t) = take(r.mul(&base, bits));
-                r = p;
-                c += t;
-            }
-            dropped[i as usize] = c;
-        }
-        // Step 4: `sum_i c_i 2^i`, in 32-bit digits for `BigUint::new`.
-        let mut digits = Vec::with_capacity(dropped.len() / 32 + 5);
-        let (mut carry, mut digit) = (0u128, 0u32);
-        for (i, c) in dropped.iter().enumerate() {
-            carry += u128::from(*c);
-            digit |= ((carry & 1) as u32) << (i % 32);
-            carry >>= 1;
-            if i % 32 == 31 {
-                digits.push(digit);
-                digit = 0;
-            }
-        }
-        if dropped.len() % 32 != 0 {
-            digits.push(digit);
-        }
-        let low = BigUint::new(digits);
-        let high = BigUint::from(carry) << dropped.len();
-        // Step 3: `s * exp + sum_i c_i 2^i`.
-        r.shift = &self.shift * BigInt::from(exp.clone()) + BigInt::from(low + high);
-        r
-    }
-
-    /// Whether every value in `self` is below every value in `o`.
-    fn below(&self, o: &Approx) -> bool {
-        scaled_cmp(&self.hi, &self.shift, &o.lo, &o.shift) == Ordering::Less
-    }
-
-    /// Whether every value in `self` is at most `y * 2^sy`.
-    fn hi_at_most(&self, y: &BigInt, sy: &BigInt) -> bool {
-        scaled_cmp(&self.hi, &self.shift, y, sy) != Ordering::Greater
-    }
-}
 
 /// `base ^ exp`, written out by zed-bignum `fast::pow` (DRY-bignum-crate-2026-11-26: this was a
 /// second power by squaring with the same product): its cost is that of the value's digits.
@@ -3434,6 +3154,20 @@ mod tests {
         pub(super) static CORE_APPROX_BITS: Cell<u64> = const { Cell::new(0) };
     }
 
+    /// A crate above zed-bignum takes the measured leaves in its own unit tests: zed-bignum's
+    /// small leaves come only from its own `cfg(test)` and from the package zed-bignum-small,
+    /// which only zed-kernel's unit tests link (zed-bignum `fast::SMALL_LEAVES`;
+    /// TEST-kernel-small-leaves-after-bignum-move). zed-kernel's
+    /// `num::tests::the_unit_tests_take_the_small_leaves` checks the other side.
+    #[test]
+    fn the_unit_tests_of_another_crate_take_the_measured_leaves() {
+        use zed_bignum::fast::crossover;
+        const { assert!(!crossover::SMALL_LEAVES) };
+        assert_eq!(crossover::MUL_LEAF, 400);
+        assert!(crossover::TOOM_COST.is_finite());
+        assert!(crossover::DIV_COST.is_finite());
+    }
+
     /// `is_succ` and the two `at_most_succ` that use it agree with `a == b + 1` and `a <= b + 1`
     /// formed by num-bigint, on every pair of: 0, ±1, ±2, the values next to ±2^63, ±2^64 (one
     /// 64-bit digit full, a carry into a new digit), ±2^128, ±2^192 and 2^128 + 2^64 (a carry
@@ -3558,70 +3292,6 @@ mod tests {
             "{calls} approximations of cores for 2 n = {} terms",
             2 * n
         );
-    }
-
-    /// `x ^ exp` by the loop `Approx::pow` ran before PERF-fold-power-of-huge-exponent, the
-    /// shift carried through every step.
-    fn pow_carrying_the_shift(x: &Approx, exp: &BigUint, bits: u64) -> Approx {
-        let mut r = Approx::exact(BigInt::from(1u32));
-        for i in (0..exp.bits()).rev() {
-            r = r.mul(&r, bits);
-            if exp.bit(i) {
-                r = r.mul(x, bits);
-            }
-        }
-        r
-    }
-
-    /// `Approx::pow` gives the ends and shift of the loop that carried the shift through every
-    /// step: bases exact and not, of shifts zero, positive and negative, to 8, 64 and 200 bits,
-    /// and exponents 0 to 40, `2^k`, `2^k - 1` and random ones of up to 300 bits, so that the
-    /// dropped bits carry across 32-bit digits and past the top bit of the exponent.
-    #[test]
-    fn a_power_keeps_its_shift_out_of_the_loop() {
-        let (mut rng, _) = crate::seed::Rng::fresh("a_power_keeps_its_shift_out_of_the_loop");
-        let mut exps: Vec<BigUint> = (0u32..=40).map(BigUint::from).collect();
-        for k in [31u32, 32, 33, 63, 64, 65, 200] {
-            exps.push(BigUint::one() << k);
-            exps.push((BigUint::one() << k) - 1u32);
-        }
-        for _ in 0..20 {
-            let words: Vec<u32> = (0..10).map(|_| rng.next_u64() as u32).collect();
-            exps.push(BigUint::new(words) >> (rng.next_u64() % 320));
-        }
-        let lo = BigInt::from(3u64 << 61) * 5u32 + 7u32;
-        let bases = [
-            Approx::exact(BigInt::from(2u32)),
-            Approx::exact(BigInt::from(3u32)),
-            Approx::exact(lo.clone()),
-            Approx {
-                lo: lo.clone(),
-                hi: &lo + 1u32,
-                shift: BigInt::from(17u32),
-            },
-            Approx {
-                lo: lo.clone(),
-                hi: &lo + 2u32,
-                shift: BigInt::from(-90),
-            },
-            Approx {
-                lo: BigInt::from(1u32),
-                hi: BigInt::from(1u32),
-                shift: BigInt::one() << 100u32,
-            },
-        ];
-        for x in &bases {
-            for bits in [8u64, 64, 200] {
-                for e in &exps {
-                    let (got, want) = (x.pow(e, bits), pow_carrying_the_shift(x, e, bits));
-                    assert_eq!(
-                        (&got.lo, &got.hi, &got.shift),
-                        (&want.lo, &want.hi, &want.shift),
-                        "{x:?} ^ {e} to {bits} bits"
-                    );
-                }
-            }
-        }
     }
 
     /// A product or sum of one kept power by small numbers is placed past `i128` by the least
