@@ -20810,7 +20810,7 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 /// Each set comes without its tails ([`Classed::without_tails`]), its ranges met with its
 /// class as the exact projection gave them, with the cause [`Refusal::Repeats`] where they
 /// are wider, as before row CLASSED-periodic-tail; only [`decide_at`] reads the tails
-/// ([`project_each_tailed`]). Why: the readers of these sets (zedc-preimage's product) read
+/// (`project_each_tailed`). Why: the readers of these sets (zedc-preimage's product) read
 /// their ranges and class, not the tails, and with the tails kept they lost what they had
 /// derived: `l01_39_scope_relations::families::answers::two_eq_case_answers` was red, with
 /// `a=[..]` where it had `a=[..=-3, 0..=0, 3..]` after `a == 3 * z0`. Teaching those readers
