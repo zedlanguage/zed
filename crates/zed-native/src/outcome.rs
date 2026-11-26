@@ -66,6 +66,7 @@ pub(crate) fn call(
     *ev = s.run.ev;
     // The hooks record the node's index in the tables; the sites are by its number in the
     // graph, which counts the nodes of the bodies the kernel runs too.
+    // Cannot panic: N1 (hooks.rs); `err_at` is only ever the `id` a node's hook got (`fail`).
     let at = s.run.err_at.map(|i| s.t.nodes[i].number);
     Ok(Outcome {
         value: r.map_err(|e| (e, at))?,
