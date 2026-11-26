@@ -20,8 +20,8 @@ use zedc_int::int::Int;
 
 /// A treap of disjoint intervals of the base coordinate, ordered by their lower ends
 /// ([`zed_collections::treap`]), each node's priority drawn once per run from its lower end
-/// ([`Hole::priority`]), so that in a run one set of intervals has one shape whatever the order
-/// they were cut in.
+/// (`Hole`'s [`treap::Item::priority`]), so that in a run one set of intervals has one shape
+/// whatever the order they were cut in.
 type Tree = treap::Tree<Hole>;
 
 /// The interval `lo..=hi` of the base coordinate, keyed by its lower end.
