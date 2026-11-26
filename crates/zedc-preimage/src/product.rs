@@ -17368,7 +17368,7 @@ impl Scope {
         // disjunctions_as_the_eager_one` and on the random seeds of
         // `l01_39_scope_relations::lazy`; they cannot catch a precision loss both scopes share.
         let leaf = b.leaf.clone();
-        let mut first: Vec<PartAt> = due.iter().cloned().collect();
+        let mut first: Vec<PartAt> = due.to_vec();
         // Complexity tradeoff: naive version, `PartAt` orders `(false, conjunct)` before
         // `(true, least)`, so in a case of a star (`persist` Arm 2 `x - j * y >= 1`) a woke
         // disjunction projects first under coarse hub bounds, `(true, least)` then narrows the
