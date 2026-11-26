@@ -2485,9 +2485,13 @@ pub fn pow(b: &BigUint, mut e: u64) -> BigUint {
 /// `n` words, left to right / right to left): at `n` = 4096, bases of 2 to 64 words 0.585 to
 /// 0.923 and 128 words 1.066; at `n` = 32768, 2 to 64 words 0.556 to 0.877 and 128 to 2048
 /// words 1.037 to 1.295. Left to right is cheaper up to 64 words at both sizes and right to
-/// left from 128, so the crossing is at a width of the base, not a fraction of the result;
-/// 64 is the widest measured width left to right wins at both. The exponent with every bit
-/// set is the case that separates the orders most: each takes one product per set bit, and
+/// left from 128. Between them, by 16 words (hm1, 2026-11-26): at `n` = 4096, 80 to 128 words
+/// 1.009 to 1.070; at `n` = 32768, 80 words 0.876, 96 words 0.881, 112 words 0.954. So the
+/// crossing lies between 64 and 80 words at `n` = 4096 and between 112 and 128 at 32768, a
+/// width that grows slowly with the result, and 64 is the widest width left to right wins at
+/// both: a switch at 112 would cost 5.7% at `n` = 4096 and 80 words, and at 64 a base of 80 to
+/// 112 words at `n` = 32768 costs 5% to 14%. The exponent with every bit set is the case that
+/// separates the orders most: each takes one product per set bit, and
 /// with a single set bit both are squarings alone. Before, one word (the earlier measurements,
 /// base 3 and a base of `n/16` words, agreed with both).
 const POW_LEFT_WORDS: u64 = 64;

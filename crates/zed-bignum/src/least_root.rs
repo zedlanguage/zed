@@ -76,7 +76,19 @@ pub fn sqrt_rem_uint(a: &BigUint) -> (BigUint, BigUint) {
     let (s1, r1) = sqrt_rem_uint(&(a >> (2 * k)));
     let a1 = (a >> k) & &mask;
     let a0 = a & &mask;
-    let (q, u) = fast::div_rem(&((r1 << k) + a1), &(&s1 << 1u32));
+    // `(q, u) = div_rem(N, 2s')` for `N = r' B + a1`, taken as `div_rem(N >> 1, s')`: with
+    // `N = 2 (N >> 1) + b0` and `N >> 1 = s' q + u'`, `0 <= u' < s'`, `N = 2s' q + (2u' + b0)`
+    // and `0 <= 2u' + b0 <= 2s' - 1`, so `q` is the quotient and `u = 2u' + b0` the remainder
+    // (the halving of the remainder in Brent and Zimmermann's SqrtRem, MCA section 1.5.1).
+    // Why: `s'` has `k` bits and `N >> 1` at most `2k` (`N <= 2s' B + B - 1 < 2 B^2`), where
+    // `2s'` and `N` have one bit more; for `a` of `2^j` whole words that bit is one more word,
+    // `2^(j-1) + 1` by `2^(j-2) + 1` words, and a product of `2^i + 1` words takes the next
+    // transform length (PERF-sqrt-production-leaves-ratio: 16385 by 8193 words took 134M
+    // instructions, 6.6 squares of 16384 words, against 4.1 at 32768 by 16385).
+    let n_hi = (r1 << k) + a1;
+    let b0 = n_hi.bit(0);
+    let (q, u_half) = fast::div_rem(&(n_hi >> 1u32), &s1);
+    let u = (u_half << 1u32) + u32::from(b0);
     let mut s = (s1 << k) + &q;
     let t = (u << k) + a0;
     let q2 = mul_uint(&q, &q);

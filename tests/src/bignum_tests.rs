@@ -66,8 +66,9 @@ mod bench {
             let bits = a.bits();
             let k = bits.div_ceil(4);
             let (s1, r1) = sqrt_rem_uint(&(&a >> (2 * k)));
-            let top = (r1 << k) + ((&a >> k) & ((BigUint::one() << k) - 1u32));
-            let den = &s1 << 1u32;
+            // The top division of `sqrt_rem_uint`: `(r' B + a1) >> 1` by `s'`.
+            let top = ((r1 << k) + ((&a >> k) & ((BigUint::one() << k) - 1u32))) >> 1u32;
+            let den = s1;
             let q = fast::div_rem(&top, &den).0;
             let all = meter.least(|| {}, || drop(black_box(sqrt_rem_uint(&a))));
             let div = meter.least(|| {}, || drop(black_box(fast::div_rem(&top, &den))));
