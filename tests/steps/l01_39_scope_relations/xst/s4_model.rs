@@ -535,7 +535,7 @@ fn control_promotion_on_arrival_depends_on_the_order() {
 /// Claude drew from seed `0x9c4ec`, each box a random sub-box of the full box
 /// ([`gapped_box`]).
 fn pcheck(pi: Pi, count: usize, seed: u64) -> [[usize; 3]; 4] {
-    pcheck_on(pi, count, seed, gapped_box)
+    pcheck_on(pi, count, seed, gapped_box, &[0, 1, 2, 3])
 }
 
 /// Claude's box: each value of each name kept with probability 2/3, so most boxes have gaps.
@@ -555,8 +555,16 @@ fn interval_box(g: &mut Lcg) -> Bx {
     out
 }
 
-/// [`pcheck`] with each box drawn by `draw_box`.
-fn pcheck_on(pi: Pi, count: usize, seed: u64, draw_box: fn(&mut Lcg) -> Bx) -> [[usize; 3]; 4] {
+/// [`pcheck`] with each box drawn by `draw_box`, counting for the tests of index in `tests` only;
+/// the other rows stay 0. A row's count reads only the draw, which takes the same values from
+/// `g` whatever `tests` is, so each row is the one `pcheck` gives.
+fn pcheck_on(
+    pi: Pi,
+    count: usize,
+    seed: u64,
+    draw_box: fn(&mut Lcg) -> Bx,
+    tests: &[usize],
+) -> [[usize; 3]; 4] {
     let mut g = Lcg(seed);
     let mut tally = [[0usize; 3]; 4];
     for _ in 0..count {
@@ -564,7 +572,8 @@ fn pcheck_on(pi: Pi, count: usize, seed: u64, draw_box: fn(&mut Lcg) -> Bx) -> [
         let phi: Vec<Atom> = (0..1 + g.next(3)).map(|_| atom(&mut g)).collect();
         let a = atom(&mut g);
         let o = [atom(&mut g), atom(&mut g)];
-        for (k, t) in tally.iter_mut().enumerate() {
+        for &k in tests {
+            let t = &mut tally[k];
             let o: &[Atom] = if k >= 2 { &o } else { &o[..1] };
             let implied = if k == 3 {
                 o.iter().any(|&oi| proj(pi, b, &[oi, negate(a)]) == BOT)
@@ -718,12 +727,15 @@ fn control_the_whole_case_implication_test_fails_property_p() {
 /// meets both, and a point of `phi` and `o` would meet `a`.
 ///
 /// The counts per piece are pinned in [`BOX_PINNED`], from a run on an 8-core VM with 8 test
-/// threads (2026-11-22; 8.6 to 9.1 s a piece). Over the 12 pieces, under arc and under bounds
-/// projection alike: boxes of intervals 928,689 premises and no failure of P; gapped boxes
-/// 1,192,872 premises and one failure (piece 9, seed `0x9c4f5`). This does not show that a
-/// failure needs a gap: at the gapped rate per premise, about 0.78 interval failures were
-/// expected, and none is seen with probability about 0.46. Whether a failure needs a gap is
-/// still open.
+/// threads (2026-11-22; 8.6 to 9.1 s a piece, when each piece also counted the three tests it
+/// does not keep; counting only the whole-case test of two atoms, 3.05 to 3.12 s a piece alone,
+/// one test thread, v5e VM at load about 1.5, b22-free2 job prof29, 2026-11-26, four pieces;
+/// 5.06 s for pieces 0 and 11 alone on an l4 VM at load 4 to 4.2, job ver31). Over the 12
+/// pieces, under arc and under bounds projection alike: boxes of intervals 928,689 premises
+/// and no failure of P; gapped boxes 1,192,872 premises and one failure (piece 9, seed
+/// `0x9c4f5`). This does not show that a failure needs a gap: at the gapped rate per premise,
+/// about 0.78 interval failures were expected, and none is seen with probability about 0.46.
+/// Whether a failure needs a gap is still open.
 const BOX_DRAWS: usize = 1_000_000;
 
 const BOX_PIECES: usize = 12;
@@ -752,7 +764,7 @@ fn whole_case_on_interval_and_gapped_boxes(piece: usize) {
     let mut t = [[0; 3]; 4];
     for (i, draw_box) in draws.into_iter().enumerate() {
         for (j, pi) in [Pi::Arc, Pi::Bounds].into_iter().enumerate() {
-            t[2 * i + j] = pcheck_on(pi, BOX_DRAWS, seed, draw_box)[2];
+            t[2 * i + j] = pcheck_on(pi, BOX_DRAWS, seed, draw_box, &[2])[2];
         }
     }
     eprintln!(

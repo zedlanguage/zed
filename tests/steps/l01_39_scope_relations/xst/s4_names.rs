@@ -462,30 +462,30 @@ struct Battery {
     study: [usize; 4],
     /// The counts of each piece, pinned from the pieces' runs.
     pinned: &'static [[usize; 4]],
+    /// The state of the generator at the start of each piece, then at the end of the last:
+    /// `starts[0]` is `seed`, and piece `j` draws from `starts[j]` and ends at `starts[j + 1]`,
+    /// so the pieces together draw what the study drew from `seed`, without any piece drawing
+    /// the draws before it again. Pinned from a run that drew the whole battery from `seed`
+    /// (b22-free2 job prof30, 2026-11-26).
+    starts: &'static [u64],
 }
 
 impl Battery {
-    /// Runs piece `j`: the draws or systems `j * per_piece` up to the next piece's first, after
-    /// drawing and dropping those before it. Asserts that the atom-wise test never breaks
-    /// property P (`Pn`) or depends on the order (`PnOrders`), and the counts pinned for the
-    /// piece.
+    /// Runs piece `j`: the draws or systems `j * per_piece` up to the next piece's first, from
+    /// the generator state pinned for its start. Asserts that the atom-wise test never breaks
+    /// property P (`Pn`) or depends on the order (`PnOrders`), the counts pinned for the piece,
+    /// and that the piece ends at the state pinned for the next one.
     fn piece(&self, j: usize) {
         let from = j * self.per_piece;
         let to = self.size.min(from + self.per_piece);
         assert!(from < to, "piece {j} starts after the last draw");
-        let mut g = Lcg(self.seed);
+        let mut g = Lcg(self.starts[j]);
         let (counts, atom_wise_failures) = match self.command {
             Command::Pn => {
-                for _ in 0..from {
-                    draw(&mut g);
-                }
                 let t = pn(self.pi, &mut g, to - from);
                 (t, t[3])
             }
             Command::PnOrders => {
-                for _ in 0..from {
-                    system(&mut g);
-                }
                 let t = pnorders(self.pi, &mut g, to - from);
                 (t, t[2])
             }
@@ -495,6 +495,7 @@ impl Battery {
             self.command, self.pi, self.seed
         );
         eprintln!("{what}: {counts:?}");
+        assert_eq!(g.0, self.starts[j + 1], "{what}: the state at the end");
         assert_eq!(atom_wise_failures, 0, "{what}: the atom-wise test");
         if let Some(want) = self.pinned.get(j) {
             assert_eq!(counts, *want, "{what}: the pinned counts");
@@ -504,12 +505,15 @@ impl Battery {
 
 // The study's sizes and seeds. Piece sizes, from runs on an 8-core VM with 8 test threads
 // (2026-11-22): a `pn` piece of 2,000,000 draws took 2.8 to 7.3 s, the later pieces longer
-// because they skip the draws before them; an Exact `pn` piece of 500,000 draws 1.6 to 2.6 s; a
-// `pnorders` piece of 25,000 systems 3.0 to 4.5 s, and of 5,000 under Exact 1.4 to 1.5 s.
+// because they then drew and dropped the draws before them (now each starts at its pinned
+// generator state, and pieces 0 and 4 of seed 0x101 took 6.32 s each alone on an l4 VM at load
+// 5.3 to 6.5, b22-free2 job ver31, 2026-11-26); an Exact `pn` piece of 500,000 draws 1.6 to
+// 2.6 s; a `pnorders` piece of 25,000 systems 3.0 to 4.5 s, and of 5,000 under Exact 1.4 to 1.5 s.
 //
 // Study counts, from the logs (`pn_*.log`, `pnorders_*.log`): arc and bounds projection give
 // the same counts on each seed, and on each piece, so the bounds batteries share the arc
-// batteries' pinned rows.
+// batteries' pinned rows (and their pinned states, since a draw does not depend on the
+// projection).
 
 const PN_ARC_101: Battery = Battery {
     command: Command::Pn,
@@ -524,6 +528,14 @@ const PN_ARC_101: Battery = Battery {
         [126_132, 1, 123_073, 0],
         [125_831, 1, 122_648, 0],
         [125_771, 1, 122_777, 0],
+    ],
+    starts: &[
+        0x101,
+        0xad9c13f19ca979f4,
+        0xda6eb3d91214e1e0,
+        0x21d286ca4471f46a,
+        0xe6c04ad72242548e,
+        0x752d6c0c52b3e370,
     ],
 };
 
@@ -545,6 +557,14 @@ const PN_ARC_202: Battery = Battery {
         [125_723, 2, 122_569, 0],
         [125_428, 2, 122_334, 0],
         [125_981, 1, 122_929, 0],
+    ],
+    starts: &[
+        0x202,
+        0x7f9459fc7105d02e,
+        0x6811a65ac1d6b389,
+        0xd11a1f219d7b170,
+        0xc348e6b75abb7378,
+        0x93c165f718fee14d,
     ],
 };
 
@@ -568,6 +588,15 @@ const PN_EXACT_303: Battery = Battery {
         [31_543, 0, 30_810, 0],
         [31_351, 0, 30_566, 0],
     ],
+    starts: &[
+        0x303,
+        0x1e53842e2523273c,
+        0x6bea7c88bcb61532,
+        0x3c70793eaac3779d,
+        0xa66e3b5484ae59ec,
+        0x93d1f9983f177518,
+        0xcbaabb73ac19c2c8,
+    ],
 };
 
 const ORDERS_ARC_A1: Battery = Battery {
@@ -586,6 +615,17 @@ const ORDERS_ARC_A1: Battery = Battery {
         [24_952, 0, 0, 1_376],
         [24_959, 0, 0, 1_430],
         [24_949, 0, 0, 1_456],
+    ],
+    starts: &[
+        0xa1,
+        0xf197a706f4e75ec6,
+        0x2d1172b7ae5644d0,
+        0x8363f4876e15660c,
+        0xbc40a443194dba28,
+        0x9eb116cbcce87cfb,
+        0x2f3fc628cbadc12b,
+        0x7445b86c6990339c,
+        0x78ce27a475d5e0b,
     ],
 };
 
@@ -611,6 +651,17 @@ const ORDERS_ARC_B2: Battery = Battery {
         [24_950, 0, 0, 1_413],
         [24_950, 0, 0, 1_452],
     ],
+    starts: &[
+        0xb2,
+        0xe4c0df89091ff258,
+        0xab8bbd6e2ec5a2fd,
+        0xd34a65a64c60566d,
+        0xf8332fa3c49dee09,
+        0x3269f89fc3a77a7e,
+        0xcc36a0eb94911e6f,
+        0x2d5b8b5e6b4cfa3b,
+        0xaf05e5bd59e6994e,
+    ],
 };
 
 const ORDERS_BOUNDS_B2: Battery = Battery {
@@ -633,6 +684,15 @@ const ORDERS_EXACT_C3: Battery = Battery {
         [4_991, 0, 0, 313],
         [4_988, 0, 0, 317],
     ],
+    starts: &[
+        0xc3,
+        0x5505d1b212ba670b,
+        0x70a7b32e5c5a814d,
+        0x9004861934c1036,
+        0xd776816218203df9,
+        0x96e50df6250113dc,
+        0x1118f362dca7834b,
+    ],
 };
 
 const BATTERIES: [&Battery; 10] = [
@@ -648,8 +708,9 @@ const BATTERIES: [&Battery; 10] = [
     &ORDERS_EXACT_C3,
 ];
 
-/// Every battery has one pinned row per piece, and the rows add up to the study's counts: with
-/// the pieces' own assertions, the battery reproduces the study. Each piece of a battery must
+/// Every battery has one pinned row per piece, and the rows add up to the study's counts; its
+/// pinned states start at its seed, one for each piece and one for the end: with the pieces' own
+/// assertions, the battery reproduces the study. Each piece of a battery must
 /// also have its test in the lists below.
 #[test]
 fn the_pinned_pieces_add_up_to_the_study_counts() {
@@ -659,6 +720,11 @@ fn the_pinned_pieces_add_up_to_the_study_counts() {
             b.pinned.len(),
             b.size.div_ceil(b.per_piece),
             "{what}: pinned pieces"
+        );
+        assert_eq!(b.starts.len(), b.pinned.len() + 1, "{what}: pinned states");
+        assert_eq!(
+            b.starts[0], b.seed,
+            "{what}: the first piece starts at the seed"
         );
         let sum = b
             .pinned

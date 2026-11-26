@@ -758,11 +758,16 @@ fn tied_sets_and_ids_compare_each_key_a_few_times() {
         });
         assert_eq!(set.len(), n);
         assert!(cmps <= bound, "{family}: {n} types, {cmps} comparisons");
-        let mut old: HashSet<Counted<Type>, BuildHasherDefault<Digest>> = HashSet::default();
-        let old_cmps = count(&mut || keys.iter().for_each(|k| _ = old.insert(k.clone())));
-        assert_eq!(old.len(), n);
-        if family == "tied" && !crate::address::SHORT {
-            assert!(old_cmps >= quadratic, "the old set: {old_cmps} comparisons");
+        // The red case for the tied types is asserted only with full addresses, so the build with
+        // short addresses does not run it: there it asserted nothing past the length and took 5.8
+        // of the test's 8.3 s alone (b22-free2 prof30, v5e VM, load 1.8; FAIL-s4-model-near-limit).
+        if family == "apart" || !crate::address::SHORT {
+            let mut old: HashSet<Counted<Type>, BuildHasherDefault<Digest>> = HashSet::default();
+            let old_cmps = count(&mut || keys.iter().for_each(|k| _ = old.insert(k.clone())));
+            assert_eq!(old.len(), n);
+            if family == "tied" {
+                assert!(old_cmps >= quadratic, "the old set: {old_cmps} comparisons");
+            }
         }
         for k in &keys {
             assert!(set.remove(k) && !set.contains(k), "{family}");

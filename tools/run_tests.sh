@@ -1313,6 +1313,10 @@ split="
 # sequences after the first failure had caught each mutant and now stops there (0.14 s, same
 # verdict). The ten below took 4.1 to 7.0 s each, 51 s together; each is a piece, which leaves
 # the other piece about 123 s, 15.4 s on 8 cores. No other test's name holds one of their names.
+# The whole lib without benchmarks on a v5e VM (8 threads, b22-free2 job prof30, 2026-11-26,
+# --report-time, FAIL-s4-model-near-limit): the 565 tests of the other piece took 52.7 s together,
+# and the slowest, of random formulas with and without the plain shortcut, 5.8 s, the next 2.0 s.
+# That one test set the piece's wall time, so it is a piece; no other test's name holds its name.
 alone="
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_1
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_2
@@ -1428,6 +1432,7 @@ alone="
   zedc_presburger::presburger::exact::tests::the_answers_do_not_depend_on_the_order_of_the_symbols_part_3
   zedc_presburger::presburger::exact::tests::the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part_0
   zedc_presburger::presburger::exact::tests::leaf_choices_over_a_polygon_of_many_true_edges_cost_log_of_them
+  zedc_presburger::presburger::exact::tests::random_formulas_project_the_same_with_and_without_the_plain_shortcut
 "
 # Tests of short-zed_kernel (the zed-kernel unit tests of the short-addresses build) each run as a
 # piece of their own, `--exact`, and skipped by the binary's other piece, as for alone above.
