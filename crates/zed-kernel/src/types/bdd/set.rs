@@ -357,7 +357,7 @@ fn rebuild<A: Atom>(path: Vec<(&Arc<Set<A>>, bool)>, mut node: Tree<A>) -> Tree<
 
 /// The set with `key` added; its atom is not in the set. One walk down while the nodes stand
 /// above the new one, then the subtree there split at the key and the path made again, as
-/// `bdd::list::treap::insert`.
+/// `zed_collections::treap::insert`.
 ///
 /// Proof of the cost, `O(1 + D)` expected, `D` the bound of module [`zed_collections::priority`] on
 /// a node's expected depth (`T0 + n(n - 1)/p + 2c H_n` for `n` keys, `T0` the keys that share
@@ -616,7 +616,7 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
 /// `x \ y`, at most `|x| - 1` of them with both sides non-empty, two paths of its treap
 /// (cross-review round 3, Gemini R3-F1).
 /// Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016, Theorem 4 of
-/// the full version; cited in full in module `bdd::list::treap`) prove
+/// the full version; cited in full in module `zed_collections::treap`) prove
 /// `O(m log(n/m + 1))` for priorities drawn independently and identically; for the 8-wise
 /// independent draw here it is proved in module `priority` (the finger bound, cross-review of
 /// PROOF-join-work-limited-independence, round 7), plus the literals that share a point.
@@ -673,7 +673,7 @@ pub(super) fn difference_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> 
 // removes each of the smaller set's `m` literals in the larger's `n`, `O(m log n)` expected, and
 // makes `O(log n)` nodes for each literal, most of them dropped at the next. Used: the join-based
 // set operation of Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016,
-// doi:10.1145/2935764.2935768, cited in full in module `bdd::list::treap`),
+// doi:10.1145/2935764.2935768, cited in full in module `zed_collections::treap`),
 // difference with the literals of `y` kept, and the nodes made are those of the result's changed
 // paths. Proved for the draw of module `priority`: `O(m (1 + D))` expected work in all, its splits
 // and joins included, `D` the bound on a node's expected depth there for `N = n + m` keys, so

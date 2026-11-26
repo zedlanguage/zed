@@ -26,7 +26,7 @@
 //!   join the two recursive results; "For INTERSECT, JOIN2 is used instead of JOIN if the root
 //!   of the first is not found in the second. For DIFFERENCE, JOIN2 is used anyway". Theorem 4:
 //!   work `O(m log(n/m + 1))` for sizes `m <= n`, "in expectation for treaps". The full citation
-//!   and the treap JOIN (Figure 5) are also in `types::bdd::list::treap`.
+//!   and the treap JOIN (Figure 5) are also in `zed_collections::treap`.
 //!
 //! Departures: the recursion runs on an explicit stack (`combine`), and it stops early at
 //! shared subtrees and at results of an operand's size (below); neither changes the bound.
@@ -188,7 +188,7 @@ thread_local! {
 }
 
 /// A set is freed in a loop, a node whose last handle goes handing its children on, so a set of
-/// any height is dropped on a small stack (as `types::bdd::list::treap` does).
+/// any height is dropped on a small stack (as `zed_collections::treap` does).
 impl<T> Drop for Node<T> {
     fn drop(&mut self) {
         let mut stack: Vec<Node<T>> = Vec::new();
@@ -653,7 +653,7 @@ impl<T: Elem> TreapSet<T> {
 
     /// Adds `key`; whether it was new. One walk down while the nodes stand above the new one,
     /// then the subtree there split at the key, `O(log n)` expected (as
-    /// `types::bdd::list::treap::insert`). A node on the path that another set shares is made
+    /// `zed_collections::treap::insert`). A node on the path that another set shares is made
     /// again, one this set alone holds is changed in place. The set is left as it was when it
     /// has the key.
     // Complexity tradeoff (PERF-varfacts-held-shared-dag): naive version, the path always made

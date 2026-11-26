@@ -3,7 +3,7 @@
 //! settings meet `n` in `O(k log(n/k + 1))` expected time (Blelloch, Ferizovic and Sun, "Just
 //! join for parallel ordered sets", SPAA 2016, doi:10.1145/2935764.2935768, Theorem 4 of the
 //! full version, for independent
-//! priorities, cited in full and quoted in module `bdd::list::treap`; for the 8-wise
+//! priorities, cited in full and quoted in module `zed_collections::treap`; for the 8-wise
 //! independent priorities here, module [`zed_collections::priority`]), where adding the smaller
 //! set's settings to the larger one at a time takes `O(k log n)`.
 //!
@@ -240,7 +240,7 @@ enum Op {
 /// root kept only when the other set had it. Two subtrees that are one node are their own
 /// union and intersection. For `k` settings into `n`, `O(k log(n/k + 1))` expected time
 /// (Blelloch, Ferizovic and Sun, Theorem 4 of the full version, splits and joins included, for
-/// independent priorities, cited in full in module `bdd::list::treap`; for the 8-wise
+/// independent priorities, cited in full in module `zed_collections::treap`; for the 8-wise
 /// independent ones of [`priority`], the finger bound of module [`zed_collections::priority`], plus
 /// the settings that share a point).
 fn combine<A: Atom>(x: &Tree<A>, y: &Tree<A>, op: Op) -> Tree<A> {

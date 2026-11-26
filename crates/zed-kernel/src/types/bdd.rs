@@ -285,9 +285,9 @@ impl<A: Literal> Bdd<A> {
         // Complexity tradeoff: the difference splits the larger block at each node of the
         // smaller, `O(m log(n/m + 1))` nodes for blocks of `m <= n` literals (Blelloch,
         // Ferizovic and Sun, "Just join for parallel ordered sets", SPAA 2016, pp. 253-264,
-        // doi:10.1145/2935764.2935768, cited in full in module `bdd::list::treap`; for the 8-wise
-        // independent priorities of the sets, module `priority`, plus the literals that share a
-        // point); the literals of
+        // doi:10.1145/2935764.2935768, cited in full in module `zed_collections::treap`; for
+        // the 8-wise independent priorities of the sets, module `priority`, plus the literals
+        // that share a point); the literals of
         // `j` joined one at a time to `x` made `O(log n)` nodes each, `O(m log n)`, the 10.8
         // times as many nodes from n = 256 to 2048 left in
         // `functions_equal_at_one_place_are_decided_a_second_time_in_linear_time` after the
@@ -3284,10 +3284,8 @@ mod list {
 
     use super::set::{self, Key, NEXT, Set, Tree};
     use super::{Bdd, Digest, Literal, Op, Owned, Part, mix};
-    use treap::Keyed;
     use zed_collections::priority::Priorities;
-
-    mod treap;
+    use zed_collections::treap::{self, Item};
 
     /// A node of a sequence of blocks: a block and the sequences of the blocks before and after
     /// it. A cell that is the root of a list's sequence is the list, with the value of its first
@@ -3669,23 +3667,40 @@ mod list {
     /// along one list's edits.
     const FIRST: u64 = 1 << 62;
 
-    impl Keyed for Label {
+    /// A label is an item of the treap of labels on its own, with no summary.
+    impl Item for Label {
+        type Key = Label;
+        type Sum = ();
+        fn key(&self) -> &Label {
+            self
+        }
         fn priority(&self) -> u64 {
             INDEX_PRIORITIES[0].of(self.0)
         }
+        fn sum(&self, _: Option<&()>, _: Option<&()>) {}
     }
+
+    /// An entry of the treap of atoms of an [`Index`]: an atom and the label of its block.
+    #[derive(Clone)]
+    struct AtomEntry<A>(AtomKey<A>, Label);
 
     /// Atoms of one digest tie and are ordered by the atoms, as the literals of a set are (module
     /// `set`, and module [`zed_collections::priority`] on keys at one point).
-    impl<A: Literal> Keyed for AtomKey<A> {
-        fn priority(&self) -> u64 {
-            INDEX_PRIORITIES[1].of(self.0.digest())
+    impl<A: Literal> Item for AtomEntry<A> {
+        type Key = AtomKey<A>;
+        type Sum = ();
+        fn key(&self) -> &AtomKey<A> {
+            &self.0
         }
+        fn priority(&self) -> u64 {
+            INDEX_PRIORITIES[1].of(self.0.0.digest())
+        }
+        fn sum(&self, _: Option<&()>, _: Option<&()>) {}
     }
 
     /// The index of a sequence's blocks (plan row KERNEL-bdd-rejoin-bytes), kept on the cell at
     /// its root: a label for each block, increasing along the sequence, and for each atom the
-    /// label of its block, each a treap with sizes (module `treap`). So the place of an atom's
+    /// label of its block, each a treap with sizes ([`treap`]). So the place of an atom's
     /// block is one lookup in `atoms` and one in `labels`, one comparison a level each
     /// ([`Index::find`]), where the atoms of the left children ([`Cell::atoms`]) take an
     /// ordered-set lookup at each of `O(log m)` levels.
@@ -3702,8 +3717,8 @@ mod list {
     /// of an indexed list by [`replace`] or [`cut`] passes its index on ([`reindex`]); every
     /// other list has none and is searched by the atoms of its left children, as before.
     pub(super) struct Index<A: Literal> {
-        labels: treap::Tree<Label, ()>,
-        atoms: treap::Tree<AtomKey<A>, Label>,
+        labels: treap::Tree<Label>,
+        atoms: treap::Tree<AtomEntry<A>>,
     }
 
     // Complexity tradeoff (COMPLEXITY.md K67 (5)): the naive way to find an atom's block reads
@@ -3723,10 +3738,10 @@ mod list {
         fn single(block: &Arc<Set<A>>) -> Index<A> {
             let mut atoms = None;
             for (a, _) in set::iter(Some(block)) {
-                atoms = treap::insert(&atoms, AtomKey(a.clone()), Label(FIRST));
+                atoms = treap::insert(&atoms, AtomEntry(AtomKey(a.clone()), Label(FIRST)));
             }
             Index {
-                labels: treap::insert(&None, Label(FIRST), ()),
+                labels: treap::insert(&None, Label(FIRST)),
                 atoms,
             }
         }
@@ -3736,7 +3751,7 @@ mod list {
         /// then the block at that place. `None` when the atom is in no block: absent, or under a
         /// label absent from `labels` (the invariant of [`Index`]).
         fn find(&self, root: &Cell<A>, atom: &A) -> Option<(usize, bool)> {
-            let label = treap::get(&self.atoms, atom)?;
+            let label = &treap::get(&self.atoms, atom)?.1;
             let k = treap::place(&self.labels, label)?;
             let taken = set::get(Some(block_at(root, k)), atom);
             debug_assert!(taken.is_some(), "an atom's label is its block's");
@@ -3787,7 +3802,7 @@ mod list {
             1 if olds.is_empty() => {
                 debug_assert_eq!(i, 0, "a block is added only in front");
                 let l = Label(treap::nth(&ix.labels, 0).0 - 1);
-                labels = treap::insert(&labels, l, ());
+                labels = treap::insert(&labels, l);
                 Some(l)
             }
             1 => olds.iter().max_by_key(|(_, s)| s.len()).map(|&(l, _)| l),
@@ -3802,14 +3817,14 @@ mod list {
             if let Some(k) = kept {
                 for (a, _) in set::iter(Some(s)) {
                     if !gone.contains(a) {
-                        atoms = treap::insert(&atoms, AtomKey(a.clone()), k);
+                        atoms = treap::insert(&atoms, AtomEntry(AtomKey(a.clone()), k));
                     }
                 }
             }
         }
         if let Some(k) = kept {
             for a in added {
-                atoms = treap::insert(&atoms, AtomKey(a.clone()), k);
+                atoms = treap::insert(&atoms, AtomEntry(AtomKey(a.clone()), k));
             }
         }
         Some(Index { labels, atoms })
@@ -4702,7 +4717,7 @@ mod list {
     /// absent from the labels and greater than all of them.
     #[cfg(test)]
     fn index_is_sound<A: Literal>(c: &Cell<A>, ix: &Index<A>) -> bool {
-        let labels: Vec<Label> = treap::iter(&ix.labels).map(|(l, _)| *l).collect();
+        let labels: Vec<Label> = treap::iter(&ix.labels).copied().collect();
         if labels.len() != c.len {
             return false;
         }
@@ -4710,14 +4725,14 @@ mod list {
         for (k, &l) in labels.iter().enumerate() {
             for (a, _) in set::iter(Some(block_at(c, k))) {
                 atoms += 1;
-                if treap::get(&ix.atoms, a) != Some(&l) {
+                if treap::get(&ix.atoms, a).map(|e| e.1) != Some(l) {
                     return false;
                 }
             }
         }
         let last = labels.last().copied();
         let (mut present, mut stale_above) = (0, true);
-        for (_, l) in treap::iter(&ix.atoms) {
+        for AtomEntry(_, l) in treap::iter(&ix.atoms) {
             if treap::get(&ix.labels, l).is_some() {
                 present += 1;
             } else {

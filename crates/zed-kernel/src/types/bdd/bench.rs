@@ -13,19 +13,18 @@ fn forced_atoms_of_a_long_chain_scale() {
     // `w ∧ ((x_1 ∧ … ∧ x_m) ∨ z)`: `true` is reached past `z` from every `x_k`. Finding the
     // branches that dominate `true` took the nearest common dominator of `m` branches at
     // growing depths, walking up one step at a time: `O(m²)`. Small instances:
-    // `the_one_atom_a_chain_forces_is_its_first`.
-    std::thread::Builder::new()
-        .spawn(|| {
-            let n = 1 << 12;
-            let built = scaling::inputs(n, forced_chain);
-            scaling::check("the forced atoms of a chain, by its length", n, |m| {
-                let (p, w) = &built[&m];
-                assert_eq!(p.forced(), (vec![w.clone()], Vec::new()));
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    // `the_one_atom_a_chain_forces_is_its_first`. On a thread of 2 MiB, the stack the thread
+    // spawned here before had, by `on_a_stack`, which gives it the test's name: the meter finds
+    // the test by that name, and on a thread without one it measured processor time (`work=`),
+    // which moves with the load, in place of instructions (the coordinator, 2026-11-26).
+    scaling::on_a_stack(2 << 20, || {
+        let n = 1 << 12;
+        let built = scaling::inputs(n, forced_chain);
+        scaling::check("the forced atoms of a chain, by its length", n, |m| {
+            let (p, w) = &built[&m];
+            assert_eq!(p.forced(), (vec![w.clone()], Vec::new()));
+        });
+    });
 }
 
 #[test]
@@ -80,26 +79,23 @@ fn forced_atoms_of_a_balanced_conjunction_scale() {
 fn comparing_equal_expressions_built_apart_scales() {
     // `x_{k+1} = x_k & !x_k`, built twice: both operands of each level lead to the level
     // below, so comparing operand by operand met the bottom `2^depth` times. Small
-    // instances: `equal_expressions_built_apart_compare_equal`.
-    std::thread::Builder::new()
-        .spawn(|| {
-            let n = 1 << 17;
-            let built: BTreeMap<usize, (Part<Row>, Part<Row>)> = [n, scaling::FACTOR * n]
-                .into_iter()
-                .map(|m| (m, (self_meets(m), self_meets(m))))
-                .collect();
-            scaling::check(
-                "comparing equal expressions built apart, by depth",
-                n,
-                |m| {
-                    let (a, b) = &built[&m];
-                    assert_eq!(a.cmp(b), Ordering::Equal);
-                },
-            );
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    // instances: `equal_expressions_built_apart_compare_equal`. On a named thread of 2 MiB, as
+    // `forced_atoms_of_a_long_chain_scale` says, so the meter counts instructions.
+    scaling::on_a_stack(2 << 20, || {
+        let n = 1 << 17;
+        let built: BTreeMap<usize, (Part<Row>, Part<Row>)> = [n, scaling::FACTOR * n]
+            .into_iter()
+            .map(|m| (m, (self_meets(m), self_meets(m))))
+            .collect();
+        scaling::check(
+            "comparing equal expressions built apart, by depth",
+            n,
+            |m| {
+                let (a, b) = &built[&m];
+                assert_eq!(a.cmp(b), Ordering::Equal);
+            },
+        );
+    });
 }
 
 #[test]
@@ -267,9 +263,9 @@ fn joining_chains_to_lists_scales() {
     // spine, of expected length under `1 + 2D` (the proof at `set::insert`; `D = T0 + n(n -
     // 1)/p + 2c H_n`, COMPLEXITY K123), and `T0` is 0 here, which the assertion below checks on
     // every input. The `replace` of the list's one block around it rebuilds `O(1)` cells, and
-    // where the list has an index, its atom entry is one `bdd::list::treap::insert`, `O(log m)`
-    // expected by the same walk. So `m` literals cost `O(m log m)` expected. Measured 2026-11-20
-    // (BENCH-over-nlogn-prediction item 17, default seed): 9.82 and 9.79 times the
+    // where the list has an index, its atom entry is one `zed_collections::treap::insert`,
+    // `O(log m)` expected by the same walk. So `m` literals cost `O(m log m)` expected. Measured
+    // 2026-11-20 (BENCH-over-nlogn-prediction item 17, default seed): 9.82 and 9.79 times the
     // instructions (`Or`, `And`) and 9.40 times the bytes, under 10.18; the union 8.02.
     let shapes = scaling::inputs(n, |m| {
         (0..SHAPES)
@@ -378,7 +374,7 @@ fn exclusive_ors_scale() {
     // share a quarter, are joined by their sets' join-based symmetric difference
     // (`set::symmetric`): Blelloch, Ferizovic and Sun's `O(m log(n/m + 1))` ("Just join for
     // parallel ordered sets", SPAA 2016, doi:10.1145/2935764.2935768, cited in full in module
-    // `bdd::list::treap`), `O(n)` here where
+    // `zed_collections::treap`), `O(n)` here where
     // `m` is about `n`, proved for the 8-wise independent priorities of the sets in module
     // `priority` (plan row PROOF-join-work-limited-independence); the ratio measured is near 8
     // (COMPLEXITY.md K123). Each

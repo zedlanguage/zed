@@ -32,6 +32,10 @@
 //! independence over the prime `2^64 - 59` (Seidel and Aragon 1996; the full comment and the
 //! proofs are at the head of `priority.rs`), and the two primes of the kernel's fingerprints.
 //!
+//! [`treap`]: persistent treaps with sizes and a summary of each subtree, by split and join, each
+//! operation `O(log n)` expected (Blelloch, Ferizovic and Sun 2016; the full comment is at the
+//! head of `treap.rs`).
+//!
 //! [`by_address`]: a map key that is the address of an `Arc` and holds it, so no address in a
 //! memo is freed and given to another value while the memo lives.
 //!
@@ -58,6 +62,7 @@ pub mod priority;
 pub mod search;
 pub mod sorted;
 pub mod spelling;
+pub mod treap;
 
 /// The scaling test of the rule of low complexity, shared with the step tests.
 #[cfg(test)]
