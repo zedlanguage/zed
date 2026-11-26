@@ -14955,9 +14955,9 @@ impl Scope {
     // for m bindings changed, of terms of size s. Tradeoffs: a binding whose integers this
     // test leaves as they were is not read, since the test that last narrowed it read it
     // then, and a narrowing the reduction after it makes is read once by
-    // [`Scope::read_back_terms`]. A test that narrows every link of a chain still costs every link, as the scope
-    // then differs from the one before in all of them, so n such tests cost Θ(n²) reads, the
-    // size of the narrowings they give. Tests
+    // [`Scope::read_back_terms`]. A test that narrows every link of a chain still costs every
+    // link, as the scope then differs from the one before in all of them, so n such tests cost
+    // Θ(n²) reads, the size of the narrowings they give. Tests
     // `l01_39_reduced_product::let_terms::bench::reading_chains_of_terms_scales` (4n reads) and
     // `let_terms::bench::a_test_that_narrows_every_link_reads_every_link_once` (n(n+1) reads);
     // COMPLEXITY.md row PA-let-unsummarized-narrow. Why each binding is read once and last:
