@@ -41,6 +41,9 @@
 //! [`ZED_METER_ICOUNT`] name DynamoRIO and its client `zed_icount`, a test that makes a meter
 //! starts the binary again under them, so that its instructions are counted in software
 //! ([`start_under_dynamorio`] says when).
+//!
+//! A process whose arguments name a benchmark measures the fixed draw 0 of the treap priorities
+//! and fingerprint primes when it is given none ([`ZED_TREAP_SEED`]).
 
 /// The settings, in the form `GLIBC_TUNABLES` takes: `name=value` items joined by `:`.
 ///
@@ -144,6 +147,47 @@ pub fn with_the_settings(tunables: &str) -> String {
 
 fn name_of(item: &str) -> &str {
     item.split_once('=').map_or(item, |(name, _)| name)
+}
+
+/// The variable that fixes the draw of the treap priorities and of the fingerprint primes
+/// (`zed_collections::priority::SEED_VAR`, the same name; test
+/// `the_meter_fixes_the_draw_zed_collections_reads`).
+///
+/// The function in `.init_array` sets it to `0` when it is unset and the arguments name a
+/// benchmark ([`names_a_benchmark`]), as `tools/run_tests.sh --bench` exports it, so that a
+/// benchmark run by any runner (cargo, Colab's job.sh, a check's run in a new process) counts
+/// the same work on every run (FAIL-bench-random-fingerprint-primes). Under a fresh draw each
+/// run, zedc's `2 ^ (2 ^ 1048576)`, rejected as too large, counted 18,495,235 and 18,911,247
+/// instructions under seeds 1 and 2 and 18,684,593, 19,411,026 and 20,901,241 in three runs
+/// with no seed (callgrind, hm1, 2026-11-26), the difference spent by the search for a safe
+/// prime, whose number of draws follows the draw. A correctness run keeps a fresh draw, so that
+/// each run checks that no output depends on it (`m0_09_kernel_evaluator::treap_seeds_binary`
+/// compares zedc's output under two seeds).
+pub const ZED_TREAP_SEED: &str = "ZED_TREAP_SEED";
+
+/// Whether the program arguments `args` (the first, the program's name, skipped) name a
+/// benchmark: an argument holds `bench::`, as tools/run_tests.sh names a benchmark's path, and
+/// is not an option (starts with `-`) or the value of `--skip`. tools/run_tests.sh runs a
+/// correctness piece of a binary that holds benchmarks with `--skip bench::`, and each benchmark
+/// as `--exact <its path>`.
+///
+/// What it does not see: a filter without `bench::` that selects benchmarks (`kept_powers`
+/// selects `bench::kept_powers::...`), or no filter at all. Such a run keeps a fresh draw; where
+/// the hardware has no counter, the benchmark's checks then count in new processes, each started
+/// with its path as the filter, which this does see.
+pub fn names_a_benchmark<A: AsRef<[u8]>>(args: &[A]) -> bool {
+    let mut after_skip = false;
+    for a in args.iter().skip(1).map(AsRef::as_ref) {
+        if std::mem::take(&mut after_skip) {
+            continue;
+        }
+        if a == b"--skip" {
+            after_skip = true;
+        } else if !a.starts_with(b"-") && a.windows(7).any(|w| w == b"bench::") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether the process started with the settings, as glibc read them.
@@ -407,6 +451,18 @@ mod imp {
         });
         let held = tunables.as_deref().is_some_and(holds_the_settings);
         IN_EFFECT.store(held && !secure, Relaxed);
+        // A benchmark measures the fixed draw 0 when none is given (`ZED_TREAP_SEED`). In the
+        // first image of a start again the variable is not passed on (`new_env` is built from
+        // `env`); the second sets it here in its turn.
+        let seed = [super::ZED_TREAP_SEED.as_bytes(), b"="].concat();
+        // SAFETY: glibc passes the program's null-ended argument vector.
+        if !env.iter().any(|e| e.starts_with(&seed))
+            && super::names_a_benchmark(&unsafe { strings(argv) })
+        {
+            // SAFETY: the calling thread is the only one (checked at the top; argument at
+            // `START`), and `envp`'s strings were copied into `env` above.
+            unsafe { std::env::set_var(super::ZED_TREAP_SEED, "0") };
+        }
         let under = super::ZED_METER_UNDER_DRRUN.as_bytes();
         if env.iter().any(|e| {
             e.strip_prefix(under)
@@ -743,6 +799,21 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A benchmark is named by a filter or an `--exact` path holding `bench::`, not by the value
+    /// of `--skip`, an option, or the program's name.
+    #[test]
+    fn a_benchmark_is_named_by_a_filter_holding_its_path() {
+        let named = |a: &[&str]| names_a_benchmark(&[&["/t/bench::x"][..], a].concat());
+        assert!(named(&["bench::too_large", "--nocapture"]));
+        assert!(named(&["--exact", "a::bench::b", "--test-threads=1"]));
+        assert!(named(&["--skip", "x", "m::bench::y"]));
+        assert!(!named(&[]));
+        assert!(!named(&["--skip", "bench::"]));
+        assert!(!named(&["--skip=bench::", "kept_powers"]));
+        assert!(!named(&["kept_powers", "powers", "--nocapture"]));
+        assert!(!named(&["benches::x", "bench:x"]));
+    }
 
     /// The start hook turns on the trim at the end of each test (TEST-l01-26-peak-memory):
     /// `zed_alloc_count::give_back_as_each_test_ends` has been called before any test runs.

@@ -201,3 +201,11 @@ fn a_spin_run_with_other_tests() {
         square
     )));
 }
+
+/// Prints the draw of the treap priorities this process was given, `ZED_TREAP_SEED`, or
+/// `unset`; it measures nothing. `a_benchmark_measures_a_fixed_draw_by_any_runner` starts it.
+#[test]
+fn the_draw_of_this_process() {
+    let seed = std::env::var(zed_meter_settings::ZED_TREAP_SEED);
+    println!("draw: {}", seed.as_deref().unwrap_or("unset"));
+}

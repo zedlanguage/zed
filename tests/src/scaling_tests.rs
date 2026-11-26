@@ -658,6 +658,54 @@ fn no_other_thread_exists_when_start_runs() {
     assert_eq!(zed_meter_settings::threads_at_start(), Some(1));
 }
 
+/// The variable the start of a test binary sets for a benchmark is the one zed-collections reads.
+#[test]
+fn the_meter_fixes_the_draw_zed_collections_reads() {
+    assert_eq!(
+        zed_meter_settings::ZED_TREAP_SEED,
+        zed_collections::priority::SEED_VAR
+    );
+}
+
+/// A benchmark started by a runner that does not fix the draw (cargo, Colab's job.sh) measures
+/// the draw 0, and one given a draw keeps it; a process whose filter names no benchmark keeps a
+/// fresh draw. Each run is this binary started on `bench::the_draw_of_this_process` with
+/// `ZED_TREAP_SEED` removed or set, with the meter's settings (no start again) and without
+/// them (the start again sets the draw in the second image). Failed before
+/// FAIL-bench-random-fingerprint-primes, when the first printed `unset`.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn a_benchmark_measures_a_fixed_draw_by_any_runner() {
+    let probe = "scaling_tests::bench::the_draw_of_this_process";
+    let draw = |args: &[&str], seed: Option<&str>, settings: bool| {
+        let mut run =
+            std::process::Command::new(std::env::current_exe().expect("this test binary"));
+        run.args(args).args(["--nocapture", "--test-threads=1"]);
+        match seed {
+            Some(s) => run.env(zed_meter_settings::ZED_TREAP_SEED, s),
+            None => run.env_remove(zed_meter_settings::ZED_TREAP_SEED),
+        };
+        if !settings {
+            run.env_remove("GLIBC_TUNABLES");
+        }
+        let out = run.output().expect("this test binary runs");
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert!(out.status.success(), "{text}");
+        text.lines()
+            .find_map(|l| l.strip_prefix("draw: "))
+            .map(str::to_owned)
+    };
+    for settings in [true, false] {
+        let exact = [probe, "--exact"];
+        assert_eq!(draw(&exact, None, settings).as_deref(), Some("0"));
+        assert_eq!(draw(&exact, Some("7"), settings).as_deref(), Some("7"));
+        // A filter that selects the probe without naming `bench::`, as a correctness run's
+        // filter may: the draw stays fresh.
+        let part = ["the_draw_of_this_process"];
+        assert_eq!(draw(&part, None, settings).as_deref(), Some("unset"));
+    }
+}
+
 /// `tools/run_tests.sh --bench` fixes the draw of the treap priorities when `ZED_TREAP_SEED` is
 /// unset, so that a benchmark measures the same draw on every run; a correctness run does not.
 #[test]

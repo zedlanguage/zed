@@ -531,13 +531,18 @@ fn seeded_words(seed: u64, tag: u64) -> impl FnMut() -> u64 {
     move || g.next_u64()
 }
 
-/// `ZED_TREAP_SEED`, read once; `None` when it is unset. Then [`source`] takes seed 0 in the
+/// The variable that fixes the draw, read by [`fixed_seed`]. A test binary that links
+/// zed-meter-settings sets it to 0 as it starts when it is unset and the arguments name a
+/// benchmark (`zed_meter_settings::ZED_TREAP_SEED`, the same name).
+pub const SEED_VAR: &str = "ZED_TREAP_SEED";
+
+/// [`SEED_VAR`], read once; `None` when it is unset. Then [`source`] takes seed 0 in the
 /// unit tests of this crate and of the crates that ask for it
 /// ([`Priorities::fixed_in_unit_tests`]), and the system's random bytes otherwise.
 fn fixed_seed() -> Option<u64> {
     static SEED: OnceLock<Option<u64>> = OnceLock::new();
     *SEED.get_or_init(|| {
-        let Ok(s) = std::env::var("ZED_TREAP_SEED") else {
+        let Ok(s) = std::env::var(SEED_VAR) else {
             return None;
         };
         Some(
