@@ -289,3 +289,22 @@ fn intersect(a: &[Arc<Lin>], b: &[Arc<Lin>]) -> Vec<Lin> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A term with no coefficients is divided by the absolute value of its constant. The old
+    /// `content` started its gcd fold at the constant itself, so for no coefficients it was the
+    /// constant, sign included, and `primitive(-3)` was `-3 / -3 = 1` while `primitive(-1)` was
+    /// `-1`. `Hull::and` reads such a row only as zero or not, so this test reads the helpers
+    /// themselves.
+    #[test]
+    fn the_primitive_of_a_negative_constant_keeps_its_sign() {
+        assert_eq!(content(&Lin::constant(-3)), Int::from(3));
+        assert_eq!(primitive(Lin::constant(-3)), Lin::constant(-1));
+        assert_eq!(primitive(Lin::constant(-1)), Lin::constant(-1));
+        assert_eq!(primitive(Lin::constant(6)), Lin::constant(1));
+        assert_eq!(primitive(Lin::constant(0)), Lin::constant(0));
+    }
+}
