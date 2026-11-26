@@ -72,11 +72,12 @@ fn the_forest_of_atoms_of_wide_and_small_integers_scales() {
 /// (escape.rs, PROOF-escape-tied-log-only); `the_big_heads_family_reads_its_cells_in_its_size`
 /// checks the cell count it starts from.
 /// Measured at 11ccd6bec's zed-kernel (b22-free2 meas26, a Colab VM, 2026-11-26, this test run
-/// with n = 1024, 512 and 256), debug build: tied, 510.1M and 5122.2M instructions at m = 1024 and 8192 (10.04)
-/// and 19.11M and 152.20M bytes (7.96); untied, 182.5M and 1553.0M (8.51) and 19.87M and 158.80M
-/// bytes (7.99); a release build, 10.07 tied and 8.55 untied. Tied, per head: 498.1K, 541.7K
-/// and 593.3K instructions at m = 1024, 2048 and 4096; the cost `m (a + b log2 m)` through 1024
-/// and 4096 predicts 545.7K at 2048 and 10.29 at 8192. The bytes, about 18.6K a head, predict 8.
+/// with n = 1024, 512 and 256), debug build: tied, 510.1M and 5122.2M instructions at m = 1024
+/// and 8192 (10.04) and 19.11M and 152.20M bytes (7.96); untied, 182.5M and 1553.0M (8.51) and
+/// 19.87M and 158.80M bytes (7.99); a release build, 10.07 tied and 8.55 untied. Tied, per head:
+/// 498.1K, 541.7K and 593.3K instructions at m = 1024, 2048 and 4096; the cost
+/// `m (a + b log2 m)` through 1024 and 4096 predicts 545.7K at 2048 and 10.29 at 8192. The
+/// bytes, about 18.6K a head, predict 8.
 #[test]
 fn the_escape_decision_on_lists_of_big_integers_scales() {
     use crate::scaling;
