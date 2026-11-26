@@ -10,7 +10,7 @@ use zedc::testing::{test, test_through};
 use zedc::zir::lower::lower;
 use zedc::zir::memory::{plan, run};
 
-fn units() -> Vec<PathBuf> {
+pub(super) fn units() -> Vec<PathBuf> {
     let steps = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("steps");
     let mut out = Vec::new();
     for step in std::fs::read_dir(steps).unwrap() {

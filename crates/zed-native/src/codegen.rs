@@ -16,6 +16,7 @@
 //! word leaves the function, returning the error word.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F64, I64};
@@ -27,6 +28,7 @@ use cranelift_module::{FuncId, Linkage, Module};
 
 use zed_kernel::Prim;
 use zedc::zir::legalize::Expansion;
+use zedc::zir::lower::Names;
 use zedc::zir::memory::{Mode, RegionPlan};
 use zedc::zir::{Op, Src, binds};
 use zedc_lattice::float_kinds::Kinds;
@@ -97,7 +99,48 @@ pub(crate) struct Code {
     /// when [`define`] is asked for it; otherwise `None`, as for a function Cranelift gives
     /// none.
     pub unwind: Option<UnwindInfo>,
+    /// The names the program binds in it, in the order bound, when [`define`] is given
+    /// [`Named`]; otherwise empty.
+    pub vars: Vec<Var>,
 }
+
+/// The names the program binds to its values, for a debugger (plan row
+/// DEBUG-dwarf-clif-bindings): the [`Names`] of each node, by its number in the legalized
+/// graph ([`zedc::zir::lower::lower_debug`], [`zedc::zir::legalize::legalized_sites`]), and
+/// the names bound in the root region.
+#[derive(Clone, Copy)]
+pub(crate) struct Named<'a> {
+    pub nodes: &'a [Names],
+    pub root: &'a [(Arc<str>, Src)],
+}
+
+/// A name bound in a function's code: where its word is, and the numbers of the first and
+/// the last node of its scope. A node output's scope starts after its node, whose own code
+/// stores the word; an argument's or a constant's is its whole region. Each ends with the
+/// last node of the region that binds it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Var {
+    pub name: Arc<str>,
+    pub place: Place,
+    pub scope: (u32, u32),
+    /// Whether it is a parameter of the function: one of a lambda body's parameters, not one
+    /// of its captures.
+    pub param: bool,
+}
+
+/// Where a [`Var`]'s word is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Place {
+    /// In the function's frame, at this offset from the canonical frame address (DWARF 5
+    /// section 6.4), the stack pointer's value at the call.
+    Frame(i64),
+    /// A constant, the word itself.
+    Word(Word),
+}
+
+/// A name bound in the function being built ([`Gen::bound`]): its name, where it is, the first
+/// and last node of its scope, and whether it is a parameter.
+type Bound = (Arc<str>, Loc, u32, u32, bool);
 
 struct Gen<'a, M: Module> {
     m: &'a mut M,
@@ -122,6 +165,19 @@ struct Gen<'a, M: Module> {
     code: Vec<Code>,
     /// Whether each function's call frame information is kept ([`Code::unwind`]).
     unwind: bool,
+    /// The names to record in each function ([`Code::vars`]), when asked for.
+    named: Option<Named<'a>>,
+    /// The names bound to each region's arguments and to constants in it, by the region's
+    /// number; all empty without [`Gen::named`].
+    region_names: Vec<&'a [(Arc<str>, Src)]>,
+    /// The number of parameters of each region, by its number: a lambda's for its body, whose
+    /// arguments after them are its captures; 0 for any other region.
+    body_params: Vec<usize>,
+    /// The names bound so far in the function being built; a scope's end is set when its
+    /// region's code ends ([`Frame::vars`]).
+    bound: Vec<Bound>,
+    /// The number of the last node whose code was marked in the function being built.
+    last: u32,
     /// In the test build, the printed name of a primitive whose every node first reads
     /// address 0, a fault no rule of the language explains, from `ZED_TEST_FAULT` (plan row
     /// RT-internal-fault: an injected fault is reported as a bug in zedc).
@@ -182,6 +238,8 @@ struct Frame {
     ins: Vec<Loc>,
     /// The `if` or `match` whose arms are being emitted.
     open: Option<Open>,
+    /// The names bound in the region, by index in [`Gen::bound`], whose scopes end with it.
+    vars: Vec<usize>,
 }
 
 /// An `if` or a `match` whose test is emitted, with the arms that remain.
@@ -197,15 +255,24 @@ struct Open {
     early: bool,
 }
 
+/// The number of node `number` as a scope bound of a [`Var`]; a number past `u32` only widens
+/// a scope, since node ranges carry numbers below 2^31 ([`Gen::at`]).
+fn bound_number(number: usize) -> u32 {
+    u32::try_from(number).unwrap_or(u32::MAX)
+}
+
 /// Declares and defines every function of the graph in `t`, with `plans` by region, in `m`;
-/// appends each function's IR text to `ir` when given, and keeps each function's call frame
-/// information when `unwind`.
+/// appends each function's IR text to `ir` when given, keeps each function's call frame
+/// information when `unwind`, and with `named`, the names bound in each function
+/// ([`Code::vars`]). The code is the same with names and without: they are read off the
+/// slots and constants the code uses.
 pub(crate) fn define<'a, M: Module>(
     m: &'a mut M,
     t: &'a Tables,
     plans: &'a [&'a RegionPlan],
     ir: Option<&'a mut String>,
     unwind: bool,
+    named: Option<Named<'a>>,
 ) -> Result<Funcs, String> {
     let mut hooks = HashMap::new();
     for (name, p, r) in HOOKS {
@@ -250,6 +317,22 @@ pub(crate) fn define<'a, M: Module>(
     let root = m
         .declare_function("zed_root", Linkage::Export, &sig(m, 0, 2))
         .map_err(err)?;
+    // Each region's names, from those of the node that holds it, O(nodes + regions).
+    let mut region_names: Vec<&[(Arc<str>, Src)]> = vec![&[]; t.regions.len()];
+    if let Some(n) = named {
+        region_names[0] = n.root;
+        for node in &t.nodes {
+            for (i, &r) in node.subs.iter().enumerate() {
+                if let Some(names) = n.nodes.get(node.number).and_then(|x| x.regions.get(i)) {
+                    region_names[r] = names;
+                }
+            }
+        }
+    }
+    let mut body_params = vec![0; t.regions.len()];
+    for l in &t.lambdas {
+        body_params[l.body] = l.params;
+    }
     let mut cg = Gen {
         m,
         t,
@@ -263,6 +346,11 @@ pub(crate) fn define<'a, M: Module>(
         ir,
         code: Vec::new(),
         unwind,
+        named,
+        region_names,
+        body_params,
+        bound: Vec::new(),
+        last: 0,
         #[cfg(feature = "counts")]
         fault: std::env::var("ZED_TEST_FAULT").ok(),
     };
@@ -293,6 +381,8 @@ impl<M: Module> Gen<'_, M> {
         rets: usize,
         f: impl FnOnce(&mut Self, &mut Fx<'_>, Vec<W>) -> Result<Vec<W>, String>,
     ) -> Result<(), String> {
+        self.bound.clear();
+        self.last = 0;
         let mut ctx = self.m.make_context();
         ctx.func.signature = sig(self.m, 2 * params, 2 * rets);
         let mut fbc = FunctionBuilderContext::new();
@@ -336,6 +426,27 @@ impl<M: Module> Gen<'_, M> {
         if let Some(s) = self.ir.as_deref_mut() {
             s.push_str(&ctx.func.display().to_string());
         }
+        // Whether the function has a loop, found when names are recorded and in every debug
+        // build, in O(blocks). The location lists rely on there being none
+        // (`dwarf::bindings`): Cranelift's loop-invariant code motion (cranelift-codegen
+        // 0.137.1 `egraph/elaborate.rs`:659) can move a node's code above the store of a name
+        // in scope there, and gdb would print a word the slot held before. The code built here
+        // has none:
+        // - each block is filled once, and every branch goes to a block not filled yet
+        //   (`Gen::merge`, `Gen::when`, `Fx::exit`, `Gen::on_cell`), so each edge goes from a
+        //   block filled earlier to one filled later, and no path comes back to a block;
+        // - a recurrence, a generation, a `fold` or a `fix` is run by the runtime
+        //   (`Gen::node` sends every op it does not emit inline to `Gen::slow`, `rt_node`);
+        // - a call, a recursive one too, is a `call` or a `call_indirect`, never a
+        //   `return_call` or a jump back.
+        // The debug assertion makes the tests fail if that changes; in a release build such a
+        // function's names are left out, so gdb says they are not available. The analysis
+        // reads the function only and does not change its code.
+        let looped = (cfg!(debug_assertions) || self.named.is_some()) && has_loop(&mut ctx);
+        debug_assert!(
+            !looped,
+            "a function built with a loop: its names would be unsound"
+        );
         self.m.define_function(id, &mut ctx).map_err(err)?;
         // The ranges of each node's code, O(code). Cranelift makes each location absolute
         // when the compile ends (`CompiledCodeStencil::apply_params`, cranelift-codegen
@@ -351,15 +462,93 @@ impl<M: Module> Gen<'_, M> {
                 true => c.create_unwind_info(self.m.isa()).map_err(err)?,
                 false => None,
             };
+            let vars = match c.buffer.frame_layout() {
+                Some(f) => kept(looped, self.vars(f)),
+                None => Vec::new(),
+            };
             self.code.push(Code {
                 id,
                 len,
                 nodes,
                 unwind,
+                vars,
             });
         }
         self.m.clear_context(&mut ctx);
         Ok(())
+    }
+
+    /// The names bound in the function just compiled ([`Gen::bound`]), each slot placed by the
+    /// frame layout `f`, with an empty scope left out. O(names).
+    ///
+    /// A slot is `f.stackslots[s].offset` bytes above the stack pointer after the prologue,
+    /// which is `f.frame_to_fp_offset` bytes below the frame pointer; on x86-64 the frame
+    /// pointer is 16 bytes below the canonical frame address, below the return address and
+    /// the caller's frame pointer the prologue pushes (Cranelift's `setup_area_size`, 16 in
+    /// every function, cranelift-codegen 0.137.1 `isa/x64/abi.rs`, `compute_frame_layout`;
+    /// System V AMD64 ABI section 3.2.2). On another target nothing is recorded: its frame is
+    /// not read here yet.
+    fn vars(&self, f: &cranelift_codegen::MachBufferFrameLayout) -> Vec<Var> {
+        if !cfg!(target_arch = "x86_64") {
+            return Vec::new();
+        }
+        let below_cfa = i64::from(f.frame_to_fp_offset) + 16;
+        (self.bound.iter())
+            .filter(|b| b.2 <= b.3)
+            .map(|(name, loc, a, e, param)| Var {
+                name: name.clone(),
+                place: match *loc {
+                    Loc::Slot(s) => Place::Frame(i64::from(f.stackslots[s].offset) - below_cfa),
+                    Loc::Const(w) => Place::Word(w),
+                },
+                scope: (*a, *e),
+                param: *param,
+            })
+            .collect()
+    }
+
+    /// Records the names bound to the arguments `args` of region `at` and to constants in it
+    /// ([`Gen::region_names`]), their scopes the whole region, from its first node; gives
+    /// their indices in [`Gen::bound`]. Nothing without [`Gen::named`]. The arguments include
+    /// the region's captures, each named by the name the region reads it by, so a name bound
+    /// outside a lambda is a variable of its body too, in the slot the body put it in.
+    fn bind_args(&mut self, at: usize, args: &[Loc]) -> Vec<usize> {
+        let names = self.region_names[at];
+        if names.is_empty() {
+            return Vec::new();
+        }
+        let t = self.t;
+        let first =
+            (t.regions[at].ids.first()).map_or(u32::MAX, |&id| bound_number(t.nodes[id].number));
+        let mut out = Vec::with_capacity(names.len());
+        for (x, s) in names {
+            let loc = match s {
+                Src::Arg(i) => args.get(*i).copied(),
+                // A scalar is shown as its word. A non-scalar is shown only when the code uses
+                // it, so that it is in the table of constants: a `let` of a string that
+                // staging made a literal and kept for its name (`zedc::stage::mix_named`) is
+                // read by no code, and is left unshown (plan row
+                // FAIL-dwarf-staged-let-nonscalar).
+                Src::Const(v) => match Word::scalar(v) {
+                    Some(w) => Some(Loc::Const(w)),
+                    None => (self.t.const_index_if(v)).map(|i| {
+                        Loc::Const(Word {
+                            tag: Word::VAL,
+                            bits: i as i64,
+                        })
+                    }),
+                },
+                Src::Out(..) => None,
+            };
+            if let Some(loc) = loc {
+                // A body's captures, the arguments after its parameters, are the values
+                // `lambda_body` read from the closure and put in this frame.
+                let param = matches!(s, Src::Arg(i) if *i < self.body_params[at]);
+                out.push(self.bound.len());
+                self.bound.push((x.clone(), loc, first, 0, param));
+            }
+        }
+        out
     }
 
     /// The source location of the code of the node numbered `number` in the legalized graph
@@ -690,6 +879,7 @@ impl<M: Module> Gen<'_, M> {
                 // The node's code, up to the next node's, is marked with its number, which a
                 // fault in it is reported at (plan row RT-internal-fault).
                 fx.b.set_srcloc(Self::at(t.nodes[id].number));
+                self.last = bound_number(t.nodes[id].number);
                 match &node.op {
                     Op::If => {
                         // An `if` reads its condition only to choose an arm, so an owned
@@ -721,7 +911,10 @@ impl<M: Module> Gen<'_, M> {
                     let l = self.src(s, &top.args, &top.outs);
                     out.push(self.get(fx, l));
                 }
-                stack.pop();
+                let done = stack.pop().expect("the region being ended");
+                for i in done.vars {
+                    self.bound[i].3 = self.last;
+                }
                 let Some(up) = stack.last() else {
                     return Ok(out);
                 };
@@ -738,12 +931,14 @@ impl<M: Module> Gen<'_, M> {
             let w = self.get(fx, args[a]);
             self.dec(fx, w);
         }
+        let vars = self.bind_args(at, &args);
         Frame {
             at,
             args,
             outs: Vec::new(),
             ins: Vec::new(),
             open: None,
+            vars,
         }
     }
 
@@ -751,9 +946,19 @@ impl<M: Module> Gen<'_, M> {
     fn finish(&mut self, fx: &mut Fx<'_>, f: &mut Frame, ws: Vec<W>) {
         let k = f.outs.len();
         let early = f.open.take().is_some_and(|o| o.early);
-        let o = ws.into_iter().map(|w| self.put(fx, w)).collect();
-        f.outs.push(o);
+        let o: Vec<Loc> = ws.into_iter().map(|w| self.put(fx, w)).collect();
         let t = self.t;
+        let number = t.nodes[t.regions[f.at].ids[k]].number;
+        if let Some(n) = self.named.and_then(|n| n.nodes.get(number)) {
+            for (p, x) in &n.outs {
+                if let Some(&loc) = o.get(*p) {
+                    f.vars.push(self.bound.len());
+                    let first = bound_number(number).saturating_add(1);
+                    self.bound.push((x.clone(), loc, first, 0, false));
+                }
+            }
+        }
+        f.outs.push(o);
         let released = early.then(|| &t.nodes[t.regions[f.at].ids[k]].node().inputs[0]);
         for s in &self.plans[f.at].nodes[k].drops {
             if released == Some(s) {
@@ -1385,4 +1590,83 @@ fn float_cmp(p: Prim) -> Option<FloatCC> {
         Prim::Le => FloatCC::LessThanOrEqual,
         _ => return None,
     })
+}
+
+/// Whether the function in `ctx` has a loop, by Cranelift's loop analysis (a block that
+/// dominates one of its predecessors), in O(blocks). It reads the function only.
+fn has_loop(ctx: &mut cranelift_codegen::Context) -> bool {
+    ctx.compute_cfg();
+    ctx.compute_domtree();
+    ctx.compute_loop_analysis();
+    ctx.loop_analysis.loops().next().is_some()
+}
+
+/// The names recorded for a function: none when it has a loop (`Gen::function`).
+fn kept(looped: bool, vars: Vec<Var>) -> Vec<Var> {
+    if looped { Vec::new() } else { vars }
+}
+
+#[cfg(test)]
+mod tests {
+    use cranelift_codegen::Context;
+    use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
+    use target_lexicon::PointerWidth;
+
+    use super::*;
+
+    /// A function of one `i64` that counts it down to 0, with a back edge to its loop's head
+    /// when `back`; else the head branches forward only.
+    fn counter(back: bool) -> Context {
+        let mut ctx = Context::new();
+        ctx.func.signature.params.push(AbiParam::new(I64));
+        ctx.func.signature.returns.push(AbiParam::new(I64));
+        let mut fbc = FunctionBuilderContext::new();
+        let mut b = FunctionBuilder::new(&mut ctx.func, &mut fbc);
+        let (entry, head, step, done) = (
+            b.create_block(),
+            b.create_block(),
+            b.create_block(),
+            b.create_block(),
+        );
+        b.append_block_params_for_function_params(entry);
+        b.append_block_param(head, I64);
+        b.switch_to_block(entry);
+        let n = b.block_params(entry)[0];
+        b.ins().jump(head, &[BlockArg::Value(n)]);
+        b.switch_to_block(head);
+        let k = b.block_params(head)[0];
+        b.ins().brif(k, step, &[], done, &[]);
+        b.switch_to_block(step);
+        let less = b.ins().iadd_imm_s(k, -1);
+        match back {
+            true => b.ins().jump(head, &[BlockArg::Value(less)]),
+            false => b.ins().jump(done, &[]),
+        };
+        b.switch_to_block(done);
+        let z = b.ins().iconst(I64, 0);
+        b.ins().return_(&[z]);
+        b.seal_all_blocks();
+        b.finalize(TargetFrontendConfig {
+            default_call_conv: CallConv::SystemV,
+            pointer_width: PointerWidth::U64,
+            page_size_align_log2: 12,
+        });
+        ctx
+    }
+
+    #[test]
+    fn a_function_with_a_back_edge_has_a_loop_and_keeps_no_names() {
+        let var = Var {
+            name: "k".into(),
+            place: Place::Frame(-16),
+            scope: (1, 2),
+            param: true,
+        };
+        let looped = has_loop(&mut counter(true));
+        assert!(looped);
+        assert_eq!(kept(looped, vec![var.clone()]), Vec::new());
+        let straight = has_loop(&mut counter(false));
+        assert!(!straight);
+        assert_eq!(kept(straight, vec![var.clone()]), vec![var]);
+    }
 }

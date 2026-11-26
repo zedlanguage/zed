@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use zed_native::link::{build_id, runtime_of};
 use zed_tests::scaling::{self, FACTOR};
-use zedc::zir::lower::lower_sited;
+use zedc::zir::lower::{lower_debug, lower_sited};
 
 use super::runtime::{library, object_file, of_other_flags};
 use super::sites::chain;
@@ -63,36 +63,49 @@ fn reader(n: usize) -> String {
     src + &format!("  m.stdout <- \"{}\";\n}}\n", holes.join("|"))
 }
 
-/// An executable reading n files named by its n arguments does work linear in n: its start
-/// decodes and plans the program once, and each read is one call through `Files`. Small
-/// instance: `agreement.rs`'s `READER`, three files read, found, missing and unreadable, by the
-/// executable and the interpreter.
+/// Building an executable reading n files named by its n arguments, and running it, does work
+/// linear in n: the build compiles n reads, the start decodes and plans the program once, and
+/// each read is one call through `Files`. Small instance: `agreement.rs`'s `READER`, three
+/// files read, found, missing and unreadable, by the executable and the interpreter.
 #[test]
 fn an_executable_reading_n_files_scales() {
     let d = dir("scaling");
-    let n = 400;
-    // The programs, their executables, the files and the words of both sizes are made before
-    // the runs are measured.
-    let words = |m: usize| -> Vec<OsString> {
-        let src = d.join(format!("reader{m}.zed"));
-        std::fs::write(&src, reader(m)).unwrap();
-        built(&src, &d.join(format!("reader{m}")));
+    let n = 200;
+    // The measured run builds the executable (`link::build`: this process compiles, the linker
+    // it starts links) and runs it. The run of the executable alone was the measure before,
+    // and under DynamoRIO's zed_icount (the Colab VMs) that counted only this process's start
+    // of it and its pipes, 145,484 and 915,752 instructions at 200 and 1600 (job dv52 of
+    // b22-free2, 2026-11-26): the client never counts a child process
+    // (tools/icount/zed_icount.c, "Threads", case 3), so neither the build nor the executable's
+    // own work was measured there, and the linker's and the executable's are not now. Where perf
+    // counts with `inherit` the ended children count too. `link::build` of the reader took
+    // 5,888,951,454 and 36,561,376,157 instructions at 400 and 3200, 6.21 times, in 7.6 s and
+    // 23.3 s on a Colab VM (job dv51), so the sizes are 200 and 1600. Each process makes only
+    // the size it runs (`scaling::check_inputs`; FAIL-exe-reader-bench-first-phase).
+    let words = |m: usize| -> (usize, Vec<OsString>) {
+        std::fs::write(d.join(format!("reader{m}.zed")), reader(m)).unwrap();
         let mut w: Vec<OsString> = vec!["--".into()];
         for i in 0..m {
             let f = d.join(format!("file{i}.txt"));
             std::fs::write(&f, format!("{i:05}")).unwrap();
             w.push(f.into());
         }
-        w
+        (m, w)
     };
-    let (small, large) = (words(n), words(FACTOR * n));
-    scaling::check("an executable reading n files", n, |m| {
-        let w = if m == n { &small } else { &large };
-        let ran = executable(&d.join(format!("reader{m}")), w, b"");
-        assert_eq!(ran.status, 0, "{}", ran.stderr);
-        // Each file holds five digits, and a `|` or the last `\n` follows each.
-        assert_eq!(ran.stdout.len(), 6 * m);
-    });
+    scaling::check_inputs(
+        "building and running an executable reading n files",
+        n,
+        words,
+        |(m, w)| {
+            let m = *m;
+            let exe = d.join(format!("reader{m}"));
+            built(&d.join(format!("reader{m}.zed")), &exe);
+            let ran = executable(&exe, w, b"");
+            assert_eq!(ran.status, 0, "{}", ran.stderr);
+            // Each file holds five digits, and a `|` or the last `\n` follows each.
+            assert_eq!(ran.stdout.len(), 6 * m);
+        },
+    );
 }
 
 /// Small instance: `sites::the_sites_change_neither_the_address_nor_the_zir_text`.
@@ -194,30 +207,42 @@ fn the_start_reads_the_plan_in_less_work_than_planning() {
 }
 
 /// The object file of an executable with its DWARF (plan row DEBUG-dwarf-clif, COMPLEXITY.md
-/// row Z37): the line table's rows, the subprograms and the sections are each linear in the
-/// code, and each node's line one binary search. The measure is the whole object file, the
-/// code generator's work with it. Small instance:
-/// `dwarf::the_code_is_the_same_with_and_without_debug_information`.
+/// rows Z37 and Z38): the line table's rows, the subprograms and the sections are each linear
+/// in the code, and each node's line one binary search; the n names the chain binds in
+/// `zed_root` are sorted and swept once (DEBUG-dwarf-clif-bindings). The measure is the whole
+/// object file, the code generator's work with it. Small instances:
+/// `dwarf::the_code_is_the_same_with_and_without_debug_information` and
+/// `dwarf::gdb_prints_the_words_the_names_are_bound_to`.
 #[test]
 fn the_dwarf_of_n_statements_scales() {
     let n = 500;
-    let programs = scaling::inputs(n, |m| zedc::run::load(chain(m, "    ").as_bytes()).unwrap());
-    let lowered = scaling::inputs(n, |m| {
-        lower_sited(&programs[&m].term(), Some(programs[&m].sites())).unwrap()
-    });
-    scaling::check("the object file of n statements, with DWARF", n, |m| {
-        let (p, (g, sites)) = (&programs[&m], &lowered[&m]);
-        let object = zed_native::executable_object(
-            g.clone(),
-            true,
-            p.ports(),
-            &p.limits(),
-            p.address().unwrap(),
-            (p.file(), p.text()),
-            sites,
-            true,
-        )
-        .unwrap();
-        std::hint::black_box(object);
-    });
+    // Each process builds only the size it runs (`scaling::check_inputs`). The bench stopped
+    // before its count while the location lists' pieces were quadratic in n: the code of no
+    // node between ranges split every scope (`dwarf::Runs`; 41,208 pieces for 200 joins in job
+    // dv50 of b22-free2, 2026-11-26).
+    let made = |m: usize| {
+        let p = zedc::run::load(chain(m, "    ").as_bytes()).unwrap();
+        let lowered = lower_debug(&p.term(), Some(p.sites())).unwrap();
+        (p, lowered)
+    };
+    scaling::check_inputs(
+        "the object file of n statements, with DWARF",
+        n,
+        made,
+        |made| {
+            let (p, (g, sited)) = made;
+            let object = zed_native::executable_object(
+                g.clone(),
+                true,
+                p.ports(),
+                &p.limits(),
+                p.address().unwrap(),
+                (p.file(), p.text()),
+                sited,
+                true,
+            )
+            .unwrap();
+            std::hint::black_box(object);
+        },
+    );
 }

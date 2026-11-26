@@ -609,10 +609,21 @@ impl Program {
     /// end (step L1.28), and what the build did. The staged program keeps this one's content
     /// address.
     pub fn stage(&self) -> (Program, stage::Report) {
+        self.staged(stage::mix)
+    }
+
+    /// [`Program::stage`], keeping each `let` of a name the program wrote that the build made
+    /// a literal, for a debugger to show (`stage::mix_named`): `zedc build` lowers this. The
+    /// graph and the code are those of [`Program::stage`].
+    pub fn stage_named(&self) -> (Program, stage::Report) {
+        self.staged(stage::mix_named)
+    }
+
+    /// This program staged by `mix`, [`stage::mix`] or [`stage::mix_named`].
+    fn staged(&self, mix: fn(&Unit, &[&str]) -> (Unit, stage::Report)) -> (Program, stage::Report) {
         // Staging records the site of each node it builds in place of a node, and of each copy.
         let recorder = Recorder::start(&self.sites);
-        let (unit, report) =
-            work::stage(Stage::Staging, None, || stage::mix(&self.unit, &["main"]));
+        let (unit, report) = work::stage(Stage::Staging, None, || mix(&self.unit, &["main"]));
         let sites = recorder.freeze(unit.defs.iter().map(|d| &*d.term));
         let program = Program {
             unit: Arc::new(unit),
@@ -1431,13 +1442,14 @@ fn command_inner(
     let (mut suppress, rest) = Suppress::take(rest).map_err(|why| (2, why))?;
     let (on, rest) = crate::build::take(&rest).map_err(|why| (2, why))?;
     let options = Options::parse(&rest, replay.is_none()).map_err(usage)?;
-    let program = load_one(file, &on, &mut suppress, stderr, options.program.is_none())?;
+    let last = options.program.is_none();
+    let program = load_one(file, &on, &mut suppress, stderr, last, Program::stage)?;
     // `zedc replay old.zed <record> --program new.zed` (step L1.19d): both programs are loaded
     // before the run starts, so a rejection of either is reported as `zedc run` reports one.
     let other = match options.program {
         Some(new_file) => Some((
             new_file,
-            load_one(new_file, &on, &mut suppress, stderr, true)?,
+            load_one(new_file, &on, &mut suppress, stderr, true, Program::stage)?,
         )),
         None => None,
     };
@@ -1534,19 +1546,31 @@ pub fn load_file(
     suppress: &mut Suppress,
     stderr: &mut dyn Write,
 ) -> Result<Program, (u8, String)> {
-    load_one(file, on, suppress, stderr, true)
+    load_one(file, on, suppress, stderr, true, Program::stage)
 }
 
-/// [`load_file`], which writes the lines of the addresses `suppress` names that no warning has
-/// only when `last`: a command that loads two programs (`zedc replay --program`, step L1.19d)
-/// writes them after the second, so an address is unmatched when neither program's warnings
-/// have it.
+/// [`load_file`], staged by [`Program::stage_named`], which keeps the names the build made
+/// literals for a debugger: `zedc build` loads with this.
+pub fn load_file_named(
+    file: &str,
+    on: &[&str],
+    suppress: &mut Suppress,
+    stderr: &mut dyn Write,
+) -> Result<Program, (u8, String)> {
+    load_one(file, on, suppress, stderr, true, Program::stage_named)
+}
+
+/// [`load_file`], staged by `staging`, which writes the lines of the addresses `suppress` names
+/// that no warning has only when `last`: a command that loads two programs (`zedc replay
+/// --program`, step L1.19d) writes them after the second, so an address is unmatched when
+/// neither program's warnings have it.
 fn load_one(
     file: &str,
     on: &[&str],
     suppress: &mut Suppress,
     stderr: &mut dyn Write,
     last: bool,
+    staging: fn(&Program) -> (Program, stage::Report),
 ) -> Result<Program, (u8, String)> {
     work::unit(file);
     let bytes = std::fs::read(file).map_err(|e| (2, unreadable(file, &e)))?;
@@ -1612,7 +1636,7 @@ fn load_one(
     })?;
     // Run, replay and build all take the staged program, so an executable holds only the
     // branch of `if build.target == …` its build takes (step L2.8d).
-    Ok(program.stage().0)
+    Ok(staging(&program).0)
 }
 
 /// The words of a command line after the program: the file `--record` names, and the file of

@@ -7,7 +7,8 @@
 //! step program and enabled corpus program; an executable whose line table is removed fails
 //! that check (the negative control).
 //!
-//! Bindings and their types are still open (plan row DEBUG-dwarf-clif-bindings). No inlined
+//! gdb prints the words the program's names are bound to, in the frame and constants, as the
+//! type `zed_word` of a tag and a payload (plan row DEBUG-dwarf-clif-bindings). No inlined
 //! calls are described, since the generator inlines none.
 
 use std::collections::BTreeMap;
@@ -16,7 +17,7 @@ use std::process::{Command, Stdio};
 
 use object::{Object as _, ObjectSection as _, ObjectSymbol as _, RelocationTarget, SymbolKind};
 use zed_tests::oracle::{self, ENABLED};
-use zedc::zir::lower::lower_sited;
+use zedc::zir::lower::lower_debug;
 
 use super::{built, dir};
 
@@ -41,14 +42,32 @@ fn written(name: &str, src: &str) -> PathBuf {
 /// The object file `zedc build` makes for the program in `file`, with its debug sections when
 /// `debug`.
 fn object_file(file: &Path, debug: bool) -> Vec<u8> {
-    let p = zedc::run::load_file(
+    object_of(&loaded(file, zedc::run::load_file_named), debug)
+}
+
+/// The program in `file`, loaded by `load`, [`zedc::run::load_file`] or `load_file_named`.
+fn loaded(file: &Path, load: Load) -> zedc::run::Program {
+    load(
         file.to_str().unwrap(),
         &[],
         &mut Default::default(),
         &mut Vec::new(),
     )
-    .unwrap_or_else(|(status, why)| panic!("{}: status {status}: {why}", file.display()));
-    let (g, sites) = lower_sited(&p.term(), Some(p.sites())).unwrap();
+    .unwrap_or_else(|(status, why)| panic!("{}: status {status}: {why}", file.display()))
+}
+
+/// The signature of [`zedc::run::load_file`].
+type Load = fn(
+    &str,
+    &[&str],
+    &mut zedc::suppress::Suppress,
+    &mut dyn std::io::Write,
+) -> Result<zedc::run::Program, (u8, String)>;
+
+/// The object file `zedc build` makes for the staged program `p`, with its debug sections
+/// when `debug`.
+fn object_of(p: &zedc::run::Program, debug: bool) -> Vec<u8> {
+    let (g, sited) = lower_debug(&p.term(), Some(p.sites())).unwrap();
     zed_native::executable_object(
         g,
         true,
@@ -56,7 +75,7 @@ fn object_file(file: &Path, debug: bool) -> Vec<u8> {
         &p.limits(),
         p.address().unwrap(),
         (p.file(), p.text()),
-        &sites,
+        &sited,
         debug,
     )
     .unwrap()
@@ -188,6 +207,65 @@ fn the_code_is_the_same_with_and_without_debug_information() {
         line_relocations.iter().any(|(_, t, _)| t == "zed_root"),
         "{line_relocations:?}"
     );
+}
+
+#[test]
+fn staging_for_names_keeps_the_graph_and_the_code() {
+    // `zedc build` stages keeping the `let`s of the names the build made literals
+    // (`Program::stage_named`), for the debugger; a literal lowers to no node, so the ZIR and
+    // the code are those of `Program::stage`, which run and replay take. The programs: the
+    // chain, one with folded lets of an integer, a float and a string (whose name is not shown
+    // yet, plan row FAIL-dwarf-staged-let-nonscalar, but whose kept `let` must still build),
+    // and the step programs.
+    let folded = "main(m: MainArgs) {
+    n = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 1;
+    c = 7;
+    f = 1.5;
+    s = \"hi\";
+    k = n + c;
+    m.stdout <- \"${k}\";
+}
+";
+    let mut files = vec![
+        written("names-chain", CHAIN),
+        written("names-folded", folded),
+    ];
+    files.extend(
+        (oracle::step_units().into_iter())
+            .filter(|p| zedc::run::load(&std::fs::read(p).unwrap()).is_ok()),
+    );
+    assert_eq!(files.len(), 6);
+    let root_names = |s: &zedc::zir::lower::Sited| -> Vec<String> {
+        s.root.iter().map(|(x, _)| x.to_string()).collect()
+    };
+    for (i, file) in files.iter().enumerate() {
+        let plain = loaded(file, zedc::run::load_file);
+        let named = loaded(file, zedc::run::load_file_named);
+        let (g, unnamed) = lower_debug(&plain.term(), Some(plain.sites())).unwrap();
+        let (h, sited) = lower_debug(&named.term(), Some(named.sites())).unwrap();
+        // The negative control: the folded names are kept by the one staging only, so the
+        // two stagings do differ.
+        if i == 1 {
+            let (without, with) = (root_names(&unnamed), root_names(&sited));
+            for x in ["c", "f", "s"] {
+                assert!(!without.iter().any(|y| y == x), "{without:?}");
+                assert!(with.iter().any(|y| y == x), "{with:?}");
+            }
+        }
+        let shown = file.display();
+        assert_eq!(
+            zedc::zir::text::print(&g),
+            zedc::zir::text::print(&h),
+            "{shown}"
+        );
+        let (a, b) = (object_of(&plain, false), object_of(&named, false));
+        assert!(sections(&a) == sections(&b), "{shown}: the objects differ");
+        // With debug information too, the named program's code is the plain program's.
+        let (a, b) = (sections(&a), sections(&object_of(&named, true)));
+        for name in [".text", ".eh_frame"] {
+            assert!(a.get(name) == b.get(name), "{shown}: {name} differs");
+        }
+    }
 }
 
 #[test]
@@ -344,15 +422,143 @@ fn the_lines_after_a_family_body_are_their_own() {
     // after it are found by the numbers of their nodes, so `next` still visits 3, 4 and 5.
     let src = CHAIN.replacen("String(m.args)", "String(m.args.map((a) -> a ++ \"x\"))", 1);
     let (_, exe) = executable_of("family", &src);
-    let out = under_gdb(
-        &exe,
-        &["break family.zed:2", "run", "next", "next", "next"],
-    );
+    let out = under_gdb(&exe, &["break family.zed:2", "run", "next", "next", "next"]);
     let visited: Vec<u32> = out
         .lines()
         .filter_map(|l| l.split_once('\t')?.0.parse().ok())
         .collect();
     assert_eq!(visited, [2, 3, 4, 5], "{out}");
+}
+
+#[test]
+fn gdb_prints_the_words_the_names_are_bound_to() {
+    // Plan row DEBUG-dwarf-clif-bindings: at line 6, `n` and `k` are in the frame, each a
+    // `zed_word` of its tag and payload, and the type names the tags. `c` and `f` are
+    // constants: staging puts 7 in place of each read of `c` and reads `f` nowhere, and keeps
+    // their `let`s for their names (`Program::stage_named`, which `zedc build` lowers), so
+    // each is a constant word (`DW_OP_implicit_value`), the float's payload its bits.
+    if !cfg!(target_arch = "x86_64") {
+        return;
+    }
+    let src = "main(m: MainArgs) {
+    n = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 1;
+    c = 7;
+    f = 1.5;
+    k = n + c;
+    j = k * 3;
+    m.stdout <- \"${j}\";
+}
+";
+    let (_, exe) = executable_of("bindings", src);
+    let out = under_gdb(
+        &exe,
+        &[
+            "break bindings.zed:6",
+            "run -- 5",
+            "print n",
+            "print k",
+            "print c",
+            "print f",
+            "print k.bits - n.bits",
+            "print k.tag",
+            "info locals",
+            "ptype k",
+            "print m",
+            "print m.args.bits - m.args.bits",
+            "ptype m",
+            "continue",
+        ],
+    );
+    assert_eq!(stops(&out, "bindings.zed"), [6], "{out}");
+    // On a failure, the names the lowering recorded from the staged program, as `zedc build`
+    // lowers it, to tell a name never recorded from one the generator or the DWARF writer lost.
+    let p = zedc::run::load(src.as_bytes()).unwrap().stage_named().0;
+    let sited = lower_debug(&p.term(), Some(p.sites())).unwrap().1;
+    let named = format!("names {:?}, root {:?}", sited.names, sited.root);
+    // The bits of 1.5, 0x3FF8 << 48.
+    let float = format!("$4 = {{tag = FLOAT, bits = {}}}", 1.5f64.to_bits() as i64);
+    for want in [
+        "$1 = {tag = INT, bits = 5}",
+        "$2 = {tag = INT, bits = 12}",
+        "$3 = {tag = INT, bits = 7}",
+        float.as_str(),
+        "$5 = 7",
+        "$6 = INT",
+        "type = struct zed_word",
+        // `m` is the fields the program reads, here `m.args` (DEBUG-dwarf-clif-bindings).
+        "$7 = {args = {tag = ",
+        "$8 = 0",
+        "type = struct MainArgs {",
+        " args;",
+        "exited normally",
+    ] {
+        assert!(out.contains(want), "no {want:?} in:\n{out}\n{named}");
+    }
+    let locals: Vec<&str> = (out.lines())
+        .filter_map(|l| Some(l.split_once(" = {tag = ")?.0))
+        .collect();
+    for name in ["n", "c", "f", "k"] {
+        assert!(
+            locals.contains(&name),
+            "no local {name} in:\n{out}\n{named}"
+        );
+    }
+    // `j` is bound after line 6's code, and the run's output is 36.
+    assert!(!locals.contains(&"j"), "{out}");
+    assert!(out.contains("36"), "{out}");
+}
+
+#[test]
+fn gdb_prints_a_name_a_lambda_captures_inside_its_body() {
+    // zed/DEBUGGING.md: every binding in scope, and a name bound outside a lambda is in scope
+    // in its body. The body reads `c` from the closure into its own frame at its start, so at
+    // line 5, in the body's function and not `zed_root`, `c` is a local and `v` an argument.
+    // The lambda is called through a tuple, so it is a function of its own.
+    if !cfg!(target_arch = "x86_64") {
+        return;
+    }
+    let src = "main(m: MainArgs) {
+    n = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 1;
+    c = n * 2;
+    f = (v) ->
+        v + c;
+    t = (f, n);
+    m.stdout <- \"${t[0](t[1])}\";
+}
+";
+    let (_, exe) = executable_of("captures", src);
+    let out = under_gdb(
+        &exe,
+        &[
+            "break captures.zed:5",
+            "run -- 5",
+            "bt 1",
+            "print c",
+            "print v",
+            "info args",
+            "info locals",
+            "continue",
+        ],
+    );
+    assert_eq!(stops(&out, "captures.zed"), [5], "{out}");
+    let top = (out.lines().find(|l| l.starts_with("#0 "))).unwrap_or_else(|| panic!("{out}"));
+    assert!(
+        !top.contains("zed_root"),
+        "the stop is not in the body: {top}\n{out}"
+    );
+    for want in [
+        "$1 = {tag = INT, bits = 10}",
+        "$2 = {tag = INT, bits = 5}",
+        "v = {tag = INT, bits = 5}",
+        "c = {tag = INT, bits = 10}",
+        "exited normally",
+    ] {
+        assert!(out.contains(want), "no {want:?} in:\n{out}");
+    }
+    // `v` is the parameter and `c` a capture: `info args` comes before `info locals`.
+    let (args, locals) = (out.find("v = {"), out.find("c = {tag"));
+    assert!(args < locals, "{out}");
+    assert!(out.contains("15"), "{out}");
 }
 
 #[test]

@@ -1456,8 +1456,25 @@ fn built_value(v: Value) -> Term {
 /// and the tests read. The result has no warnings: they are the elaborator's, and
 /// `zedc::run::Program::stage` shares the program's placed warnings instead.
 pub fn mix(unit: &Unit, roots: &[&str]) -> (Unit, Report) {
-    let (out, m) = mix_keeping(unit, roots);
+    let (out, m) = mix_keeping(unit, roots, false);
     (out, m.report)
+}
+
+/// [`mix`], which keeps each `let` of a name the program wrote whose bound term the build
+/// makes a literal, though the body no longer reads it, so that a debugger can show the name
+/// (`zedc build`, plan row DEBUG-dwarf-clif-bindings). A literal adds no node when lowered, so
+/// the graph and the code are those of [`mix`]; only the names recorded beside them differ
+/// (test `l01_36a_executables::dwarf::staging_for_names_keeps_the_graph_and_the_code`).
+pub fn mix_named(unit: &Unit, roots: &[&str]) -> (Unit, Report) {
+    let (out, m) = mix_keeping(unit, roots, true);
+    (out, m.report)
+}
+
+/// Whether the kernel name `x` is one the program wrote, as a debugger shows it: it starts as
+/// a name does (`[A-Za-z_]`), unlike the elaborator's temporaries (`$3`) and this module's
+/// names (`zed_kernel::text::ident::written_name` gives the forms).
+fn written(x: &str) -> bool {
+    x.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
 }
 
 /// The mixer of a unit after [`mix`] with every definition a root: it mixes a changed term of
@@ -1470,7 +1487,7 @@ impl Remix {
     /// `unit` with its build-stage terms evaluated, every definition kept, and the mixer.
     pub fn new(unit: &Unit) -> (Unit, Remix) {
         let roots: Vec<&str> = unit.defs.iter().map(|d| d.name.as_str()).collect();
-        let (out, mut m) = mix_keeping(unit, &roots);
+        let (out, mut m) = mix_keeping(unit, &roots, false);
         m.report = Report::default();
         (out, Remix { m })
     }
@@ -1512,7 +1529,8 @@ impl Remix {
     }
 }
 
-fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
+/// [`mix`] of `unit` and its mixer; `keep_named` as [`mix_named`] keeps lets.
+fn mix_keeping(unit: &Unit, roots: &[&str], keep_named: bool) -> (Unit, Mixer) {
     // Complexity tradeoff (COMPLEXITY.md F25): a search of the list of roots for each
     // definition costs O(definitions × roots); the roots in a hash set cost O(1) per
     // definition and O(roots) memory.
@@ -1538,6 +1556,7 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
         }
     }
     let mut m = Mixer::of(unit);
+    m.keep_named = keep_named;
     // What each definition mixed reads in the parts the build takes, by kernel name.
     let mut taken: HashMap<&str, Vec<Arc<str>>> = HashMap::new();
     let mut out = Unit {
@@ -1783,7 +1802,7 @@ impl<'u> Specializer<'u> {
         // The mixer binds each definition mixed, as `mix` binds it, so the splits see what the
         // build sees: a build-stage binding is a literal, lambda, primitive or name, and a
         // definition whose mix fails is left to run.
-        let (mixed, mut mixer) = mix_keeping(unit, &roots);
+        let (mixed, mut mixer) = mix_keeping(unit, &roots, false);
         mixer.report = Report::default();
         let mut calls: HashMap<(Arc<str>, usize), BTreeSet<Key>> = HashMap::new();
         let key = |v: &Value| Key::new(&mixer.names, v);
@@ -2717,6 +2736,9 @@ struct Mixer {
     /// each part the mix keeps as written or evaluates adds what it reads, and the arms of an
     /// `if` the build does not take add nothing.
     taken: Set,
+    /// Whether a `let` of a name the program wrote is kept when its body no longer reads its
+    /// literal ([`mix_named`]); false for [`mix`] and [`Remix`].
+    keep_named: bool,
 }
 
 impl Mixer {
@@ -3736,9 +3758,20 @@ impl Mixer {
                     };
                     let body = done.pop().expect("the body");
                     self.scope.pop();
+                    // A `let` of a name the program wrote stays for a debugger when asked
+                    // ([`mix_named`]), its literal unread by the body, when the body is left
+                    // to run: the mix reads the form of a literal, function, primitive or
+                    // name (`Mixer::known`, an `if`'s condition), and a `let` over one would
+                    // hide it, so the build would take less. Over a body left to run the
+                    // `let` changes no stage, and lowers to no node.
+                    let runs = !matches!(
+                        body.term(),
+                        Term::Lit(_) | Term::Lam(..) | Term::PrimFn(_) | Term::Var(_)
+                    );
+                    let kept = self.keep_named && runs && written(x);
                     let x = self.frees.name(x);
                     let read = self.frees.sets.contains(body.sum.free, x);
-                    done.push(if matches!(*e, Term::Lit(_)) && !read {
+                    done.push(if matches!(*e, Term::Lit(_)) && !read && !kept {
                         body
                     } else {
                         let sum = self.frees.summary(Part::held(&e));
@@ -3896,12 +3929,21 @@ impl Mixer {
                 let name = self.frees.name(x);
                 let read = self.frees.summary(Part::held(b)).free;
                 let read = self.frees.sets.contains(read, name);
-                if self.build(bound, names) && !read {
+                let unread = self.build(bound, names) && !read;
+                if unread {
                     // Not an arm the build leaves out: the bound term is read as taken.
                     self.read_taken(bound.free);
                     self.report
                         .unread
                         .push(crate::defs::written_name(x).to_string());
+                }
+                // A literal bound to a name the program wrote and never reads goes the way of
+                // a read `let` under [`mix_named`], so that `LetBody` keeps it for a debugger
+                // as it keeps a literal the body no longer reads; a literal mixes to itself
+                // and fails nothing, and its name read nowhere changes no other part. Any
+                // other unread term is still left out unmixed, as [`mix`] leaves it.
+                let kept = self.keep_named && matches!(**e, Term::Lit(_)) && written(x);
+                if unread && !kept {
                     todo.push(Mix::Part(body));
                 } else {
                     let (e, _) = parts.pop().expect("the bound term");

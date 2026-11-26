@@ -332,3 +332,78 @@ fn the_sites_change_neither_the_address_nor_the_zir_text() {
     // Lowered with no sites, a graph has no table.
     assert_eq!(lower_sited(&p.term(), None).unwrap().1, []);
 }
+
+#[test]
+fn lowering_names_each_value_the_program_binds_by_its_node() {
+    // Plan row DEBUG-dwarf-clif-bindings: `s0` to `s3` are node outputs, each named once at
+    // its node, and `m.args` is named too: the syntax builder makes the field `main` reads one
+    // name, so no word of the whole `m` exists here, and the DWARF writer makes `m` of its
+    // fields (`dwarf::gdb_prints_the_words_the_names_are_bound_to` prints `m`); the names
+    // change neither the graph nor its sites, and with no sites there are none.
+    let p = zedc::run::load(chain(3, "    ").as_bytes()).unwrap();
+    let (g, sited) = zedc::zir::lower::lower_debug(&p.term(), Some(p.sites())).unwrap();
+    let (h, sites) = lower_sited(&p.term(), Some(p.sites())).unwrap();
+    assert_eq!(print(&g), print(&h));
+    assert_eq!(sited.sites, sites);
+    assert_eq!(sited.names.len(), sites.len());
+    let mut outs: Vec<&str> = (sited.names.iter())
+        .flat_map(|n| n.outs.iter().map(|(_, x)| &**x))
+        .collect();
+    let in_regions = (sited.names.iter()).flat_map(|n| n.regions.iter().flatten());
+    let named_m = (sited.root.iter().chain(in_regions)).any(|(x, _)| &**x == "m.args")
+        || outs.contains(&"m.args");
+    outs.retain(|x| x.starts_with('s'));
+    outs.sort_unstable();
+    assert_eq!(outs, ["s0", "s1", "s2", "s3"], "{sited:?}");
+    assert!(named_m, "{sited:?}");
+    let none = zedc::zir::lower::lower_debug(&p.term(), None).unwrap().1;
+    assert_eq!(none, zedc::zir::lower::Sited::default());
+}
+
+#[test]
+fn lowering_names_a_capture_in_the_body_that_reads_it() {
+    // Plan row DEBUG-dwarf-clif-bindings: `c`, bound in `main`, is a capture of the lambda's
+    // body, so the body's region names it, an argument after its parameter `v`, which is
+    // named too; the graph is the same as without the names.
+    let src = "main(m: MainArgs) {\n    n = int(m.args[0] else #outOfBounds -> \"\") else \
+               #invalid -> 1;\n    c = n * 2;\n    f = (v) -> v + c;\n    t = (f, n);\n    \
+               m.stdout <- \"${t[0](t[1])}\";\n}\n";
+    let p = zedc::run::load(src.as_bytes()).unwrap();
+    let (g, sited) = zedc::zir::lower::lower_debug(&p.term(), Some(p.sites())).unwrap();
+    let (h, _) = lower_sited(&p.term(), Some(p.sites())).unwrap();
+    assert_eq!(print(&g), print(&h));
+    let body = (sited.names.iter().flat_map(|n| &n.regions))
+        .find(|r| r.iter().any(|(x, _)| &**x == "v"))
+        .unwrap_or_else(|| panic!("no region names `v`: {sited:?}"));
+    let arg = |name: &str| {
+        body.iter().find_map(|(x, s)| match s {
+            zedc::zir::Src::Arg(i) if &**x == name => Some(*i),
+            _ => None,
+        })
+    };
+    let (v, c) = (arg("v"), arg("c"));
+    assert!(v.is_some() && c.is_some() && v < c, "{body:?}");
+}
+
+#[test]
+fn lowering_names_a_renamed_binder_as_written() {
+    // Plan row DEBUG-dwarf-clif-bindings: the two parameters `v` are renamed apart by the
+    // elaborator, `v@1` and `v@2` (`zed_kernel::text::ident::written_name`), and a debugger
+    // shows each as the program wrote it, `v`, in its own body's region.
+    let src = "main(m: MainArgs) {\n    n = int(m.args[0] else #outOfBounds -> \"\") else \
+               #invalid -> 1;\n    f = (v) -> v + 1;\n    g = (v) -> v * 2;\n    \
+               t = (f, g, n);\n    m.stdout <- \"${t[0](t[2])}${t[1](t[2])}\";\n}\n";
+    let p = zedc::run::load(src.as_bytes()).unwrap();
+    // The negative control: the term does hold the renamed binders.
+    assert!(format!("{:?}", p.term()).contains("v@"), "{:?}", p.term());
+    let (_, sited) = zedc::zir::lower::lower_debug(&p.term(), Some(p.sites())).unwrap();
+    let regions = sited.names.iter().flat_map(|n| &n.regions);
+    let all = (sited.root.iter().chain(regions.clone().flatten())).map(|(x, _)| &**x);
+    let outs = (sited.names.iter()).flat_map(|n| n.outs.iter().map(|(_, x)| &**x));
+    let renamed: Vec<&str> = all.chain(outs).filter(|x| x.contains('@')).collect();
+    assert!(renamed.is_empty(), "{renamed:?} in {sited:?}");
+    let with_v = regions
+        .filter(|r| r.iter().any(|(x, _)| &**x == "v"))
+        .count();
+    assert_eq!(with_v, 2, "{sited:?}");
+}

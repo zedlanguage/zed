@@ -117,6 +117,10 @@ struct Frame {
     /// The argument that holds each edge already captured: the depth of the region it comes
     /// from and its key there.
     brought: HashMap<(usize, (usize, usize)), Src>,
+    /// The name the region first reads each edge of an enclosing region by, keyed as
+    /// `brought`, when lowering with sites; else empty. A capture of the edge is named by it
+    /// in each region it enters ([`Lower::bring`]).
+    read_names: HashMap<(usize, (usize, usize)), Arc<str>>,
     /// The current state edge of each port the region has touched.
     states: HashMap<Arc<str>, Src>,
     /// The nodes entered with each key, by their shapes.
@@ -127,6 +131,9 @@ struct Frame {
     numbers: Vec<Vec<usize>>,
     /// The site of each node, in node order, when lowering with sites; else empty.
     sites: Vec<NodeSite>,
+    /// The names bound to the region's arguments and to constants in it, in the order bound,
+    /// when lowering with sites ([`Names::regions`]); else empty.
+    names: Vec<(Arc<str>, Src)>,
     /// Whether the region is the body of a `fam` node: its kind is function, as a lambda's is,
     /// and a refusal of a port in it names a family, not a function.
     family: bool,
@@ -151,11 +158,13 @@ impl Frame {
             },
             captures: Vec::new(),
             brought: HashMap::new(),
+            read_names: HashMap::new(),
             states: HashMap::new(),
             seen: HashMap::new(),
             keys: Vec::new(),
             numbers: Vec::new(),
             sites: Vec::new(),
+            names: Vec::new(),
             family: false,
             reads: HashMap::new(),
             hoisted: HashMap::new(),
@@ -173,6 +182,7 @@ struct Built {
     keys: Vec<Vec<ContentAddress>>,
     numbers: Vec<Vec<usize>>,
     sites: Vec<NodeSite>,
+    names: Vec<(Arc<str>, Src)>,
 }
 
 struct Lower<'t> {
@@ -290,6 +300,43 @@ pub fn lower(t: &Term) -> Result<Region, String> {
 // 8.3 times the instructions and 8.9 times the bytes
 // (`l01_36a_executables::sites::lowering_with_sites_scales`, 2026-11-13).
 pub fn lower_sited(t: &Term, sites: Option<&Sites>) -> Result<(Region, Vec<Option<Span>>), String> {
+    lower_debug(t, sites).map(|(g, d)| (g, d.sites))
+}
+
+/// The names a program gives the values of one node of a graph lowered with sites
+/// ([`lower_debug`]), for a debugger (plan row DEBUG-dwarf-clif-bindings): each output a
+/// `let` binds, by its index, and for each of the node's regions in order, the names bound to
+/// its arguments (a parameter, a pattern binder, a `let` of an argument, or a capture, by the
+/// name the region reads it by) and to constants, each with its `Src`, an argument or a
+/// constant, in the order bound. Only names the program wrote are kept, a name or a field of
+/// one it reads (`m.args`): a name the elaborator or the lowering makes up (`$3`) is not.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Names {
+    /// Each output a `let` binds: its index among the node's outputs, and the name.
+    pub outs: Vec<(usize, Arc<str>)>,
+    /// For each of the node's regions in order, the names bound to its arguments and to
+    /// constants in it, in the order bound.
+    pub regions: Vec<Vec<(Arc<str>, Src)>>,
+}
+
+/// What [`lower_debug`] keeps beside the graph, each table by node number in preorder: the
+/// sites ([`lower_sited`]) and the [`Names`] of each node, and the names bound in the root
+/// region, as [`Names::regions`] gives them for a node's region. All empty when lowered
+/// without sites.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Sited {
+    /// Each node's site, as [`lower_sited`] gives it.
+    pub sites: Vec<Option<Span>>,
+    /// Each node's [`Names`].
+    pub names: Vec<Names>,
+    /// The names bound in the root region.
+    pub root: Vec<(Arc<str>, Src)>,
+}
+
+/// The graph of `t`, as [`lower_sited`] gives it, with the names the program binds to its
+/// values ([`Sited`]). The graph is the same as without them. O(n + b) more for n nodes and b
+/// bindings, kept in the tree of sites and numbered in its one walk.
+pub fn lower_debug(t: &Term, sites: Option<&Sites>) -> Result<(Region, Sited), String> {
     let mut uses: HashMap<Arc<str>, usize> = HashMap::new();
     let mut pushed: HashSet<Arc<str>> = HashSet::new();
     let places = Places::new(t, &mut |s| match s {
@@ -336,33 +383,75 @@ pub fn lower_sited(t: &Term, sites: Option<&Sites>) -> Result<(Region, Vec<Optio
         root.kind = RegionKind::Port;
     }
     validate(&root).map_err(|e| bug(format_args!("the lowered graph is invalid: {e}")))?;
-    let numbered = preorder(f.sites);
-    Ok((root, numbered))
+    let (sites, names) = preorder(f.sites);
+    let root_names = f.names;
+    Ok((
+        root,
+        Sited {
+            sites,
+            names,
+            root: root_names,
+        },
+    ))
 }
 
-/// The site of a node lowered with sites ([`lower_sited`]), and the sites of the nodes of each
-/// of its regions, each in node order.
+/// The site of a node lowered with sites ([`lower_sited`]), the names of its outputs
+/// ([`Names::outs`]), and what is kept of each of its regions.
 struct NodeSite {
     at: Option<Span>,
-    regions: Vec<Vec<NodeSite>>,
+    outs: Vec<(usize, Arc<str>)>,
+    regions: Vec<RegionSite>,
 }
 
-/// The sites of `nodes`, a region's, and of the nodes of their regions, by node number in
-/// preorder: a region's nodes in order, each followed at once by the nodes of its regions.
-/// O(n) for n nodes, with the nodes still to number on a heap stack, since regions nest as
-/// deep as the program.
-fn preorder(nodes: Vec<NodeSite>) -> Vec<Option<Span>> {
-    let mut out = Vec::new();
+/// What lowering with sites keeps of one region of a node: the names bound to its arguments
+/// and to constants ([`Names::regions`]), and its nodes', in node order.
+struct RegionSite {
+    names: Vec<(Arc<str>, Src)>,
+    nodes: Vec<NodeSite>,
+}
+
+/// The sites and the [`Names`] of `nodes`, a region's, and of the nodes of their regions, by
+/// node number in preorder: a region's nodes in order, each followed at once by the nodes of
+/// its regions. O(n + b) for n nodes and b names, with the nodes still to number on a heap
+/// stack, since regions nest as deep as the program.
+fn preorder(nodes: Vec<NodeSite>) -> (Vec<Option<Span>>, Vec<Names>) {
+    let (mut sites, mut names) = (Vec::new(), Vec::new());
     let mut todo: Vec<std::vec::IntoIter<NodeSite>> = vec![nodes.into_iter()];
     while let Some(top) = todo.last_mut() {
         let Some(n) = top.next() else {
             todo.pop();
             continue;
         };
-        out.push(n.at);
-        todo.extend(n.regions.into_iter().rev().map(Vec::into_iter));
+        sites.push(n.at);
+        let mut regions = Vec::with_capacity(n.regions.len());
+        let mut subs = Vec::with_capacity(n.regions.len());
+        for r in n.regions {
+            regions.push(r.names);
+            subs.push(r.nodes);
+        }
+        names.push(Names {
+            outs: n.outs,
+            regions,
+        });
+        todo.extend(subs.into_iter().rev().map(Vec::into_iter));
     }
-    out
+    (sites, names)
+}
+
+/// The name a debugger shows for the kernel name `x` ([`Names`]), when the program wrote it:
+/// it starts as a name does (`[A-Za-z_]`, a binder or a field it reads such as `m.args`),
+/// unlike a name the elaborator (`$3`) or the lowering (a NUL first, [`Lower::fresh`]) makes
+/// up. A binder the resolver renamed apart (`c@2`) is shown as written (`c`,
+/// `zed_kernel::text::ident::written_name`); a name with no `@` is shared, not copied.
+fn shown(x: &Arc<str>) -> Option<Arc<str>> {
+    if !x.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+        return None;
+    }
+    let w = zed_kernel::text::ident::written_name(x);
+    Some(match w.len() == x.len() {
+        true => x.clone(),
+        false => w.into(),
+    })
 }
 
 impl<'t> Lower<'t> {
@@ -372,6 +461,48 @@ impl<'t> Lower<'t> {
 
     fn frame(&mut self) -> &mut Frame {
         self.frames.last_mut().expect("a frame")
+    }
+
+    /// Records that the program binds `x` to `v`, when lowering with sites ([`Names`]): a
+    /// node's output on that node, an argument on its region, and a constant on the region
+    /// being built, where the binding is. A function or a prelude word not yet a node is not
+    /// recorded, nor is a name the program could not write.
+    fn named(&mut self, x: &Arc<str>, v: &Val<'t>) {
+        let (Some(_), Val::Src(s, d)) = (self.sites, v) else {
+            return;
+        };
+        let Some(x) = shown(x) else {
+            return;
+        };
+        let top = self.top();
+        match s {
+            Src::Out(n, p) => {
+                if let Some(site) = self.frames[*d].sites.get_mut(*n) {
+                    site.outs.push((*p, x));
+                }
+            }
+            Src::Arg(_) => self.frames[*d].names.push((x, s.clone())),
+            Src::Const(_) => self.frames[top].names.push((x, s.clone())),
+        }
+    }
+
+    /// Records, when lowering with sites, that the region being built reads `v` by the name
+    /// `x`, when `v` is an edge of an enclosing region: its capture is named `x` in each region
+    /// it enters ([`Lower::bring`]). The name is exact there: the read resolves `x` to that
+    /// binding, so no region between binds `x` again. The first name read by is kept.
+    fn read_as(&mut self, x: &Arc<str>, v: &Val<'t>) {
+        if self.sites.is_none() {
+            return;
+        }
+        let top = self.top();
+        if let Val::Src(s, d) = v
+            && *d < top
+            && !matches!(s, Src::Const(_))
+            && let Some(x) = shown(x)
+        {
+            let key = (*d, captured(s));
+            self.frames[top].read_names.entry(key).or_insert(x);
+        }
     }
 
     fn fresh(&mut self) -> Arc<str> {
@@ -460,8 +591,13 @@ impl<'t> Lower<'t> {
             Some(held) if from > at => held.clone(),
             _ => s,
         };
+        // The name the region being built reads the edge by, if any ([`Lower::read_as`]).
+        let name = self.frames[top].read_names.get(&key).cloned();
         for k in from + 1..=top {
             s = self.capture(k, s);
+            if let Some(x) = &name {
+                self.frames[k].names.push((x.clone(), s.clone()));
+            }
             self.frames[k].brought.insert(key, s.clone());
         }
         s
@@ -683,7 +819,7 @@ impl<'t> Lower<'t> {
         node: Node,
         keys: Vec<ContentAddress>,
         numbers: Vec<usize>,
-        regions: Vec<Vec<NodeSite>>,
+        regions: Vec<RegionSite>,
     ) -> usize {
         self.add_in(self.top(), node, keys, numbers, regions)
     }
@@ -696,10 +832,11 @@ impl<'t> Lower<'t> {
         node: Node,
         keys: Vec<ContentAddress>,
         numbers: Vec<usize>,
-        regions: Vec<Vec<NodeSite>>,
+        regions: Vec<RegionSite>,
     ) -> usize {
         let site = self.sites.map(|_| NodeSite {
             at: self.site,
+            outs: Vec::new(),
             regions,
         });
         let shape = match (
@@ -782,10 +919,21 @@ impl<'t> Lower<'t> {
         let mut numbers = Vec::new();
         let mut sites = Vec::new();
         for b in built {
-            sites.push(b.sites);
             let map: Vec<usize> = (0..b.fixed)
                 .chain(b.captures.iter().map(|c| b.fixed + at[&captured(c)]))
                 .collect();
+            // A name of a capture follows it to its place in the merged list, as `renumber`
+            // moves the region's reads of it.
+            let names = (b.names.into_iter())
+                .map(|(x, s)| match s {
+                    Src::Arg(i) => (x, Src::Arg(map[i])),
+                    s => (x, s),
+                })
+                .collect();
+            sites.push(RegionSite {
+                names,
+                nodes: b.sites,
+            });
             let mut r = b.region;
             renumber(&mut r, &map);
             r.args.truncate(b.fixed);
@@ -907,6 +1055,7 @@ impl<'t> Lower<'t> {
             Term::Lit(v) => s.vals.push(Val::Src(Src::Const(v.clone()), at)),
             Term::Var(x) => {
                 let v = self.lookup(x)?;
+                self.read_as(x, &v);
                 s.vals.push(v);
             }
             Term::PrimFn(p) => s.vals.push(Val::Prim(*p)),
@@ -1269,7 +1418,9 @@ impl<'t> Lower<'t> {
         let depth = self.top();
         let mark = self.scope.clone();
         for (i, p) in params.iter().enumerate() {
-            self.bind(p.clone(), Val::Src(Src::Arg(i), depth));
+            let v = Val::Src(Src::Arg(i), depth);
+            self.named(p, &v);
+            self.bind(p.clone(), v);
         }
         s.jobs.push(Job::EndRegion { ports, mark });
         s.jobs.push(Job::Src);
@@ -1296,6 +1447,7 @@ impl<'t> Lower<'t> {
             Job::Site(around) => self.site = around,
             Job::Var(x) => {
                 let v = self.lookup(&x)?;
+                self.read_as(&x, &v);
                 s.vals.push(v);
             }
             Job::Src => {
@@ -1321,6 +1473,7 @@ impl<'t> Lower<'t> {
                     }
                 }
                 let mark = self.scope.clone();
+                self.named(x, &v);
                 self.bind(x.clone(), v);
                 s.jobs.push(Job::Restore(mark));
                 s.jobs.push(Job::Term(body));
@@ -1345,6 +1498,7 @@ impl<'t> Lower<'t> {
                 let vs = take(&mut s.vals, params.len());
                 let mark = self.scope.clone();
                 for (p, v) in params.iter().cloned().zip(vs) {
+                    self.named(&p, &v);
                     self.bind(p, v);
                 }
                 s.jobs.push(Job::Restore(mark));
@@ -1358,6 +1512,7 @@ impl<'t> Lower<'t> {
                 let vs = take(&mut s.vals, c.params.len());
                 let saved = self.swap_scope(env.clone());
                 for (p, v) in c.params.iter().cloned().zip(vs) {
+                    self.named(&p, &v);
                     self.bind(p, v);
                 }
                 s.jobs.push(Job::Restore(saved));
@@ -1427,6 +1582,7 @@ impl<'t> Lower<'t> {
                     keys: f.keys,
                     numbers: f.numbers,
                     sites: f.sites,
+                    names: f.names,
                 });
             }
             Job::Node { op, fixed, regions } => {

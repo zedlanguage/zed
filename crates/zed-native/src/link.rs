@@ -22,7 +22,7 @@ use std::process::Command;
 
 use zedc::suppress::Suppress;
 use zedc::work::{self, Stage};
-use zedc::zir::lower::lower_sited;
+use zedc::zir::lower::lower_debug;
 
 use crate::section::{section, section_of};
 
@@ -287,9 +287,10 @@ pub fn build(
             ),
         ));
     }
-    let program = zedc::run::load_file(file, on, suppress, stderr)?;
-    let (g, sites) = work::stage(Stage::Lower, None, || {
-        lower_sited(&program.term(), Some(program.sites()))
+    // Staged keeping the names the build made literals, for the debug information.
+    let program = zedc::run::load_file_named(file, on, suppress, stderr)?;
+    let (g, sited) = work::stage(Stage::Lower, None, || {
+        lower_debug(&program.term(), Some(program.sites()))
     })
     .map_err(|e| (1, format!("{file}: {e}")))?;
     let address = program.address().map_err(|e| (1, format!("{file}: {e}")))?;
@@ -301,7 +302,7 @@ pub fn build(
             &program.limits(),
             address,
             (program.file(), program.text()),
-            &sites,
+            &sited,
             // DWARF in every build, debug and optimized (zed/DEBUGGING.md section 4).
             true,
         )

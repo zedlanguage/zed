@@ -72,6 +72,46 @@ fn opt_level_none_gives_the_values_opt_level_speed_gives() {
     assert!(runs.get() >= 9, "{} native runs", runs.get());
 }
 
+/// No function compiled has a loop, at either level: a recursive call and every term of every
+/// step unit are compiled here, and `Gen::function` asserts in every debug build that the
+/// function it built has none (Cranelift's loop analysis), since at `speed` Cranelift would
+/// hoist code out of a loop above the store of a name the debug information places in that
+/// code (zed-native `dwarf::bindings`). The test build has debug assertions on.
+#[test]
+fn no_function_compiled_has_a_loop_at_either_level() {
+    // Not `assert!`, which clippy refuses on a constant, nor `const { assert!(..) }`, which
+    // would stop a build without debug assertions from compiling the other tests.
+    if !cfg!(debug_assertions) {
+        panic!("the check is a debug assertion");
+    }
+    let runs = Cell::new(0);
+    let through = |t: &Term, ev: &mut Evaluator| {
+        let g = zed_native::legalize(lower(t)?);
+        let p = plan(g.graph(), true);
+        for level in [OptLevel::None, OptLevel::Speed] {
+            let mut copy = Evaluator::new(ev.world.clone());
+            run_at(level, &g, &p, &mut copy)?;
+        }
+        runs.set(runs.get() + 1);
+        Ok(run_at(OptLevel::None, &g, &p, ev)?.value)
+    };
+    for path in super::corpus::units() {
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            test_through(&text, &through),
+            test(&text),
+            "{}",
+            path.display()
+        );
+    }
+    // At least one run for each of the 92 table rows the units check.
+    assert!(runs.get() >= 92, "{} native runs", runs.get());
+    let t = zed_tests::deep::linked_list(10);
+    for level in [OptLevel::None, OptLevel::Speed] {
+        assert_eq!(at(level, &t).value, kernel(&t).unwrap());
+    }
+}
+
 #[test]
 fn a_loop_of_integer_arithmetic_agrees_at_both_levels() {
     // The sum of the squares below 40 of the numbers that are not multiples of 3, by a closure

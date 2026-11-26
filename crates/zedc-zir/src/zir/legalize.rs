@@ -96,7 +96,7 @@ pub fn nodes_in(regions: &[Arc<Region>]) -> usize {
 /// its site, and a derived node that expands drops its number, its certificate's nodes, which
 /// follow it in preorder, taking its place, as [`legalize`] numbers them. One walk of `g`,
 /// O(n) for n nodes, with the regions still to read on a heap stack.
-pub fn legalized_sites<T: Copy>(g: &Region, want: Expansions, sites: &[T]) -> Vec<T> {
+pub fn legalized_sites<T: Clone>(g: &Region, want: Expansions, sites: &[T]) -> Vec<T> {
     let mut out = Vec::with_capacity(sites.len());
     let mut number = 0;
     let mut todo: Vec<std::slice::Iter<'_, Node>> = vec![g.nodes.iter()];
@@ -106,7 +106,7 @@ pub fn legalized_sites<T: Copy>(g: &Region, want: Expansions, sites: &[T]) -> Ve
             continue;
         };
         if !expands(node, want) {
-            out.push(sites[number]);
+            out.push(sites[number].clone());
         }
         number += 1;
         todo.extend(node.regions.iter().rev().map(|r| r.nodes.iter()));

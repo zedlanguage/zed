@@ -161,7 +161,7 @@ fn run_in(
         b.symbol(*name, a);
     }
     let mut m = Jit(ManuallyDrop::new(JITModule::new(b)));
-    let f = codegen::define(&mut *m.0, &t, &plans, None, false)?;
+    let f = codegen::define(&mut *m.0, &t, &plans, None, false, None)?;
     m.0.finalize_definitions().map_err(bug)?;
     let code = m.0.get_finalized_function(f.root);
     // SAFETY: `code` is `zed_root`, which the generator defines with no parameters and two
@@ -181,7 +181,7 @@ fn run_in(
 pub fn object(g: &Legalized, plan: &Plan) -> Result<Vec<u8>, String> {
     let (t, plans) = Tables::new(g, plan)?;
     let mut m = object_module()?;
-    codegen::define(&mut m, &t, &plans, None, false)?;
+    codegen::define(&mut m, &t, &plans, None, false, None)?;
     m.finish().emit().map_err(bug)
 }
 
@@ -191,7 +191,7 @@ pub fn ir(g: &Legalized, plan: &Plan) -> Result<String, String> {
     let (t, plans) = Tables::new(g, plan)?;
     let mut m = object_module()?;
     let mut s = String::new();
-    codegen::define(&mut m, &t, &plans, Some(&mut s), false)?;
+    codegen::define(&mut m, &t, &plans, Some(&mut s), false, None)?;
     Ok(s)
 }
 
@@ -202,11 +202,12 @@ pub fn ir(g: &Legalized, plan: &Plan) -> Result<String, String> {
 /// library's start. The data holds `g` as lowered, since ZIR's binary form does not record which
 /// nodes legalization swapped; the start legalizes it again, as this does, and reads the memory
 /// plan this made, which the data holds too (plan row EXE-plan-carried). The data
-/// holds too `source`, the name of the program's file and its text, and `sites`, the site of
-/// each node of `g` (plan row RT-sites), so that a run-time error prints its site as `zedc run`
-/// prints it. With `debug`, the object holds the program's DWARF too (`dwarf::add`, plan row
-/// DEBUG-dwarf-clif), added after the code is made, so the code is the same without it, and
-/// the thread-local variables a debugger conditions on (`dwarf::define_debug_vars`).
+/// holds too `source`, the name of the program's file and its text, and the site of each node
+/// of `g` (plan row RT-sites), from `sited`, so that a run-time error prints its site as `zedc
+/// run` prints it. With `debug`, the object holds the program's DWARF too (`dwarf::add`, plan
+/// row DEBUG-dwarf-clif), with the names `sited` gives the program's values (plan row
+/// DEBUG-dwarf-clif-bindings), added after the code is made, so the code is the same without
+/// it, and the thread-local variables a debugger conditions on (`dwarf::define_debug_vars`).
 #[cfg(unix)]
 #[expect(
     clippy::too_many_arguments,
@@ -219,19 +220,27 @@ pub fn executable_object(
     limits: &zed_kernel::limits::MainLimits,
     address: zedc::address::ContentAddress,
     source: (Option<&str>, &str),
-    sites: &[Option<zed_kernel::sites::Span>],
+    sited: &zedc::zir::lower::Sited,
     debug: bool,
 ) -> Result<Vec<u8>, String> {
     // The data holds `g` as lowered and the plan of `g` legalized, which the code is made from.
     let legal = legalize(g.clone());
     let plan = plan(legal.graph(), fuse);
-    let data = exe::data(&plan, address, ports, limits, source, sites, &g)?;
+    let data = exe::data(&plan, address, ports, limits, source, &sited.sites, &g)?;
     // The code's node numbers are those of `g` legalized, as at the executable's start.
-    let legal_sites = debug.then(|| zedc::zir::legalize::legalized_sites(&g, EXPANSIONS, sites));
+    let legal_sites = debug.then(|| {
+        let sites = zedc::zir::legalize::legalized_sites(&g, EXPANSIONS, &sited.sites);
+        let names = zedc::zir::legalize::legalized_sites(&g, EXPANSIONS, &sited.names);
+        (sites, names)
+    });
     let g = legal;
     let (t, plans) = Tables::new(&g, &plan)?;
     let mut m = object_module()?;
-    let f = codegen::define(&mut m, &t, &plans, None, true)?;
+    let named = (legal_sites.as_ref()).map(|(_, names)| codegen::Named {
+        nodes: names,
+        root: &sited.root,
+    });
+    let f = codegen::define(&mut m, &t, &plans, None, true, named)?;
     let main = exe::define_main(&mut m, f.root, &data, &f.code, true)?;
     let cie = cranelift_module::Module::isa(&m).create_systemv_cie();
     let decls = cranelift_module::Module::declarations(&m);
@@ -251,7 +260,7 @@ pub fn executable_object(
     // Before the debug sections, so that with and without them `.eh_frame` and the symbols
     // before theirs are the same.
     dwarf::eh_frame(&mut product, cie, f.code.iter().chain([&main]))?;
-    if let Some(sites) = legal_sites {
+    if let Some((sites, _)) = &legal_sites {
         let file = source.0.unwrap_or_default();
         // The directory of an absolute file name is its own, so the object's bytes do not
         // depend on where `zedc build` runs; a relative name is read from the working
@@ -272,8 +281,11 @@ pub fn executable_object(
             file,
             &dir,
             source.1,
-            &sites,
+            sites,
             vars,
+            &(ports.inputs.iter())
+                .map(|(x, _)| x.as_str())
+                .collect::<Vec<_>>(),
         )?;
     }
     product.emit().map_err(bug)
@@ -410,6 +422,75 @@ mod tests {
         assert_eq!(freed.load(Ordering::SeqCst), 0);
         drop(m);
         assert_eq!(freed.load(Ordering::SeqCst), 1);
+    }
+
+    /// The pieces of the location lists of n reads of files and of a chain of n joins, at n and
+    /// 8n: at most 9 times as many at 8n, and in each function at most (2d + 1) 2v for v
+    /// bindings and d descents of the node numbers in code order, the bound of `dwarf::Runs`.
+    /// That bound is linear only while d is, which is measured here, not proved: the largest d
+    /// of a function may not grow from n to 8n. Splitting a scope at the code of no node made
+    /// the pieces quadratic: 176,499 for 100 reads.
+    #[test]
+    fn the_pieces_of_the_names_grow_linearly_with_the_program() {
+        let reader = |n: usize| {
+            let mut src = "main(m: MainArgs) {\nfs = main::files;\n".to_string();
+            for k in 1..=n {
+                src += &format!(
+                    "  r{k} = (fs[m.args[{}] else #outOfBounds -> \"\"] else #notFound -> \
+                     \"missing\") else #ioError -> \"unreadable\";\n",
+                    k - 1
+                );
+            }
+            let holes: Vec<String> = (1..=n).map(|k| format!("${{r{k}}}")).collect();
+            src + &format!("  m.stdout <- \"{}\";\n}}\n", holes.join("|"))
+        };
+        let chain = |n: usize| {
+            let mut src = "main(m: MainArgs) {\n    s0 = String(m.args);\n".to_string();
+            for k in 1..=n {
+                src += &format!("    s{k} = s{} ++ \"x\";\n", k - 1);
+            }
+            src + &format!("    m.stdout <- s{n};\n}}\n")
+        };
+        let count = |what: &str, src: String| {
+            let p = zedc::run::load(src.as_bytes()).unwrap().stage_named().0;
+            let (g, sited) = zedc::zir::lower::lower_debug(&p.term(), Some(p.sites())).unwrap();
+            let legal = legalize(g.clone());
+            let plan = plan(legal.graph(), true);
+            let names = zedc::zir::legalize::legalized_sites(&g, EXPANSIONS, &sited.names);
+            let (t, plans) = Tables::new(&legal, &plan).unwrap();
+            let mut m = object_module().unwrap();
+            let named = codegen::Named {
+                nodes: &names,
+                root: &sited.root,
+            };
+            let f = codegen::define(&mut m, &t, &plans, None, true, Some(named)).unwrap();
+            let (mut vars, mut most, mut pieces) = (0, 0, 0);
+            for c in &f.code {
+                let mut code: Vec<_> = c.nodes.iter().filter(|r| r.0 < r.1).collect();
+                code.sort_unstable();
+                let d = code.windows(2).filter(|w| w[0].2 > w[1].2).count();
+                let b = dwarf::bindings(&c.nodes, &c.vars);
+                let here: usize = b.iter().map(|b| b.pieces.len()).sum();
+                assert!(
+                    here <= (2 * d + 1) * 2 * c.vars.len(),
+                    "{what}: {here} pieces"
+                );
+                (vars, most, pieces) = (vars + c.vars.len(), most.max(d), pieces + here);
+            }
+            eprintln!("{what}: {vars} bindings, at most {most} descents, {pieces} pieces");
+            (pieces, most)
+        };
+        for (what, src, n) in [
+            ("reads", &reader as &dyn Fn(usize) -> String, 12),
+            ("joins", &chain, 25),
+        ] {
+            let ((small, d), (large, d8)) = (count(what, src(n)), count(what, src(8 * n)));
+            assert!(
+                small > 0 && large <= 9 * small,
+                "{what}: {small} pieces at {n}, {large} at 8n"
+            );
+            assert!(d8 <= d, "{what}: at most {d} descents at {n}, {d8} at 8n");
+        }
     }
 }
 

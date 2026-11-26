@@ -496,6 +496,7 @@ pub(crate) fn define_main<M: Module>(
         len: c.code_info().total_size,
         nodes: Vec::new(),
         unwind,
+        vars: Vec::new(),
     };
     m.clear_context(&mut ctx);
     Ok(main)

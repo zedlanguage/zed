@@ -741,10 +741,13 @@ impl Tables {
         // Cannot panic: codegen asks (`Gen::src`) only for a constant input of a visited node or
         // result of a visited region that is not a scalar, and [`Tables::visit`] records each
         // such constant under the same key.
-        *self
-            .const_at
-            .get(v)
+        self.const_index_if(v)
             .unwrap_or_else(|| panic!("constant {v:?} is not in the table {:?}", self.consts))
+    }
+
+    /// The index of non-scalar constant `v`, if the graph's code uses it.
+    pub fn const_index_if(&self, v: &Value) -> Option<usize> {
+        self.const_at.get(v).copied()
     }
 }
 
