@@ -262,7 +262,8 @@ fn own_keyed<T>(n: &Node<T>) -> u64 {
 /// keys of a kind whose weights tie and which gives no other input, as types of one digest,
 /// plan row PERF-set-tied-digest-depth), the bucket is ordered, so a share costs `O(log b)`
 /// comparisons of sets for `b` sets in the bucket, not `b` ([`HashConsTable`]). Not proved here
-/// that SipHash-1-3 (std's algorithm, "subject to change" by its documentation) is such a function; it is the one std
+/// that SipHash-1-3 (std's algorithm, "subject to change" by its documentation) is such a
+/// function; it is the one std
 /// uses against the same attack on its maps. Cost: 8 bytes a node and one hash per key put in
 /// ([`TreapSet::insert`]); a node made again takes its own seeded weight from its old counts
 /// ([`own_keyed`]). Results do not depend on the key: the table only ever gives a set an equal

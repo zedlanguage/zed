@@ -550,7 +550,8 @@ impl Elem for Spine {
 
 /// TREAP-eq-alloc: trees of height 100 push past the 32 pairs or jobs held inline in `eq`,
 /// `subset_walk` and `combine`, so the stacks move to the heap (`eq`'s, of at most 101 pairs,
-/// grows once more there, from 64 to 128); the results must be what they are on short trees. Only the results are checked, not the allocations.
+/// grows once more there, from 64 to 128); the results must be what they are on short trees.
+/// Only the results are checked, not the allocations.
 #[test]
 fn comparing_and_combining_tall_tied_sets() {
     let n = 100i64;

@@ -426,7 +426,8 @@ impl<W: Word> Montgomery<W> {
 }
 
 /// Residues modulo an odd 64-bit `n > 1` in Montgomery form (struct `Montgomery`, P. L.
-/// Montgomery 1985, cited there), for a crate that reduces many numbers modulo one `n` known only at run
+/// Montgomery 1985, cited there), for a crate that reduces many numbers modulo one `n` known
+/// only at run
 /// time (zed-kernel `Rat::fingerprint`, modulo two primes drawn per run). A residue `x` is held
 /// as `x R mod n`, `R = 2^64`: two equal numbers have equal held residues and, `R` being a unit
 /// modulo the odd `n`, two numbers unequal modulo `n` have unequal ones, so a held residue tells
@@ -1092,7 +1093,10 @@ mod tests {
     /// residues give equal held ones and unequal give unequal.
     #[test]
     fn montgomery64_residues_agree_with_division() {
-        use crate::{mul_mod, pow_mod, rem_big_u64};
+        use crate::{mul_mod, pow_mod};
+        // `x mod n` by `BigUint`'s own division, not `crate::rem_big_u64`: that is defined in
+        // `lib.rs`, which re-exports this file, so naming it here would make an import cycle.
+        let rem = |x: &num_bigint::BigUint, n: u64| u64::try_from(x % n).expect("below n");
         let (mut rng, _) = crate::seed::Rng::fresh("montgomery64_residues_agree_with_division");
         let mut next = move || rng.next_u64();
         let mut moduli = vec![3, 5, 9, 561, 1_000_003, (1 << 61) - 1, (1 << 60) + 33];
@@ -1121,11 +1125,11 @@ mod tests {
                 let x = num_bigint::BigUint::from_slice(
                     &(0..2 * words).map(|_| next() as u32).collect::<Vec<_>>(),
                 );
-                assert_eq!(m.of_big(&x), m.of_word(rem_big_u64(&x, n)), "{x} mod {n}");
+                assert_eq!(m.of_big(&x), m.of_word(rem(&x, n)), "{x} mod {n}");
                 let top = (num_bigint::BigUint::from(1u8) << (64 * words)) - 1u8;
                 assert_eq!(
                     m.of_big(&top),
-                    m.of_word(rem_big_u64(&top, n)),
+                    m.of_word(rem(&top, n)),
                     "2^(64 {words}) - 1"
                 );
             }
