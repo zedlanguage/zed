@@ -99,7 +99,10 @@ pub const ZED_METER_DRRUN: &str = "ZED_METER_DRRUN";
 /// under DynamoRIO again when the client does not answer: such a start happens at most once.
 pub const ZED_METER_UNDER_DRRUN: &str = "ZED_METER_UNDER_DRRUN";
 
-/// Starts the process again under DynamoRIO, as `drrun -c <client> -- <binary> <arguments>` with
+/// Starts the process again under DynamoRIO, as
+/// `drrun -c <client> <dir> -- <binary> <arguments>` (`<dir>` the directory `zed-icount` under
+/// the temporary directory, through which the client passes each child process's count to its
+/// parent; drrun follows child processes, so each runs under the client too) with
 /// [`ZED_METER_DRRUN`] and [`ZED_METER_ICOUNT`], when both are set and not empty, the process was
 /// started with `--exact`, it does not run under the client already (the client's system call
 /// does not answer) and was not started by this function, and the hardware counter of
@@ -175,7 +178,8 @@ pub fn can_attach_dynamorio() -> bool {
 /// - `-no_follow_children`: a process this one starts (the run at 8n of a check, in a new process
 ///   of the test binary) starts natively and starts DynamoRIO itself at its own first run, where
 ///   by default DynamoRIO would follow its `execve` and run its whole set-up under DynamoRIO;
-/// - `-client_lib <client>;0;`: the client, with id 0 and no options.
+/// - `-client_lib <client>;0;<dir>`: the client, with id 0 and one option, the directory through
+///   which it takes the counts of the child processes [`counted`] starts.
 ///
 /// The start inside the process is tried first in a child, made by `fork` from the calling
 /// thread with a second thread waiting, as the test harness's main thread waits for the test's
@@ -216,6 +220,28 @@ pub fn can_attach_dynamorio() -> bool {
 /// elsewhere an error.
 pub fn attach_dynamorio() -> Result<(), String> {
     imp::attach_dynamorio()
+}
+
+/// A command that runs `program` so that the meter of this process counts its instructions, as
+/// perf's `inherit` counts a child process with the hardware counter (ICOUNT-child-processes):
+/// every process a measured run starts is made by this, not by `Command::new` (the source check
+/// `zed_tests` scaling_tests::every_process_a_benchmark_starts_is_counted holds the list of the
+/// starts that are not, each with its reason).
+///
+/// Where DynamoRIO runs inside this process ([`attach_dynamorio`] succeeded), it does not follow
+/// a child's `execve` (`-no_follow_children`, so that the run at 8n of a check, a new process of
+/// the test binary, starts natively and starts DynamoRIO at its own first run), so the command is
+/// `drrun -c <client> <dir> on -- <program>`: the child runs under the client from its start, and
+/// its total reaches this process when it is reaped (tools/icount/zed_icount.c, "Child
+/// processes"). Otherwise it is `Command::new(program)`: under the fallback, the process started
+/// again under `drrun`, DynamoRIO follows every child by default; with the hardware counter,
+/// perf's `inherit` counts it; with neither nothing is counted.
+///
+/// Inferred, not checked against DynamoRIO's source: no DynamoRIO option follows one `execve`
+/// and not another, so the choice of which child runs under the client is made here, by the
+/// program run, and not by an option of the start inside the process.
+pub fn counted(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    imp::counted_command(program.as_ref())
 }
 
 /// The variable that names the DynamoRIO client `libzed_icount.so`; see [`ZED_METER_DRRUN`].
@@ -641,12 +667,58 @@ mod imp {
         };
         value(super::ZED_METER_DRRUN)?;
         let client = std::str::from_utf8(value(super::ZED_METER_ICOUNT)?).ok()?;
-        if client.contains(|c: char| c.is_whitespace() || matches!(c, ';' | '"' | '\'')) {
+        let unsafe_in_options =
+            |s: &str| s.contains(|c: char| c.is_whitespace() || matches!(c, ';' | '"' | '\''));
+        if unsafe_in_options(client) {
             return None;
         }
+        // The client's one option, the children directory (`children_dir`); left out where the
+        // option text cannot hold it, and then the client counts no child process.
+        let dir = children_dir();
+        let dir = dir.to_str().filter(|d| !unsafe_in_options(d)).unwrap_or("");
         Some(format!(
-            "-code_api -no_follow_children -client_lib {client};0;"
+            "-code_api -no_follow_children -client_lib {client};0;{dir}"
         ))
+    }
+
+    /// The directory through which the client passes a child process's count to the process
+    /// that reaps it (tools/icount/zed_icount.c, "Child processes"): `zed-icount` under the
+    /// temporary directory, the same for every process, since a child finds it only by the
+    /// option it was started with.
+    fn children_dir() -> std::path::PathBuf {
+        std::env::temp_dir().join("zed-icount")
+    }
+
+    /// Whether DynamoRIO was started inside this process ([`attach_dynamorio`]) and runs.
+    static ATTACHED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+
+    /// See [`super::counted_command`].
+    pub(super) fn counted_command(program: &std::ffi::OsStr) -> std::process::Command {
+        let named = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+        let (Some(drrun), Some(client)) = (
+            named(super::ZED_METER_DRRUN),
+            named(super::ZED_METER_ICOUNT),
+        ) else {
+            return std::process::Command::new(program);
+        };
+        if !matches!(ATTACHED.get(), Some(Ok(()))) {
+            return std::process::Command::new(program);
+        }
+        let dir = children_dir();
+        // An error here shows as the client's own, when it cannot write its record there.
+        let _ = std::fs::create_dir_all(&dir);
+        let mut command = std::process::Command::new(drrun);
+        command
+            .arg("-c")
+            .arg(client)
+            .arg(dir)
+            .arg("on")
+            .arg("--")
+            .arg(program)
+            // This process's options name its own start inside the process; the child's
+            // DynamoRIO takes its options from drrun alone.
+            .env_remove(super::DYNAMORIO_OPTIONS);
+        command
     }
 
     /// See [`super::can_attach_dynamorio`].
@@ -660,7 +732,6 @@ mod imp {
 
     /// See [`super::attach_dynamorio`].
     pub(super) fn attach_dynamorio() -> Result<(), String> {
-        static ATTACHED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
         ATTACHED.get_or_init(attach_once).clone()
     }
 
@@ -816,8 +887,8 @@ mod imp {
         {
             return;
         }
-        // `drrun -c <client> -- <this binary> <its arguments>`. The binary is named by the file
-        // `/proc/self/exe` links to, read here, since the new process is drrun's. The environment
+        // `drrun -c <client> <dir> -- <this binary> <its arguments>`. The binary is named by the
+        // file `/proc/self/exe` links to, read here, since the new process is drrun's. The environment
         // is this one, which holds the settings (the caller checks `in_effect` first), with the
         // marker of a start again, so that the new image's `start` sets the name back and does
         // not start again, and [`super::ZED_METER_UNDER_DRRUN`], so that it does not come here
@@ -849,7 +920,16 @@ mod imp {
         }
         let mut ptrs: Vec<*const c_char> = env.iter().map(|c| c.as_ptr()).collect();
         ptrs.push(std::ptr::null());
-        let mut dargs = vec![drrun, c"-c".to_owned(), client, c"--".to_owned(), exe];
+        // The client's one option: the directory through which a child process passes its count
+        // to the process that reaps it (tools/icount/zed_icount.c, "Child processes"). Without
+        // it the client counts no child process; if it cannot be made, the client says so when
+        // it cannot write there.
+        let dir = children_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let Ok(dir) = CString::new(dir.into_os_string().into_encoded_bytes()) else {
+            return;
+        };
+        let mut dargs = vec![drrun, c"-c".to_owned(), client, dir, c"--".to_owned(), exe];
         dargs.extend(args.into_iter().skip(1));
         let mut dptrs: Vec<*const c_char> = dargs.iter().map(|c| c.as_ptr()).collect();
         dptrs.push(std::ptr::null());
@@ -1075,6 +1155,10 @@ mod imp {
 
     pub(super) fn can_attach_dynamorio() -> bool {
         false
+    }
+
+    pub(super) fn counted_command(program: &std::ffi::OsStr) -> std::process::Command {
+        std::process::Command::new(program)
     }
 
     pub(super) fn attach_dynamorio() -> Result<(), String> {

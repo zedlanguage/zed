@@ -4,7 +4,7 @@
 use std::ffi::OsString;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use zed_native::link::{Ld, Toolchain, build, driver_env, runtime_of};
 
@@ -58,7 +58,7 @@ pub struct Ran {
 
 /// The executable `exe` run on the words `words` after its name, with `stdin` as its input.
 pub fn executable(exe: &Path, words: &[OsString], stdin: &[u8]) -> Ran {
-    let mut child = Command::new(exe)
+    let mut child = std::process::Command::new(exe)
         .args(words)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

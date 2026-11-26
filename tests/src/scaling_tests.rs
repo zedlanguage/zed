@@ -1095,6 +1095,333 @@ fn the_fallback_under_drrun_counts() {
     assert_eq!(fell_back, in_software);
 }
 
+/// A loop of `steps` steps of the shell `sh`, run in a new process.
+fn a_shell_loop(steps: u32) {
+    let out = std::process::Command::new("sh")
+        .args([
+            "-c",
+            &format!("i=0; while [ $i -lt {steps} ]; do i=$((i + 1)); done"),
+        ])
+        .output()
+        .expect("running sh");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Prints this process's meter and the work it counts for [`a_shell_loop`] of 10,000 steps and
+/// of 100,000, each in a process the run starts, for `a_run_counts_the_processes_it_starts`,
+/// which runs this test alone. It holds nothing itself.
+#[test]
+fn counts_of_runs_that_start_a_process() {
+    let mut meter = Meter::new();
+    println!("meter unit {}", meter.unit());
+    // The first run of a process does one-time work (`counts_of`), so it is left out.
+    meter.work(|| a_shell_loop(10));
+    let small = meter.work(|| a_shell_loop(10_000)).units;
+    let large = meter.work(|| a_shell_loop(100_000)).units;
+    println!("process work {small} {large}");
+}
+
+/// A run that starts a process counts that process's work, as perf's counter opened with
+/// `inherit` does (ICOUNT-child-processes): 90,000 more steps of a shell loop in the process the
+/// run starts count at least 10 instructions a step more. Run alone, where this binary counts
+/// with DynamoRIO started inside it at the meter's first read when it has no hardware counter;
+/// the shell then runs under `drrun`, since [`a_shell_loop`] starts it through
+/// `zed_meter_settings::counted`.
+#[test]
+fn a_run_counts_the_processes_it_starts() {
+    counts_the_processes_it_starts(&[]);
+}
+
+/// The same where the process starts again under `drrun` at the meter's first read
+/// (`ZED_METER_NO_ATTACH`, the fallback), where DynamoRIO follows the shell's `execve` itself.
+#[test]
+fn a_run_on_the_fallback_counts_the_processes_it_starts() {
+    counts_the_processes_it_starts(&[(zed_meter_settings::ZED_METER_NO_ATTACH, "1")]);
+}
+
+/// Runs `counts_of_runs_that_start_a_process` alone in a new process of this test binary with
+/// the variables `env` set, and checks the counts it prints.
+fn counts_the_processes_it_starts(env: &[(&str, &str)]) {
+    let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            "--exact",
+            "scaling_tests::counts_of_runs_that_start_a_process",
+            "--show-output",
+            "--test-threads=1",
+        ])
+        .envs(env.iter().copied())
+        .output()
+        .expect("running this test binary");
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(run.status.success(), "{out}");
+    let unit = out
+        .lines()
+        .find_map(|l| l.strip_prefix("meter unit "))
+        .unwrap_or_else(|| panic!("no line naming the meter in:\n{out}"));
+    assert!(
+        unit.starts_with("instructions"),
+        "the run alone counted {unit}, not instructions: this machine has no hardware counter of \
+         instructions, and ZED_METER_DRRUN and ZED_METER_ICOUNT (crate zed-meter-settings) do not \
+         name DynamoRIO and its client zed_icount (tools/icount)"
+    );
+    let line = out
+        .lines()
+        .find_map(|l| l.strip_prefix("process work "))
+        .unwrap_or_else(|| panic!("no line of counts in:\n{out}"));
+    let counts: Vec<u64> = line
+        .split(' ')
+        .map(|c| c.parse().expect("a count"))
+        .collect();
+    let &[small, large] = counts.as_slice() else {
+        panic!("two counts in {line:?}")
+    };
+    assert!(
+        large > small + 10 * 90_000,
+        "a shell loop of 100,000 steps counted {large} instructions, and of 10,000 steps {small}: \
+         the work of the process the run starts is not counted"
+    );
+}
+
+/// The text a process start is found by. Made by `concat!` so that this file's own lines that
+/// hold it are not taken for starts.
+const A_START: &str = concat!("Command", "::new(");
+
+/// The starts of a process with `Command::new` in the sources of the tests and the benchmarks
+/// that are not started through `zed_meter_settings::counted`, each a file of this workspace
+/// and the function that holds the start, with the reason. Each is a process that measures
+/// itself with its own meter (or measures nothing), not one whose work a measured run of this
+/// process must count; counting it would run it under the client from its start.
+const NOT_COUNTED: &[(&str, &str, &str)] = &[
+    (
+        "tests/src/scaling.rs",
+        "fresh_command",
+        "the run at n or 8n of a check, in a new process of the test binary, which measures \
+         itself; under `counted` its set-up would run under DynamoRIO, which it starts itself at \
+         its first measured run",
+    ),
+    (
+        "tests/src/scaling_tests.rs",
+        "this_binary_with_this_meter",
+        SELF_TEST,
+    ),
+    (
+        "tests/src/scaling_tests.rs",
+        "a_ratio_from_9_to_10_5_prints_a_note_naming_the_test",
+        SELF_TEST,
+    ),
+    (
+        "tests/src/scaling_tests.rs",
+        "the_instructions_of_a_run_repeat",
+        SELF_TEST,
+    ),
+    (
+        "tests/src/scaling_tests.rs",
+        "a_benchmark_measures_a_fixed_draw_by_any_runner",
+        SELF_TEST,
+    ),
+    (
+        "tests/src/scaling_tests.rs",
+        "each_check_prints_a_bench_line_whose_time_grows_with_the_work",
+        SELF_TEST,
+    ),
+    (
+        "tests/src/scaling_tests.rs",
+        "a_benchmark_run_with_other_tests_counts_instructions",
+        SELF_TEST,
+    ),
+    (
+        "tests/src/scaling_tests.rs",
+        "where_dynamorio_runs",
+        SELF_TEST,
+    ),
+    (
+        "tests/src/scaling_tests.rs",
+        "counts_the_processes_it_starts",
+        SELF_TEST,
+    ),
+    (
+        "tests/src/scaling_tests.rs",
+        "run_reading_phases",
+        SELF_TEST,
+    ),
+    (
+        "tests/src/scaling_tests.rs",
+        "a_fresh_child_ends_when_its_parent_is_killed",
+        SELF_TEST,
+    ),
+    (
+        "tests/steps/l01_37_oracle/modes.rs",
+        "child",
+        "runs a test of this binary in a child with its mode set; no run measures it",
+    ),
+    (
+        "tests/steps/l01_26a_generic_literals/bench/scaling.rs",
+        "the_power_when_run_passes_after_other_tests_in_one_process",
+        "runs benchmarks of this binary in a child, which measure themselves",
+    ),
+    (
+        "tests/src/step_helpers/l01_17_value_representation.rs",
+        "in_child_at",
+        "runs a test again in a child under a memory limit; the child measures itself",
+    ),
+    (
+        "benches/src/bin/crossover.rs",
+        "all",
+        "each benchmark of `all` is a process of its own that measures itself",
+    ),
+];
+
+/// The reason of the starts in this file: each runs this test binary to test the harness, and
+/// the child measures with its own meter.
+const SELF_TEST: &str = "runs this test binary to test the harness; the child measures itself";
+
+/// The starts in the file `path`, of text `text`, that [`NOT_COUNTED`] does not hold, as
+/// `path:line in fn`: those of a file that measures (it names `scaling::` or `Meter`) or of a
+/// helper under `tests/src/step_helpers`, outside comments. Each start is taken to belong to
+/// the nearest `fn` above it.
+fn uncounted_starts(path: &str, text: &str) -> Vec<String> {
+    if !(path.starts_with("tests/src/step_helpers/")
+        || text.contains("scaling::")
+        || text.contains("Meter"))
+    {
+        return Vec::new();
+    }
+    let mut function = "";
+    let mut found = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let code = line.trim_start();
+        if code.starts_with("//") {
+            continue;
+        }
+        if let Some(at) = code.find("fn ") {
+            // Only qualifiers before `fn`: `pub(crate) fn`, `async fn`, not `x = fn` or text.
+            let qualifier = |t: &str| {
+                t.starts_with("pub") || matches!(t, "async" | "const" | "unsafe" | "extern")
+            };
+            let before = &code[..at];
+            if (before.is_empty() || before.ends_with(' '))
+                && before.split_whitespace().all(qualifier)
+            {
+                let name = &code[at + 3..];
+                let end = name
+                    .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .unwrap_or(name.len());
+                if end > 0 {
+                    function = &name[..end];
+                }
+            }
+        }
+        if code.contains(A_START)
+            && !NOT_COUNTED
+                .iter()
+                .any(|&(p, f, _)| p == path && f == function)
+        {
+            found.push(format!("{path}:{} in fn {function}", i + 1));
+        }
+    }
+    found
+}
+
+/// The `.rs` files under `dir`, as paths relative to `root` with `/` between parts.
+fn rust_files(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+    for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+        let path = entry.expect("a directory entry").path();
+        if path.is_dir() {
+            rust_files(root, &path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            let rel = path.strip_prefix(root).expect("under the root");
+            let rel = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            let text = std::fs::read_to_string(&path).expect("a source file in UTF-8");
+            out.push((rel, text));
+        }
+    }
+}
+
+/// Every process the tests' and the benchmarks' measuring code starts is started through
+/// `zed_meter_settings::counted` (ICOUNT-child-processes), or is named in [`NOT_COUNTED`] with
+/// its reason, and every name there still names a start, so the list does not go stale. A start
+/// left out counts on the hardware counter (perf's `inherit`) and not under DynamoRIO, so a
+/// benchmark whose child does the work would measure nothing on the Colab VMs.
+#[test]
+fn every_process_a_benchmark_starts_is_counted() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the workspace");
+    let mut files = Vec::new();
+    for dir in ["tests/src", "tests/steps", "tests/full", "benches/src"] {
+        rust_files(root, &root.join(dir), &mut files);
+    }
+    let found: Vec<String> = files
+        .iter()
+        .flat_map(|(p, t)| uncounted_starts(p, t))
+        .collect();
+    assert!(
+        found.is_empty(),
+        "processes started with Command::new, not zed_meter_settings::counted, in code that \
+         measures; start them through counted, or name them in NOT_COUNTED with the reason:\n{}",
+        found.join("\n")
+    );
+    for &(path, function, _) in NOT_COUNTED {
+        let text = &files
+            .iter()
+            .find(|(p, _)| p == path)
+            .unwrap_or_else(|| panic!("NOT_COUNTED names {path}, which does not exist"))
+            .1;
+        let named = text.lines().any(|l| {
+            l.contains(&format!("fn {function}(")) || l.contains(&format!("fn {function}<"))
+        });
+        assert!(
+            named,
+            "NOT_COUNTED names fn {function} of {path}, which is not there"
+        );
+    }
+}
+
+/// The negative control of [`every_process_a_benchmark_starts_is_counted`]: a benchmark source
+/// whose measured run starts a process with `Command::new` is found, with its line and function,
+/// and the same start through `counted`, a start in a comment, and a start in a file that
+/// measures nothing are not.
+#[test]
+fn a_process_a_benchmark_starts_uncounted_is_found() {
+    let start = A_START;
+    let bench = format!(
+        "use zed_tests::scaling;\n\
+         fn spawns_in_its_run() {{\n\
+         \x20   scaling::check(\"x\", 10, |m| {{\n\
+         \x20       std::process::{start}\"sh\").arg(m.to_string()).status().unwrap();\n\
+         \x20   }});\n\
+         }}\n"
+    );
+    assert_eq!(
+        uncounted_starts("tests/steps/x/bench.rs", &bench),
+        ["tests/steps/x/bench.rs:4 in fn spawns_in_its_run"]
+    );
+    let counted = bench.replace(
+        &format!("std::process::{start}"),
+        "zed_meter_settings::counted(",
+    );
+    assert!(uncounted_starts("tests/steps/x/bench.rs", &counted).is_empty());
+    let in_comment = bench.replace("        std::process", "        // std::process");
+    assert!(uncounted_starts("tests/steps/x/bench.rs", &in_comment).is_empty());
+    let unmeasured = bench.replace("scaling", "other");
+    assert!(uncounted_starts("tests/steps/x/plain.rs", &unmeasured).is_empty());
+    // The same start, under a helper's path, is found though the file names no meter.
+    assert_eq!(
+        uncounted_starts("tests/src/step_helpers/x.rs", &unmeasured),
+        ["tests/src/step_helpers/x.rs:4 in fn spawns_in_its_run"]
+    );
+    // And a start NOT_COUNTED names is not.
+    let named = bench.replace("spawns_in_its_run", "fresh_command");
+    assert!(uncounted_starts("tests/src/scaling.rs", &named).is_empty());
+}
 /// The variable naming, for [`bench::a_spin_whose_phase_at_8n_is_read`], the file of the
 /// benchmark's phases: its own name, since a process started for a run at 8n is not given
 /// `ZED_BENCH_LIMIT_FILE`.

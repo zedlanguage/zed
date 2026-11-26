@@ -23,15 +23,26 @@
  *    before the second read; and the loop counted after it ran while off counts exactly what it
  *    counted before (check 1's d1), so the block built while off is not run after the switch
  *    on. A client that kept the blocks built while off would count about 0 there, and fails.
+ * 5. Child processes (ICOUNT-child-processes; zed_icount.c, "Child processes"): a child that
+ *    fork starts, runs check 1's loop of k iterations and ends, reaped by waitpid between two
+ *    reads, adds 2k and its fixed costs, so the difference for k2 and k1 is 2 (k2 - k1) within
+ *    10^4; and a child that posix_spawn starts, running this program as `selftest spin <k>`,
+ *    which makes no read, adds the same within 10^5 (the program's start under DynamoRIO is in
+ *    both counts). The second needs the count carried through the execve with counting on. The
+ *    old client, which counted no child, gave about 0 for both differences.
+ *
+ *   selftest spin <k>   runs check 1's loop of k iterations and makes no read (check 5)
  */
 
 #define _GNU_SOURCE
 #include <pthread.h>
+#include <spawn.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define ZED_ICOUNT_SYSNUM 0x5a45
@@ -88,6 +99,41 @@ counted_thread(uint64_t k)
     return b - a;
 }
 
+/* Check 5: a child that fork starts runs the loop and ends; reaped between the two reads. */
+static long
+counted_fork(uint64_t k)
+{
+    long a = count();
+    pid_t p = fork();
+    if (p == 0) {
+        spin(k);
+        _exit(0);
+    }
+    if (p < 0 || waitpid(p, NULL, 0) != p) {
+        perror("fork");
+        exit(1);
+    }
+    long b = count();
+    return b - a;
+}
+
+/* Check 5: this program, `self`, started by posix_spawn as `self spin <k>`. */
+static long
+counted_spawn(const char *self, uint64_t k)
+{
+    char arg[32];
+    snprintf(arg, sizeof(arg), "%llu", (unsigned long long)k);
+    char *args[] = {(char *)self, "spin", arg, NULL};
+    pid_t p;
+    long a = count();
+    if (posix_spawn(&p, self, NULL, NULL, args, environ) != 0 || waitpid(p, NULL, 0) != p) {
+        perror("posix_spawn");
+        exit(1);
+    }
+    long b = count();
+    return b - a;
+}
+
 static int failures;
 
 static void
@@ -130,6 +176,10 @@ main(int argc, char **argv)
         printf("%ld\n", a < 0 ? -1 : b - a);
         return 0;
     }
+    if (argc == 3 && strcmp(argv[1], "spin") == 0) {
+        spin(strtoull(argv[2], NULL, 10));
+        return 0;
+    }
     if (count() < 0) {
         printf("no software counter (not run under zed_icount)\n");
         return 3;
@@ -163,5 +213,16 @@ main(int argc, char **argv)
     spin(k1);
     long d1c = counted_spin(k1);
     check(d1c == d1, "switching: a loop first run while off counts as before once on", d1c, d1);
+    /* Warm, as above; the switch-off just before is turned back on by the reads. */
+    counted_fork(k1);
+    long f1 = counted_fork(k1), f2 = counted_fork(k2);
+    check(labs(f2 - f1 - 2 * (k2 - k1)) < 10000,
+          "processes: a forked child's loop counts in the parent that reaps it (within 10^4)",
+          f2 - f1, 2 * (k2 - k1));
+    counted_spawn(argv[0], k1);
+    long s1 = counted_spawn(argv[0], k1), s2 = counted_spawn(argv[0], k2);
+    check(labs(s2 - s1 - 2 * (k2 - k1)) < 100000,
+          "processes: a spawned program's loop counts in the parent that reaps it (within 10^5)",
+          s2 - s1, 2 * (k2 - k1));
     return failures != 0;
 }

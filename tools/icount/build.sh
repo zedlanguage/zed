@@ -15,7 +15,9 @@ mkdir -p "$out" || exit 1
 cmake -S "$src" -B "$out" -DDynamoRIO_DIR="$dr/cmake" -DCMAKE_BUILD_TYPE=RelWithDebInfo > "$out/cmake.log" 2>&1 ||
   { cat "$out/cmake.log" >&2; exit 1; }
 cmake --build "$out" > "$out/build.log" 2>&1 || { cat "$out/build.log" >&2; exit 1; }
-# The client's own checks (selftest.c), under the client.
-"$dr/bin64/drrun" -c "$out/libzed_icount.so" -- "$out/zed_icount_selftest" > "$out/selftest.log" 2>&1 ||
+# The client's own checks (selftest.c), under the client, with the directory for the counts of
+# child processes (zed_icount.c, "Child processes"), which check 5 needs.
+mkdir -p "$out/children" || exit 1
+"$dr/bin64/drrun" -c "$out/libzed_icount.so" "$out/children" -- "$out/zed_icount_selftest" > "$out/selftest.log" 2>&1 ||
   { echo "zed_icount's self-test failed:" >&2; cat "$out/selftest.log" >&2; exit 1; }
 echo "$out/libzed_icount.so"

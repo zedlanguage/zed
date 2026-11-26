@@ -41,19 +41,47 @@
  *   started after the opening by it or by those threads; a started thread's count joins the
  *   counter when that thread ends (kernel/events/core.c, perf_event_exit_task and
  *   sync_child_event, from memory of the kernel source; checked by the behavior Meter relies
- *   on: a run that starts and joins threads counts their work, test
- *   scaling_tests::a_run_counts_the_threads_it_starts). Here a read answers the calling
- *   thread's own count plus the totals of its ended descendants, as the tree below folds them:
- *   when a thread ends, its total (own count plus what its ended descendants gave it) is added
- *   to its nearest ancestor that has not ended. So the two agree on the use Meter makes of
- *   them, a difference of two reads around a run that joins the threads it starts. They differ
- *   (1) for a thread started before the first read and ended between two reads, which perf does
- *   not count and this does; (2) for a grandchild that ended while its parent still runs, which
- *   perf counts at once and this only when the parent ends; (3) for child processes, which perf
- *   counts when they end and this never does (each process under DynamoRIO counts alone).
- *   The scaling harness meets none of the three: a run's threads are started inside the run and
- *   joined before it returns, and a run starts no process (a check's run at 8n in a new process
- *   is measured by that process's own meter).
+ *   on: a run that starts and joins threads counts their work, check 3 of selftest.c). Here a
+ *   read answers the calling thread's own count plus the totals of its ended descendants, as
+ *   the tree below folds them: when a thread ends, its total (own count plus what its ended
+ *   descendants gave it) is added to its nearest ancestor that has not ended. So the two agree
+ *   on the use Meter makes of them, a difference of two reads around a run that joins the
+ *   threads it starts. They differ (1) for a thread started before the first read and ended
+ *   between two reads, which perf does not count and this does; (2) for a grandchild that ended
+ *   while its parent still runs, which perf counts at once and this only when the parent ends.
+ *   The scaling harness meets neither: a run's threads are started inside the run and joined
+ *   before it returns.
+ * - Child processes (ICOUNT-child-processes). perf's `inherit` counts a child process too, as
+ *   a thread. Here each process under DynamoRIO counts alone (DynamoRIO's -follow_children,
+ *   on by default, runs every child under the client), and a child's total reaches its parent
+ *   through a file in the directory given as the client's first option (zed_meter_settings
+ *   passes it: start_under_dynamorio to drrun, the start inside the process in
+ *   DYNAMORIO_OPTIONS, and counted() to the drrun it starts a child under, since the start
+ *   inside the process uses -no_follow_children; with no option nothing below is done). A
+ *   second option `on` turns counting on at the start where no execve record says otherwise:
+ *   counted() passes it.
+ *   - At its exit a process writes `<dir>/<pid>` with its parent's pid, 0, and its total: the
+ *     own counts of all its threads, plus the totals of the children it reaped, plus the count
+ *     an execve carried into it. The exit event runs before the last system call of the
+ *     process, so the file is written before the parent can reap the child.
+ *   - When a thread's wait4 reaps a child that ended (not one that stopped), it reads
+ *     `<dir>/<child pid>`, and if the parent pid in it is its own process's, adds the total to
+ *     its own reads (its node's acc) and to its process's total, and empties the file, so that
+ *     a later process with the same pid is not counted twice. waitid is not followed; glibc's
+ *     waitpid and wait, which Rust's std and sh use, are wait4 on x86_64 Linux.
+ *   - At an execve a thread writes `<dir>/<tid>.exec` with its parent's pid, whether counting
+ *     is on, and its own count plus its acc, and zeroes both; the new program's client reads
+ *     the file at its start (the pid of a process that execs is the tid of its thread that
+ *     calls execve when that thread leads the process, as a child of fork or of posix_spawn's
+ *     vfork-like clone does), takes the count, and sets counting as it was. A child started
+ *     while counting is on so counts from its first instruction. An execve that fails gets the
+ *     counts back. DynamoRIO calls no exit event at an execve (dr_events.h of 11.3.0).
+ *   What is not counted: a child that is never reaped, or that dies without its exit event (a
+ *   signal that kills it outright); a child that ends after its parent, or that its parent
+ *   reaps through waitid; the threads an execve ends, other than the one that calls it; an
+ *   execve by a thread that does not lead its process. A read in the parent after it reaps a
+ *   child counts the child's whole life, as perf does for a child started after the read
+ *   before. The files are left in the directory, empty once read: one per process run.
  *
  * The read. The program makes the system call ZED_ICOUNT_SYSNUM with first argument
  * ZED_ICOUNT_KEY. Under this client the call never reaches the kernel: the pre-syscall event
@@ -71,8 +99,8 @@
  * after its first read (Meter::new), and its first run's first read turns it on for the rest
  * of the process (Meter::work). So a benchmark's set-up, the building of its inputs before
  * its first run and the replay of a test in a new process up to its first run, runs under
- * DynamoRIO with no add. Each change of state removes every block of the program's code from the cache
- * (dr_delay_flush_region over each module), so that each block is built again as the new state
+ * DynamoRIO with no add. Each change of state removes every block of the program's code from the
+ * cache (dr_delay_flush_region over each module), so that each block is built again as the new state
  * says: a block built while counting was off and run after it is turned on would count nothing.
  * Proof that a count between two reads is the one the client gave before this change: the
  * first read turns counting on and queues the flush, and the reading thread does the flush
@@ -98,7 +126,9 @@
 #include "hashtable.h"
 
 #include <stdint.h>
+#include <string.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 
 #define ZED_ICOUNT_SYSNUM 0x5a45      /* "ZE"; also in zed_alloc_count::os::software_instructions */
 #define ZED_ICOUNT_KEY 0x7a6564696e73ULL /* "zedins"; the same */
@@ -130,10 +160,22 @@ typedef struct node {
     volatile uint64 *own;
     /* clone flags saved by the pre-syscall event for the post-syscall event. */
     uint64 clone_flags;
+    /* wait4's status pointer and options, saved by the pre-syscall event likewise. */
+    void *wait_status;
+    int wait_options;
+    /* The count an execve took from this thread, given back if the execve fails. */
+    uint64 exec_carried;
 } node_t;
 
 static void *lock;
 static hashtable_t by_tid;
+
+/* The directory of the files through which a child process's total reaches its parent (file
+ * comment, "Child processes"): the client's first option; empty when there is none. */
+static char dir[512];
+/* This process's total so far: the own counts of its threads that ended, the totals of the
+ * children it reaped, and the count an execve carried into it. Guarded by `lock`. */
+static uint64 proc_total;
 
 /* Whether the blocks built now get the add (file comment, "Counting only around the measured
  * runs"). Off at the start; changed only by set_counting. One thread changes it at a time: the
@@ -208,8 +250,80 @@ node_create(thread_id_t tid)
     n->acc = 0;
     n->own = NULL;
     n->clone_flags = 0;
+    n->wait_status = NULL;
+    n->wait_options = 0;
+    n->exec_carried = 0;
     hashtable_add(&by_tid, (void *)(ptr_uint_t)tid, n);
     return n;
+}
+
+/* `<dir>/<pid><suffix>` in `buf`; false when there is no directory or the name does not fit. */
+static bool
+record_path(char *buf, size_t size, process_id_t pid, const char *suffix)
+{
+    if (dir[0] == '\0')
+        return false;
+    int len = dr_snprintf(buf, size, "%s/%d%s", dir, (int)pid, suffix);
+    return len >= 0 && (size_t)len < size;
+}
+
+/* Writes the record `<ppid> <on> <total>` to `<dir>/<pid><suffix>`, in place of what it held. */
+static void
+write_record(process_id_t pid, const char *suffix, process_id_t ppid, bool on, uint64 total)
+{
+    char path[600], text[64];
+    if (!record_path(path, sizeof(path), pid, suffix))
+        return;
+    int len = dr_snprintf(text, sizeof(text), "%d %d %llu\n", (int)ppid, on ? 1 : 0,
+                          (unsigned long long)total);
+    file_t f = dr_open_file(path, DR_FILE_WRITE_OVERWRITE);
+    if (f == INVALID_FILE || len < 0 || dr_write_file(f, text, len) != (ssize_t)len)
+        dr_fprintf(STDERR, "zed_icount: cannot write %s; a process's count is lost\n", path);
+    if (f != INVALID_FILE)
+        dr_close_file(f);
+}
+
+/* Reads `<dir>/<pid><suffix>` and empties it, so that a later process with the same pid does not
+ * read it again; true when it held a record whose parent is `ppid`, with its fields. */
+static bool
+take_record(process_id_t pid, const char *suffix, process_id_t ppid, bool *on, uint64 *total)
+{
+    char path[600], text[64];
+    if (!record_path(path, sizeof(path), pid, suffix))
+        return false;
+    file_t f = dr_open_file(path, DR_FILE_READ);
+    if (f == INVALID_FILE)
+        return false;
+    ssize_t got = dr_read_file(f, text, sizeof(text) - 1);
+    dr_close_file(f);
+    if (got <= 0)
+        return false;
+    text[got] = '\0';
+    f = dr_open_file(path, DR_FILE_WRITE_OVERWRITE);
+    if (f != INVALID_FILE)
+        dr_close_file(f);
+    int p, o;
+    unsigned long long t;
+    if (dr_sscanf(text, "%d %d %llu", &p, &o, &t) != 3 || p != (int)ppid)
+        return false;
+    *on = o != 0;
+    *total = t;
+    return true;
+}
+
+/* Whether the wait4 that `n` made and that answered a pid reaped a child that ended, not one
+ * that stopped or went on: from the status it wrote, or with none, from its options, without
+ * which wait4 reports only ends (wait4(2)). */
+static bool
+reaped_an_end(node_t *n)
+{
+    if (n->wait_status == NULL)
+        return (n->wait_options & (WUNTRACED | WCONTINUED)) == 0;
+    int status = 0;
+    size_t got = 0;
+    if (!dr_safe_read(n->wait_status, sizeof(status), &status, &got) || got != sizeof(status))
+        return false;
+    return WIFEXITED(status) || WIFSIGNALED(status);
 }
 
 /* The node that an ended thread's total goes to: the nearest ancestor of `n` that still runs or
@@ -261,6 +375,7 @@ event_thread_exit(void *drcontext)
         return;
     dr_mutex_lock(lock);
     n->acc += *n->own;
+    proc_total += *n->own;
     n->own = NULL;
     if (!n->parent_known) {
         /* Ended before its parent's clone returned: wait there (the first thread waits for
@@ -277,13 +392,23 @@ event_thread_exit(void *drcontext)
 }
 
 static bool
+is_execve(int sysnum)
+{
+    return sysnum == SYS_execve
+#ifdef SYS_execveat
+        || sysnum == SYS_execveat
+#endif
+        ;
+}
+
+static bool
 event_filter_syscall(void *drcontext, int sysnum)
 {
     return sysnum == ZED_ICOUNT_SYSNUM || sysnum == SYS_clone
 #ifdef SYS_clone3
         || sysnum == SYS_clone3
 #endif
-        ;
+        || (dir[0] != '\0' && (sysnum == SYS_wait4 || is_execve(sysnum)));
 }
 
 static bool
@@ -310,6 +435,26 @@ event_pre_syscall(void *drcontext, int sysnum)
     }
     if (n == NULL)
         return true;
+    if (sysnum == SYS_wait4) {
+        /* x86_64: wait4(pid, wstatus, options, rusage). */
+        n->wait_status = (void *)dr_syscall_get_param(drcontext, 1);
+        n->wait_options = (int)dr_syscall_get_param(drcontext, 2);
+        return true;
+    }
+    if (is_execve(sysnum)) {
+        /* The count goes to the new program through the file (file comment, "Child
+         * processes"). In a child of a vfork-like clone this thread runs in its parent's memory,
+         * so only this thread's own fields are taken: the process's total is the parent's. */
+        dr_mutex_lock(lock);
+        uint64 carried = *n->own + n->acc;
+        *n->own = 0;
+        n->acc = 0;
+        n->exec_carried = carried;
+        dr_mutex_unlock(lock);
+        write_record(dr_get_thread_id(drcontext), ".exec", dr_get_parent_id(), counting,
+                     carried);
+        return true;
+    }
     if (sysnum == SYS_clone) {
         /* x86_64: clone(flags, stack, parent_tid, child_tid, tls). */
         n->clone_flags = (uint64)dr_syscall_get_param(drcontext, 0);
@@ -332,19 +477,51 @@ event_pre_syscall(void *drcontext, int sysnum)
 static void
 event_post_syscall(void *drcontext, int sysnum)
 {
+    node_t *me = drmgr_get_tls_field(drcontext, node_field);
+    if (me == NULL)
+        return;
+    ptr_int_t result = (ptr_int_t)dr_syscall_get_result(drcontext);
+    if (sysnum == SYS_wait4) {
+        bool on;
+        uint64 total;
+        if (result <= 0 || !reaped_an_end(me) ||
+            !take_record((process_id_t)result, "", dr_get_process_id(), &on, &total))
+            return;
+        dr_mutex_lock(lock);
+        me->acc += total;
+        proc_total += total;
+        dr_mutex_unlock(lock);
+        return;
+    }
+    if (is_execve(sysnum)) {
+        /* Only an execve that failed returns: take the count back, and empty the file. */
+        bool on;
+        uint64 total;
+        take_record(dr_get_thread_id(drcontext), ".exec", dr_get_parent_id(), &on, &total);
+        dr_mutex_lock(lock);
+        me->acc += me->exec_carried;
+        me->exec_carried = 0;
+        dr_mutex_unlock(lock);
+        return;
+    }
     if (sysnum != SYS_clone
 #ifdef SYS_clone3
         && sysnum != SYS_clone3
 #endif
     )
         return;
-    node_t *me = drmgr_get_tls_field(drcontext, node_field);
-    if (me == NULL || (me->clone_flags & CLONE_THREAD) == 0)
-        return;
-    ptr_int_t result = (ptr_int_t)dr_syscall_get_result(drcontext);
     if (result <= 0)
-        return; /* failed, or the new thread's own return */
+        return; /* failed, or the new thread's or process's own return */
     thread_id_t child = (thread_id_t)result;
+    if ((me->clone_flags & CLONE_THREAD) == 0) {
+        /* A new process. A vfork-like clone's child ran as a thread of this process, with a node
+         * under its tid; take the tid out, so that a later thread given the same tid gets a new
+         * node and not that one's state. */
+        dr_mutex_lock(lock);
+        hashtable_remove(&by_tid, (void *)(ptr_uint_t)child);
+        dr_mutex_unlock(lock);
+        return;
+    }
     dr_mutex_lock(lock);
     node_t *c = hashtable_lookup(&by_tid, (void *)(ptr_uint_t)child);
     if (c == NULL)
@@ -365,8 +542,15 @@ event_fork_init(void *drcontext)
 {
     /* The child of a fork has one thread, and the lock may have been held by a thread the
      * child did not keep: make a new one. The nodes of the other threads stay and are never
-     * read. */
+     * read. The child counts from 0: what its thread counted before the fork is its parent's. */
     lock = dr_mutex_create();
+    proc_total = 0;
+    node_t *n = drmgr_get_tls_field(drcontext, node_field);
+    if (n != NULL) {
+        n->acc = 0;
+        if (n->own != NULL)
+            *n->own = 0;
+    }
 }
 
 static dr_emit_flags_t
@@ -419,6 +603,9 @@ event_app_instruction(void *drcontext, void *tag, instrlist_t *bb, instr_t *inst
 static void
 event_exit(void)
 {
+    /* DynamoRIO has called the thread exit event of every thread by now, so proc_total holds
+     * them all (file comment, "Child processes"). */
+    write_record(dr_get_process_id(), "", dr_get_parent_id(), false, proc_total);
     drmgr_unregister_tls_field(node_field);
     dr_raw_tls_cfree(tls_offs, 1);
     drreg_exit();
@@ -438,6 +625,24 @@ dr_client_main(client_id_t id, int argc, const char *argv[])
     node_field = drmgr_register_tls_field();
     lock = dr_mutex_create();
     hashtable_init(&by_tid, 8, HASH_INTPTR, false);
+    if (argc >= 2 && dr_snprintf(dir, sizeof(dir), "%s", argv[1]) < 0) {
+        dr_fprintf(STDERR, "zed_icount: the directory %s is too long; no child is counted\n",
+                   argv[1]);
+        dir[0] = '\0';
+    }
+    dir[sizeof(dir) - 1] = '\0';
+    /* A program an execve started: take what the old one carried (file comment, "Child
+     * processes"). No block is built yet, so `counting` is set with no flush. */
+    bool on;
+    uint64 carried;
+    if (take_record(dr_get_process_id(), ".exec", dr_get_parent_id(), &on, &carried)) {
+        counting = on;
+        proc_total = carried;
+    } else if (argc >= 3 && strcmp(argv[2], "on") == 0) {
+        /* A child zed_meter_settings::counted started under drrun with no record to take:
+         * count from its first instruction, as perf's inherit counts a child. */
+        counting = true;
+    }
     dr_register_exit_event(event_exit);
     dr_register_filter_syscall_event(event_filter_syscall);
     dr_register_fork_init_event(event_fork_init);
