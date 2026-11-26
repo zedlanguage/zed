@@ -16,6 +16,7 @@
 
 use super::linear::Term;
 use zed_collections::search::{first_true, last_true};
+use zedc_affine::lines::{floor_sum, upper_envelope_by};
 use zedc_int::int::{Int, IntRange, meet_range, row_range};
 use zedc_int::q::Q;
 
@@ -60,63 +61,34 @@ impl Line {
     }
 }
 
-/// `Σ ⌊(a·i + b) / m⌋` for `i` from 0 below `n`, with `m` above zero and `n` at least zero (the
-/// AtCoder Library's floor_sum): each round swaps the roles of `a` and `m` as in Euclid's
-/// algorithm, so the rounds are logarithmic in `m`.
-fn floor_sum(n: &Int, m: &Int, a: &Int, b: &Int) -> Int {
-    let two = Int::from(2);
-    let (mut n, mut m) = (n.clone(), m.clone());
-    let mut ans = Int::ZERO;
-    let pairs = |n: &Int| (n * &(n - &Int::ONE)).div_floor(&two);
-    ans = &ans + &(&pairs(&n) * &a.div_floor(&m));
-    let mut a = a.mod_floor(&m);
-    ans = &ans + &(&n * &b.div_floor(&m));
-    let mut b = b.mod_floor(&m);
-    loop {
-        if a >= m {
-            ans = &ans + &(&pairs(&n) * &a.div_floor(&m));
-            a = a.mod_floor(&m);
-        }
-        if b >= m {
-            ans = &ans + &(&n * &b.div_floor(&m));
-            b = b.mod_floor(&m);
-        }
-        let top = &(&a * &n) + &b;
-        if top < m {
-            return ans;
-        }
-        n = top.div_floor(&m);
-        b = top.mod_floor(&m);
-        std::mem::swap(&mut m, &mut a);
-    }
-}
-
 /// The least of the lines at each `x`: each line of it from left to right, with the `x` where
-/// it starts, `None` for the first.
+/// it starts, `None` for the first. It is the upper envelope of the lines negated
+/// ([`upper_envelope_by`]): sorted by slope falling, so each line is least to the right of the
+/// ones before, and within a slope by intercept falling, so that of one slope the last, the
+/// lowest, counts; the test `not_above(-a, -b, -c)` on the negated lines is the same cross
+/// product of the lines themselves, each of its two products a product of two negated
+/// differences.
 fn least(lines: &[Line]) -> Vec<(usize, Option<Q>)> {
     let keyed: Vec<(Q, Q)> = lines.iter().map(|l| (l.slope(), l.icpt())).collect();
     let mut order: Vec<usize> = (0..lines.len()).collect();
-    // Slope falling, so each line is least to the right of the ones before; of equal slopes
-    // only the lowest counts.
-    order.sort_by(|&i, &j| (keyed[j].0.cmp(&keyed[i].0)).then_with(|| keyed[i].1.cmp(&keyed[j].1)));
-    order.dedup_by(|j, i| keyed[*i].0 == keyed[*j].0);
-    let mut env: Vec<(usize, Option<Q>)> = Vec::new();
-    for i in order {
-        loop {
-            let Some((top, start)) = env.last() else {
-                env.push((i, None));
-                break;
-            };
-            let (s, t) = (&keyed[*top], &keyed[i]);
-            // Where `t` meets the top: past it `t` is the less.
-            let x = t.1.sub(&s.1).div(&s.0.sub(&t.0));
-            if start.as_ref().is_some_and(|st| x <= *st) {
-                env.pop();
-                continue;
-            }
-            env.push((i, Some(x)));
-            break;
-        }
+    order.sort_by(|&i, &j| keyed[j].cmp(&keyed[i]));
+    let on = upper_envelope_by(
+        &order,
+        |&i, &j| keyed[i].0 == keyed[j].0,
+        |&a, &b, &c| {
+            let (a, b, c) = (&keyed[a], &keyed[b], &keyed[c]);
+            b.0.sub(&a.0).mul(&c.1.sub(&a.1)) >= b.1.sub(&a.1).mul(&c.0.sub(&a.0))
+        },
+    );
+    let mut env: Vec<(usize, Option<Q>)> = Vec::with_capacity(on.len());
+    for k in on {
+        let i = order[k];
+        // Where `t` meets the line before it: past it `t` is the less.
+        let start = env.last().map(|&(top, _)| {
+            let (s, t) = (&keyed[top], &keyed[i]);
+            t.1.sub(&s.1).div(&s.0.sub(&t.0))
+        });
+        env.push((i, start));
     }
     env
 }
@@ -679,21 +651,6 @@ mod tests {
         // `x - 3y` in [1, 1] and `x <= 10`: the greatest is 10, the least open.
         let rows = [([1, -3], -1), ([-1, 3], 1), ([-1, 0], 10)];
         assert_eq!(ends_of(&rows), Some((None, Some(Int::from(10)))));
-    }
-
-    #[test]
-    fn the_floor_sum_matches_the_sum() {
-        for n in 0..12i64 {
-            for m in 1..7i64 {
-                for a in -9..9i64 {
-                    for b in -9..9i64 {
-                        let want: i64 = (0..n).map(|i| (a * i + b).div_euclid(m)).sum();
-                        let got = floor_sum(&n.into(), &m.into(), &a.into(), &b.into());
-                        assert_eq!(got, Int::from(want), "n {n} m {m} a {a} b {b}");
-                    }
-                }
-            }
-        }
     }
 
     /// The rows `c0·x + c1·y + k >= 0` as `point` reads them, over `x` and, when `y`, `y`.

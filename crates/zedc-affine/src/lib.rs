@@ -6,8 +6,10 @@
 //! are [`Coef`]: [`Int`] and [`Num`]. Module [`shadow`] reads a row in one variable as bounds
 //! and eliminates a variable from a pair of bounds (the real and the dark shadow). Module
 //! [`plane`] holds the plane geometry of the two-variable readers: cross and dot products,
-//! angle order, Cramer's rule and the unimodular basis from Bezout.
+//! angle order, Cramer's rule and the unimodular basis from Bezout. Module [`lines`] holds the
+//! upper envelope of a set of lines (the convex hull trick) and the floor sum.
 
+pub mod lines;
 pub mod plane;
 pub mod shadow;
 

@@ -39,8 +39,9 @@ use std::sync::Arc;
 use super::formula::{Rel, Shared};
 use super::{
     Atom, Con, Factor, Formula, Id, Lin, Model, Refusal, decide, nnf, satisfiable, shadow,
-    shadow_whole, upper_envelope,
+    shadow_whole,
 };
+use zedc_affine::lines::upper_envelope;
 use zedc_int::int::Int;
 
 mod def;

@@ -94,13 +94,14 @@ only on crates above it in this list:
 | zedc-base | |
 | zedc-syntax | base |
 | zedc-int | |
-| zedc-lattice | base, int |
-| zedc-solvers | int |
-| zedc-presburger | int, lattice, solvers |
+| zedc-affine | int |
+| zedc-lattice | affine, base, int |
+| zedc-solvers | affine, int |
+| zedc-presburger | affine, int, lattice, solvers |
 | zedc-types | base, syntax |
 | zedc-resolve | base, syntax |
 | zedc-stage | base, syntax |
-| zedc-preimage | int, lattice, presburger, stage |
+| zedc-preimage | affine, int, lattice, presburger, stage |
 | zedc-check | base, int, lattice, preimage, resolve, syntax, types |
 | zedc-zir | base, int, lattice, syntax |
 | zedc-elab | base, check, resolve, stage, syntax, types |
@@ -143,8 +144,9 @@ merge that drops zero coefficients (`add_term`, `add_scaled`, `scaled`), gcd-nor
 `shadow` rows in one variable read as bounds (`i128_row_bound`, `i128_meet`), Fourier-Motzkin
 pairs and the dark shadow (`i128_pair`, `dark_gap`, `dark_exact`), and in `plane` the 2D
 geometry (`cross`, `dot`, `angle_cmp`, `angle_cmp_from`, `cramer`) and unimodular bases from
-Bezout (`Basis`), over `i128` and `Int` (depends also on zed-numtheory); still to come, and
-then also over zed-collections: LLL, simplex and Gauss-Jordan). Text helpers stay in
+Bezout (`Basis`), over `i128` and `Int` (depends also on zed-numtheory), and in `lines` the
+upper envelope of lines (`upper_envelope`, `upper_envelope_by`, `not_above`) and `floor_sum`;
+still to come, and then also over zed-collections: LLL, simplex and Gauss-Jordan). Text helpers stay in
 `zed_kernel::text::prose` and `zedc_base` (`source`, `terminal`, `address`).
 
 Before writing an algorithm that is likely generic or reusable, search these crates and call what

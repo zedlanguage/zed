@@ -517,3 +517,56 @@ mod plane {
         }
     }
 }
+
+mod lines {
+    use crate::lines::*;
+    use zedc_int::int::Int;
+
+    #[test]
+    fn the_floor_sum_matches_the_sum() {
+        for n in 0..12i64 {
+            for m in 1..7i64 {
+                for a in -9..9i64 {
+                    for b in -9..9i64 {
+                        let want: i64 = (0..n).map(|i| (a * i + b).div_euclid(m)).sum();
+                        let got = floor_sum(&n.into(), &m.into(), &a.into(), &b.into());
+                        assert_eq!(got, Int::from(want), "n {n} m {m} a {a} b {b}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// [`upper_envelope`] keeps exactly the lines that are above every other line somewhere,
+    /// on random sets of distinct lines with slopes and intercepts in `-6..=6`. Two lines cross
+    /// at `x = a / b` with `|a| <= 12` and `0 < b <= 12`, so two crossings are at least 1/144
+    /// apart and the open piece where a line is alone on top holds a point `k / 288`; the
+    /// oracle tries each `k / 288` for `|x| <= 13` (all crossings within `|x| <= 12`), and a
+    /// line is checked at `p·k + 288·q`. Moved from zedc-presburger with the routine; its fixed
+    /// seed is now a new seed each run, printed.
+    #[test]
+    fn the_upper_envelope_keeps_the_lines_alone_on_top_somewhere() {
+        let (mut rng, seed) =
+            crate::seed::Rng::fresh("the_upper_envelope_keeps_the_lines_alone_on_top_somewhere");
+        for _ in 0..400 {
+            let mut lines: Vec<(i128, i128)> = (0..rng.int(1, 9))
+                .map(|_| (rng.int(-6, 6).into(), rng.int(-6, 6).into()))
+                .collect();
+            lines.sort_unstable();
+            lines.dedup();
+            let big: Vec<(Int, Int)> = (lines.iter())
+                .map(|&(p, q)| (Int::from(p), Int::from(q)))
+                .collect();
+            let got = upper_envelope(&big, |(p, q)| (p, q));
+            let want: Vec<usize> = (0..lines.len())
+                .filter(|&j| {
+                    (-288 * 13..=288 * 13).any(|k: i128| {
+                        let at = |(p, q): (i128, i128)| p * k + 288 * q;
+                        (lines.iter().enumerate()).all(|(i, &l)| i == j || at(l) < at(lines[j]))
+                    })
+                })
+                .collect();
+            assert_eq!(got, want, "seed {seed}, {lines:?}");
+        }
+    }
+}

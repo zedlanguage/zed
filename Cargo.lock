@@ -1686,6 +1686,7 @@ dependencies = [
  "zed-graph",
  "zed-hash",
  "zed-kernel",
+ "zedc-affine",
  "zedc-int",
  "zedc-solvers",
 ]

@@ -3,9 +3,9 @@
 //! (PERF-l139-ray-hull, moved here from `zedc-preimage`'s `RayHull` so that other crates can
 //! use it).
 
-pub use crate::presburger::not_above;
-use crate::presburger::upper_envelope;
 use zed_collections::search::first_true;
+pub use zedc_affine::lines::not_above;
+use zedc_affine::lines::upper_envelope;
 use zedc_int::int::Int;
 
 /// The upper convex hull of a set of points, as its vertices from least `x` to greatest, no
@@ -28,7 +28,7 @@ pub struct UpperHull(imbl::Vector<(Int, Int)>);
 impl UpperHull {
     /// The hull of `points`, given in increasing order of `(x, y)`, in O(R) for R points:
     /// the upper hull of the points `(p, q)` is the upper envelope of the lines `p·x + q`
-    /// ([`not_above`]), which `presburger::upper_envelope` finds by the monotone chain.
+    /// ([`not_above`]), which [`upper_envelope`] finds by the monotone chain.
     pub fn of<'a>(points: impl Iterator<Item = &'a (Int, Int)>) -> UpperHull {
         let points: Vec<&(Int, Int)> = points.collect();
         let on = upper_envelope(&points, |p| (&p.0, &p.1));

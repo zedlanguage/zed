@@ -115,6 +115,7 @@ use zed_kernel::digest::{DigestMap, DigestSet, TextMap, TextSet, text_hash, text
 use zed_graph::{UnionFind, reach, reach_until};
 use zed_kernel::refine::Refine;
 use zed_kernel::value::fresh_id;
+use zedc_affine::lines::upper_envelope;
 use zedc_int::int::{Int, IntRange, meet_range, range_meet, row_range};
 use zedc_int::q::Q;
 use zedc_lattice::interval::{End, IntervalSet, Num};
@@ -9791,58 +9792,6 @@ fn envelope(mut lines: Vec<(Int, Int)>) -> Vec<(Option<Q>, Int, Int)> {
         .zip(hull.iter())
         .map(|(s, (p, q))| (s, p.clone(), q.clone()))
         .collect()
-}
-
-/// The upper envelope of lines `p·x + q`, `line` giving `(p, q)` of each, `lines` sorted by
-/// slope and within a slope by intercept: the indices of the lines on it, in order of slope.
-/// Of one slope only the last, the highest, can be on it. Line `b` between `a` and `c` (slopes
-/// `pa < pb < pc`) is under `max(a, c)` everywhere when at the crossing of `a` and `c`,
-/// `x = (qa - qc) / (pc - pa)`, it is under `a`: `(pb - pa)·(qa - qc) <= (qa - qb)·(pc - pa)`,
-/// with both differences of slopes above zero, so the cross-multiplied form keeps the order.
-/// Everywhere, because `b - a` rises in `x` (`pb > pa`) and `b - c` falls (`pb < pc`): at or
-/// left of the crossing `b - a` is at most its value there, at most 0; at or right of it `b - c`
-/// is at most its value there, which equals that of `b - a`, as `a = c` there.
-/// Shared by [`envelope`], `extend`'s `hull_of` (DRY-numeric-shared; two copies before,
-/// the same test written with the operands named apart) and [`UpperHull::of`], whose upper
-/// hull of points `(p, q)` is this envelope of lines `p·x + q`; the test is
-/// [`not_above`] on `(pa, qa)`, `(pb, qb)` and `(pc, qc)`, negated on both sides.
-///
-/// Complexity tradeoff: naive version, each line tested against every pair of the others,
-/// O(n³) products. Used: the monotone chain (Andrew, "Another efficient algorithm for convex
-/// hulls in two dimensions", IPL 9(5), 1979, doi:10.1016/0020-0190(79)90072-3, read
-/// 2026-11-21; sec. 3 builds a point hull, this is its dual on lines; see `lib.rs`) on the sorted
-/// lines, each index pushed and popped
-/// at most once, O(n) products after the caller's O(n log n) sort. Tradeoffs: none.
-///
-/// [`UpperHull::of`]: crate::upper_hull::UpperHull::of
-pub(crate) fn upper_envelope<T>(lines: &[T], line: impl Fn(&T) -> (&Int, &Int)) -> Vec<usize> {
-    let mut hull: Vec<usize> = Vec::new();
-    for j in 0..lines.len() {
-        let (pc, qc) = line(&lines[j]);
-        if lines.get(j + 1).is_some_and(|next| line(next).0 == pc) {
-            continue;
-        }
-        while let [.., a, b] = hull[..] {
-            if not_above(line(&lines[a]), line(&lines[b]), (pc, qc)) {
-                hull.pop();
-            } else {
-                break;
-            }
-        }
-        hull.push(j);
-    }
-    hull
-}
-
-/// Whether `b` lies on or below the line from `a` to `c`, for `a.0 < b.0 < c.0`: the cross
-/// product of `b - a` and `c - a` is at least 0. In the dual picture, where the point `(p, q)`
-/// stands for the line `p·x + q`, it says that line `b` is nowhere above both `a` and `c`,
-/// the test `upper_envelope` pops by. Kept here beside it, not in `upper_hull`, which uses
-/// both, so that the two files import in one direction only (`s_01f_import_graph`).
-pub fn not_above(a: (&Int, &Int), b: (&Int, &Int), c: (&Int, &Int)) -> bool {
-    let (bx, by) = (b.0 - a.0, b.1 - a.1);
-    let (cx, cy) = (c.0 - a.0, c.1 - a.1);
-    &bx * &cy >= &by * &cx
 }
 
 impl<'c> CoreClasses<'c> {
@@ -38728,42 +38677,5 @@ mod loose_pair_tests {
         cons[1] = c(&[("a", 3), ("b", 2), ("c", 3)], -4, Rel::Eq);
         let m = solve(&cons, true).unwrap().expect("a point");
         assert!(cons.iter().all(|k| k.holds(&m)), "{m:?}");
-    }
-}
-
-#[cfg(test)]
-mod upper_envelope_tests {
-    use super::{Int, upper_envelope};
-
-    /// [`upper_envelope`] keeps exactly the lines that are above every other line somewhere,
-    /// on random sets of distinct lines with slopes and intercepts in `-6..=6`. Two lines cross
-    /// at `x = a / b` with `|a| <= 12` and `0 < b <= 12`, so two crossings are at least 1/144
-    /// apart and the open piece where a line is alone on top holds a point `k / 288`; the
-    /// oracle tries each `k / 288` for `|x| <= 13` (all crossings within `|x| <= 12`), and a
-    /// line is checked at `p·k + 288·q`.
-    #[test]
-    fn the_upper_envelope_keeps_the_lines_alone_on_top_somewhere() {
-        // xorshift64 (zed-hash's, where its source is).
-        let mut xs = zed_hash::Xorshift64::new(0x9e37_79b9_7f4a_7c15);
-        let mut rng = |n: u64| xs.below(n);
-        for _ in 0..400 {
-            let mut lines: Vec<(i128, i128)> = (0..1 + rng(9))
-                .map(|_| (rng(13) as i128 - 6, rng(13) as i128 - 6))
-                .collect();
-            zed_collections::sorted::sort_dedup(&mut lines);
-            let big: Vec<(Int, Int)> = (lines.iter())
-                .map(|&(p, q)| (Int::from(p), Int::from(q)))
-                .collect();
-            let got = upper_envelope(&big, |(p, q)| (p, q));
-            let want: Vec<usize> = (0..lines.len())
-                .filter(|&j| {
-                    (-288 * 13..=288 * 13).any(|k: i128| {
-                        let at = |(p, q): (i128, i128)| p * k + 288 * q;
-                        (lines.iter().enumerate()).all(|(i, &l)| i == j || at(l) < at(lines[j]))
-                    })
-                })
-                .collect();
-            assert_eq!(got, want, "{lines:?}");
-        }
     }
 }
