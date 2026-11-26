@@ -166,8 +166,8 @@ fn gram_schmidt<const N: usize>(form: &[[Q; N]; N], b: &[[Int; N]; N]) -> GramSc
 /// product is bounded below by a positive constant for a positive definite form with rational
 /// entries (the termination argument of LLL 1982, p. 521, written here from memory of the
 /// paper; the page was not checked again on 2026-11-26). Exact: the arithmetic is in [`Q`].
-/// The Gram–Schmidt data is computed afresh at each step, `O(N³)` operations on `Q` a step; the one caller has
-/// `N = 3`, where that is a constant.
+/// The Gram–Schmidt data is computed afresh at each step, `O(N³)` operations on `Q` a step;
+/// the one caller has `N = 3`, where that is a constant.
 pub fn lll<const N: usize>(form: &[[Q; N]; N]) -> Reduced<N> {
     let mut b = identity::<N>();
     let delta = Q::new(Int::from(3), Int::from(4));
