@@ -1315,33 +1315,20 @@ enum Phase {
     Relax { x: usize, e: usize },
     /// Relaxing the `e`th edge of `settled[i]`, if its weight is negative.
     Negative { i: usize, e: usize },
-    /// Following the parent pointers from the `i`th of the nodes settled, then fallen, in this
-    /// round; now at `v`.
-    Walk { i: usize, v: usize },
-}
-
-/// What one call of [`Rounds::step`] did.
-pub enum Did {
-    /// One unit of work: a heap entry, an edge, or a step of a parent walk.
-    Work,
-    /// Moved to the next phase, with no work.
-    Move,
-    /// The search ended: the labels, or `None` for a negative cycle.
-    End(Option<Vec<Int>>),
 }
 
 /// BF-Dijkstra (\[D\] Lemma l.129): distances from a source with an edge of weight `label[x]`
 /// to each node `x` (0 for [`Rounds::new`]), by Dijkstra's search on the edges of weight at
 /// least 0 with a round of the negative edges out of the nodes it settled after each, one step
 /// of a phase per call of [`Rounds::step`], so that utvpi can interleave it with Goldberg and
-/// Radzik's search. After round `k` each label is at most the weight of every walk with `k`
+/// Radzik's search, or all of it in one call of `Rounds::run`, negsssp's `bf_dijkstra`. After round `k` each label is at most the weight of every walk with `k`
 /// negative edges besides the source's, so a graph whose shortest paths have few negative
 /// edges takes few rounds, each O(E log V), whatever the order of its nodes; a label that falls
 /// in round `eta` shows a walk shorter than all with `eta` negative edges, and so a negative
 /// cycle (\[D\] Theorem 3.1; with `eta = V`, since a simple path has at most `V - 1` edges).
 ///
-/// With [`Rounds::with_parents`], a cycle of parent pointers is a negative cycle too (B. V.
-/// Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms", Math. Programming
+/// In `Rounds::run` from `Rounds::with_parents`, a cycle of parent pointers is a negative
+/// cycle too (B. V. Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms", Math. Programming
 /// 85(2), 1999, doi:10.1007/s101070050058, read 2026-11-21, PDF from LibGen; Lemma 3, p. 282:
 /// "Any cycle in G_p is negative"); it is looked for after each round, from the nodes settled
 /// or fallen in it, each node visited once. That is their amortized search (sec. 6.4, p. 289),
@@ -1351,10 +1338,8 @@ pub enum Did {
 /// ("after a finite number of labeling operations G_p always has a cycle") is why a later
 /// search finds it, and the round bound `eta` ends the search in any case.
 ///
-/// One routine for negsssp's searches (`bf_dijkstra`, on compressed rows with the parent walk)
-/// and utvpi's (on `out`, the labels it lowered kept for Goldberg and Radzik's search): each
-/// call of `step` that does no work returns [`Did::Move`], so negsssp's work count, and its
-/// budget in `Solver::quick`, is that of the loop it replaced.
+/// One state for negsssp's searches (`bf_dijkstra`, on compressed rows with the parent walk)
+/// and utvpi's (on `out`, the labels it lowered kept for Goldberg and Radzik's search).
 pub struct Rounds<'a, G: Edges + ?Sized = [Vec<(usize, Int)>]> {
     out: &'a G,
     label: Vec<Int>,
@@ -1374,11 +1359,9 @@ pub struct Rounds<'a, G: Edges + ?Sized = [Vec<(usize, Int)>]> {
     in_lowered: Vec<bool>,
     /// The node whose edge last lowered each label; empty when the search walks no parents.
     parent: Vec<usize>,
-    /// The walk that last passed each node, the walks so far, and their count before this
-    /// round's.
+    /// The walk that last passed each node, and the walks so far.
     walked: Vec<u64>,
     walks: u64,
-    before: u64,
 }
 
 impl<'a> Rounds<'a> {
@@ -1409,7 +1392,6 @@ impl<'a, G: Edges + ?Sized> Rounds<'a, G> {
             parent: Vec::new(),
             walked: Vec::new(),
             walks: 0,
-            before: 0,
         }
     }
 
@@ -1456,14 +1438,15 @@ impl<'a, G: Edges + ?Sized> Rounds<'a, G> {
         }
     }
 
-    /// One step: a unit of work, a move to the next phase, or the end.
-    pub fn step(&mut self) -> Did {
+    /// One unit of work, with no parent walk; once the search ends, the labels, or `None` for
+    /// a negative cycle.
+    pub fn step(&mut self) -> Option<Option<Vec<Int>>> {
         let out = self.out;
         match self.phase {
             Phase::Pop => {
                 let Some((dx, x)) = self.heap.pop() else {
                     self.phase = Phase::Negative { i: 0, e: 0 };
-                    return Did::Move;
+                    return None;
                 };
                 if dx == self.label[x] && self.settled_in[x] != self.round {
                     self.settled_in[x] = self.round;
@@ -1474,7 +1457,7 @@ impl<'a, G: Edges + ?Sized> Rounds<'a, G> {
             Phase::Relax { x, e } => {
                 let Some((y, w)) = out.edge(false, x, e) else {
                     self.phase = Phase::Pop;
-                    return Did::Move;
+                    return None;
                 };
                 self.phase = Phase::Relax { x, e: e + 1 };
                 if !w.is_negative() {
@@ -1483,43 +1466,42 @@ impl<'a, G: Edges + ?Sized> Rounds<'a, G> {
             }
             Phase::Negative { i, e } => {
                 let Some(&x) = self.settled.get(i) else {
-                    return self.end_round();
+                    if self.fell.is_empty() {
+                        return Some(Some(std::mem::take(&mut self.label)));
+                    }
+                    if self.round >= self.eta {
+                        return Some(None);
+                    }
+                    self.round += 1;
+                    self.settled.clear();
+                    self.fell.clear();
+                    self.phase = Phase::Pop;
+                    return None;
                 };
                 let Some((y, w)) = out.edge(true, x, e) else {
                     self.phase = Phase::Negative { i: i + 1, e: 0 };
-                    return Did::Move;
+                    return None;
                 };
                 self.phase = Phase::Negative { i, e: e + 1 };
                 if w.is_negative() && self.lower(x, y, w) {
                     self.fell.push(y);
                 }
             }
-            Phase::Walk { i, v } => {
-                if v != NONE && self.walked[v] <= self.before {
-                    self.walked[v] = self.walks;
-                    self.phase = Phase::Walk {
-                        i,
-                        v: self.parent[v],
-                    };
-                } else if v != NONE && self.walked[v] == self.walks {
-                    return Did::End(None);
-                } else {
-                    return self.walk_from(i + 1);
-                }
-            }
         }
-        Did::Work
+        None
     }
 
-    /// The search run to its end, `tick` called once for each step that [`Rounds::step`]
-    /// counts as [`Did::Work`], in the same order, so with the same answer and work count:
-    /// `step`'s phases as plain loops, for a caller that does not interleave another search.
-    // Complexity tradeoff: driving `step` to the end costs a match on the phase and a store of
-    // it per unit of work. As `bf_dijkstra`'s loop on 2026-11-26 that took 3.1% / 4.4% more
-    // instructions on `duong_scales_alone` at n / 8n (1,225M / 8,346M against 1,188M /
-    // 7,991M), and 3.5% / 3.4% and 3.5% / 3.5% more on the race benches
-    // `the_joined_union_family_scales` and `bad_gor_scales`, over the 2% the merge of the two
-    // copies allowed; these loops are the copy negsssp had, on the shared state and `lower`.
+    /// The search run to its end with its parent walk, `tick` called once per unit of work: a
+    /// heap entry, an edge, or a step of a parent walk, as `bf_dijkstra`'s loop counted them
+    /// before, so negsssp's work count, and its budget in `Solver::quick`, are unchanged.
+    // Complexity tradeoff: the rounds are those of `step` written as plain loops, a second
+    // form of the same search on the same state and `lower`. Driving `step` to the end, with
+    // the walk as a phase of it, cost a match on the phase and a store of it per unit of work:
+    // on 2026-11-26 `duong_scales_alone` took 1,225M / 8,346M instructions at n / 8n against
+    // 1,188M / 7,991M with the loops (3.1% / 4.4%, over the 2% the merge of the copies
+    // allowed), and the walk as a phase made utvpi's interleaved `step` 3.4-3.5% slower on
+    // `the_joined_union_family_scales` and `bad_gor_scales`. So `step`, for utvpi, walks no
+    // parents, and this, for negsssp, does not interleave.
     fn run<H>(mut self, tick: &mut impl FnMut() -> Result<(), H>) -> Step<Vec<Int>, H> {
         let out = self.out;
         loop {
@@ -1577,42 +1559,6 @@ impl<'a, G: Edges + ?Sized> Rounds<'a, G> {
         }
     }
 
-    /// The end of a round's negative edges: the labels if none fell, a negative cycle at the
-    /// round bound, else the parent walk or the next round.
-    fn end_round(&mut self) -> Did {
-        if self.fell.is_empty() {
-            return Did::End(Some(std::mem::take(&mut self.label)));
-        }
-        if self.round >= self.eta {
-            return Did::End(None);
-        }
-        if self.parent.is_empty() {
-            return self.walk_from(usize::MAX);
-        }
-        self.before = self.walks;
-        self.walk_from(0)
-    }
-
-    /// Starts the walk from the `i`th of the nodes settled, then fallen, in this round, or,
-    /// past the last, the next round.
-    fn walk_from(&mut self, i: usize) -> Did {
-        let s = self.settled.len();
-        let next = match i.checked_sub(s) {
-            None => self.settled.get(i),
-            Some(j) => self.fell.get(j),
-        };
-        if let Some(&v) = next {
-            self.walks += 1;
-            self.phase = Phase::Walk { i, v };
-        } else {
-            self.round += 1;
-            self.settled.clear();
-            self.fell.clear();
-            self.phase = Phase::Pop;
-        }
-        Did::Move
-    }
-
     /// Relaxes the edge `x → y` of weight `w`; whether the label of `y` fell.
     fn lower(&mut self, x: usize, y: usize, w: &Int) -> bool {
         let candidate = &self.label[x] + w;
@@ -1641,7 +1587,7 @@ mod completeness;
 mod tests {
     use std::convert::Infallible;
 
-    use super::{Aux, Did, Edges, Int, Rounds, Rows, Stop, bf_dijkstra};
+    use super::{Aux, Edges, Int, Rounds, Rows, Stop, bf_dijkstra};
 
     /// A graph `u → (v, w)` built in [`Aux`], the negative edges apart.
     fn split(out: &[Vec<(usize, i64)>]) -> Aux {
@@ -1687,27 +1633,21 @@ mod tests {
             eta: u64,
         ) -> Option<Vec<Int>> {
             let label = vec![Int::ZERO; n];
-            let mut units = 0u64;
-            let mut tick = || {
-                units += 1;
-                Ok::<(), Infallible>(())
-            };
-            let found = match bf_dijkstra(graph, label.clone(), seeds, eta, &mut tick) {
+            let tick = &mut || Ok::<(), Infallible>(());
+            let found = match bf_dijkstra(graph, label.clone(), seeds, eta, tick) {
                 Ok(d) => Some(d),
                 Err(Stop::Negative) => None,
                 Err(Stop::Tick(never)) => match never {},
             };
-            // `Rounds::run` is `Rounds::step` driven to the end: the same answer and work.
+            // `Rounds::step` driven to the end, the same rounds with no parent walk, gives the
+            // same answer: the walk only ends a search with a negative cycle sooner.
             let mut rounds = Rounds::with_parents(graph, label, seeds, eta);
-            let mut steps = 0u64;
             let stepped = loop {
-                match rounds.step() {
-                    Did::Work => steps += 1,
-                    Did::Move => {}
-                    Did::End(found) => break found,
+                if let Some(found) = rounds.step() {
+                    break found;
                 }
             };
-            assert_eq!((&stepped, steps), (&found, units));
+            assert_eq!(stepped, found);
             found
         }
         let n = out.len();

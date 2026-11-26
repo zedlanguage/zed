@@ -443,7 +443,7 @@ fn negated(q: &[Int]) -> Vec<Int> {
 fn bf_dijkstra(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     let mut rounds = negsssp::Rounds::new(out);
     loop {
-        if let negsssp::Did::End(found) = rounds.step() {
+        if let Some(found) = rounds.step() {
             return found;
         }
     }
@@ -494,10 +494,7 @@ impl<'a> Shared<'a> {
             }
             self.gor.lowered.clear();
         }
-        match self.rounds.step() {
-            negsssp::Did::End(found) => Some(found),
-            negsssp::Did::Work | negsssp::Did::Move => None,
-        }
+        self.rounds.step()
     }
 }
 
