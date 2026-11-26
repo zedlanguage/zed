@@ -16,67 +16,67 @@
 //! makes the product O(n log n) and builds division, gcd and printing from a bounded number of
 //! products at each level of a recursion that halves the width.
 //!
-//! **Multiplication** ([`mul`], [`transform_mul`]). The product of two numbers is the
+//! **Multiplication** ([`mul`], `transform_mul`). The product of two numbers is the
 //! convolution of their word lists followed by carrying, O(n^2) done directly. A transform
 //! turns the convolution into pointwise products: evaluate both polynomials at the `n`-th
-//! roots of unity ([`Field::forward`], an FFT), multiply the values pairwise, interpolate back
-//! ([`Field::inverse`]), O(n log n). The arithmetic is modulo a prime `p = c 2^50 + 1`, so roots
+//! roots of unity (`Field::forward`, an FFT), multiply the values pairwise, interpolate back
+//! (`Field::inverse`), O(n log n). The arithmetic is modulo a prime `p = c 2^50 + 1`, so roots
 //! of unity of every order up to `2^50` exist and the values are exact; a coefficient of the
 //! convolution can reach `n 2^128`, more than one 62-bit prime holds, so the convolution is
-//! done modulo three primes ([`FIELDS`], product above `2^185`) and each coefficient rebuilt by
+//! done modulo three primes (`FIELDS`, product above `2^185`) and each coefficient rebuilt by
 //! the Chinese remainder theorem in Garner's form, then the carries propagated, in one pass.
 //! Products modulo `p` use Montgomery's form and Shoup's precomputed quotients for the
 //! twiddle factors. The length is padded to a power of two, so the time rises in steps:
 //! doubling the padded length doubles the time, and sizes between two powers cost the same. A
 //! square needs one forward transform fewer. A factor with few nonzero words (as `2^s + 1`,
 //! which the exact numbers keep) is multiplied by schoolbook over those words
-//! ([`sparse_mul`]). Above [`MUL_LEAF`] words in the narrower factor, [`mul`] takes whichever of
-//! three computed costs is lowest: rows over nonzero words, the transforms ([`transform_plan`])
-//! and num-bigint's product ([`TOOM_COST`]); at or below it, num-bigint's.
+//! (`sparse_mul`). Above `MUL_LEAF` words in the narrower factor, [`mul`] takes whichever of
+//! three computed costs is lowest: rows over nonzero words, the transforms (`transform_plan`)
+//! and num-bigint's product (`TOOM_COST`); at or below it, num-bigint's.
 //!
-//! **Division** ([`div_rem`], [`Level`], [`approx_reciprocal`]). To divide by `d` of `n` bits
+//! **Division** ([`div_rem`], `Level`, `approx_reciprocal`). To divide by `d` of `n` bits
 //! a quotient of `k <= n` bits, take the top `k` bits `t` of `d` and an approximate reciprocal
 //! `X`, `t X < 2^2k <= t (X + 2)`, from Newton's iteration (Brent and Zimmermann, Modern
-//! Computer Arithmetic, Algorithm 3.5): from a reciprocal of [`RECIP_LEAF`] bits by
+//! Computer Arithmetic, Algorithm 3.5): from a reciprocal of `RECIP_LEAF` bits by
 //! num-bigint's division, each step goes from `h = ceil((p + 3) / 2)` bits to `p` with two
-//! cyclic products of `p / 2` bits that share one factor's transforms ([`newton`]), so the
+//! cyclic products of `p / 2` bits that share one factor's transforms (`newton`), so the
 //! whole costs about 5/3 of a product of `k` bits. With `X` taken to `w = 64 ceil(k / 64)`
 //! bits, the estimate `q0 = xh + floor(xh (X - 2^w) / 2^w)`, `xh` the dividend's bits above
 //! the divisor's, is a product of `k` bits, at most four below the quotient (two above it when
 //! `k < n`), and the remainder `x - q0 d`, in `(-2d, 5d)`, is a cyclic product of `d`'s width
-//! modulo `2^(64 m) - 1` read back by its low word ([`unfold`]); at most four steps of `d`
+//! modulo `2^(64 m) - 1` read back by its low word (`unfold`); at most four steps of `d`
 //! correct both. A quotient wider than the divisor is found in blocks
-//! of the divisor's width ([`div_rem_blocks`]) by one [`Divisor`], whose reciprocal and both
+//! of the divisor's width (`div_rem_blocks`) by one [`Divisor`], whose reciprocal and both
 //! factors' transforms are built once: about one product of the divisor's width a block. A
 //! divisor with few nonzero words is divided by long division over those words
-//! ([`sparse_div_rem`]), chosen by computed cost as for products.
+//! (`sparse_div_rem`), chosen by computed cost as for products.
 //!
-//! **Gcd** ([`gcd`], [`half`], [`step`], [`half_leaf`]). Euclid's algorithm takes O(n) steps of
+//! **Gcd** ([`gcd`], `half`, `step`, `half_leaf`). Euclid's algorithm takes O(n) steps of
 //! O(n) each. The half gcd avoids touching the full numbers at each step. It uses the binary
 //! step: with `a` odd and `b = 2^j b'`, `b'` odd, choose `q`, `|q| < 2^j`, with `a + q b'`
-//! divisible by `2^(j+1)` ([`inverse_mod_pow2`] gives `q`), and replace the pair by
+//! divisible by `2^(j+1)` (`inverse_mod_pow2` gives `q`), and replace the pair by
 //! `(b', (a + q b') / 2^j)`. This keeps the gcd's odd part ([`gcd`] divides each number by its
 //! own power of two first and multiplies the result by the smaller power at the end), and is
-//! the 2 by 2 integer matrix `[[0, 2^j], [2^j, q]]` over `2^2j` ([`Mat`]).
+//! the 2 by 2 integer matrix `[[0, 2^j], [2^j, q]]` over `2^2j` (`Mat`).
 //! Because the steps work from the low end, the steps whose halvings total at most `k` depend
 //! only on `a` and `b` modulo `2^(2k+1)`: no carry from the high bits reaches them, which is
 //! why the binary form is used rather than the classical half gcd, which works from the high
-//! end and must correct for carries. So [`half`] finds the matrix of the first half of the
+//! end and must correct for carries. So `half` finds the matrix of the first half of the
 //! steps from residues of half the width, applies it to the whole pair (a few products), takes
 //! one step, and recurses on the second half: `T(n) = 2 T(n/2) + O(M(n))`, O(M(n) log n). The
-//! recursion's leaf ([`half_leaf`], at or below [`HALF_LEAF`]) runs on 128-bit integers, which
+//! recursion's leaf (`half_leaf`, at or below `HALF_LEAF`) runs on 128-bit integers, which
 //! the residues and matrix entries provably never exceed. [`gcd`] repeats one half gcd and one
 //! step until the second number is zero, and hands what is left to num-bigint's Stein gcd at
-//! or below [`GCD_LEAF`]. Reference: Stehlé and Zimmermann (2004) and Möller (2008), cited
+//! or below `GCD_LEAF`. Reference: Stehlé and Zimmermann (2004) and Möller (2008), cited
 //! in full under "Sources" below.
 //!
 //! **Printing** ([`to_decimal`], [`to_decimal_split`]). The powers `10^(L 2^i)`, `L` being
-//! [`PRINT_LEAF`], are built once by squaring. `x` is written as `high 10^(L 2^i) + low` by one
+//! `PRINT_LEAF`, are built once by squaring. `x` is written as `high 10^(L 2^i) + low` by one
 //! division by the largest power at most `x`, and each half is printed by the next power down,
 //! the low half padded with zeros to its fixed width. The largest power's reciprocal is found
 //! by Newton's iteration to only the precision that division and the level below need; each
-//! power below is a [`Level`] whose reciprocal is derived from the one above by one product and
-//! one cyclic product ([`derive()`]), and whose reciprocal and power are transformed once for
+//! power below is a `Level` whose reciprocal is derived from the one above by one product and
+//! one cyclic product (`derive()`), and whose reciprocal and power are transformed once for
 //! all its divisions. A division at a level takes one product for the quotient and one cyclic
 //! product of half its length for the remainder, which lies in `[0, 4d)` and so is found modulo
 //! `2^(64 m) - 1`. Each level divides numbers of `n` bits in total, O(M(n)), over
@@ -94,8 +94,8 @@
 //! 16,384, 32,768 and 65,536 (load 15 to 17); printing, by the levels above, is slower than
 //! num-bigint's below [`PRINT_WHOLE`] words, where its fixed costs (the powers, the levels'
 //! transforms, one Newton reciprocal) outweigh num-bigint's `n^1.5` (COMPLEXITY.md K81).
-//! The gcd gains from about 300 words, since num-bigint's is quadratic. Past [`DIV_LEAF`],
-//! num-bigint's division is taken by a computed cost, [`DIV_COST`], as [`TOOM_COST`] is for
+//! The gcd gains from about 300 words, since num-bigint's is quadratic. Past `DIV_LEAF`,
+//! num-bigint's division is taken by a computed cost, `DIV_COST`, as `TOOM_COST` is for
 //! products (CROSSOVER-bench, 2026-11-12). Open for the port: a cheaper first reciprocal or
 //! cached powers, which would lower the split's fixed costs and with them [`PRINT_WHOLE`].
 //!
@@ -107,16 +107,16 @@
 //!   (ANTS 2004), Lecture Notes in Computer Science, Springer, pp. 411-425,
 //!   doi:10.1007/978-3-540-24847-7_31. Lemma 1 (GB division): for `ν2(a) < ν2(b)` there is
 //!   one `(q, r)` with `r = a + q b / 2^(ν2(b) - ν2(a))`, `|q| < 2^(ν2(b) - ν2(a))` and
-//!   `ν2(r) > ν2(b)`; this is [`step`]. Lemma 7: if `a' = a mod 2^(2k+1)` and
+//!   `ν2(r) > ν2(b)`; this is `step`. Lemma 7: if `a' = a mod 2^(2k+1)` and
 //!   `b' = b mod 2^(2k+1)`, then up to the first remainder of valuation above `k` the GB
-//!   quotients of the two pairs are equal; this is why [`half`] works on residues. Theorem 4:
+//!   quotients of the two pairs are equal; this is why `half` works on residues. Theorem 4:
 //!   Fast-GB-gcd takes `O(M(n) log n)`. Departures: the pair is kept with its powers of two
 //!   divided out, as in Möller's form below, and the leaf runs on 128-bit integers.
 //! - N. Möller, "On Schönhage's algorithm and subquadratic integer gcd computation", Math.
 //!   Comp. 77(261):589-607, 2008 (Crossref dates it 2007, online first),
 //!   doi:10.1090/S0025-5718-07-02017-0. Section 4, p. 596, restates Stehlé and Zimmermann's
 //!   algorithm as `hgcd-b`, whose step 7, `(A; B) <- (α, β) + 2^(ℓ1 - 2 j1) M (A'; B')`,
-//!   lifts the residues' pair by the matrix applied to the high parts; [`half`]'s `lift` is
+//!   lifts the residues' pair by the matrix applied to the high parts; `half`'s `lift` is
 //!   that step. p. 595: "The use of quotients in the symmetric interval −2^k < q < 2^k is
 //!   essential; if one tries to use positive quotients 0 < q < 2^(k+1), the algorithm no
 //!   longer terminates."
@@ -131,10 +131,10 @@
 //!   Algorithm 3.5 ApproximateReciprocal (§3.4.1) takes a reciprocal of the top `h` words and
 //!   refines it by one Newton step; Lemma 3.4.2: "If β is a power of two satisfying β ≥ 8, and
 //!   β^n/2 ≤ A < β^n, then the output X ... satisfies: AX < β^2n < A(X + 2)". Departure:
-//!   [`approx_reciprocal`] works in bits (β = 2, outside the lemma's `β ≥ 8`) and starts each
+//!   `approx_reciprocal` works in bits (β = 2, outside the lemma's `β ≥ 8`) and starts each
 //!   step from `h = ceil((p + 3) / 2)` bits, and it promises only `t (X + 2) > 2^2k`. The
-//!   lemma's proof does not cover that case; [`newton`] proves one step in bits and
-//!   [`approx_reciprocal`] the whole by induction over its sizes, at every width
+//!   lemma's proof does not cover that case; `newton` proves one step in bits and
+//!   `approx_reciprocal` the whole by induction over its sizes, at every width
 //!   (PROOF-kernel-proofdoc3a-gaps (e)). The test `approximate_reciprocals_keep_their_bounds`
 //!   checks the bound for every `t` of 5 to 13 bits and for edge and random `t` at 15 widths up
 //!   to 30,001 bits. Algorithm 1.26
@@ -182,14 +182,14 @@
 //!   result comes out "in such an order that the index of an X must have its binary bits
 //!   put in reverse order" (22). So a transform of `2^k` points is `k`
 //!   stages of butterflies `(x + r y, x - r y)`, O(n log n) in all, in bit-reversed order.
-//!   [`Field::forward`] does this over the integers modulo a prime in place of the complex
+//!   `Field::forward` does this over the integers modulo a prime in place of the complex
 //!   numbers.
 //! - P. L. Montgomery, "Modular multiplication without trial division", Math. Comp.
 //!   44(170):519-521, 1985, doi:10.1090/S0025-5718-1985-0777282-X (read 2026-11-20, PDF,
 //!   Sci-Hub, verification only; the AMS copy is behind a browser check). Section 1, p. 519:
 //!   with `R R^-1 - N N' = 1`, "function REDC(T): m ← (T mod R) N' mod R; t ← (T + mN)/R; if
 //!   t ≥ N then return t - N else return t", for `0 ≤ T < RN`, since then "0 ≤ t < 2N". Here
-//!   `R = 2^64` and `N' = -N^-1 mod R`. [`Field::mul`] is REDC of `a b` with `neg_inv` as
+//!   `R = 2^64` and `N' = -N^-1 mod R`. `Field::mul` is REDC of `a b` with `neg_inv` as
 //!   `N'`, ending with that subtraction; it departs by taking `a, b < 2p`, so `T < 4p^2`, which
 //!   is below `RN = 2^64 p` because `4p < 2^64`, and the paper's bound still holds.
 //! - D. Harvey, "Faster arithmetic for number-theoretic transforms", J. Symbolic Comput.
@@ -197,9 +197,9 @@
 //!   Algorithm 3, the modified Shoup butterfly, takes `X, Y` in `[0, 2p)` and returns
 //!   `X + Y` and `W (X - Y)` mod `p` in `[0, 2p)`, so "each element has two possible
 //!   representations", saving reductions; its twiddle products use a precomputed quotient
-//!   `W' = ⌊W β / p⌋` ([`Field::shoup`]), a method the paper says "is attributed to Shoup in
+//!   `W' = ⌊W β / p⌋` (`Field::shoup`), a method the paper says "is attributed to Shoup in
 //!   Färnqvist (2005), but does not seem to have been published". Its Algorithm 4, the
-//!   inverse butterfly, holds values in `[0, 4p)`. [`Field::forward`] takes values below `4p`
+//!   inverse butterfly, holds values in `[0, 4p)`. `Field::forward` takes values below `4p`
 //!   and returns them below `2p`.
 //! - H. L. Garner, "The residue number system", IRE Trans. Electronic Computers
 //!   EC-8(2):140-147, 1959, doi:10.1109/TEC.1959.5219515 (read 2026-11-20, PDF, LibGen,
@@ -210,11 +210,11 @@
 //!   this file's terms: a number known by its residues modulo `p0, p1, p2` is
 //!   `v0 + v1 p0 + v2 p0 p1`,
 //!   each `v_i < p_i` found from the ones before by one product with a fixed inverse; this is
-//!   [`garner`], with its constants in [`Garner`].
+//!   `garner`, with its constants in `Garner`.
 //! - J. Stein, "Computational problems associated with Racah algebra", J. Comput. Phys.
 //!   1(3):397-405, 1967, doi:10.1016/0021-9991(67)90047-2 (Crossref and the text checked). Its
 //!   gcd rests on "if a and b are odd integers and a > b, then GCD (a, b) = GCD(b, (a - b)/2)",
-//!   with the difference shifted right until odd. [`stein_odd`] departs by taking up to 30 such
+//!   with the difference shifted right until odd. `stein_odd` departs by taking up to 30 such
 //!   halvings at a time from the low 128 bits as a 2 by 2 matrix, the 2-adic analog of
 //!   Lehmer's method below, and applying it to the full words in one pass.
 //! - D. H. Lehmer, "Euclid's algorithm for large numbers", Amer. Math. Monthly 45(4):227-233,
@@ -226,7 +226,7 @@
 //!   Möller (above), §1.1, describes it: "Lehmer's algorithm computes the initial part of the
 //!   quotient sequence using single or double precision arithmetic on the most significant
 //!   words of the input, and applies several quotients at once to the multi-precision
-//!   numbers." [`stein_odd`] uses that idea at the low end.
+//!   numbers." `stein_odd` uses that idea at the low end.
 //! - A. L. Toom, "The complexity of a scheme of functional elements realizing the
 //!   multiplication of integers", Soviet Math. Dokl. 3:714-716, 1963, and S. A. Cook, "On the
 //!   minimum computation time of functions", PhD thesis, Harvard University, 1966. Neither has
@@ -264,7 +264,7 @@
 //!   CORE and dblp know only Cook and Aanderaa's 1969 paper (doi:10.2307/1995359); Harvard's
 //!   catalog (record 990038153110203941) holds the thesis on paper and microfilm only; archive.org,
 //!   LibGen, Google Scholar and Anna's Archive gave nothing. None of this code runs Toom's
-//!   method; it is num-bigint's product, modeled by [`TOOM_COST`] and [`TOOM_POWER`], whose
+//!   method; it is num-bigint's product, modeled by `TOOM_COST` and `TOOM_POWER`, whose
 //!   exponent the instruction counts there check (6.48 to 7.19 units per `l s^0.465` over 512
 //!   to 24,576 words); a wrong exponent would show as a drift of that ratio with size, a
 //!   wrong constant would not show except as a crossover moved from its measured place.
@@ -272,18 +272,18 @@
 //! Tests: `tests::products_agree_with_num_bigint` and
 //! `tests::factor_products_agree_with_num_bigint` check the transform, REDC, the lazy reduction
 //! and Garner's step together by comparing whole products with num-bigint's;
-//! `tests::gcds_agree_with_num_bigint` checks [`gcd`], whose leaf is [`stein_odd`]. None checks
+//! `tests::gcds_agree_with_num_bigint` checks [`gcd`], whose leaf is `stein_odd`. None checks
 //! a bound on a residue between stages directly: a value that overflowed would show only as a
 //! wrong product.
 //!
 //! **At the port to Zed.** The results must stay those of num-bigint's operations, which the
 //! unit tests compare at every leaf setting. What depends on measurement and is to be measured
-//! again on the Zed code: the leaves [`MUL_LEAF`], [`DIV_LEAF`], [`RECIP_LEAF`], [`GCD_LEAF`],
-//! [`PRINT_HANDOFF`], [`PRINT_WHOLE`] and the cost constants [`TOOM_COST`], [`DIV_COST`],
-//! [`TRANSFORM_COST`], [`WRAP_COST`], [`SPARSE_WORD`], [`SPARSE_RUN`], [`SPARSE_STEP`],
-//! [`CACHED_COST`];
+//! again on the Zed code: the leaves `MUL_LEAF`, `DIV_LEAF`, `RECIP_LEAF`, `GCD_LEAF`,
+//! [`PRINT_HANDOFF`], [`PRINT_WHOLE`] and the cost constants `TOOM_COST`, `DIV_COST`,
+//! `TRANSFORM_COST`, `WRAP_COST`, `SPARSE_WORD`, `SPARSE_RUN`, `SPARSE_STEP`,
+//! `CACHED_COST`;
 //! the benchmark `crossover all` (crate zed-benches) measures each against its crossover.
-//! [`HALF_LEAF`] and [`PRINT_LEAF`] are derived, not measured. The Rust constructs that need
+//! `HALF_LEAF` and `PRINT_LEAF` are derived, not measured. The Rust constructs that need
 //! a Zed form are listed in ZED_PORT_GAPS.md, sections "Entries from NUM-subquad", "Entries from
 //! BIGINT-fast-mul" and "Entries from NUM-print-fast".
 //!
@@ -1660,9 +1660,9 @@ fn add_slice(a: &mut [u64], b: &[u64]) -> bool {
 }
 
 /// A factor `x` that multiplies many numbers of at most `other` words, with its spectra on
-/// the points of such a product (see [`Field::spectrum`]) when that costs less than [`mul`]:
+/// the points of such a product (see `Field::spectrum`) when that costs less than [`mul`]:
 /// each product then transforms only the other factor and the result, two of the three
-/// transforms of [`transform_mul`].
+/// transforms of `transform_mul`.
 pub struct Factor {
     x: BigUint,
     other: usize,
@@ -1803,9 +1803,9 @@ fn dense_cost(a: usize, b: usize) -> f64 {
 }
 
 /// The cost [`mul`] is estimated to take on dense factors of `a` and `b` 64-bit words, in the
-/// units of [`TRANSFORM_COST`] (one word product): num-bigint's product at or below
-/// [`MUL_LEAF`], `a b` word products or [`toom_cost`], whichever is less; above it the less of
-/// [`toom_cost`] and the transforms' [`transform_plan`], as [`mul_method`] chooses. Rows over
+/// units of `TRANSFORM_COST` (one word product): num-bigint's product at or below
+/// `MUL_LEAF`, `a b` word products or `toom_cost`, whichever is less; above it the less of
+/// `toom_cost` and the transforms' `transform_plan`, as `mul_method` chooses. Rows over
 /// nonzero words are not counted, so a factor with many zero words costs less than this.
 /// Infinite when the product's words do not fit in a `usize` with room to round up.
 pub fn mul_cost(a: usize, b: usize) -> f64 {
@@ -1830,10 +1830,10 @@ pub fn mul_cost(a: usize, b: usize) -> f64 {
 }
 
 /// Whether [`mul`] squares a number of `n` 64-bit words, every one nonzero, by transforms whole
-/// ([`transform_mul`]), as [`mul_method`] chooses for `a * a`: such a square takes one forward
+/// (`transform_mul`), as `mul_method` chooses for `a * a`: such a square takes one forward
 /// transform fewer than a product of two numbers, which [`mul_cost`] does not count. num-bigint's
 /// product and the rows over nonzero words square no faster than they multiply. `O(log n)`, as
-/// [`transform_plan`].
+/// `transform_plan`.
 pub fn squares_by_transform(n: usize) -> bool {
     // Past `usize::MAX / 4` words the product's length does not fit, as in [`mul_cost`].
     if n <= MUL_LEAF || n > usize::MAX / 4 {
@@ -2071,8 +2071,8 @@ pub fn mul_int(a: &BigInt, b: &BigInt) -> BigInt {
     BigInt::from_biguint(a.sign() * b.sign(), mul(a.magnitude(), b.magnitude()))
 }
 
-/// `v0 * p1 + v1 * p0` over nonnegative integers. When both products are past [`MUL_LEAF`] and
-/// transforming the four operands and taking one inverse transform costs less by [`TRANSFORM_COST`]
+/// `v0 * p1 + v1 * p0` over nonnegative integers. When both products are past `MUL_LEAF` and
+/// transforming the four operands and taking one inverse transform costs less by `TRANSFORM_COST`
 /// than two separate products, the sum is formed in the transform domain (five transforms in place
 /// of six, one Garner pass, and no separate big-integer addition; D. J. Bernstein, "Fast
 /// multiplication and its applications", in *Algorithmic Number Theory*, MSRI Publications 44,
@@ -2142,9 +2142,9 @@ pub fn hold_roots() -> HoldRoots {
 /// remainder trees", 2004, Section 2), satisfying `|S / 2^f - u / p| < 1.5 / 2^f` for `0 <= u < p`
 /// and `p >= 2`, `f >= bits(p) + 4`.
 ///
-/// Below or at [`RECIP_LEAF`] bits, exact floor division `floor(u * 2^f / p)` has error
+/// Below or at `RECIP_LEAF` bits, exact floor division `floor(u * 2^f / p)` has error
 /// `< 1 / 2^f`.
-/// Above [`RECIP_LEAF`], [`approx_reciprocal`] on `p' = p * 2^(k - n)` (`n = bits(p)`, `k = f + 2`)
+/// Above `RECIP_LEAF`, `approx_reciprocal` on `p' = p * 2^(k - n)` (`n = bits(p)`, `k = f + 2`)
 /// gives `X` with `p' X < 2^(2k) <= p' (X + 2)`, so `0 < 2^(f + n + 2) / p - X <= 2`; then
 /// `S = floor(u X / 2^(n + 2))` satisfies `0 <= S < 2^f` (as `u < p` implies `u X < 2^(f + n + 2)`)
 /// and `0 <= u * 2^f / p - S < 2 u / 2^(n + 2) + 1 < 2 p / 2^(n + 2) + 1 < 1.5`.
@@ -2191,7 +2191,7 @@ pub fn scaled_node_precision(
 }
 
 /// [`scaled_node_precision`] with the cost of the step it chooses, in the units of
-/// [`TRANSFORM_COST`] (one word product): the cheaper of the shared transform and the two
+/// `TRANSFORM_COST` (one word product): the cheaper of the shared transform and the two
 /// products, for [`trees::remainders`]'s choice of method node by node. O(log) in the widths.
 ///
 /// [`trees::remainders`]: crate::trees::remainders
@@ -2220,9 +2220,9 @@ pub fn scaled_node_plan(
 }
 
 /// The cost of [`scaled_root`] for `u` of `uw` words over `p` of `pw` words at precision `f`,
-/// in the units of [`TRANSFORM_COST`]: num-bigint's division of `u 2^f` by `p` at or below
-/// [`RECIP_LEAF`], a word product for each quotient word and divisor word; else
-/// [`approx_reciprocal`], about 5/3 of a product of `f` bits (as [`newton_cost`] counts it),
+/// in the units of `TRANSFORM_COST`: num-bigint's division of `u 2^f` by `p` at or below
+/// `RECIP_LEAF`, a word product for each quotient word and divisor word; else
+/// `approx_reciprocal`, about 5/3 of a product of `f` bits (as `newton_cost` counts it),
 /// and its product by `u`. O(log) in the widths.
 pub fn scaled_root_cost(uw: usize, pw: usize, f: u64) -> f64 {
     let fw = usize::try_from(f.div_ceil(64)).expect("words fit in memory");
@@ -2466,12 +2466,12 @@ pub fn pow(b: &BigUint, mut e: u64) -> BigUint {
 // Division
 
 /// `(a / b, a mod b)` for `b` not zero. A narrow divisor goes to num-bigint, a narrow quotient
-/// by a wider divisor to [`div_rem_short_quotient`], and a quotient wider than the divisor
-/// goes block by block ([`div_rem_blocks`]). Otherwise the
+/// by a wider divisor to `div_rem_short_quotient`, and a quotient wider than the divisor
+/// goes block by block (`div_rem_blocks`). Otherwise the
 /// quotient, of `k` bits, is estimated from the reciprocal of the divisor's top `k` bits, at
-/// most a few off, and the remainder, found by a cyclic product ([`Level::div_rem`]), corrects
+/// most a few off, and the remainder, found by a cyclic product (`Level::div_rem`), corrects
 /// it. O(M(n)): about four squarings of the quotient's width (4.0 at 4096 to 65,536 words,
-/// 2026-11-09), and the same for `2w` by `w` words through [`div_rem_blocks`].
+/// 2026-11-09), and the same for `2w` by `w` words through `div_rem_blocks`.
 pub fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     assert!(!b.is_zero(), "a division by zero");
     if a < b {
@@ -2668,11 +2668,11 @@ pub fn rem(a: &BigUint, b: &BigUint) -> BigUint {
 }
 
 /// The cost [`rem`] is estimated to take for a dividend of `aw` 64-bit words by `b`, in the
-/// units of [`TRANSFORM_COST`] (one word product), for [`trees::remainders`]'s choice of method
+/// units of `TRANSFORM_COST` (one word product), for [`trees::remainders`]'s choice of method
 /// node by node: 1 (a comparison) for a dividend narrower than `b`; num-bigint's long division,
 /// a word product for each quotient word and divisor word, where [`rem`] and [`div_rem`] take it
-/// whatever its cost (a divisor or a quotient of at most [`DIV_LEAF`] bits); otherwise
-/// [`rem_cost_past_leaf`]. O(1) below the leaf, inlined into the loop over a level's nodes
+/// whatever its cost (a divisor or a quotient of at most `DIV_LEAF` bits); otherwise
+/// `rem_cost_past_leaf`. O(1) below the leaf, inlined into the loop over a level's nodes
 /// (`trees::descent_cost`, one call a node); O(words(b)) past it.
 ///
 /// [`trees::remainders`]: crate::trees::remainders
@@ -3948,7 +3948,7 @@ pub fn gcd_uint(a: &BigUint, b: &BigUint) -> BigUint {
 }
 
 /// The greatest common divisor of `a` and `b`. The powers of 2 are taken out first; the odd
-/// parts then go through the binary gcd, half of what is left at a time by [`half`], whose
+/// parts then go through the binary gcd, half of what is left at a time by `half`, whose
 /// steps keep the odd part of the gcd. O(M(n) log n).
 pub fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
     gcd_using(a, b, GCD_LEAF, LIFT_BITS)
@@ -4003,7 +4003,7 @@ fn gcd_using(a: &BigUint, b: &BigUint, leaf: u64, lift: u64) -> BigUint {
 }
 
 /// `a^-1 mod m` for `m` above zero, or `None` when `a` and `m` have a common factor. The odd
-/// part `o` of `m` by [`inverse_mod_odd`], the power `2^e` by [`inverse_mod_pow2`], joined by
+/// part `o` of `m` by `inverse_mod_odd`, the power `2^e` by `inverse_mod_pow2`, joined by
 /// the Chinese remainder theorem: `x = x1 + o ((x2 - x1) o^-1 mod 2^e)`, below `o 2^e = m`.
 /// O(M(n) log n). Panics with "a modulus above 0" for `m` zero.
 pub fn inverse_mod(a: &BigUint, m: &BigUint) -> Option<BigUint> {
@@ -4248,9 +4248,9 @@ fn bezout_with(a: &BigUint, b: &BigUint, lift: u64) -> (BigUint, BigInt, BigInt)
 // Decimal printing
 
 /// A divisor used many times, with how it is divided by, chosen as [`div_rem`] chooses for the
-/// widest dividend it is made for: num-bigint's division when it has at most [`DIV_LEAF`] bits
+/// widest dividend it is made for: num-bigint's division when it has at most `DIV_LEAF` bits
 /// or costs least, long division over its nonzero words when that costs less than the
-/// reciprocal, else a [`Level`]: its reciprocal and itself transformed once, with the roots for
+/// reciprocal, else a `Level`: its reciprocal and itself transformed once, with the roots for
 /// every product.
 pub struct Divisor<'a> {
     d: Cow<'a, BigUint>,
@@ -4301,8 +4301,8 @@ fn divisor_way(d: &BigUint, a_bits: u64) -> Way {
 }
 
 /// The points of the transforms a [`Divisor`] of `d` for dividends of at most `a_bits` bits
-/// keeps, the most of its [`level_points`], or `None` when it divides without them (see
-/// [`Way`]). Its memory is a multiple of these points (`num::Rat::rem_euclid` and
+/// keeps, the most of its `level_points`, or `None` when it divides without them (see
+/// `Way`). Its memory is a multiple of these points (`num::Rat::rem_euclid` and
 /// `num::Rat::div_euclid` ask for it).
 pub fn reciprocal_points(d: &BigUint, a_bits: u64) -> Option<usize> {
     match divisor_way(d, a_bits) {
@@ -4337,14 +4337,14 @@ impl<'a> Divisor<'a> {
         }
     }
 
-    /// `(a / d, a mod d)`, by [`Divisor::blocks`].
+    /// `(a / d, a mod d)`, by `Divisor::blocks`.
     pub fn div_rem(&self, a: &BigUint) -> (BigUint, BigUint) {
         let mut quotient = vec![0u64; words(a)];
         let r = self.blocks(a, |at, q| quotient[at..at + q.len()].copy_from_slice(q));
         (from_words(quotient), from_words(r))
     }
 
-    /// `a mod d`, by [`Divisor::blocks`], its memory that of `d` whatever the size of `a`.
+    /// `a mod d`, by `Divisor::blocks`, its memory that of `d` whatever the size of `a`.
     pub fn rem(&self, a: &BigUint) -> BigUint {
         from_words(self.blocks(a, |_, _| {}))
     }
@@ -4465,7 +4465,7 @@ thread_local! {
     };
 }
 
-/// While it lives, [`roots`] keeps the table it built last, so that products run one after
+/// While it lives, `roots` keeps the table it built last, so that products run one after
 /// another, as the gcd's matrix products are, share one table instead of each building its
 /// own. Opened for one operation and dropped at its end, which frees the table once nothing
 /// else holds it. Measured, `reading_a_rat_of_two_wide_parts_scales` at 640,000 digits:
@@ -5162,7 +5162,8 @@ fn add_around(x: &mut [u64], mut c: u128) {
 // where both sides of the crossover change.
 pub const LEAF_DIGITS: usize = 2048;
 
-/// zed-kernel `num::read_digits` with texts of at most `leaf` digits read whole; `leaf` is at least 1.
+/// zed-kernel `num::read_digits` with texts of at most `leaf` digits read whole; `leaf` is at least
+/// 1.
 ///
 /// It is here, beside the products it is built from, and not in `num`, which reads through it:
 /// the module `crossover` below also names it, and a name of `num` from this file would put the

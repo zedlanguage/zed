@@ -388,13 +388,15 @@ impl Int {
     ///
     /// The coprime path (PERF-crt-tree-scaled-remainder, 2026-11-21): the cofactors
     /// `(M / m_i) mod m_i` come from the kernel's `trees::cofactors_mod_leaves` (the cofactor sum
-    /// `S = sum_i M / m_i` up the tree, then Bernstein's scaled remainder tree down it, handing over
+    /// `S = sum_i M / m_i` up the tree, then Bernstein's scaled remainder tree down it, handing
+    /// over
     /// to the exact descent at nodes of 128 words), the inverses are one word inverse each, and the
     /// sum goes up by `trees::linear_combination_up`. Every phase is O(M(N) log k).
     ///
     /// Cost argument and its limit: each level of the product tree holds at most `N + k` bits, so
     /// any method that builds the tree costs at least one multiplication of the level's width a
-    /// level, `sum_levels M(N) = M(N) log k`. Only the output size, Omega(N), is a proved lower bound
+    /// level, `sum_levels M(N) = M(N) log k`. Only the output size, Omega(N), is a proved lower
+    /// bound
     /// for CRT; no O(M(N)) method for `k` moduli of similar size is known. Searched 2026-11-21 with
     /// allpapers (keyword and semantic, `-n 250`, saved and read): R. P. Brent and P. Zimmermann,
     /// *Modern Computer Arithmetic*, arXiv:1004.4710, §2.7 (CRT by subproduct tree, O(M(N) log k));
@@ -453,7 +455,8 @@ impl Int {
     ///
     /// No refusal (PROOF-crt-refusal-exact-class, 2026-11-21). The author's order allows a refusal
     /// only for a class of inputs that provably degrades, defined by the moduli. To prove that a
-    /// class needs more than O(n log n) work one needs a lower bound above `n log n` for CRT on that
+    /// class needs more than O(n log n) work one needs a lower bound above `n log n` for CRT on
+    /// that
     /// class. None is known in any model: the only proved lower bound is the output, Omega(N), and
     /// the conditional Omega(N log N) bounds cited above are for one multiplication, which every
     /// method also pays. So no nonempty class can be shown to degrade, the exact refusal class is
@@ -502,7 +505,8 @@ impl Int {
     /// With `g = gcd(self, m)`, a solution needs `g | b`; then `self / g` is coprime to
     /// `p = m / g` and the solutions are `t == (b / g) · (self / g)^-1 (mod p)`. For
     /// `self == 0 (mod m)`, `g = m` and `p = 1`: every `t` when `m | b`, so `t = 0`. One gcd
-    /// and one inverse ([`Int::inverse_mod`]). Tests: `tests::linear_congruences_agree_with_a_scan`.
+    /// and one inverse ([`Int::inverse_mod`]). Tests:
+    /// `tests::linear_congruences_agree_with_a_scan`.
     pub fn solve_linear_congruence(&self, b: &Int, m: &Int) -> Option<(Int, Int)> {
         let g = self.gcd(m);
         if !b.mod_floor(&g).is_zero() {

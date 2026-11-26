@@ -290,8 +290,8 @@ pub fn hold_in_phases(
 /// started for one run of a check, or on a thread that is not a test's; the caller measures here.
 ///
 /// Why (FAIL-casts-difference-of-processor-times, dry-num, 2026-11-26): a check
-/// ([`compare_by`]) beside other tests, where the hardware has no counter of instructions, counts
-/// each of its runs in a new process under DynamoRIO ([`counts_in_new_processes`]), but a count a
+/// (`compare_by`) beside other tests, where the hardware has no counter of instructions, counts
+/// each of its runs in a new process under DynamoRIO (`counts_in_new_processes`), but a count a
 /// benchmark makes itself stays in this process, in processor time. The casts benchmarks of
 /// l01_29_repairs_and_printing take the difference of two such counts, the check of a program
 /// with R rejections less the check without; beside the binary's other tests, on Colab, the

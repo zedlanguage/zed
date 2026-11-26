@@ -360,11 +360,11 @@ fn factor_words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
 }
 
 /// The fewest inputs for which [`shares_a_factor`] tests whether every input is a prime word
-/// ([`prime_words`]) before the other methods.
+/// (`prime_words`) before the other methods.
 ///
 /// A measured switchover, not a proved bound (author decision A96). Measured 2026-11-21 (load
 /// 166, instructions; `zed_numtheory::is_prime` on every input and the sort of
-/// [`shares_among_primes`], over what [`shares_a_factor`] took before, on the first `k` primes
+/// `shares_among_primes`, over what [`shares_a_factor`] took before, on the first `k` primes
 /// above `2^(b-1)`, from zedc-presburger so that multiplication has its real switchovers;
 /// PERF-private-quotient-wide-moduli): at `k = 128` 0.30 at 24 bits, 1.16 at 32, 0.88 at
 /// 40, 0.91 at 48, 0.92 at 56 and 0.93 at 63; at `k = 256` 0.25, 0.92, 0.70, 0.69, 0.67 and
@@ -387,7 +387,7 @@ fn factor_words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
 /// is 1.03. Kept for 3.0 times fewer instructions and 3.9 times fewer bytes, under the limit
 /// 10.5 though over the preferred 9 on this bench.
 ///
-/// What relies on it: only the cost; [`shares_among_primes`] and [`base_of_primes`] give the
+/// What relies on it: only the cost; `shares_among_primes` and `base_of_primes` give the
 /// answers of the other methods (proved there; `tests::the_prime_word_path_agrees` holds them
 /// equal). Run the measurement again for each target platform and after a change to
 /// `zed_numtheory::is_prime`.

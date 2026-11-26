@@ -865,7 +865,8 @@ impl Rat {
     /// the product, which is 1 exactly when no listed prime divides it (zero included); so the
     /// cost is that of the parts as written, not of the number's digits.
     ///
-    /// Complexity tradeoff: the product by pairs (`trees::product_of`) and the half gcd (`fast::gcd`) cost
+    /// Complexity tradeoff: the product by pairs (`trees::product_of`) and the half gcd
+    /// (`fast::gcd`) cost
     /// O(M(n) log n) in the bits n of the parts, where a remainder of `num` and `den` by each
     /// prime costs O(n) a prime, O(n^2) for n/64 primes. Nothing is given up.
     pub fn from_kept(num: BigInt, den: BigInt, pows: Vec<(u64, BigInt)>) -> Option<Rat> {
