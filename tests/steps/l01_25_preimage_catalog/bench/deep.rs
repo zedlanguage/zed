@@ -52,8 +52,13 @@ const DEEP: usize = 10_000;
 
 /// The preimage of `true` under `make(DEEP)` for `i` in `[-50, 50]`, on a 2 MiB stack.
 fn deep(make: fn(usize) -> Term, expected: &'static str) {
+    deep_at(DEEP, make, expected);
+}
+
+/// The preimage of `true` under `make(k)` for `i` in `[-50, 50]`, on a 2 MiB stack.
+fn deep_at(k: usize, make: fn(usize) -> Term, expected: &'static str) {
     on_small_stack(move || {
-        let t = make(DEEP);
+        let t = make(k);
         let p = preimage(
             &t,
             &doms(&[("i", Some(-50), Some(50))]),
@@ -66,6 +71,13 @@ fn deep(make: fn(usize) -> Term, expected: &'static str) {
 #[test]
 fn a_sum_10000_deep_has_its_preimage_on_a_2_mib_stack() {
     deep(sum, "i [0..=50]; exact");
+}
+
+/// The depth of `a_deep_sum_costs_linear_work_in_its_depth` at 8n, whose run overflowed a 2 MiB
+/// stack on main 7369bc891 (FAIL-deep-sum-8n-stack-overflow).
+#[test]
+fn a_sum_100000_deep_has_its_preimage_on_a_2_mib_stack() {
+    deep_at(100_000, sum, "i [0..=50]; exact");
 }
 
 #[test]

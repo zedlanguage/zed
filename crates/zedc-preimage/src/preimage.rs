@@ -532,21 +532,24 @@ fn linear_order(
 
 /// Whether `t` is a linear integer term of the names of `inputs`: a name among them, an
 /// integer literal, a sum, difference or negation of such terms, or one times an integer
-/// literal. O(s) for a term of `s` nodes.
+/// literal. O(s) for a term of `s` nodes, its subterms on a stack of the heap, so a sum
+/// 100,000 deep fits a 2 MiB stack (FAIL-deep-sum-8n-stack-overflow).
 fn linear_in(t: &Term, inputs: &Domains) -> bool {
-    match t {
-        Term::Var(x) => inputs.contains_key(x),
-        Term::Lit(Value::Int(_)) => true,
-        Term::Prim(Prim::Add | Prim::Sub, a) => {
-            a.len() == 2 && a.iter().all(|t| linear_in(t, inputs))
+    let mut todo = vec![t];
+    while let Some(t) = todo.pop() {
+        match t {
+            Term::Var(x) if inputs.contains_key(x) => {}
+            Term::Lit(Value::Int(_)) => {}
+            Term::Prim(Prim::Add | Prim::Sub, a) if a.len() == 2 => todo.extend(a.iter()),
+            Term::Prim(Prim::Neg, a) if a.len() == 1 => todo.push(&a[0]),
+            Term::Prim(Prim::Mul, a) => match a.as_slice() {
+                [Term::Lit(Value::Int(_)), t] | [t, Term::Lit(Value::Int(_))] => todo.push(t),
+                _ => return false,
+            },
+            _ => return false,
         }
-        Term::Prim(Prim::Neg, a) => a.len() == 1 && linear_in(&a[0], inputs),
-        Term::Prim(Prim::Mul, a) => match a.as_slice() {
-            [Term::Lit(Value::Int(_)), t] | [t, Term::Lit(Value::Int(_))] => linear_in(t, inputs),
-            _ => false,
-        },
-        _ => false,
     }
+    true
 }
 
 /// For a test `x op k` or `k op x` of a name `x` against an integer literal `k` by an order
