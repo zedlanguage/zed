@@ -890,6 +890,49 @@ fn an_untyped_receiver_imports_only_through_its_type_file() {
 }
 
 #[test]
+fn an_index_into_another_crates_type_of_its_types_imports_nothing() {
+    // The false cycle of zed-kernel's `types/empty/sweep.rs` (FAIL-imports-untyped-method-false-
+    // edge): `es` is a `zed_collections::intern::Interner<BTreeSet<Arc<str>>>`, and
+    // `self.es[i].is_empty()` calls `BTreeSet::is_empty`, never `Bucket::is_empty`, written apart
+    // in `empty.rs`, though `scan.rs` names `Bucket`.
+    let crate_with = |es: &str, more: &str| {
+        let scan = format!(
+            "use crate::t::Bucket;\n{more}pub struct S {{ pub es: {es} }}\n\
+             pub fn count(_: &Bucket) -> usize {{ 0 }}\n\
+             pub fn f(s: &S) -> bool {{ s.es[0].is_empty() }}\n"
+        );
+        graph(&[
+            ("lib.rs", "mod t;\nmod empty;\nmod scan;\n"),
+            ("t.rs", "pub struct Bucket;\n"),
+            (
+                "empty.rs",
+                "use crate::t::Bucket;\nimpl Bucket {\n    \
+                 pub fn is_empty(&self) -> bool { crate::scan::count(self) == 0 }\n}\n",
+            ),
+            ("scan.rs", &scan),
+        ])
+    };
+    let g = crate_with("other::Interner<std::collections::BTreeSet<u8>>", "");
+    assert_eq!(
+        edges(&g),
+        ["empty.rs -> t.rs", "empty.rs -> scan.rs", "scan.rs -> t.rs"]
+    );
+    assert!(cycles(&g).is_empty(), "{:?}", cycles(&g));
+    // With the crate's `Bucket` among the arguments, the index may give a `Bucket`, so the
+    // call is drawn and the cycle is found.
+    let g = crate_with("other::Interner<Bucket>", "");
+    assert_eq!(cycles(&g), [["empty.rs", "scan.rs"]]);
+    // So too when the crate has an `Index` of its own for a type not its own, whose output
+    // could be a `Bucket` whatever the arguments.
+    let g = crate_with(
+        "other::Interner<u8>",
+        "pub struct Id;\nimpl std::ops::Index<Id> for other::Interner<u8> {\n    \
+         type Output = Bucket;\n    fn index(&self, _: Id) -> &Bucket { &Bucket }\n}\n",
+    );
+    assert_eq!(cycles(&g), [["empty.rs", "scan.rs"]]);
+}
+
+#[test]
 fn a_word_after_a_range_starts_a_chain() {
     // The false cycle of zed-kernel's `text/names.rs` (IMPORT-cycle-kernel-text): `ids` is a
     // slice parameter, and `..ids.len()` calls the slice's `len`, never `A::len`, written apart

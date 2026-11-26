@@ -462,6 +462,8 @@ struct ImplRec {
     inherent: bool,
     /// An `impl Deref for Type`.
     deref: bool,
+    /// An `impl Index<…> for Type`.
+    index: bool,
     /// The tokens of its `type Target = …;`.
     target: Option<(usize, usize)>,
     methods: Vec<usize>,
@@ -511,6 +513,10 @@ enum Ty {
     /// A type outside the crate (of another crate, a primitive, a type parameter, `impl Trait`
     /// or `dyn Trait`), which has no inherent method of the crate.
     Foreign,
+    /// A type of another crate with type arguments (`other::Interner<Type>`): `Foreign` for its
+    /// methods, but indexing it gives a type its `Index` names, which may be one of the
+    /// arguments, so they are kept.
+    Outer(Vec<Text>),
     /// A standard type that holds others: `Option`, `Result`, `Seq` (vectors, slices and
     /// arrays), `Map`, `Iter` and `Tuple`, with the types it holds.
     Std(&'static str, Vec<Text>),
@@ -542,6 +548,9 @@ struct Builder<'a> {
     fn_of: HashMap<(usize, &'a str), usize>,
     /// The names of the type parameters declared anywhere in the crate.
     generic: HashSet<&'a str>,
+    /// Whether the crate has an `impl Index<…> for` a type not its own, whose output could be
+    /// the crate's whatever the type's arguments are (`Ty::Outer`).
+    index_outside: bool,
 }
 
 /// A file to read: the file, and its parent module and name there, or none for a crate root.
@@ -945,6 +954,7 @@ impl<'a> Builder<'a> {
             def_of: HashMap::new(),
             fn_of: HashMap::new(),
             generic: HashSet::new(),
+            index_outside: false,
         };
         let mut todo: Vec<Todo<'a>> = files
             .iter()
@@ -1296,7 +1306,7 @@ impl<'a> Builder<'a> {
         while tok(toks, k)? != Tok::Open {
             k += 1;
         }
-        let (ty, deref) = match trait_end {
+        let (ty, deref, index) = match trait_end {
             Some(f) => {
                 // The trait's name is its path's last segment before any `<`.
                 let name = toks[start..f]
@@ -1307,9 +1317,9 @@ impl<'a> Builder<'a> {
                         _ => None,
                     })
                     .last();
-                ((f + 1, end), name == Some("Deref"))
+                ((f + 1, end), name == Some("Deref"), name == Some("Index"))
             }
-            None => ((start, end), false),
+            None => ((start, end), false, false),
         };
         self.impls.push(ImplRec {
             file,
@@ -1317,6 +1327,7 @@ impl<'a> Builder<'a> {
             ty,
             inherent: trait_end.is_none(),
             deref,
+            index,
             target: None,
             methods: Vec::new(),
             def: None,
@@ -1789,7 +1800,8 @@ impl<'a> Builder<'a> {
                         return Ty::Unknown;
                     }
                     return match self.resolve(text.module, &segs, done) {
-                        (Res::Outside, _) => Ty::Foreign,
+                        (Res::Outside, _) if args.is_empty() => Ty::Foreign,
+                        (Res::Outside, _) => Ty::Outer(args),
                         _ => Ty::Unknown,
                     };
                 }
@@ -2063,6 +2075,7 @@ impl<'a> Builder<'a> {
                             .push((imp.file, open[f]));
                     }
                 }
+                None if imp.index => self.index_outside = true,
                 _ => {}
             }
         }
@@ -3210,8 +3223,15 @@ impl<'b, 'a> Walk<'b, 'a> {
                     j += 1;
                 }
                 (Some(Tok::LBrack), _) => {
-                    ty = match ty {
+                    ty = match &ty {
                         Ty::Std("Map", _) => self.held(&ty, &["Map"], 1),
+                        // Another crate's `Index` gives a type that crate names: one of the
+                        // crate's only if one is among the arguments, or if this crate has an
+                        // `Index` for a type not its own (the orphan rule allows one with an
+                        // index type of this crate).
+                        Ty::Outer(args) if !self.b.index_outside && self.all_outside(args) => {
+                            Ty::Foreign
+                        }
                         _ => self.held(&ty, &["Seq"], 0),
                     };
                     j = self.mate[j] + 1;
@@ -3219,6 +3239,16 @@ impl<'b, 'a> Walk<'b, 'a> {
                 _ => return (ty, j),
             }
         }
+    }
+
+    /// Whether every type in `args`, and every type they hold, is outside the crate. Recursion
+    /// as deep as the nesting of the written type.
+    fn all_outside(&mut self, args: &[Text]) -> bool {
+        args.iter().all(|&t| match self.ty(t) {
+            Ty::Foreign => true,
+            Ty::Outer(held) | Ty::Std(_, held) => self.all_outside(&held),
+            Ty::Def(_) | Ty::Unknown => false,
+        })
     }
 
     /// The type the standard type `ty` of one of `kinds` holds at `n`.
@@ -3359,7 +3389,7 @@ impl<'b, 'a> Walk<'b, 'a> {
                     }
                 }
                 Ty::Std(kind, args) => return self.std_call(kind, args, name),
-                Ty::Foreign => {
+                Ty::Foreign | Ty::Outer(_) => {
                     return match name {
                         "clone" | "to_owned" | "to_string" | "as_str" | "as_bytes" | "trim"
                         | "trim_start" | "trim_end" | "to_lowercase" | "to_uppercase" | "len"
