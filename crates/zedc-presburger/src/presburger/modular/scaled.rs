@@ -536,7 +536,7 @@ fn affine_preimage(a: &Int, k: &Int, m: &Int, v: &[(Int, Int)]) -> Option<(Int, 
     if steps(&src) > Int::from(SWEEP_SWITCHOVER as usize) {
         return None;
     }
-    let inv = inverse_mod(&b, &n)?;
+    let inv = b.inverse_mod(&n)?;
     let mut parts = Vec::new();
     for (l, h) in &src {
         if &(h - l) + &Int::ONE <= windows {

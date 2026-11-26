@@ -479,7 +479,7 @@ pub(super) fn solve_by_sums(
                 Part::Q(i) => {
                     let row = &rows[*i];
                     let sc = if row.sigma > 0 { c.clone() } else { -c };
-                    let Some(w) = inverse_mod(&row.m, mj) else {
+                    let Some(w) = row.m.inverse_mod(mj) else {
                         let e = dq.entry(*i).or_insert(Int::ZERO);
                         *e = &*e + &sc;
                         continue;
@@ -764,7 +764,7 @@ pub(super) fn solve_by_sums(
         }
         let entries = std::iter::once(&a_j[j]).chain(u[j].iter().map(|(_, v)| v));
         let (lam, inv) = (entries.clone())
-            .find_map(|e| inverse_mod(e, mj_int).map(|inv| (e.clone(), inv)))
+            .find_map(|e| e.inverse_mod(mj_int).map(|inv| (e.clone(), inv)))
             .unwrap_or((Int::ONE, Int::ONE));
         let norm = |e: &Int| word(&(e * &inv).mod_floor(mj_int)).expect("below a word modulus");
         let key: Key = (
@@ -1096,7 +1096,11 @@ pub(super) fn solve_by_sums(
             let row = &rows[i];
             let g = row.a.gcd(&b.m);
             let n = b.m.div_floor(&g);
-            let inv = inverse_mod(&row.a.div_floor(&g), &n).expect("coprime after the gcd");
+            let inv = row
+                .a
+                .div_floor(&g)
+                .inverse_mod(&n)
+                .expect("coprime after the gcd");
             let k0 = row.k.mod_floor(&g);
             for (lo, hi) in &pieces[i] {
                 let mut rho = lo + &(&k0 - lo).mod_floor(&g);

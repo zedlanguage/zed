@@ -3536,7 +3536,7 @@ fn literal_to_base_cnf(
     let mut active_facs: Vec<(usize, Int)> = Vec::with_capacity(facs.len());
     for &(i, ref q) in facs {
         if let Some(rq) = single_residue_mod_q(&bases_info[i], &allowed[i], q) {
-            let (u_new, m_new) = combine_crt_pair(&u_fixed, &m_fixed, &rq, q)?;
+            let (u_new, m_new) = Int::crt_pair(&u_fixed, &m_fixed, &rq, q)?;
             u_fixed = u_new;
             m_fixed = m_new;
         } else {
@@ -5263,7 +5263,7 @@ fn solve_coprime_connected(
                 let comp = res_complement(&allowed[i], z_q);
                 let r0_z = (&r0 - &bases_info[i].u).div_floor(&bases_info[i].stride);
                 let m0_z = m0.div_floor(&bases_info[i].stride);
-                if let Some(inv_m0) = inverse_mod(&m0_z, z_q) {
+                if let Some(inv_m0) = m0_z.inverse_mod(z_q) {
                     let u_inv = (-&(&r0_z * &inv_m0)).mod_floor(z_q);
                     if let Some(ry_forb) = map_affine_mod(&comp, &inv_m0, &u_inv, z_q) {
                         for (ry_a, ry_b) in ry_forb {
@@ -5528,7 +5528,7 @@ fn find_point_by_conditional_expectations(
                 }
                 let z_i = chosen.get(i)?.as_ref()?;
                 let r_i = bases_info[i].r_from_z(z_i);
-                let Some((rn, mn)) = combine_crt_pair(&r_cur, &m_cur, &r_i, &bases_info[i].max_q)
+                let Some((rn, mn)) = Int::crt_pair(&r_cur, &m_cur, &r_i, &bases_info[i].max_q)
                 else {
                     break;
                 };
@@ -5571,7 +5571,7 @@ fn find_point_in_y_span(
         }
         let r_cur_z = (r_cur - &info_k.u).div_floor(&info_k.stride);
         let m_cur_z = m_cur.div_floor(&info_k.stride);
-        let Some(inv_m) = inverse_mod(&m_cur_z, z_q) else {
+        let Some(inv_m) = m_cur_z.inverse_mod(z_q) else {
             continue;
         };
         let u_inv = (-&(&r_cur_z * &inv_m)).mod_floor(z_q);
@@ -5644,30 +5644,16 @@ fn elementary_intervals(
     out
 }
 
-fn combine_crt_pair(r1: &Int, m1: &Int, r2: &Int, m2: &Int) -> Option<(Int, Int)> {
-    let g = m1.gcd(m2);
-    let diff = r2 - r1;
-    if !diff.mod_floor(&g).is_zero() {
-        return None;
-    }
-    let m2_g = m2.div_floor(&g);
-    let u = inverse_mod(&m1.div_floor(&g), &m2_g)?;
-    let lcm = m1 * &m2_g;
-    let step = (&diff.div_floor(&g) * &u).mod_floor(&m2_g);
-    let r = (r1 + &(m1 * &step)).mod_floor(&lcm);
-    Some((r, lcm))
-}
-
 /// The solution `(r, m)` of `x == r_i (mod m_i)` for all `(r_i, m_i)` in `pairs`, `m` the lcm
 /// of the `m_i`, or `None` when the congruences conflict. When the moduli are pairwise coprime
 /// (always so for the bases of `solve_regime_step`), by the product and remainder trees:
 /// `x = sum_i c_i M / m_i mod M` with `c_i = r_i (M / m_i)^-1 mod m_i`, the sum built up the
 /// product tree as `v = v_left P_right + v_right P_left`, O(M(N) log k) for `k` moduli of `N`
-/// bits, plus one inverse modulo each `m_i` ([`inverse_mod`], O(M(n) log n) for `n` bits).
+/// bits, plus one inverse modulo each `m_i` ([`Int::inverse_mod`], O(M(n) log n) for `n` bits).
 ///
 /// When one modulus is not coprime to the product of the others, the pairs are combined two
 /// at a time up a tree, each by a gcd, exact quotients and an inverse on the merged moduli
-/// ([`combine_crt_pair`]), O(M(N) log N) at each level of the tree. Tests:
+/// ([`Int::crt_pair`]), O(M(N) log N) at each level of the tree. Tests:
 /// `r4_tests::the_crt_tree_solves_its_congruences`; bench `pncx_fibonacci_crt_scale`
 /// (tests/steps/l01_38_presburger/bench/pncx_probe.rs).
 ///
@@ -5762,7 +5748,7 @@ fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
     let cof = trees::cofactors_mod_leaves(&leaves, &levels);
     let mut vals: Option<Vec<BigUint>> = Some(Vec::with_capacity(pairs.len()));
     for ((r, m), e) in pairs.iter().zip(cof) {
-        let Some(inv) = inverse_mod(&from_uint(e), m) else {
+        let Some(inv) = from_uint(e).inverse_mod(m) else {
             vals = None;
             break;
         };
@@ -5791,7 +5777,7 @@ fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
         let mut it = pairs.into_iter();
         while let Some((r1, m1)) = it.next() {
             if let Some((r2, m2)) = it.next() {
-                next.push(combine_crt_pair(&r1, &m1, &r2, &m2)?);
+                next.push(Int::crt_pair(&r1, &m1, &r2, &m2)?);
             } else {
                 next.push((r1, m1));
             }
@@ -6376,32 +6362,6 @@ fn batch_remainders(x: &Int, moduli: &[Int]) -> Vec<Int> {
             false => from_uint(r),
         })
         .collect()
-}
-
-/// `a^-1 mod m` for `m` above zero, in `[0, m)`, or `None` when `gcd(a, m) != 1`.
-///
-/// Complexity tradeoff: the Euclidean `bezout` is O(n^2) on `n`-bit moduli, two Fibonacci
-/// neighbours being its slowest case (`pncx_fibonacci_crt_scale`, 77.9 times the work for 8
-/// times the width, R6-CLAUDE-7); the kernel's binary half gcd with its steps kept
-/// (`zed_kernel::num::inverse_mod_uint`) is O(M(n) log n). A value that cannot be built keeps
-/// the Euclidean `bezout`, as do values that fit in 128 bits, which keep the arithmetic they
-/// had; the inverse is the same.
-fn inverse_mod(a: &Int, m: &Int) -> Option<Int> {
-    if let (Some(_), Some(_)) = (a.to_i128(), m.to_i128()) {
-        let (g, u, _) = a.mod_floor(m).extended_gcd(m)?;
-        return (g == Int::ONE).then(|| u.mod_floor(m));
-    }
-    let a = a.mod_floor(m);
-    let an = zedc_int::int::Num::from(&a);
-    let mn = zedc_int::int::Num::from(m);
-    match (an.built(), mn.built()) {
-        (Ok(ab), Ok(mb)) => zed_kernel::num::inverse_mod_uint(ab.magnitude(), mb.magnitude())
-            .map(|x| Int::from(num_bigint::BigInt::from(x))),
-        _ => {
-            let (g, u, _) = a.extended_gcd(m)?;
-            (g == Int::ONE).then(|| u.mod_floor(m))
-        }
-    }
 }
 
 /// The integers in every domain of `domains`, every integer for none: the complement of the

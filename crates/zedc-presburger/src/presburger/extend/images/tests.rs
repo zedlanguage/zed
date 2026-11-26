@@ -856,7 +856,7 @@ fn residue_map_images_at_a_large_modulus_agree_with_a_backward_search() {
     let modulus = Int::from(m);
     let back = |step: &MapStep, y: i64| -> Vec<i64> {
         let (p, w, c) = step.default;
-        let (inv, _) = congruence(&Int::from(p + w), &Int::ONE, &modulus).unwrap();
+        let inv = Int::from(p + w).inverse_mod(&modulus).unwrap();
         let r = (&inv * &Int::from(y - c))
             .mod_floor(&modulus)
             .to_i128()

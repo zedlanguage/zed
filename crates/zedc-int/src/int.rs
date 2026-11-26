@@ -16,11 +16,11 @@ use zed_collections::sorted::{Joined, merge_join, merge_with};
 use zed_kernel::bits::BitLen;
 use zed_kernel::num::coprime::coprime_base_exponents;
 use zed_kernel::num::{
-    TooLarge, div_floor_int, gcd_uint, least_root, mod_floor_int, mul_int, mul_uint,
-    nth_root_rem_uint, read_digits, room, to_decimal,
+    TooLarge, div_floor_int, gcd_uint, inverse_mod_uint, least_root, mod_floor_int, mul_int,
+    mul_uint, nth_root_rem_uint, read_digits, room, to_decimal,
 };
 use zed_numtheory::{
-    bezout_i128, gcd_big_u64, gcd_u64, gcd_u128, log2_bounds, next_prime, pow_mod,
+    bezout_i128, gcd_big_u64, gcd_u64, gcd_u128, inverse_mod_u64, log2_bounds, next_prime, pow_mod,
 };
 
 /// An integer. A value that fits in `i128` is always `Small`, so that two equal values have
@@ -284,6 +284,88 @@ impl Int {
             t = -&t;
         }
         (r, s, t)
+    }
+
+    /// `self^-1 mod m` for `m` above zero, in `0..m`, or `None` when `gcd(self, m) != 1`;
+    /// `Some(0)` modulo 1. The one inverse modulo an unbounded integer
+    /// (DRY-int-crt-inverse-2026-11-26): moved from zedc-presburger `modular.rs`
+    /// `inverse_mod`, it replaced the extended Euclid over `Num` of zedc-lattice
+    /// `lattice.rs` `inverse` and over `Int` of zedc-presburger `extend/images.rs`
+    /// `congruence`. Panics with "a modulus above 0" for `m` not above zero.
+    ///
+    /// Complexity tradeoff: the Euclidean algorithm over unbounded integers is O(n^2) on
+    /// `n`-bit moduli, two Fibonacci neighbors being its slowest case
+    /// (`pncx_fibonacci_crt_scale`, 77.9 times the work for 8 times the width, R6-CLAUDE-7);
+    /// the kernel's binary half gcd with its steps kept (`zed_kernel::num::inverse_mod_uint`)
+    /// is O(M(n) log n). Below that, a modulus of one word takes zed-numtheory's word Euclid
+    /// (`inverse_mod_u64`, one 64-bit division a step) and one of two words the `i128`
+    /// extended Euclid ([`bezout_i128`] through [`Int::extended_gcd`]): O(log m) steps on
+    /// registers, with no allocation. The inverse is the same on every path, being unique in
+    /// `0..m`. Tests: `tests::inverses_modulo_an_integer_at_every_width`.
+    pub fn inverse_mod(&self, m: &Int) -> Option<Int> {
+        assert!(m.is_positive(), "a modulus above 0");
+        let a = self.mod_floor(m);
+        if let (Repr::Small(x), Repr::Small(y)) = (&a.0, &m.0) {
+            if let (Ok(x), Ok(y)) = (u64::try_from(*x), u64::try_from(*y)) {
+                return inverse_mod_u64(x, y).map(|v| Int::from(i128::from(v)));
+            }
+            // `a` is in `0..m` and `m` is above 0, so neither is `i128::MIN` and
+            // `extended_gcd` is `Some`.
+            let (g, u, _) = a.extended_gcd(m)?;
+            return (g == Int::ONE).then(|| u.mod_floor(m));
+        }
+        inverse_mod_uint(&a.magnitude(), &m.magnitude()).map(|x| Int::from(BigInt::from(x)))
+    }
+
+    /// The integers in both `r1 mod m1` and `r2 mod m2`, for `m1` and `m2` above zero, as one
+    /// class `(r, lcm(m1, m2))` with `r` in `0..lcm`, or `None` when no integer is in both:
+    /// the Chinese remainder theorem for two moduli that may share factors
+    /// (DRY-int-crt-inverse-2026-11-26: moved from zedc-presburger `modular.rs`
+    /// `combine_crt_pair`; zedc-lattice `Congruence::meet` calls it too).
+    ///
+    /// With `g = gcd(m1, m2)`, `x = r1 + m1 k` is in `r2 mod m2` exactly when
+    /// `m1 k == r2 - r1 (mod m2)`. That needs `g | r2 - r1`; then dividing by `g`,
+    /// `(m1 / g) k == (r2 - r1) / g (mod m2 / g)`, and `m1 / g` is coprime to `m2 / g`, so
+    /// `k == (r2 - r1) / g · (m1 / g)^-1 (mod m2 / g)`: one class of `k` modulo `m2 / g`, so
+    /// one class of `x` modulo `m1 m2 / g = lcm(m1, m2)`. One gcd and one inverse
+    /// ([`Int::inverse_mod`]): O(M(n) log n). Tests: `tests::crt_pairs_agree_with_a_scan`.
+    pub fn crt_pair(r1: &Int, m1: &Int, r2: &Int, m2: &Int) -> Option<(Int, Int)> {
+        let g = m1.gcd(m2);
+        let diff = r2 - r1;
+        if !diff.mod_floor(&g).is_zero() {
+            return None;
+        }
+        let m2_g = m2.div_floor(&g);
+        let u = m1
+            .div_floor(&g)
+            .inverse_mod(&m2_g)
+            .expect("m1 / g and m2 / g are coprime");
+        let lcm = m1 * &m2_g;
+        let step = (&diff.div_floor(&g) * &u).mod_floor(&m2_g);
+        let r = (r1 + &(m1 * &step)).mod_floor(&lcm);
+        Some((r, lcm))
+    }
+
+    /// The least `t >= 0` with `self · t == b (mod m)`, for `m` above zero, and the period
+    /// `m / gcd(self, m)` of all solutions; `None` when there is none
+    /// (DRY-int-crt-inverse-2026-11-26: it replaced the solves of zedc-presburger
+    /// `extend/images.rs` `congruence` and `exact/projection.rs` `project`).
+    ///
+    /// With `g = gcd(self, m)`, a solution needs `g | b`; then `self / g` is coprime to
+    /// `p = m / g` and the solutions are `t == (b / g) · (self / g)^-1 (mod p)`. For
+    /// `self == 0 (mod m)`, `g = m` and `p = 1`: every `t` when `m | b`, so `t = 0`. One gcd
+    /// and one inverse ([`Int::inverse_mod`]). Tests: `tests::linear_congruences_agree_with_a_scan`.
+    pub fn solve_linear_congruence(&self, b: &Int, m: &Int) -> Option<(Int, Int)> {
+        let g = self.gcd(m);
+        if !b.mod_floor(&g).is_zero() {
+            return None;
+        }
+        let period = m.div_floor(&g);
+        let inv = self
+            .div_floor(&g)
+            .inverse_mod(&period)
+            .expect("self / g and m / g are coprime");
+        Some(((&b.div_floor(&g) * &inv).mod_floor(&period), period))
     }
 
     /// `self / m` rounded down, for `m` of either sign and not zero. Past `i128` the division
@@ -3634,6 +3716,149 @@ mod tests {
                 let (x, y) = (Int::from(a.clone()), Int::from(m.clone()));
                 let want = (Int::from(a.div_floor(m)), Int::from(a.mod_floor(m)));
                 assert_eq!((x.div_floor(&y), x.mod_floor(&y)), want, "{a} by {m}");
+            }
+        }
+    }
+
+    /// A random integer of `0..2^bits`, `bits` drawn from [`WIDTHS`].
+    fn random_int(rng: &mut crate::seed::Rng) -> Int {
+        let bits = rng.pick(&WIDTHS);
+        let words: Vec<u64> = (0..bits.div_ceil(64)).map(|_| rng.next_u64()).collect();
+        let mut v = BigUint::from(0u8);
+        for w in words.iter().rev() {
+            v = (v << 64u32) + BigUint::from(*w);
+        }
+        Int::from(BigInt::from(v >> (64 * bits.div_ceil(64) - bits)))
+    }
+
+    /// The widths the tests of the modular routines draw from: one word (zed-numtheory's word
+    /// Euclid), two words (`i128` extended Euclid), and past `i128` (the kernel's half gcd).
+    const WIDTHS: [usize; 6] = [3, 20, 64, 100, 127, 400];
+
+    /// `Int::inverse_mod` against a scan of `0..m` for every `m` up to 40 and `a` in
+    /// `-50..50`, and at random widths against the definition (`a x == 1 (mod m)`, `x` in
+    /// `0..m`) and Euclid over `Int` (`euclid_bezout`, the O(n^2) copy it replaced), whose
+    /// cofactor reduced modulo `m` is the unique inverse; `None` exactly when the gcd is not 1.
+    #[test]
+    fn inverses_modulo_an_integer_at_every_width() {
+        for m in 1..=40i128 {
+            for a in -50..50i128 {
+                let want = (0..m).find(|x| (a * x).rem_euclid(m) == 1 % m);
+                let got = Int::from(a).inverse_mod(&Int::from(m));
+                assert_eq!(got, want.map(Int::from), "{a}^-1 mod {m}");
+            }
+        }
+        let (mut rng, _) = crate::seed::Rng::fresh("inverses_modulo_an_integer_at_every_width");
+        let mut found = 0;
+        for _ in 0..600 {
+            let m = &random_int(&mut rng) + &Int::ONE;
+            let mut a = random_int(&mut rng);
+            if rng.coin() {
+                a = -&a;
+            }
+            let (g, s, _) = a.mod_floor(&m).euclid_bezout(&m);
+            match a.inverse_mod(&m) {
+                Some(x) => {
+                    found += 1;
+                    assert_eq!(g, Int::ONE, "{a} mod {m}");
+                    assert!(!x.is_negative() && x < m, "{a}^-1 mod {m} = {x}");
+                    assert_eq!((&a * &x).mod_floor(&m), Int::ONE.mod_floor(&m));
+                    assert_eq!(x, s.mod_floor(&m));
+                }
+                None => assert_ne!(g, Int::ONE, "{a} mod {m}"),
+            }
+        }
+        assert!(found >= 200, "only {found} inverses found");
+    }
+
+    /// `Int::crt_pair` against a scan of `0..lcm(m1, m2)` for every `m1, m2` up to 12 and
+    /// residues in `-13..13`; at random widths, the class found lies in both classes, its
+    /// modulus is the lcm, and `None` exactly when `gcd(m1, m2)` does not divide `r2 - r1`.
+    #[test]
+    fn crt_pairs_agree_with_a_scan() {
+        for m1 in 1..=12i128 {
+            for m2 in 1..=12i128 {
+                let lcm = Int::from(m1).lcm(&Int::from(m2));
+                let l = lcm.to_i128().expect("small");
+                for r1 in -13..13i128 {
+                    for r2 in (-13..13i128).step_by(3) {
+                        let want = (0..l)
+                            .find(|x| (x - r1).rem_euclid(m1) == 0 && (x - r2).rem_euclid(m2) == 0)
+                            .map(|x| (Int::from(x), lcm.clone()));
+                        let got = Int::crt_pair(&r1.into(), &m1.into(), &r2.into(), &m2.into());
+                        assert_eq!(got, want, "{r1} mod {m1} and {r2} mod {m2}");
+                    }
+                }
+            }
+        }
+        let (mut rng, _) = crate::seed::Rng::fresh("crt_pairs_agree_with_a_scan");
+        let mut solved = 0;
+        for _ in 0..400 {
+            // A shared factor half the time, so both answers are common.
+            let common = &random_int(&mut rng) + &Int::ONE;
+            let mut m1 = &random_int(&mut rng) + &Int::ONE;
+            let mut m2 = &random_int(&mut rng) + &Int::ONE;
+            if rng.coin() {
+                (m1, m2) = (&m1 * &common, &m2 * &common);
+            }
+            let r1 = random_int(&mut rng);
+            let mut r2 = random_int(&mut rng);
+            if rng.coin() {
+                // `r2 == r1 (mod gcd)`, so there is an answer.
+                r2 = &r1 + &(&m1.gcd(&m2) * &r2);
+            }
+            let g = m1.gcd(&m2);
+            match Int::crt_pair(&r1, &m1, &r2, &m2) {
+                Some((r, l)) => {
+                    solved += 1;
+                    assert_eq!(l, m1.lcm(&m2));
+                    assert!(!r.is_negative() && r < l);
+                    assert_eq!(r.mod_floor(&m1), r1.mod_floor(&m1));
+                    assert_eq!(r.mod_floor(&m2), r2.mod_floor(&m2));
+                }
+                None => assert!(!(&r2 - &r1).mod_floor(&g).is_zero()),
+            }
+        }
+        assert!(solved >= 100, "only {solved} pairs solved");
+    }
+
+    /// `Int::solve_linear_congruence` against a scan of `0..m` for every `m` up to 30 and `a`,
+    /// `b` in `-31..31`: the least solution and the period `m / gcd(a, m)`; at random widths,
+    /// the solution solves, lies below the period, and `None` exactly when `gcd(a, m)` does not
+    /// divide `b`.
+    #[test]
+    fn linear_congruences_agree_with_a_scan() {
+        for m in 1..=30i128 {
+            for a in -31..31i128 {
+                for b in -31..31i128 {
+                    let want = (0..m).find(|t| (a * t - b).rem_euclid(m) == 0).map(|t| {
+                        let p = m / Int::from(a).gcd(&Int::from(m)).to_i128().expect("small");
+                        (Int::from(t), Int::from(p))
+                    });
+                    let got = Int::from(a).solve_linear_congruence(&b.into(), &m.into());
+                    assert_eq!(got, want, "{a} t == {b} mod {m}");
+                }
+            }
+        }
+        let (mut rng, _) = crate::seed::Rng::fresh("linear_congruences_agree_with_a_scan");
+        for _ in 0..400 {
+            let m = &random_int(&mut rng) + &Int::ONE;
+            let a = random_int(&mut rng);
+            let mut b = random_int(&mut rng);
+            if rng.coin() {
+                b = &a * &b;
+            }
+            let g = a.gcd(&m);
+            match a.solve_linear_congruence(&b, &m) {
+                Some((t, p)) => {
+                    assert_eq!(p, m.div_floor(&g));
+                    assert!(!t.is_negative() && t < p);
+                    assert!(
+                        (&(&a * &t) - &b).mod_floor(&m).is_zero(),
+                        "{a} t == {b} mod {m}"
+                    );
+                }
+                None => assert!(!b.mod_floor(&g).is_zero()),
             }
         }
     }

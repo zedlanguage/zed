@@ -1335,7 +1335,7 @@ fn verdict_and_model_paths_agree_exhaustively_and_on_edge_forms() {
     ));
 }
 
-/// `combine_crt_tree` agrees with a left fold of `combine_crt_pair` on moduli that are not
+/// `combine_crt_tree` agrees with a left fold of `Int::crt_pair` on moduli that are not
 /// pairwise coprime: equal moduli, powers of 2 and of 3 out of order, a divisibility chain with
 /// duplicates, repeated coprime moduli and moduli sharing factors without a chain, each also
 /// with a conflict. Taken unchanged from the R2 Gemini seat of XR-negated-chain-crt-tree
@@ -1346,7 +1346,7 @@ fn crt_tree_chain_and_repeated_moduli_match_pairwise() {
     let ref_crt = |pairs: &[(Int, Int)]| -> Option<(Int, Int)> {
         let mut cur = (Int::ZERO, Int::ONE);
         for (r, m) in pairs {
-            cur = combine_crt_pair(&cur.0, &cur.1, r, m)?;
+            cur = Int::crt_pair(&cur.0, &cur.1, r, m)?;
         }
         Some(cur)
     };

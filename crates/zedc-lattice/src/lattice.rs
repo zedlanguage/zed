@@ -9,6 +9,7 @@ use std::fmt;
 
 use zed_kernel::treap_set::{Elem, TreapSet};
 use zed_kernel::types::{Type, Universe};
+use zedc_int::int::Int;
 
 use super::interval::{End, IntervalSet, Num};
 use super::landmarks::{Landmarks, Mark};
@@ -83,8 +84,8 @@ impl Lattice for IntervalSet {
 /// strictly larger class has a proper divisor of `m` as modulus. Departures: none in the
 /// lattice; the widening is the join, which that bound makes terminate. The normal form, the
 /// residue in `0..modulus` and the modulus at least 0, is the paper's `Norm` (p. 170). The same
-/// arithmetic is used by zedc-preimage `preimage.rs` and
-/// `preimage_ref.rs`, fn `class_of`. Tests:
+/// arithmetic is used by zedc-preimage `preimage.rs`, fn `class_of`; the meet's Chinese
+/// remainder step is zedc-int `Int::crt_pair`. Tests:
 /// `l01_24_refinement_lattices::complete::congruence_join_and_meet_on_every_kind_of_operand`
 /// checks join, widening and meet on every kind of operand against classes worked by hand; it
 /// does not test the arithmetic of `class_of`.
@@ -99,22 +100,6 @@ pub enum Congruence {
         /// The residue, in `0..modulus`, or the value when the modulus is 0.
         residue: Num,
     },
-}
-
-/// The inverse of `a` modulo `n`, for `a` and `n` coprime and `n >= 1`, in `0..n` (0 when `n`
-/// is 1).
-fn inverse(a: &Num, n: &Num) -> Num {
-    // The extended Euclidean algorithm on (a, n), keeping only the coefficient of a.
-    let (mut r0, mut r1) = (a.rem_euclid(n), n.clone());
-    let (mut t0, mut t1) = (Num::ONE, Num::ZERO);
-    while !r1.is_zero() {
-        let q = r0.div_floor(&r1);
-        let r2 = &r0 - &(&q * &r1);
-        let t2 = &t0 - &(&q * &t1);
-        (r0, r1) = (r1, r2);
-        (t0, t1) = (t1, t2);
-    }
-    t0.rem_euclid(n)
 }
 
 impl Congruence {
@@ -213,17 +198,32 @@ impl Lattice for Congruence {
                     residue: s,
                 },
             ) => {
-                // The Chinese remainder theorem: solvable iff r ≡ s mod g = gcd(m, n), and then
-                // the solutions are one class modulo lcm(m, n): x = r + m·k, where
-                // (m/g)·k ≡ (s - r)/g mod n/g. Exact for every size: the lcm of two moduli
-                // past the 64-bit range is held as a `Num`.
+                // The Chinese remainder theorem (`Int::crt_pair`, its proof there): solvable iff
+                // r ≡ s mod g = gcd(m, n), and then the solutions are one class modulo
+                // lcm(m, n): x = r + m·k, where (m/g)·k ≡ (s - r)/g mod n/g. Both moduli are
+                // above 0 here (a modulus 0 is taken by the arms above).
+                if ![m, r, n, s].iter().any(|v| v.is_kept()) {
+                    let int = |v: &Num| Int::from(v);
+                    return match Int::crt_pair(&int(r), &int(m), &int(s), &int(n)) {
+                        Some((x, l)) => Congruence::new(Num::from(&l), Num::from(&x)),
+                        None => Bottom,
+                    };
+                }
+                // Complexity tradeoff: a kept operand stays kept where `Num` keeps it (the gcd
+                // of a kept value with a written one is taken by residues, `Num::gcd`), so
+                // `2^(10^8) mod 6` meets in the digits of 6, not of `2^(10^8)`; `Int` would
+                // write every operand out. Only the inverse modulo `n/g` is written out, being
+                // below `n/g`; it is `Int::inverse_mod` on `m/g mod n/g`.
                 let g = m.gcd(n);
                 let d = s - r;
                 if !d.rem_euclid(&g).is_zero() {
                     return Bottom;
                 }
                 let (m1, n1) = (m.div_floor(&g), n.div_floor(&g));
-                let k = &d.div_floor(&g).rem_euclid(&n1) * &inverse(&m1, &n1);
+                let inv = Int::from(&m1.rem_euclid(&n1))
+                    .inverse_mod(&Int::from(&n1))
+                    .expect("m/g and n/g are coprime");
+                let k = &d.div_floor(&g).rem_euclid(&n1) * &Num::from(&inv);
                 Congruence::new(&m1 * n, r + &(m * &k.rem_euclid(&n1)))
             }
         }
@@ -495,6 +495,31 @@ mod tests {
                         a.contains(&v) && b.contains(&v),
                         "{a:?} ⊓ {b:?} at {v}"
                     );
+                }
+            }
+        }
+    }
+
+    /// The meet of a class with a kept modulus (`2^200`, `3 · 2^200`) and a class of a small
+    /// modulus, taken in `Num` (the kept path), equals the meet of the same classes written out
+    /// (the `Int::crt_pair` path), in both orders (DRY-int-crt-inverse-2026-11-26).
+    #[test]
+    fn meets_with_a_kept_modulus_agree_with_the_written_ones() {
+        let k = Num::pow2(&Num::from(200));
+        assert!(k.is_kept());
+        for big in [k.clone(), &k * &Num::from(3)] {
+            let written = Num::from(&Int::from(&big));
+            assert!(!written.is_kept());
+            for n in 1..=12i64 {
+                for s in 0..n {
+                    for r in [Num::from(0), Num::from(5), &big - &Num::from(1)] {
+                        let small = Congruence::new(n, s);
+                        let want = Congruence::new(written.clone(), Num::from(&Int::from(&r)))
+                            .meet(&small);
+                        let kept = Congruence::new(big.clone(), r.clone());
+                        assert_eq!(kept.meet(&small), want, "{r} mod {big} and {s} mod {n}");
+                        assert_eq!(small.meet(&kept), want, "{s} mod {n} and {r} mod {big}");
+                    }
                 }
             }
         }

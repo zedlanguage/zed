@@ -294,7 +294,7 @@ impl Frame {
                 missing.insert(self.back(t));
             }
             // c + d t -> u c + C + d u t: base c' = (u c + C) mod d, t' = u t + (u c + C) div d.
-            let (u_n_inv, _) = congruence(u, &Int::ONE, &self.n)?;
+            let u_n_inv = u.inverse_mod(&self.n)?;
             Frame {
                 c: image_c.mod_floor(&self.d),
                 u: (u * &self.u).mod_floor(&self.n),
@@ -339,9 +339,9 @@ impl Frame {
         }
         // e_q == 1 mod q and 0 mod m / q; u' = u (1 - e_q) + e_q is a unit mod m.
         let rest = m.div_floor(&q);
-        let e_q = (&rest * &congruence(&rest, &Int::ONE, &q)?.0).mod_floor(m);
+        let e_q = (&rest * &rest.inverse_mod(&q)?).mod_floor(m);
         let unit = (&(u * &(&Int::ONE - &e_q)) + &e_q).mod_floor(m);
-        let (unit_inv, _) = congruence(&unit, &Int::ONE, m)?;
+        let unit_inv = unit.inverse_mod(m)?;
         next.p = (&unit * &self.p).mod_floor(m);
         next.p_inv = (&self.p_inv * &unit_inv).mod_floor(m);
         next.r0 = (&(u * &self.r0) + &map.c).mod_floor(m);
@@ -399,32 +399,6 @@ struct Exception {
     b2: Int,
 }
 
-/// The least t >= 0 with a*t == b (mod m), m > 0, and the period m / gcd(a, m) of all
-/// solutions; `None` where there is none. Extended Euclid on the original O(log m)-bit
-/// values: O(log m) arithmetic operations.
-fn congruence(a: &Int, b: &Int, m: &Int) -> Option<(Int, Int)> {
-    let a = a.mod_floor(m);
-    let g = a.gcd(m);
-    if !b.mod_floor(&g).is_zero() {
-        return None;
-    }
-    let period = m.div_floor(&g);
-    if period == Int::ONE {
-        return Some((Int::ZERO, period));
-    }
-    // Inverse of a/g modulo the period by the extended Euclidean algorithm.
-    let (mut r0, mut r1) = (a.div_floor(&g), period.clone());
-    let (mut s0, mut s1) = (Int::ONE, Int::ZERO);
-    while !r1.is_zero() {
-        let q = r0.div_floor(&r1);
-        let r2 = &r0 - &(&q * &r1);
-        let s2 = &s0 - &(&q * &s1);
-        (r0, r1, s0, s1) = (r1, r2, s1, s2);
-    }
-    let t = (&b.div_floor(&g) * &s0).mod_floor(&period);
-    Some((t, period))
-}
-
 impl Exception {
     // Complexity tradeoff: the image of k steps on Z_m by explicit residue sets is O(k m),
     // and the graph path splits on residues (I34, I49). Proved closed form instead (R7
@@ -442,10 +416,10 @@ impl Exception {
         }
         let y0 = (y - &(k * &self.b2)).mod_floor(m);
         // Index (0-based) of y0 on the orbit s, s - b2, s - 2 b2, ...
-        let Some((i0, orbit)) = congruence(&self.b2, &(&self.s - &y0), m) else {
+        let Some((i0, orbit)) = self.b2.solve_linear_congruence(&(&self.s - &y0), m) else {
             return false;
         };
-        let window = match congruence(&self.b2, &(-&delta), m) {
+        let window = match self.b2.solve_linear_congruence(&(-&delta), m) {
             // b1 - b2 == -(-e) b2: the removed point lies e places before the added one.
             Some((back, _)) => {
                 let e = (-&back).mod_floor(&orbit);
@@ -465,14 +439,14 @@ impl Exception {
     fn residue(&self, k: &Int, r: &Int) -> Int {
         let m = &self.m;
         let moved = (r + &(k * &self.b2)).mod_floor(m);
-        let Some((t0, _)) = congruence(&self.b2, &(&self.s - r), m) else {
+        let Some((t0, _)) = self.b2.solve_linear_congruence(&(&self.s - r), m) else {
             return moved;
         };
         if t0 >= *k {
             return moved;
         }
         let back = (&self.s + &self.b1).mod_floor(m);
-        let visits = match congruence(&self.b2, &(&self.s - &back), m) {
+        let visits = match self.b2.solve_linear_congruence(&(&self.s - &back), m) {
             None => Int::ONE,
             Some((t1, _)) => &Int::ONE + &(&(k - &Int::ONE) - &t0).div_floor(&(&t1 + &Int::ONE)),
         };
@@ -1206,8 +1180,9 @@ impl ScalarImages {
     // invariant at `record_step`, over the axis class `x == r (mod m)`, `V` takes exactly
     // the lifts of `u_V r + c_V` (`V(x + m) = V(x) +- m`, all `j`), and `W mod m` is the
     // constant `u_W r + c_W mod m` (`(1, 0)` when `W` is the axis). So some `x` gives
-    // `V == c` and `W mod m == s` iff some `r` solves both congruences; `congruence` gives
-    // all solutions `r0 + q Z` of the first, and the second becomes a congruence in `t`.
+    // `V == c` and `W mod m == s` iff some `r` solves both congruences;
+    // `Int::solve_linear_congruence` gives all solutions `r0 + q Z` of the first, and the
+    // second becomes a congruence in `t`.
     // Exception branch: `V` is `k` steps of `step` from the axis and `W` is `j` steps. The
     // step satisfies `g(h + m) = g(h) + m`, so over a class the later value takes every
     // lift of its residue, and the class of the earlier value fixes the later one
@@ -1239,11 +1214,11 @@ impl ScalarImages {
                     return Some(false);
                 }
                 // r == r0 (mod q) from the first; then A_V (r0 + q t) + B_V == c.
-                let Some((r0, q)) = congruence(&aw, &(s - &bw), &m) else {
+                let Some((r0, q)) = aw.solve_linear_congruence(&(s - &bw), &m) else {
                     return Some(false);
                 };
                 let rest = &(c - &v.c) - &(&v.u * &r0);
-                return Some(congruence(&(&v.u * &q), &rest, &m).is_some());
+                return Some((&v.u * &q).solve_linear_congruence(&rest, &m).is_some());
             }
             if let Some((axis, step, k)) = self.excepted.get(output)
                 && step.m == m

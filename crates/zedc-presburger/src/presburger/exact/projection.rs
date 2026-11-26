@@ -792,19 +792,9 @@ fn project_read(
             // `a·t + c == 0 mod g`: with `d = gcd(a, g)`, `t == r mod g/d` (the protected
             // variable's step of Pugh's projection, "Projection", which adds `g·σ == ...`).
             let a = e.terms.get(t).cloned().unwrap_or_else(|| Int::from(0));
-            let c = e.constant.clone();
-            let d = a.gcd(&g);
-            if !c.mod_floor(&d).is_zero() {
+            // `a·r == -c mod g`; none when `d` does not divide `c`, else `r` modulo `m = g/d`.
+            let Some((r, m)) = a.solve_linear_congruence(&-&e.constant, &g) else {
                 return Ok(());
-            }
-            let m = g.div_floor(&d);
-            let (a1, c1) = (a.div_floor(&d), c.div_floor(&d));
-            // `a1·r == -c1 mod m`, `a1` and `m` coprime.
-            let r = if m == Int::from(1) {
-                Int::from(0)
-            } else {
-                let (_, inv, _) = a1.mod_floor(&m).bezout(&m);
-                (&(-&c1) * &inv).mod_floor(&m)
             };
             // `t := m·t + r`.
             let e_t = Lin {
