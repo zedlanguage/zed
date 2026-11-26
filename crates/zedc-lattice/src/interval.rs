@@ -1264,7 +1264,7 @@ impl IntervalSet {
     /// The gcd `g` of the differences of the members, so that `least mod g` is the least class
     /// holding a set whose least member is `least`: 0 for one point, 1 when a piece holds two
     /// integers or more (an infinite end included), and `None` for the empty set (the proof at
-    /// `spacing`). Kept at each node of height [`SPACING_KEPT_FROM`] or more, and walked
+    /// `spacing`). Kept at each node of height `SPACING_KEPT_FROM` or more, and walked
     /// below it, fewer than `2^SPACING_KEPT_FROM` points under each kept node: `O(p)` the
     /// first time, `O(log p)` after a change to a set already asked that keeps all but a path
     /// of its tree, `O(1)` when the root's piece is wider than one point.
