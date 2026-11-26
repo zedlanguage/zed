@@ -21,6 +21,7 @@ zed-graph.workspace = true
 zed-hash.workspace = true
 zed-kernel.workspace = true
 zed-numtheory.workspace = true
+zedc-affine.workspace = true
 zedc-int.workspace = true
 zedc-lattice.workspace = true
 zedc-solvers.workspace = true

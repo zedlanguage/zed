@@ -1520,6 +1520,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "zedc-affine"
+version = "0.0.0"
+dependencies = [
+ "zed-hash",
+ "zedc-int",
+]
+
+[[package]]
 name = "zedc-base"
 version = "0.0.0"
 dependencies = [
@@ -1602,6 +1610,7 @@ dependencies = [
  "zed-hash",
  "zed-kernel",
  "zed-numtheory",
+ "zedc-affine",
  "zedc-base",
  "zedc-int",
  "zedc-syntax",
@@ -1648,6 +1657,7 @@ dependencies = [
  "zed-kernel",
  "zed-meter-settings",
  "zed-numtheory",
+ "zedc-affine",
  "zedc-int",
  "zedc-lattice",
  "zedc-presburger",

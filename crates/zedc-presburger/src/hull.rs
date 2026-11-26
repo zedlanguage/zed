@@ -83,8 +83,7 @@ impl Hull {
                 lin = lin.times(k.abs()).minus(&t.times(s));
             }
         }
-        let g = lin.terms.values().fold(Int::ZERO, |g, c| g.gcd(c));
-        if g.is_zero() {
+        if lin.terms.is_empty() {
             let holds = match c.rel {
                 Rel::Ge => !lin.constant.is_negative(),
                 Rel::Eq => lin.constant.is_zero(),
@@ -95,19 +94,16 @@ impl Hull {
                 Formula::bottom()
             };
         }
-        if c.rel == Rel::Eq && !lin.constant.mod_floor(&g).is_zero() {
-            return Formula::bottom();
+        // The proof that the division keeps the integer points is at
+        // `zedc_affine::row_divisor`.
+        match zedc_affine::row_divisor(lin.terms.values(), &lin.constant, c.rel == Rel::Eq) {
+            zedc_affine::Divisor::Keep => {}
+            zedc_affine::Divisor::Infeasible => return Formula::bottom(),
+            zedc_affine::Divisor::By(g) => {
+                zedc_affine::divide_row(&mut lin.terms, &mut lin.constant, &g)
+            }
         }
-        let constant = lin.constant.div_floor(&g);
-        let terms = lin
-            .terms
-            .into_iter()
-            .map(|(a, k)| (a, k.div_floor(&g)))
-            .collect();
-        Formula::Con(Con {
-            lin: Lin { terms, constant },
-            rel: c.rel,
-        })
+        Formula::Con(Con { lin, rel: c.rel })
     }
 
     /// The hull of the points of this one where `t` is zero. The hull is taken by value, so
@@ -226,19 +222,14 @@ fn eliminate(r: &Lin, p: &Lin, a: &Atom) -> Lin {
 
 /// The gcd of a term's coefficients and constant.
 fn content(t: &Lin) -> Int {
-    t.terms.values().fold(t.constant.clone(), |g, c| g.gcd(c))
+    zedc_affine::content(t.terms.values().chain([&t.constant]))
 }
 
 /// `t` divided by `k`, above zero, which divides each coefficient and the constant.
 fn over(t: &Lin, k: &Int) -> Lin {
-    Lin {
-        terms: t
-            .terms
-            .iter()
-            .map(|(a, c)| (a.clone(), c.div_floor(k)))
-            .collect(),
-        constant: t.constant.div_floor(k),
-    }
+    let mut out = t.clone();
+    zedc_affine::divide_row(&mut out.terms, &mut out.constant, k);
+    out
 }
 
 /// `t` divided by the gcd of its coefficients and constant, its first coefficient positive.

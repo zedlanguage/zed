@@ -210,18 +210,11 @@ fn ties(defs: &[Option<Def>], index: &HashMap<&Atom, usize>) -> Vec<(usize, Int,
 }
 
 /// `lin` divided by the gcd of its coefficients, the constant rounded down: the same integer
-/// points of `lin >= 0`.
+/// points of `lin >= 0` (the proof is at `zedc_affine::row_divisor`).
 fn normal(lin: &Lin) -> Lin {
-    let d = (lin.terms.values()).fold(Int::ZERO, |d, c| d.gcd(c));
-    if d.is_zero() || d == Int::ONE {
-        return lin.clone();
-    }
-    Lin {
-        terms: (lin.terms.iter())
-            .map(|(a, c)| (a.clone(), c.div_floor(&d)))
-            .collect(),
-        constant: lin.constant.div_floor(&d),
-    }
+    let mut out = lin.clone();
+    zedc_affine::tighten_ge(&mut out.terms, &mut out.constant);
+    out
 }
 
 /// The row `>= 0` of a guard written `t >= 0` or `!(t >= 0)` (`-t - 1 >= 0`).

@@ -579,17 +579,18 @@ fn dark(rows: Vec<Con>, x: &Atom, m: &Model) -> Vec<Con> {
 /// which hold at the point, dropped.
 fn normalized(rows: &mut Vec<Con>, divs: &mut Vec<Div>) {
     rows.retain_mut(|k| {
-        let g = (k.lin.terms.values()).fold(Int::ZERO, |g, c| g.gcd(c));
-        if g.is_zero() {
+        if k.lin.terms.is_empty() {
             debug_assert!(holds_at(k, &k.lin.constant), "a row the point fails");
             return false;
         }
-        if g > Int::ONE {
+        // The proof that the division keeps the integer points is at
+        // `zedc_affine::row_divisor`; an equation here holds at the point, so its gcd divides
+        // its constant.
+        if let zedc_affine::Divisor::By(g) =
+            zedc_affine::row_divisor(k.lin.terms.values(), &k.lin.constant, false)
+        {
             debug_assert!(k.rel == Rel::Ge || k.lin.constant.mod_floor(&g).is_zero());
-            for c in k.lin.terms.values_mut() {
-                *c = c.div_floor(&g);
-            }
-            k.lin.constant = k.lin.constant.div_floor(&g);
+            zedc_affine::divide_row(&mut k.lin.terms, &mut k.lin.constant, &g);
         }
         true
     });
@@ -639,7 +640,10 @@ fn tidied(rows: Vec<Con>) -> Option<Vec<Con>> {
     let mut eqs: BTreeMap<BTreeMap<Atom, Int>, Int> = BTreeMap::new();
     let mut ges: BTreeMap<BTreeMap<Atom, Int>, Int> = BTreeMap::new();
     for k in rows {
-        let Lin { terms, constant } = k.lin;
+        let Lin {
+            mut terms,
+            mut constant,
+        } = k.lin;
         if terms.is_empty() {
             let ok = match k.rel {
                 Rel::Ge => !constant.is_negative(),
@@ -650,19 +654,13 @@ fn tidied(rows: Vec<Con>) -> Option<Vec<Con>> {
             }
             continue;
         }
-        let g = terms.values().fold(Int::from(0), |g, c| g.gcd(c));
-        let (terms, constant) = if g == Int::from(1) {
-            (terms, constant)
-        } else {
-            if k.rel == Rel::Eq && !constant.mod_floor(&g).is_zero() {
-                return None;
-            }
-            let terms = terms
-                .into_iter()
-                .map(|(a, c)| (a, c.div_floor(&g)))
-                .collect();
-            (terms, constant.div_floor(&g))
-        };
+        // The proof that the division keeps the integer points is at
+        // `zedc_affine::row_divisor`.
+        match zedc_affine::row_divisor(terms.values(), &constant, k.rel == Rel::Eq) {
+            zedc_affine::Divisor::Keep => {}
+            zedc_affine::Divisor::Infeasible => return None,
+            zedc_affine::Divisor::By(g) => zedc_affine::divide_row(&mut terms, &mut constant, &g),
+        }
         match k.rel {
             Rel::Eq => {
                 // `t + c == 0` and `-t - c == 0` are one row: keep the one whose first

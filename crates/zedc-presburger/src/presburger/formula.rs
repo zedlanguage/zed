@@ -12,6 +12,7 @@ use std::slice;
 use std::sync::{Arc, OnceLock};
 
 use zed_kernel::value::fresh_id;
+use zedc_affine::Divisor;
 use zedc_int::int::Int;
 use zedc_lattice::affine::write_sum;
 
@@ -707,14 +708,7 @@ impl Lin {
 
     /// `self += other`, in time near `other` alone.
     pub fn plus_assign(&mut self, other: &Lin) {
-        for (a, c) in &other.terms {
-            let v = self.terms.get(a).map_or_else(|| c.clone(), |o| o + c);
-            if v.is_zero() {
-                self.terms.remove(a);
-            } else {
-                self.terms.insert(a.clone(), v);
-            }
-        }
+        zedc_affine::add_terms(&mut self.terms, &other.terms);
         self.constant = &self.constant + &other.constant;
     }
 
@@ -725,11 +719,7 @@ impl Lin {
             return Lin::default();
         }
         Lin {
-            terms: self
-                .terms
-                .iter()
-                .map(|(a, c)| (a.clone(), c * &k))
-                .collect(),
+            terms: zedc_affine::scaled(&self.terms, &k),
             constant: &self.constant * &k,
         }
     }
@@ -839,35 +829,21 @@ impl Con {
     /// (`2x - 1 >= 0` is `x - 1 >= 0`, `2x == 1` is `false`). `None` when `g` is one or the
     /// constraint has no term, so that a constraint written so already is kept as it is.
     ///
-    /// Proof. With `g` dividing every coefficient, the terms' sum is `g*s` for an integer `s`
-    /// at every integer point, and `s` is the sum of the divided terms. An equation `g*s + k ==
-    /// 0` needs `g | k`, else no point holds it; when `g | k` it is `s + k/g == 0`. An
-    /// inequality `g*s + k >= 0` is `s >= -k/g`, and for integer `s` that is `s >=
-    /// ceil(-k/g) = -floor(k/g)`, so `s + floor(k/g) >= 0`, which `div_floor` gives (it rounds
-    /// toward `-inf` for either sign of `k`, as `g > 0` from `gcd`).
+    /// The proof is at [`zedc_affine::row_divisor`], which decides the case.
     pub fn reduced(&self) -> Option<Formula> {
-        let mut g = Int::ZERO;
-        for k in self.lin.terms.values() {
-            g = g.gcd(k);
-            if g.is_unit() {
-                return None;
-            }
-        }
-        if g.is_zero() {
-            return None;
-        }
-        let k = &self.lin.constant;
-        if self.rel == Rel::Eq && !k.mod_floor(&g).is_zero() {
+        let g = match zedc_affine::row_divisor(
+            self.lin.terms.values(),
+            &self.lin.constant,
+            self.rel == Rel::Eq,
+        ) {
+            Divisor::Keep => return None,
             // `false`, written here rather than as `Formula::bottom`, which is defined in the
             // file above this one.
-            return Some(Formula::Or(Shared::new(Vec::new())));
-        }
-        let lin = Lin {
-            terms: (self.lin.terms.iter())
-                .map(|(a, c)| (a.clone(), c.div_floor(&g)))
-                .collect(),
-            constant: k.div_floor(&g),
+            Divisor::Infeasible => return Some(Formula::Or(Shared::new(Vec::new()))),
+            Divisor::By(g) => g,
         };
+        let mut lin = self.lin.clone();
+        zedc_affine::divide_row(&mut lin.terms, &mut lin.constant, &g);
         Some(Formula::Con(Con { lin, rel: self.rel }))
     }
 

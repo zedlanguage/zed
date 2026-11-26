@@ -75,11 +75,7 @@ impl Affine {
             return Affine::constant(0);
         }
         Affine {
-            terms: self
-                .terms
-                .iter()
-                .map(|(s, c)| (s.clone(), c * &k))
-                .collect(),
+            terms: zedc_affine::scaled(&self.terms, &k),
             constant: &self.constant * &k,
         }
     }

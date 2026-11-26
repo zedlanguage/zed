@@ -137,9 +137,11 @@ types or ZIR. The libraries form a DAG; each sits as low as its dependencies all
 
 Above the libraries, two compiler crates are shared by the rest and hold the generic parts that
 need the compiler's integer `Int`: `zedc-int` (`Int`, `Int::inverse_mod`, `Int::crt_pair`, the
-rational `Q`) and `zedc-affine` (new; depends on zedc-int and zed-collections: affine forms
-`Affine<K, V>`, gcd-normalized rows, primitive-form keys, Fourier-Motzkin pairs and dark shadows,
-2D geometry, unimodular bases, and later LLL, simplex and Gauss-Jordan). Text helpers stay in
+rational `Q`) and `zedc-affine` (new; depends on zedc-int: affine forms over `BTreeMap<K, V>` with the
+merge that drops zero coefficients (`add_term`, `add_scaled`, `scaled`), gcd-normalized rows
+(`content`, `row_divisor`, `divide_row`) and primitive-form keys (`primitive_form`); still to
+come, and then also over zed-collections: Fourier-Motzkin pairs and dark shadows, 2D geometry,
+unimodular bases, LLL, simplex and Gauss-Jordan). Text helpers stay in
 `zed_kernel::text::prose` and `zedc_base` (`source`, `terminal`, `address`).
 
 Before writing an algorithm that is likely generic or reusable, search these crates and call what

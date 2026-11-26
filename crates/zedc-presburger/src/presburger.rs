@@ -5714,19 +5714,12 @@ mod cell_sweep {
             if c.lin.terms.len() == 1 && c.lin.terms.contains_key(x) {
                 continue;
             }
-            let g = c.lin.terms.values().fold(Int::ZERO, |acc, k| acc.gcd(k));
-            let first_pos = c
-                .lin
-                .terms
-                .values()
-                .next()
-                .expect("non-empty")
-                .is_positive();
-            let mut prim: FormKey = Vec::with_capacity(c.lin.terms.len());
-            for (a, k) in &c.lin.terms {
-                let pk = k.div_floor(&g);
-                prim.push((a.clone(), if first_pos { pk } else { -&pk }));
-            }
+            let zedc_affine::Primitive {
+                form: prim,
+                flipped,
+                g,
+            } = zedc_affine::primitive_form(&c.lin.terms).expect("non-empty");
+            let first_pos = !flipped;
             if !forms.contains_key(&prim) {
                 form_order.push(prim.clone());
             }
@@ -6524,17 +6517,10 @@ mod cell_sweep {
         // the hull rows `L >= lo` and `L <= hi` in `p.cons`. Those rows are implied by every branch
         // of the leftover item and would otherwise make `sweep_disjoint` bail on `!leftover_ineqs`.
         if !leftover_ineqs.is_empty() && !leftover_items.is_empty() {
-            let canonical_form = |terms: &BTreeMap<Atom, Int>| -> (Vec<(Atom, Int)>, bool, Int) {
-                let first_neg = terms.values().next().expect("nonempty terms").is_negative();
-                let g = terms.values().fold(Int::ZERO, |acc, k| acc.gcd(&k.abs()));
-                let key = terms
-                    .iter()
-                    .map(|(a, k)| {
-                        let q = k.div_floor(&g);
-                        (a.clone(), if first_neg { -&q } else { q })
-                    })
-                    .collect();
-                (key, first_neg, g)
+            // Each caller below skips a row without terms first.
+            let canonical_form = |terms: &BTreeMap<Atom, Int>| {
+                let p = zedc_affine::primitive_form(terms).expect("nonempty terms");
+                (p.form, p.flipped, p.g)
             };
             let mut item_ranges: BTreeMap<Vec<(Atom, Int)>, (Int, Int)> = BTreeMap::new();
             for &idx in &leftover_items {
@@ -9394,17 +9380,10 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
     // every constraint already yields a `CellLink`.
     type EqFormKey = Vec<(Atom, Int)>;
     type EqForms = BTreeMap<EqFormKey, (CellSet, Int, Int)>;
+    // Each caller below takes rows of at least two terms.
     let canonical_form = |terms: &BTreeMap<Atom, Int>| -> (EqFormKey, bool, Int) {
-        let first_neg = terms.values().next().expect("nonempty terms").is_negative();
-        let g = terms.values().fold(Int::ZERO, |acc, k| acc.gcd(&k.abs()));
-        let key = terms
-            .iter()
-            .map(|(a, k)| {
-                let q = k.div_floor(&g);
-                (a.clone(), if first_neg { -&q } else { q })
-            })
-            .collect();
-        (key, first_neg, g)
+        let p = zedc_affine::primitive_form(terms).expect("nonempty terms");
+        (p.form, p.flipped, p.g)
     };
     let mut eq_forms: Option<EqForms> = None;
     for (c, at) in placed
@@ -11540,24 +11519,12 @@ impl Side1 {
     /// `-b·x + s >= 0`: `b·r + a·s`, which is at least 0 where they have a real `x` between them.
     fn combine(&self, hi: &Side1) -> Lin {
         let b = -&hi.a;
-        let mut lin = Lin {
-            terms: BTreeMap::new(),
+        let mut terms = zedc_affine::scaled(&self.rest.terms, &b);
+        zedc_affine::add_scaled(&mut terms, &hi.rest.terms, &self.a);
+        Lin {
+            terms,
             constant: &(&b * &self.rest.constant) + &(&self.a * &hi.rest.constant),
-        };
-        for (t, k) in &self.rest.terms {
-            lin.terms.insert(t.clone(), &b * k);
         }
-        for (t, k) in &hi.rest.terms {
-            let v = &self.a * k;
-            let sum = match lin.terms.remove(t) {
-                Some(w) => &w + &v,
-                None => v,
-            };
-            if !sum.is_zero() {
-                lin.terms.insert(t.clone(), sum);
-            }
-        }
-        lin
     }
 
     /// Whether the real shadow of the pair has the integer points of its dark shadow, `b·r +
@@ -11574,7 +11541,7 @@ impl Side1 {
         if lin.terms.is_empty() {
             return lin.constant.is_negative() || lin.constant >= gap;
         }
-        let g = lin.terms.values().fold(Int::ZERO, |g, k| g.gcd(k));
+        let g = zedc_affine::content(lin.terms.values());
         lin.constant.div_floor(&g) == (&lin.constant - &gap).div_floor(&g)
     }
 }
@@ -11719,22 +11686,15 @@ fn tidy(lin: Lin, rel: Rel) -> Result<Option<Con>, ()> {
         };
         return if holds { Ok(None) } else { Err(()) };
     }
-    let g = lin.terms.values().fold(Int::ZERO, |g, k| g.gcd(k));
-    if rel == Rel::Eq && !lin.constant.mod_floor(&g).is_zero() {
-        return Err(());
-    }
-    let lin = if g.is_unit() {
-        lin
-    } else {
-        Lin {
-            terms: lin
-                .terms
-                .iter()
-                .map(|(a, k)| (a.clone(), k.div_floor(&g)))
-                .collect(),
-            constant: lin.constant.div_floor(&g),
+    // The proof that the division keeps the integer points is at `zedc_affine::row_divisor`.
+    let mut lin = lin;
+    match zedc_affine::row_divisor(lin.terms.values(), &lin.constant, rel == Rel::Eq) {
+        zedc_affine::Divisor::Keep => {}
+        zedc_affine::Divisor::Infeasible => return Err(()),
+        zedc_affine::Divisor::By(g) => {
+            zedc_affine::divide_row(&mut lin.terms, &mut lin.constant, &g)
         }
-    };
+    }
     Ok(Some(Con { lin, rel }))
 }
 
@@ -17121,15 +17081,9 @@ impl Row {
     }
 
     /// The row divided by the gcd of its coefficients, an inequality's constant rounded down.
+    /// The proof that the division keeps the integer points is at `zedc_affine::row_divisor`.
     fn normal(self, eq: bool) -> Norm {
-        let mut g = Int::ZERO;
-        for (_, c) in self.a.iter() {
-            g = g.gcd(c);
-            if g.is_unit() {
-                return Norm::Row(self);
-            }
-        }
-        if g.is_zero() {
+        if self.a.is_empty() {
             let holds = if eq {
                 self.k.is_zero()
             } else {
@@ -17137,13 +17091,14 @@ impl Row {
             };
             return if holds { Norm::True } else { Norm::False };
         }
-        if eq && !self.k.mod_floor(&g).is_zero() {
-            return Norm::False;
+        match zedc_affine::row_divisor(self.a.iter().map(|(_, c)| c), &self.k, eq) {
+            zedc_affine::Divisor::Keep => Norm::Row(self),
+            zedc_affine::Divisor::Infeasible => Norm::False,
+            zedc_affine::Divisor::By(g) => Norm::Row(Row {
+                a: self.a.iter().map(|(i, c)| (*i, c.div_floor(&g))).collect(),
+                k: self.k.div_floor(&g),
+            }),
         }
-        Norm::Row(Row {
-            a: self.a.iter().map(|(i, c)| (*i, c.div_floor(&g))).collect(),
-            k: self.k.div_floor(&g),
-        })
     }
 
     /// The row, which holds `x[j]`, with `x[j]` replaced by `def`.
@@ -20851,13 +20806,9 @@ fn kept_part(lin: &Lin, kept: &[(Atom, Num)]) -> Option<(BTreeMap<Atom, Int>, In
     let part: BTreeMap<Atom, Int> = (kept.iter())
         .filter_map(|(a, _)| lin.terms.get(a).map(|c| (a.clone(), c.clone())))
         .collect();
-    let first = part.values().next()?;
-    let g = part.values().fold(Int::ZERO, |g, c| g.gcd(c));
-    let t = if first.is_negative() { -&g } else { g };
-    let v = (part.into_iter())
-        .map(|(a, c)| (a, c.div_floor(&t)))
-        .collect();
-    Some((v, t))
+    let p = zedc_affine::primitive_form(&part)?;
+    let t = if p.flipped { -&p.g } else { p.g };
+    Some((p.form.into_iter().collect(), t))
 }
 
 /// [`project`] onto each of `syms`, removing disjuncts once: one result for each symbol, so
@@ -26485,14 +26436,8 @@ fn real_end(c: &Formula, sym: &Atom, dir: i64) -> Option<Int> {
             .collect::<Option<_>>()?,
         _ => return None,
     };
-    let norm = |(mut t, k): Row| -> Row {
-        let d = t.values().fold(Int::ZERO, |d, a| d.gcd(a));
-        if d > Int::ONE {
-            for a in t.values_mut() {
-                *a = a.div_floor(&d);
-            }
-            return (t, k.div_floor(&d));
-        }
+    let norm = |(mut t, mut k): Row| -> Row {
+        zedc_affine::tighten_ge(&mut t, &mut k);
         (t, k)
     };
     let (mut rows, mut eqs): (Vec<Row>, Vec<Row>) = (Vec::new(), Vec::new());
@@ -26527,12 +26472,7 @@ fn real_end(c: &Formula, sym: &Atom, dir: i64) -> Option<Int> {
         t.remove(&x);
         for (r, rk) in rows.iter_mut().chain(eqs.iter_mut()) {
             let Some(a) = r.remove(&x) else { continue };
-            for (y, v) in &t {
-                let s = &r.remove(y).unwrap_or(Int::ZERO) + &(&a * v);
-                if !s.is_zero() {
-                    r.insert(y.clone(), s);
-                }
-            }
+            zedc_affine::add_scaled(r, &t, &a);
             *rk = &*rk + &(&a * &k);
         }
     }
@@ -26584,16 +26524,10 @@ fn real_end(c: &Formula, sym: &Atom, dir: i64) -> Option<Int> {
             let a = &lt[&x];
             for (ut, uk) in &upper {
                 let b = -&ut[&x];
-                let mut t: BTreeMap<Atom, Int> = BTreeMap::new();
-                for (y, v) in (lt.iter().map(|(y, v)| (y, v * &b)))
-                    .chain(ut.iter().map(|(y, v)| (y, v * a)))
-                    .filter(|(y, _)| *y != &x)
-                {
-                    let s = &t.remove(y).unwrap_or(Int::ZERO) + &v;
-                    if !s.is_zero() {
-                        t.insert(y.clone(), s);
-                    }
-                }
+                // `x` cancels: `b·a - a·b`.
+                let mut t = zedc_affine::scaled(lt, &b);
+                zedc_affine::add_scaled(&mut t, ut, a);
+                debug_assert!(!t.contains_key(&x));
                 rows.push(norm((t, &(lk * &b) + &(uk * a))));
             }
         }

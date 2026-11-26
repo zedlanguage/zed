@@ -5,6 +5,7 @@ members = [
     "crates/zedc-base",
     "crates/zedc-syntax",
     "crates/zedc-int",
+    "crates/zedc-affine",
     "crates/zedc-lattice",
     "crates/zedc-solvers",
     "crates/zedc-presburger",
@@ -60,6 +61,7 @@ zed-meter-settings = { path = "crates/zed-meter-settings" }
 zedc-base = { path = "crates/zedc-base" }
 zedc-syntax = { path = "crates/zedc-syntax" }
 zedc-int = { path = "crates/zedc-int" }
+zedc-affine = { path = "crates/zedc-affine" }
 zedc-lattice = { path = "crates/zedc-lattice" }
 zedc-solvers = { path = "crates/zedc-solvers" }
 zedc-presburger = { path = "crates/zedc-presburger" }

@@ -4583,12 +4583,13 @@ fn group_lines(rows: &[Con]) -> (LineRows, FormBounds, bool) {
         if r.lin.terms.is_empty() {
             continue;
         }
-        let g = r.lin.terms.values().fold(Int::ZERO, |g, k| g.gcd(k));
-        let neg = r.lin.terms.values().next().is_some_and(Int::is_negative);
+        let zedc_affine::Primitive {
+            form,
+            flipped: neg,
+            g,
+        } = zedc_affine::primitive_form(&r.lin.terms).expect("terms");
         let signed = if neg { -&g } else { g.clone() };
-        let t: Terms = (r.lin.terms.iter())
-            .map(|(a, k)| (a.clone(), k.div_floor(&signed)))
-            .collect();
+        let t: Terms = form.into_iter().collect();
         let c = &r.lin.constant;
         match (r.rel, neg) {
             (Rel::Ge, false) => {
@@ -4880,18 +4881,8 @@ fn fold_free_unit_pairs(mut rows: Vec<Con>, factors: &HashSet<Atom>) -> Vec<Con>
                 } else {
                     &b
                 };
-                let lin = r.lin.times(m.clone()).plus(&side.lin);
-                let g = lin.terms.values().fold(Int::ZERO, |g, c| g.gcd(c));
-                r.lin = if g.is_zero() || g == Int::ONE {
-                    lin
-                } else {
-                    Lin {
-                        terms: (lin.terms.iter())
-                            .map(|(k, c)| (k.clone(), c.div_floor(&g)))
-                            .collect(),
-                        constant: lin.constant.div_floor(&g),
-                    }
-                };
+                r.lin = r.lin.times(m.clone()).plus(&side.lin);
+                zedc_affine::tighten_ge(&mut r.lin.terms, &mut r.lin.constant);
                 for t in r.lin.terms.keys() {
                     at.entry(t.clone()).or_default().push(n);
                 }
@@ -5206,18 +5197,8 @@ fn by_pairs(mut rows: Vec<Con>, elim: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
                 Some(c) if *c == -&Int::ONE => &b,
                 _ => continue,
             };
-            let lin = r.lin.times(m.clone()).plus(&side.lin);
-            let g = lin.terms.values().fold(Int::ZERO, |g, c| g.gcd(c));
-            r.lin = if g.is_zero() || g == Int::ONE {
-                lin
-            } else {
-                Lin {
-                    terms: (lin.terms.iter())
-                        .map(|(k, c)| (k.clone(), c.div_floor(&g)))
-                        .collect(),
-                    constant: lin.constant.div_floor(&g),
-                }
-            };
+            r.lin = r.lin.times(m.clone()).plus(&side.lin);
+            zedc_affine::tighten_ge(&mut r.lin.terms, &mut r.lin.constant);
             for t in r.lin.terms.keys() {
                 at.entry(t.clone()).or_default().push(n);
             }
@@ -5407,17 +5388,15 @@ fn normalize_own_leaf(
                 }
                 continue;
             }
-            let g = r.lin.terms.values().fold(Int::ZERO, |g, k| g.gcd(k));
-            if r.rel == Rel::Eq && !r.lin.constant.mod_floor(&g).is_zero() {
-                return None;
-            }
-            if !g.is_unit() {
-                r.lin = Lin {
-                    terms: (r.lin.terms.iter())
-                        .map(|(a, k)| (a.clone(), k.div_floor(&g)))
-                        .collect(),
-                    constant: r.lin.constant.div_floor(&g),
-                };
+            // The proof that the division keeps the integer points is at
+            // `zedc_affine::row_divisor`.
+            match zedc_affine::row_divisor(r.lin.terms.values(), &r.lin.constant, r.rel == Rel::Eq)
+            {
+                zedc_affine::Divisor::Keep => {}
+                zedc_affine::Divisor::Infeasible => return None,
+                zedc_affine::Divisor::By(g) => {
+                    zedc_affine::divide_row(&mut r.lin.terms, &mut r.lin.constant, &g)
+                }
             }
         }
         out.push(r);
