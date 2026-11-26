@@ -570,3 +570,322 @@ mod lines {
         }
     }
 }
+
+mod space {
+    //! The routines moved from zedc-solvers `live3`, each checked against its definition: the
+    //! inverse by the product with the matrix, `complete` by `u·V = e1` and `det V = ±1`, LLL by
+    //! conditions (1.4) and (1.5) of LLL 1982 and by the basis staying unimodular, and the nearest
+    //! plane point by Babai's bound (4.3). The forms are `AᵀA + I` for a random integer `A`, so
+    //! positive definite.
+
+    use zedc_int::int::Int;
+    use zedc_int::q::Q;
+
+    use crate::space::*;
+
+    fn q(n: i64) -> Q {
+        Q::of(Int::from(n))
+    }
+
+    fn det3(m: &[[Q; 3]; 3]) -> Q {
+        dot(&m[0], &cross(&m[1], &m[2]))
+    }
+
+    fn as_q<const N: usize>(v: &[Int; N]) -> [Q; N] {
+        v.clone().map(Q::of)
+    }
+
+    /// `AᵀA + I` for a random `A` with entries in `-r..=r`.
+    fn form<const N: usize>(rng: &mut crate::seed::Rng, r: i64) -> [[Q; N]; N] {
+        let a: [[i64; N]; N] = std::array::from_fn(|_| std::array::from_fn(|_| rng.int(-r, r)));
+        std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                let s: i64 = (0..N).map(|k| a[k][i] * a[k][j]).sum();
+                q(s + i64::from(i == j))
+            })
+        })
+    }
+
+    #[test]
+    fn nearest_rounds_a_tie_up() {
+        let h = |n, d| nearest(&Q::new(Int::from(n), Int::from(d)));
+        assert_eq!(h(1, 2), Int::from(1));
+        assert_eq!(h(-1, 2), Int::from(0));
+        assert_eq!(h(-3, 2), Int::from(-1));
+        assert_eq!(h(7, 3), Int::from(2));
+        assert_eq!(h(-7, 3), Int::from(-2));
+    }
+
+    #[test]
+    fn the_inverse_times_the_matrix_is_the_identity() {
+        let (mut rng, seed) =
+            crate::seed::Rng::fresh("the_inverse_times_the_matrix_is_the_identity");
+        let mut done = 0;
+        while done < 200 {
+            let c: [[Q; 3]; 3] = std::array::from_fn(|_| {
+                std::array::from_fn(|_| Q::new(Int::from(rng.int(-5, 5)), Int::from(rng.int(1, 4))))
+            });
+            if det3(&c).is_zero() {
+                continue;
+            }
+            done += 1;
+            let inv = inverse(&c);
+            for (i, row) in inv.iter().enumerate() {
+                for (j, col) in c.iter().enumerate() {
+                    assert_eq!(dot(row, col), q(i64::from(i == j)), "seed {seed}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn primitive_is_a_positive_multiple_with_no_common_factor() {
+        let (mut rng, seed) =
+            crate::seed::Rng::fresh("primitive_is_a_positive_multiple_with_no_common_factor");
+        for _ in 0..300 {
+            let v: [Q; 3] = std::array::from_fn(|_| {
+                Q::new(Int::from(rng.int(-6, 6)), Int::from(rng.int(1, 6)))
+            });
+            if v.iter().all(Q::is_zero) {
+                continue;
+            }
+            let p = primitive(&v);
+            let g = p.iter().fold(Int::ZERO, |g, c| g.gcd(c));
+            assert!(g.is_unit(), "seed {seed}, {p:?}");
+            // `p = k·v` for one `k > 0`: read `k` at a nonzero entry, check the rest.
+            let i = (0..3).find(|&i| !v[i].is_zero()).expect("a nonzero entry");
+            let k = Q::of(p[i].clone()).div(&v[i]);
+            assert!(k.is_positive(), "seed {seed}");
+            for (pj, vj) in p.iter().zip(&v) {
+                assert_eq!(Q::of(pj.clone()), vj.mul(&k), "seed {seed}");
+            }
+        }
+    }
+
+    #[test]
+    fn complete_maps_a_primitive_vector_to_e1_unimodularly() {
+        let (mut rng, seed) =
+            crate::seed::Rng::fresh("complete_maps_a_primitive_vector_to_e1_unimodularly");
+        for _ in 0..300 {
+            let u: [Int; 3] = std::array::from_fn(|_| Int::from(rng.int(-40, 40)));
+            let g = u.iter().fold(Int::ZERO, |g, c| g.gcd(c));
+            if !g.is_unit() {
+                continue;
+            }
+            let v = complete(&u);
+            let uq = as_q(&u);
+            for (j, col) in v.iter().enumerate() {
+                assert_eq!(
+                    dot(&uq, &as_q(col)),
+                    q(i64::from(j == 0)),
+                    "seed {seed}, {u:?}"
+                );
+            }
+            let d = det3(&v.clone().map(|c| as_q(&c)));
+            assert!(d == q(1) || d == q(-1), "seed {seed}, {u:?}: det {d:?}");
+        }
+        // Two and four entries, the dimensions the const generic admits beyond the caller's.
+        assert_eq!(
+            complete(&[Int::from(3), Int::from(5)])
+                .map(|c| &(&c[0] * &Int::from(3)) + &(&c[1] * &Int::from(5))),
+            [Int::from(1), Int::from(0)]
+        );
+        let u4 = [6, 10, 15, -7].map(Int::from);
+        for (j, col) in complete(&u4).iter().enumerate() {
+            let s = (0..4).fold(Int::ZERO, |s, i| &s + &(&u4[i] * &col[i]));
+            assert_eq!(s, Int::from(i64::from(j == 0)));
+        }
+    }
+
+    /// Conditions (1.4) and (1.5) of LLL 1982 with `δ = 3/4`, read back from the result's own
+    /// Gram–Schmidt vectors, and `det B = ±1`.
+    fn check_reduced<const N: usize>(f: &[[Q; N]; N], r: &Reduced<N>, seed: u64) {
+        let half = Q::new(Int::ONE, Int::from(2));
+        for i in 0..N {
+            assert_eq!(r.len[i], inner(f, &r.star[i], &r.star[i]), "seed {seed}");
+            assert!(r.len[i].is_positive(), "seed {seed}");
+            for j in 0..i {
+                assert!(
+                    inner(f, &r.star[i], &r.star[j]).is_zero(),
+                    "seed {seed}: orthogonal"
+                );
+                let mu = inner(f, &as_q(&r.basis[i]), &r.star[j]).div(&r.len[j]);
+                let abs = if mu.is_negative() {
+                    mu.neg()
+                } else {
+                    mu.clone()
+                };
+                assert!(abs <= half, "seed {seed}: (1.4) at {i},{j}");
+                if j + 1 == i {
+                    let lhs = r.len[i].add(&mu.mul(&mu).mul(&r.len[j]));
+                    let rhs = Q::new(Int::from(3), Int::from(4)).mul(&r.len[j]);
+                    assert!(lhs >= rhs, "seed {seed}: (1.5) at {i}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn lll_meets_both_conditions_and_keeps_the_lattice() {
+        let (mut rng, seed) =
+            crate::seed::Rng::fresh("lll_meets_both_conditions_and_keeps_the_lattice");
+        for _ in 0..100 {
+            let f: [[Q; 3]; 3] = form(&mut rng, 30);
+            let r = lll(&f);
+            check_reduced(&f, &r, seed);
+            let d = det3(&r.basis.clone().map(|c| as_q(&c)));
+            assert!(d == q(1) || d == q(-1), "seed {seed}: unimodular");
+        }
+        for _ in 0..40 {
+            let f: [[Q; 2]; 2] = form(&mut rng, 30);
+            check_reduced(&f, &lll(&f), seed);
+            let f: [[Q; 4]; 4] = form(&mut rng, 8);
+            check_reduced(&f, &lll(&f), seed);
+        }
+        // The corner: a form that is reduced already leaves the standard basis.
+        let id: [[Q; 3]; 3] =
+            std::array::from_fn(|i| std::array::from_fn(|j| q(i64::from(i == j))));
+        let r = lll(&id);
+        assert_eq!(
+            r.basis,
+            std::array::from_fn(|i| std::array::from_fn(|j| Int::from(i64::from(i == j))))
+        );
+    }
+
+    #[test]
+    fn the_nearest_plane_point_meets_babais_bound() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("the_nearest_plane_point_meets_babais_bound");
+        for _ in 0..100 {
+            let f: [[Q; 3]; 3] = form(&mut rng, 20);
+            let r = lll(&f);
+            let x: [Q; 3] = std::array::from_fn(|_| {
+                Q::new(Int::from(rng.int(-500, 500)), Int::from(rng.int(1, 9)))
+            });
+            let z = nearest_plane(&f, &r, &x);
+            let d = sub(&x, &as_q(&z));
+            let bound = r.len.iter().fold(q(0), |s, l| s.add(l)).div(&q(4));
+            assert!(inner(&f, &d, &d) <= bound, "seed {seed}: (4.3)");
+            // An integer target is its own nearest point.
+            let p: [Int; 3] = std::array::from_fn(|_| Int::from(rng.int(-99, 99)));
+            assert_eq!(nearest_plane(&f, &r, &as_q(&p)), p, "seed {seed}");
+        }
+    }
+}
+
+mod equalities {
+    //! `eliminate_units` against its definition: on random small systems, every integer point
+    //! of a box that holds the input rows holds the output rows once the solved atoms are set
+    //! by their rows, and back: each point of the output, extended by the solved rows, holds
+    //! the input. `Empty` is checked by the box having no point of the input.
+
+    use std::collections::BTreeMap;
+
+    use zedc_int::int::Int;
+
+    use crate::equalities::*;
+
+    fn row(t: &[(u8, i64)], k: i64) -> Row<u8> {
+        (
+            t.iter()
+                .filter(|p| p.1 != 0)
+                .map(|&(x, c)| (x, Int::from(c)))
+                .collect(),
+            Int::from(k),
+        )
+    }
+
+    fn value(r: &Row<u8>, at: &BTreeMap<u8, Int>) -> Int {
+        r.0.iter().fold(r.1.clone(), |s, (x, c)| &s + &(c * &at[x]))
+    }
+
+    fn holds(eq: &[Row<u8>], ge: &[Row<u8>], at: &BTreeMap<u8, Int>) -> bool {
+        eq.iter().all(|r| value(r, at).is_zero()) && ge.iter().all(|r| !value(r, at).is_negative())
+    }
+
+    #[test]
+    fn a_chain_is_solved_from_its_end_and_keep_is_never_solved() {
+        // x0 == x1 + 1, x1 == x2 + 1, x2 == 5, with x0 kept.
+        let mut eq = vec![
+            row(&[(0, 1), (1, -1)], -1),
+            row(&[(1, 1), (2, -1)], -1),
+            row(&[(2, 1)], -5),
+        ];
+        let mut ge = vec![row(&[(0, 1)], -7)];
+        let got = eliminate_units::<u8, ()>(&mut eq, &mut ge, Some(&0), |_| Ok(())).unwrap();
+        let Eliminated::Solved(p) = got else {
+            panic!("solved")
+        };
+        assert!(p.iter().all(|(x, _)| *x != 0), "keep is never solved");
+        assert_eq!(p.len(), 2);
+        // x0 - 7 >= 0 is untouched in x0, and the rest leave x0 == 7.
+        assert_eq!(ge, vec![row(&[(0, 1)], -7)]);
+        let left: Vec<_> = eq.into_iter().filter(|r| !r.0.is_empty()).collect();
+        assert_eq!(left, vec![row(&[(0, 1)], -7)]);
+    }
+
+    #[test]
+    fn a_single_atom_equality_with_no_integer_root_is_empty() {
+        let mut eq = vec![row(&[(0, 2)], 1)];
+        let got = eliminate_units::<u8, ()>(&mut eq, &mut [], None, |_| Ok(())).unwrap();
+        assert_eq!(got, Eliminated::Empty);
+        // A charge that refuses stops at the first substitution into a row.
+        let mut eq = vec![row(&[(0, 1), (1, 1)], 0), row(&[(0, 1), (1, 2)], 0)];
+        let got = eliminate_units::<u8, &str>(&mut eq, &mut [], None, |_| Err("spent"));
+        assert_eq!(got, Err("spent"));
+    }
+
+    #[test]
+    fn the_solved_system_has_the_points_of_the_input() {
+        let (mut rng, seed) =
+            crate::seed::Rng::fresh("the_solved_system_has_the_points_of_the_input");
+        let r = 3i64;
+        for _ in 0..300 {
+            let draw = |rng: &mut crate::seed::Rng| {
+                let t: Vec<(u8, i64)> = (0..3).map(|x| (x, rng.int(-2, 2))).collect();
+                row(&t, rng.int(-3, 3))
+            };
+            let eq0: Vec<Row<u8>> = (0..rng.int(1, 3)).map(|_| draw(&mut rng)).collect();
+            let ge0: Vec<Row<u8>> = (0..rng.int(0, 2)).map(|_| draw(&mut rng)).collect();
+            let keep = (rng.below(2) == 0).then_some(0u8);
+            let (mut eq, mut ge) = (eq0.clone(), ge0.clone());
+            let got =
+                eliminate_units::<u8, ()>(&mut eq, &mut ge, keep.as_ref(), |_| Ok(())).unwrap();
+            let points: Vec<BTreeMap<u8, Int>> = (0..343)
+                .map(|n: i64| {
+                    (0..3u8)
+                        .map(|x| (x, Int::from((n / 7i64.pow(u32::from(x))) % 7 - r)))
+                        .collect()
+                })
+                .collect();
+            match got {
+                Eliminated::Empty => {
+                    // Empty is claimed without a box: the input has no integer point anywhere,
+                    // so none in the box either.
+                    assert!(!points.iter().any(|p| holds(&eq0, &ge0, p)), "seed {seed}");
+                }
+                Eliminated::Solved(piv) => {
+                    for p in &points {
+                        // Each solved atom equals its row at every point of the input.
+                        if holds(&eq0, &ge0, p) {
+                            assert!(holds(&eq, &ge, p), "seed {seed}: the output holds");
+                            for (x, row) in &piv {
+                                assert_eq!(p[x], value(row, p), "seed {seed}: pivot {x}");
+                            }
+                        }
+                        // A point of the output, with the solved atoms set from the last solved
+                        // back (each row mentions only atoms present when it was solved, so
+                        // later pivots are set first), holds the input.
+                        let mut q = p.clone();
+                        for (x, row) in piv.iter().rev() {
+                            let v = value(row, &q);
+                            q.insert(*x, v);
+                        }
+                        if holds(&eq, &ge, &q) {
+                            assert!(holds(&eq0, &ge0, &q), "seed {seed}: the input holds");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

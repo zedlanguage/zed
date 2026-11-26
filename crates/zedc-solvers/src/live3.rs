@@ -40,6 +40,7 @@ use std::cmp::Ordering;
 
 use super::linear::Term;
 use super::twovar;
+use zedc_affine::space::{self, add, cross, nearest, sub};
 use zedc_int::int::Int;
 use zedc_int::q::Q;
 
@@ -52,11 +53,6 @@ fn zero() -> Q {
 
 fn q(n: i64) -> Q {
     Q::of(Int::from(n))
-}
-
-/// `floor(c + 1/2)`, the nearest integer to `c`.
-fn nearest(c: &Q) -> Int {
-    c.add(&Q::new(Int::ONE, Int::from(2))).floor()
 }
 
 /// `a + b`, with no arithmetic when either is zero.
@@ -821,32 +817,6 @@ fn dot3(a: &[Int; 3], x: &[Q; 3]) -> Q {
     (0..3).fold(zero(), |s, i| s.add(&Q::of(a[i].clone()).mul(&x[i])))
 }
 
-fn sub3(a: &[Q; 3], b: &[Q; 3]) -> [Q; 3] {
-    [0, 1, 2].map(|i| a[i].sub(&b[i]))
-}
-
-fn add3(a: &[Q; 3], b: &[Q; 3]) -> [Q; 3] {
-    [0, 1, 2].map(|i| a[i].add(&b[i]))
-}
-
-fn cross(a: &[Q; 3], b: &[Q; 3]) -> [Q; 3] {
-    [0, 1, 2].map(|i| {
-        let (j, k) = ((i + 1) % 3, (i + 2) % 3);
-        a[j].mul(&b[k]).sub(&a[k].mul(&b[j]))
-    })
-}
-
-/// The integer multiple of `v`, not zero, whose entries have no common factor.
-fn primitive(v: &[Q; 3]) -> [Int; 3] {
-    let l = v.iter().fold(Int::ONE, |l, c| {
-        let g = l.gcd(c.denom());
-        &l.div_floor(&g) * c.denom()
-    });
-    let n = v.clone().map(|c| c.numer() * &l.div_floor(c.denom()));
-    let g = n.iter().fold(Int::ZERO, |g, c| g.gcd(c));
-    n.map(|c| c.div_floor(&g))
-}
-
 /// What the rounding finds: no real point, an integer point of the rows, or a direction `u`
 /// of few integer values (one where the rows lie in a plane normal to it), with the least and
 /// greatest of `u·x` over a set that holds the real points of the rows.
@@ -906,7 +876,7 @@ fn simplex(rows: &[Row3], bx: &[Row3]) -> Result<[[Q; 3]; 4], Box<Shape>> {
     if hi.neg() == lo {
         return Err(Box::new(Shape::Dir(e0, lo.clone(), lo)));
     }
-    let d1 = sub3(&v1, &v0);
+    let d1 = sub(&v1, &v0);
     let f2 = (0..3)
         .map(|j| {
             let mut e = [zero(), zero(), zero()];
@@ -917,8 +887,9 @@ fn simplex(rows: &[Row3], bx: &[Row3]) -> Result<[[Q; 3]; 4], Box<Shape>> {
         .expect("a normal to an edge");
     let mut vs = vec![v0, v1];
     for f in [Some(f2), None] {
-        let f =
-            primitive(&f.unwrap_or_else(|| cross(&sub3(&vs[1], &vs[0]), &sub3(&vs[2], &vs[0]))));
+        let f = space::primitive(
+            &f.unwrap_or_else(|| cross(&sub(&vs[1], &vs[0]), &sub(&vs[2], &vs[0]))),
+        );
         let (a, lo) = lp(&f)?.expect("a real point");
         let (b, hi) = lp(&neg(&f))?.expect("a real point");
         let hi = hi.neg();
@@ -932,18 +903,6 @@ fn simplex(rows: &[Row3], bx: &[Row3]) -> Result<[[Q; 3]; 4], Box<Shape>> {
     let [v0, v1, v2, v3] =
         <[[Q; 3]; 4]>::try_from(vs).unwrap_or_else(|_| unreachable!("four vertices"));
     Ok([v0, v1, v2, v3])
-}
-
-/// The inverse of the matrix whose columns are `c`, which is invertible.
-fn inverse(c: &[[Q; 3]; 3]) -> [[Q; 3]; 3] {
-    // Row `i` of the inverse is the cross product of the other two columns over the
-    // determinant.
-    let det = dot3q(&c[0], &cross(&c[1], &c[2]));
-    [0, 1, 2].map(|i| cross(&c[(i + 1) % 3], &c[(i + 2) % 3]).map(|x| x.div(&det)))
-}
-
-fn dot3q(a: &[Q; 3], b: &[Q; 3]) -> Q {
-    (0..3).fold(zero(), |s, i| s.add(&a[i].mul(&b[i])))
 }
 
 /// LLL on `Z³` under the quadratic form in which the simplex is regular, then the nearest
@@ -983,10 +942,11 @@ fn dot3q(a: &[Q; 3], b: &[Q; 3]) -> Q {
 //    198.43`, so `hi - lo`, read at the vertices of `g + 25·(S - g)`, which lie in that ball,
 //    is below 198.43 too. Sources: Lenstra, Lenstra and Lovász 1982 (doi:10.1007/bf01457454),
 //    for the reduced basis inequality, and Babai 1986 (doi:10.1007/BF02579403), the nearest
-//    plane bound. Tests: as for [`simplex`].
+//    plane bound. Tests: as for [`simplex`]. The reduction and the nearest plane step are
+//    `zedc_affine::space::{lll, nearest_plane}`, whose comments carry the two papers' text.
 fn reduce(rows: &[Row3], s: &[[Q; 3]; 4]) -> Shape {
-    let edges = [1, 2, 3].map(|i| sub3(&s[i], &s[0]));
-    let m = inverse(&edges);
+    let edges = [1, 2, 3].map(|i| sub(&s[i], &s[0]));
+    let m = space::inverse(&edges);
     // The form `Mᵀ·G·M`, with `G` twice the Gram matrix of a regular simplex of unit edges.
     let g = [[2, 1, 1], [1, 2, 1], [1, 1, 2]].map(|r| r.map(q));
     let form: [[Q; 3]; 3] = [0, 1, 2].map(|a| {
@@ -1000,66 +960,10 @@ fn reduce(rows: &[Row3], s: &[[Q; 3]; 4]) -> Shape {
             s
         })
     });
-    let ip = |x: &[Q; 3], y: &[Q; 3]| -> Q {
-        let mut s = zero();
-        for i in 0..3 {
-            for j in 0..3 {
-                s = s.add(&x[i].mul(&form[i][j]).mul(&y[j]));
-            }
-        }
-        s
-    };
-    let asq = |b: &[Int; 3]| b.clone().map(Q::of);
-    let mut b: [[Int; 3]; 3] = [0, 1, 2].map(|i| [0, 1, 2].map(|j| Int::from(i64::from(i == j))));
-    // The Gram–Schmidt vectors, their squared lengths, and the coefficients `mu`.
-    let gs = |b: &[[Int; 3]; 3]| -> ([[Q; 3]; 3], [Q; 3], [[Q; 3]; 3]) {
-        let mut st: [[Q; 3]; 3] = [0, 1, 2].map(|i| asq(&b[i]));
-        let mut len: [Q; 3] = [zero(), zero(), zero()];
-        let mut mu: [[Q; 3]; 3] = [0, 1, 2].map(|_| [zero(), zero(), zero()]);
-        for i in 0..3 {
-            for j in 0..i {
-                mu[i][j] = ip(&asq(&b[i]), &st[j]).div(&len[j]);
-                st[i] = sub3(&st[i], &st[j].each_ref().map(|x| x.mul(&mu[i][j])));
-            }
-            len[i] = ip(&st[i], &st[i]);
-        }
-        (st, len, mu)
-    };
-    let delta = Q::new(Int::from(3), Int::from(4));
-    let mut k = 1;
-    while k < 3 {
-        for j in (0..k).rev() {
-            let (_, _, mu) = gs(&b);
-            let c = nearest(&mu[k][j]);
-            if !c.is_zero() {
-                let (low, high) = b.split_at_mut(k);
-                for (x, y) in high[0].iter_mut().zip(&low[j]) {
-                    *x = &*x - &(&c * y);
-                }
-            }
-        }
-        let (_, len, mu) = gs(&b);
-        let m2 = mu[k][k - 1].mul(&mu[k][k - 1]);
-        if len[k] >= delta.sub(&m2).mul(&len[k - 1]) {
-            k += 1;
-        } else {
-            b.swap(k, k - 1);
-            k = (k - 1).max(1);
-        }
-    }
-    let (st, len, _) = gs(&b);
+    let reduced = space::lll(&form);
     let four = q(4);
     let center: [Q; 3] = [0, 1, 2].map(|i| s.iter().fold(zero(), |a, v| a.add(&v[i])).div(&four));
-    let mut t = center.clone();
-    for i in (0..3).rev() {
-        let c = nearest(&ip(&t, &st[i]).div(&len[i]));
-        t = sub3(&t, &asq(&b[i]).map(|x| x.mul(&Q::of(c.clone()))));
-    }
-    let z = sub3(&center, &t).map(|x| {
-        let (n, d) = x.into_parts();
-        debug_assert!(d == Int::ONE, "a lattice point");
-        n
-    });
+    let z = space::nearest_plane(&form, &reduced, &center);
     if holds(rows, &z) {
         return Shape::Point(z);
     }
@@ -1067,8 +971,8 @@ fn reduce(rows: &[Row3], s: &[[Q; 3]; 4]) -> Shape {
     // `g + 25·(S - g)`, which is the hull of its four vertices, so the least and greatest of
     // `u·x` there bound it over the rows, and their gap is below 199 as well: that simplex
     // lies in the ball of `75·r`.
-    let cols = [0, 1, 2].map(|i| asq(&b[i]));
-    let inv = inverse(&cols);
+    let cols = reduced.basis.clone().map(|b| b.map(Q::of));
+    let inv = space::inverse(&cols);
     let u = inv[2].clone().map(|x| {
         let (n, d) = x.into_parts();
         debug_assert!(d == Int::ONE, "a unimodular basis");
@@ -1077,7 +981,7 @@ fn reduce(rows: &[Row3], s: &[[Q; 3]; 4]) -> Shape {
     let wide = q(25);
     let at: Vec<Q> = s
         .iter()
-        .map(|v| dot3(&u, &add3(&center, &sub3(v, &center).map(|x| x.mul(&wide)))))
+        .map(|v| dot3(&u, &add(&center, &sub(v, &center).map(|x| x.mul(&wide)))))
         .collect();
     let lo = at.iter().min().expect("four vertices").clone();
     let hi = at.iter().max().expect("four vertices").clone();
@@ -1094,32 +998,6 @@ fn holds(rows: &[Row3], z: &[Int; 3]) -> bool {
         .all(|(a, k)| !(&dot_int(a, z) + k).is_negative())
 }
 
-/// The columns of a unimodular matrix `V` with `u·V = e1`, for `u` with no common factor: the
-/// column operations of Euclid's algorithm on the entries of `u`, applied to the identity.
-fn complete(u: &[Int; 3]) -> [[Int; 3]; 3] {
-    let mut r = u.clone();
-    let mut v: [[Int; 3]; 3] = [0, 1, 2].map(|i| [0, 1, 2].map(|j| Int::from(i64::from(i == j))));
-    for j in 1..3 {
-        while !r[j].is_zero() {
-            let c = r[0].div_floor(&r[j]);
-            r[0] = &r[0] - &(&c * &r[j]);
-            let (first, rest) = v.split_at_mut(1);
-            for (x, y) in first[0].iter_mut().zip(&rest[j - 1]) {
-                *x = &*x - &(&c * y);
-            }
-            r.swap(0, j);
-            v.swap(0, j);
-        }
-    }
-    if r[0].is_negative() {
-        for x in &mut v[0] {
-            *x = -&*x;
-        }
-    }
-    debug_assert!(r[0].is_unit(), "a direction with no common factor");
-    v
-}
-
 /// An integer point of the rows with `u·x = t` for an integer `t` in `[lo, hi]`, which holds
 /// every value of `u·x` over the real points of the rows, or `None` when no such slice has
 /// one. With `x = V·(t, w1, w2)` each slice is a system over `w1` and `w2`. There are at most
@@ -1128,7 +1006,8 @@ fn complete(u: &[Int; 3]) -> [[Int; 3]; 3] {
 /// of width below 199 holds at most 199 integers, and one of width in `[198, 198.43)` may hold
 /// 199.)
 fn slices(rows: &[Row3], u: &[Int; 3], lo: &Q, hi: &Q) -> Option<[Int; 3]> {
-    let v = complete(u);
+    // The unimodular `V` with `u·V = e1` ([`space::complete`]).
+    let v = space::complete(u);
     let mut t = lo.ceil();
     let top = hi.floor();
     // Each row over `(t, w1, w2)`, built once: its coefficient at `t`, its terms over `w1` and

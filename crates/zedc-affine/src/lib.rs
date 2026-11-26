@@ -7,11 +7,17 @@
 //! and eliminates a variable from a pair of bounds (the real and the dark shadow). Module
 //! [`plane`] holds the plane geometry of the two-variable readers: cross and dot products,
 //! angle order, Cramer's rule and the unimodular basis from Bezout. Module [`lines`] holds the
-//! upper envelope of a set of lines (the convex hull trick) and the floor sum.
+//! upper envelope of a set of lines (the convex hull trick) and the floor sum. Module [`space`]
+//! holds vectors in a fixed dimension over the rationals, the completion of a primitive integer
+//! vector to a unimodular matrix, LLL reduction under a quadratic form and Babai's nearest
+//! plane point. Module [`equalities`] solves a system's unit equalities and substitutes them
+//! out (the Gauss–Jordan step on unit pivots).
 
+pub mod equalities;
 pub mod lines;
 pub mod plane;
 pub mod shadow;
+pub mod space;
 
 use std::collections::BTreeMap;
 

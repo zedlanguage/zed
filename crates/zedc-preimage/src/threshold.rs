@@ -41,6 +41,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use zed_collections::ext::Ext;
 use zed_graph::{kahn, sources};
 use zedc_int::int::{Int, Num};
 use zedc_lattice::interval::{End, IntervalSet};
@@ -107,15 +108,11 @@ pub enum Answer {
     MixedHub,
 }
 
-/// A value of the propagation: `s*T + k`, `T` above every integer, or an infinity. `s` is 0
-/// when the hub has a value; it is not 0 only at an unbounded end of the hub. The derived order
-/// is the order of the values.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Val {
-    NegInf,
-    Fin(Int, Int),
-    PosInf,
-}
+/// A value of the propagation: `Fin((s, k))` for `s*T + k`, `T` above every integer, or an
+/// infinity. `s` is 0 when the hub has a value; it is not 0 only at an unbounded end of the hub.
+/// The derived order of [`Ext`] over the pairs' order is the order of the values (the proof is
+/// at [`At`]).
+type Val = Ext<(Int, Int)>;
 
 /// Where the hub is: at a value, or past every integer below or above.
 ///
@@ -145,9 +142,9 @@ impl At<'_> {
     /// `a + k*c` at this hub value.
     fn plus(&self, a: &Int, k: &Int) -> Val {
         match self {
-            At::Value(c) => Val::Fin(Int::ZERO, a + &(k * *c)),
-            At::Above => Val::Fin(k.clone(), a.clone()),
-            At::Below => Val::Fin(-k, a.clone()),
+            At::Value(c) => Val::Fin((Int::ZERO, a + &(k * *c))),
+            At::Above => Val::Fin((k.clone(), a.clone())),
+            At::Below => Val::Fin((-k, a.clone())),
         }
     }
 }
@@ -160,17 +157,17 @@ fn int(n: &Num) -> Int {
 fn ceil(d: &IntervalSet, v: &Val) -> Option<Val> {
     match v {
         Val::NegInf => Some(match d.first()? {
-            (End::Fin(lo), _) => Val::Fin(Int::ZERO, int(lo)),
+            (End::Fin(lo), _) => Val::Fin((Int::ZERO, int(lo))),
             _ => Val::NegInf,
         }),
         Val::PosInf => None,
-        Val::Fin(s, k) => match s.cmp(&Int::ZERO) {
+        Val::Fin((s, k)) => match s.cmp(&Int::ZERO) {
             Ordering::Greater => match d.last()? {
                 (_, End::PosInf) => Some(v.clone()),
                 _ => None,
             },
             Ordering::Less => match d.first()? {
-                (End::Fin(lo), _) => Some(Val::Fin(Int::ZERO, int(lo))),
+                (End::Fin(lo), _) => Some(Val::Fin((Int::ZERO, int(lo)))),
                 _ => Some(v.clone()),
             },
             Ordering::Equal => {
@@ -181,7 +178,7 @@ fn ceil(d: &IntervalSet, v: &Val) -> Option<Val> {
                     v.clone()
                 } else {
                     match lo {
-                        End::Fin(lo) => Val::Fin(Int::ZERO, int(lo)),
+                        End::Fin(lo) => Val::Fin((Int::ZERO, int(lo))),
                         _ => unreachable!("a piece after a finite end starts finite"),
                     }
                 })
@@ -209,17 +206,17 @@ fn ceil(d: &IntervalSet, v: &Val) -> Option<Val> {
 fn floor(d: &IntervalSet, v: &Val) -> Option<Val> {
     match v {
         Val::PosInf => Some(match d.last()? {
-            (_, End::Fin(hi)) => Val::Fin(Int::ZERO, int(hi)),
+            (_, End::Fin(hi)) => Val::Fin((Int::ZERO, int(hi))),
             _ => Val::PosInf,
         }),
         Val::NegInf => None,
-        Val::Fin(s, k) => match s.cmp(&Int::ZERO) {
+        Val::Fin((s, k)) => match s.cmp(&Int::ZERO) {
             Ordering::Less => match d.first()? {
                 (End::NegInf, _) => Some(v.clone()),
                 _ => None,
             },
             Ordering::Greater => match d.last()? {
-                (_, End::Fin(hi)) => Some(Val::Fin(Int::ZERO, int(hi))),
+                (_, End::Fin(hi)) => Some(Val::Fin((Int::ZERO, int(hi)))),
                 _ => Some(v.clone()),
             },
             Ordering::Equal => {
@@ -230,7 +227,7 @@ fn floor(d: &IntervalSet, v: &Val) -> Option<Val> {
                     v.clone()
                 } else {
                     match hi {
-                        End::Fin(hi) => Val::Fin(Int::ZERO, int(hi)),
+                        End::Fin(hi) => Val::Fin((Int::ZERO, int(hi))),
                         _ => unreachable!("a piece before a finite end ends finite"),
                     }
                 })
@@ -245,7 +242,7 @@ fn end_of(d: &IntervalSet, least: bool) -> Option<Val> {
     Some(match if least { lo } else { hi } {
         End::NegInf => Val::NegInf,
         End::PosInf => Val::PosInf,
-        End::Fin(n) => Val::Fin(Int::ZERO, int(n)),
+        End::Fin(n) => Val::Fin((Int::ZERO, int(n))),
     })
 }
 
@@ -367,7 +364,7 @@ fn end(v: &Val) -> End {
     match v {
         Val::NegInf => End::NegInf,
         Val::PosInf => End::PosInf,
-        Val::Fin(s, k) => match s.cmp(&Int::ZERO) {
+        Val::Fin((s, k)) => match s.cmp(&Int::ZERO) {
             Ordering::Less => End::NegInf,
             Ordering::Greater => End::PosInf,
             Ordering::Equal => End::Fin(Num::from(k)),

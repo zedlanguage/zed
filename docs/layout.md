@@ -132,7 +132,7 @@ types or ZIR. The libraries form a DAG; each sits as low as its dependencies all
 | zed-numtheory | | word arithmetic: gcd, inverses (also mod 2^64), `add_mod`/`mul_mod`, CRT, primes, factoring, sieves, bit width (`BitLen`), mod 2^61-1 and 2^64-59 hashing |
 | zed-graph | | reach, SCC, Kahn, worklists (plain, priority, keyed), union-find, BFS paths, Knuth's least derivation, functional-graph cycles |
 | zed-alloc-count | | the counting allocator |
-| zed-collections | numtheory, hash | sorted lists (merge, merge with values, subset, disjoint, `sort_dedup`), intervals, gallop search, interners, min-add segment tree, persistent treap with a lazy tag, join-based AVL, Patricia trie, priority search tree |
+| zed-collections | numtheory, hash | sorted lists (merge, merge with values, subset, disjoint, `sort_dedup`), intervals, interval ends with the infinities (`ext::Ext`), gallop search, interners, min-add segment tree, persistent treap with a lazy tag, join-based AVL, Patricia trie, priority search tree |
 | zed-bignum (new) | numtheory, collections, num-bigint | big-integer algorithms: product and remainder trees, fast division, gcd and printing, power by squaring, least and nth roots, coprime bases, CRT trees (the `m * 2^e` bound type is DRY-bignum-bound-type) |
 | zed-bignum-small (dev only) | as zed-bignum | zed-bignum's source built again with its unit tests' small leaves, for zed-kernel's unit tests alone (zed-bignum `fast::SMALL_LEAVES`) |
 | zed-testkit (new, dev only) | hash, alloc-count, meter-settings | `seed` and `scaling` (timers, n/8n ratios, inputs, load), now included by `#[path]` in 20 places |
@@ -146,8 +146,11 @@ merge that drops zero coefficients (`add_term`, `add_scaled`, `scaled`), gcd-nor
 pairs and the dark shadow (`i128_pair`, `dark_gap`, `dark_exact`), and in `plane` the 2D
 geometry (`cross`, `dot`, `angle_cmp`, `angle_cmp_from`, `cramer`) and unimodular bases from
 Bezout (`Basis`), over `i128` and `Int` (depends also on zed-numtheory), and in `lines` the
-upper envelope of lines (`upper_envelope`, `upper_envelope_by`, `not_above`) and `floor_sum`;
-still to come, and then also over zed-collections: LLL, simplex and Gauss-Jordan). Text helpers stay in
+upper envelope of lines (`upper_envelope`, `upper_envelope_by`, `not_above`) and `floor_sum`,
+in `space` lattice reduction (`lll`), Babai's nearest plane (`nearest_plane`), unimodular
+completion (`complete`) and 3D vectors over `Q`, and in `equalities` the elimination of unit
+equalities (`eliminate_units`, over zed-graph's work list; zed-graph depends on no crate);
+still to come: Karr's affine hull, after its row trait). Text helpers stay in
 `zed_kernel::text::prose` and `zedc_base` (`source`, `terminal`, `address`).
 
 Before writing an algorithm that is likely generic or reusable, search these crates and call what

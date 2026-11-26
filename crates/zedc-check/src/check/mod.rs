@@ -65,6 +65,7 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 use zed_collections::by_address::ByAddress;
+use zed_collections::ext::Ext;
 use zed_kernel::num::{
     FloatFormat, LiteralRounding, TooLarge, fixed_room, literal_f32, literal_f64, show_f32,
     show_f64,
@@ -14734,37 +14735,31 @@ struct RatRange {
     nonzero: bool,
 }
 
-/// An end of a range in a product: below every value, a value, or above every value.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum RatEnd {
-    Below,
-    At(Rat),
-    Above,
+/// An end of a range in a product: below every value, a value, or above every value. The
+/// derived order of [`Ext`] over the order of `Rat`'s values is the order of the ends.
+type RatEnd = Ext<Rat>;
+
+/// The sign of an end, `-1`, `0` or `1`.
+fn rat_end_sign(e: &RatEnd) -> i8 {
+    match e {
+        RatEnd::NegInf => -1,
+        RatEnd::Fin(r) if r.is_zero() => 0,
+        RatEnd::Fin(r) if r.is_negative() => -1,
+        _ => 1,
+    }
 }
 
-impl RatEnd {
-    /// The sign of the end, `-1`, `0` or `1`.
-    fn sign(&self) -> i8 {
-        match self {
-            RatEnd::Below => -1,
-            RatEnd::At(r) if r.is_zero() => 0,
-            RatEnd::At(r) if r.is_negative() => -1,
-            _ => 1,
-        }
-    }
-
-    /// The product of two ends: an end with no bound times a nonzero end has no bound, and
-    /// times `0r` is `0r`, the end of a range a product of ranges reaches at that corner.
-    fn mul(&self, other: &RatEnd) -> Option<RatEnd> {
-        Some(match (self, other) {
-            (RatEnd::At(x), RatEnd::At(y)) => RatEnd::At(x.mul(y).ok()?),
-            (x, y) => match x.sign() * y.sign() {
-                0 => RatEnd::At(Rat::int(0.into())),
-                s if s < 0 => RatEnd::Below,
-                _ => RatEnd::Above,
-            },
-        })
-    }
+/// The product of two ends: an end with no bound times a nonzero end has no bound, and times
+/// `0r` is `0r`, the end of a range a product of ranges reaches at that corner.
+fn rat_end_mul(a: &RatEnd, b: &RatEnd) -> Option<RatEnd> {
+    Some(match (a, b) {
+        (RatEnd::Fin(x), RatEnd::Fin(y)) => RatEnd::Fin(x.mul(y).ok()?),
+        (x, y) => match rat_end_sign(x) * rat_end_sign(y) {
+            0 => RatEnd::Fin(Rat::int(0.into())),
+            s if s < 0 => RatEnd::NegInf,
+            _ => RatEnd::PosInf,
+        },
+    })
 }
 
 impl RatRange {
@@ -14825,16 +14820,16 @@ impl RatRange {
 
     /// The product: the least and the greatest of the products of the ends.
     fn mul(&self, other: &RatRange) -> Option<RatRange> {
-        let lo = |r: &RatRange| r.lo.clone().map_or(RatEnd::Below, RatEnd::At);
-        let hi = |r: &RatRange| r.hi.clone().map_or(RatEnd::Above, RatEnd::At);
+        let lo = |r: &RatRange| r.lo.clone().map_or(RatEnd::NegInf, RatEnd::Fin);
+        let hi = |r: &RatRange| r.hi.clone().map_or(RatEnd::PosInf, RatEnd::Fin);
         let corners = [
-            lo(self).mul(&lo(other))?,
-            lo(self).mul(&hi(other))?,
-            hi(self).mul(&lo(other))?,
-            hi(self).mul(&hi(other))?,
+            rat_end_mul(&lo(self), &lo(other))?,
+            rat_end_mul(&lo(self), &hi(other))?,
+            rat_end_mul(&hi(self), &lo(other))?,
+            rat_end_mul(&hi(self), &hi(other))?,
         ];
         let at = |e: &RatEnd| match e {
-            RatEnd::At(r) => Some(r.clone()),
+            RatEnd::Fin(r) => Some(r.clone()),
             _ => None,
         };
         Some(RatRange {
@@ -20269,6 +20264,61 @@ mod tests {
         Span {
             start,
             end: start + 1,
+        }
+    }
+
+    /// `RatRange::mul` over ends with and without bounds (its ends are [`RatEnd`], an
+    /// [`Ext`] since DRY-ext-ends-2026-11-26): every product of two values of the ranges lies
+    /// in the product range, and each finite end of it is such a product (a corner), so it is
+    /// the least range. Values are sampled from -6 to 6 and at -40 and 40 within each range.
+    #[test]
+    fn the_product_of_two_rat_ranges_holds_every_product_and_no_more() {
+        let r = |i: i64| Rat::int(i.into());
+        let ends: Vec<Option<Rat>> = [None]
+            .into_iter()
+            .chain([-3, -1, 0, 2].map(|i| Some(r(i))))
+            .collect();
+        let samples: Vec<Rat> = (-6..=6).chain([-40, 40]).map(r).collect();
+        let ranges: Vec<RatRange> = ends
+            .iter()
+            .flat_map(|lo| {
+                ends.iter().map(move |hi| RatRange {
+                    lo: lo.clone(),
+                    hi: hi.clone(),
+                    nonzero: false,
+                })
+            })
+            .filter(|g| match (&g.lo, &g.hi) {
+                (Some(l), Some(h)) => l <= h,
+                _ => true,
+            })
+            .collect();
+        let within = |g: &RatRange, v: &Rat| {
+            g.lo.as_ref().is_none_or(|l| l <= v) && g.hi.as_ref().is_none_or(|h| v <= h)
+        };
+        for a in &ranges {
+            for b in &ranges {
+                let p = a.mul(b).expect("small products");
+                let products: Vec<Rat> = samples
+                    .iter()
+                    .filter(|x| within(a, x))
+                    .flat_map(|x| {
+                        samples
+                            .iter()
+                            .filter(|y| within(b, y))
+                            .map(|y| x.mul(y).expect("a small product"))
+                    })
+                    .collect();
+                for v in &products {
+                    assert!(within(&p, v), "{a:?} * {b:?} = {p:?} misses {v:?}");
+                }
+                for end in [&p.lo, &p.hi].into_iter().flatten() {
+                    assert!(
+                        products.contains(end),
+                        "{a:?} * {b:?}: {end:?} is no product"
+                    );
+                }
+            }
         }
     }
 

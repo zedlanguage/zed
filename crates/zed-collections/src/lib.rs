@@ -39,6 +39,8 @@
 //! [`by_address`]: a map key that is the address of an `Arc` and holds it, so no address in a
 //! memo is freed and given to another value while the memo lives.
 //!
+//! [`ext`]: a totally ordered set with the two infinities added, for the ends of intervals.
+//!
 //! [`period`]: the least period of a sequence that is a whole number of copies of a block, by
 //! the prefix function, O(n).
 //!
@@ -51,6 +53,7 @@ extern crate zed_numtheory as _;
 
 pub mod by_address;
 pub mod cartesian;
+pub mod ext;
 pub mod fenwick;
 pub mod held;
 pub mod index;

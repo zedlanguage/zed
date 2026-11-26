@@ -70,6 +70,7 @@ use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
+use zed_collections::ext::Ext;
 use zed_collections::fenwick::Fenwick;
 use zed_collections::index::to_u32;
 
@@ -13228,9 +13229,9 @@ impl Tb {
 struct Tot {
     lo: Int,
     hi: Int,
-    /// The terms whose least value is `Neg`, and `Pos`.
+    /// The terms whose least value is `NegInf`, and `PosInf`.
     lo_inf: [i64; 2],
-    /// The terms whose greatest value is `Neg`, and `Pos`.
+    /// The terms whose greatest value is `NegInf`, and `PosInf`.
     hi_inf: [i64; 2],
     no_val: i64,
     no_dom: i64,
@@ -13250,14 +13251,14 @@ impl Tot {
     fn put(&mut self, b: &Tb, f: &Int, k: i64) {
         let times = |v: &Val| match v {
             Val::Fin(x) => Val::Fin(x * f),
-            Val::Neg if f.is_negative() => Val::Pos,
-            Val::Pos if f.is_negative() => Val::Neg,
+            Val::NegInf if f.is_negative() => Val::PosInf,
+            Val::PosInf if f.is_negative() => Val::NegInf,
             inf => inf.clone(),
         };
         let add = |sum: &mut Int, inf: &mut [i64; 2], v: Val| match v {
             Val::Fin(x) => *sum = &*sum + &(&x * &Int::from(k)),
-            Val::Neg => inf[0] += k,
-            Val::Pos => inf[1] += k,
+            Val::NegInf => inf[0] += k,
+            Val::PosInf => inf[1] += k,
         };
         match b {
             Tb::Unset => unreachable!("a sum keeps a total only of terms with bounds"),
@@ -13311,7 +13312,7 @@ impl Tot {
     }
 
     /// The bounds of the sum with the constant `c`, as [`Sep::bounds`] gives them; an infinity
-    /// absorbs a value and the one that moves a bound outward wins, as in [`Val::plus`].
+    /// absorbs a value and the one that moves a bound outward wins, as in [`val_plus`].
     fn bounds(&self, c: &Int) -> Option<Option<(Val, Val)>> {
         if self.no_val > 0 {
             return Some(None);
@@ -13320,13 +13321,13 @@ impl Tot {
             return None;
         }
         let lo = match self.lo_inf {
-            [n, _] if n > 0 => Val::Neg,
-            [_, p] if p > 0 => Val::Pos,
+            [n, _] if n > 0 => Val::NegInf,
+            [_, p] if p > 0 => Val::PosInf,
             _ => Val::Fin(c + &self.lo),
         };
         let hi = match self.hi_inf {
-            [_, p] if p > 0 => Val::Pos,
-            [n, _] if n > 0 => Val::Neg,
+            [_, p] if p > 0 => Val::PosInf,
+            [n, _] if n > 0 => Val::NegInf,
             _ => Val::Fin(c + &self.hi),
         };
         Some(Some((lo, hi)))
@@ -13475,8 +13476,8 @@ impl Sep {
             let Some((l, h)) = pa_bounds(&self.term(t), dom(v)?) else {
                 return Some(None);
             };
-            lo = lo.plus(&l, Val::Neg);
-            hi = hi.plus(&h, Val::Pos);
+            lo = val_plus(&lo, &l, Val::NegInf);
+            hi = val_plus(&hi, &h, Val::PosInf);
         }
         Some(Some((lo, hi)))
     }
@@ -13562,9 +13563,9 @@ fn pa_image(pa: &Pa, dom: &IntervalSet) -> IntervalSet {
 /// The end of an interval set at the value `v`.
 fn val_end(v: Val) -> End {
     match v {
-        Val::Neg => NegInf,
+        Val::NegInf => NegInf,
         Val::Fin(x) => Fin(Num::from(&x)),
-        Val::Pos => PosInf,
+        Val::PosInf => PosInf,
     }
 }
 
@@ -13914,9 +13915,9 @@ impl LetPa {
         };
         match (whole, &l, &h) {
             (true, Val::Fin(x), Val::Fin(y)) => b.wide = Some(y - x),
-            (true, Val::Neg, Val::Fin(_)) => b.lo_only = 1,
-            (true, Val::Fin(_), Val::Pos) => b.hi_only = 1,
-            (true, Val::Neg, Val::Pos) => b.both = 1,
+            (true, Val::NegInf, Val::Fin(_)) => b.lo_only = 1,
+            (true, Val::Fin(_), Val::PosInf) => b.hi_only = 1,
+            (true, Val::NegInf, Val::PosInf) => b.both = 1,
             _ => b.odd = 1,
         }
         b
@@ -13958,9 +13959,9 @@ impl LetPa {
         ints: impl Fn(&Arc<str>) -> Option<&'d IntervalSet>,
     ) -> Option<IntervalSet> {
         let end = |v: Val| match v {
-            Val::Neg => NegInf,
+            Val::NegInf => NegInf,
             Val::Fin(x) => Fin(Num::from(&x)),
-            Val::Pos => PosInf,
+            Val::PosInf => PosInf,
         };
         Some(match self.formed().bounds(ints)? {
             Some((lo, hi)) => IntervalSet::range(end(lo), end(hi)),
@@ -13993,7 +13994,7 @@ impl LetPa {
     /// each input (the caller's tree keeps one per input). (3) `Tot::bounds` reads the
     /// sums and counts as `Sep::bounds` reads the terms one by one: no value wins (the sum
     /// has a value only where every term has one), then no domain, then the infinite end that
-    /// moves a bound outward (`Val::plus`). The one difference: `Sep::bounds` stops at the
+    /// moves a bound outward ([`val_plus`]). The one difference: `Sep::bounds` stops at the
     /// first term with no domain or no value, so with both it may give `None` where this
     /// gives the empty set, which is also sound. Test: `l01_39a_bit_words::bench::scaling::
     /// a_chain_of_sums_under_a_test_of_each_input_reads_each_summary_from_the_one_before` and
@@ -14002,9 +14003,9 @@ impl LetPa {
     /// count that only an input with an infinite end and a negative factor reaches.
     pub fn image_shifted(&self, s: &Shift) -> Option<IntervalSet> {
         let end = |v: Val| match v {
-            Val::Neg => NegInf,
+            Val::NegInf => NegInf,
             Val::Fin(x) => Fin(Num::from(&x)),
-            Val::Pos => PosInf,
+            Val::PosInf => PosInf,
         };
         let formed = self.formed();
         Some(
@@ -14927,32 +14928,26 @@ struct PaNode {
 }
 
 /// A value of a summary, or the infinity a piece's line tends to at an infinite end of its
-/// inputs ([`value_at`]); the derived order puts `Neg` below and `Pos` above every value.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-enum Val {
-    Neg,
-    Fin(Int),
-    Pos,
-}
+/// inputs ([`value_at`]); the derived order of [`Ext`] puts `NegInf` below and `PosInf` above
+/// every value.
+type Val = Ext<Int>;
 
-impl Val {
-    /// `self + o`, where an infinity absorbs a value and `first`, an infinity, wins over the
-    /// other: a lower bound is moved down first, an upper bound up.
-    fn plus(&self, o: &Val, first: Val) -> Val {
-        match (self, o) {
-            (Val::Fin(x), Val::Fin(y)) => Val::Fin(x + y),
-            _ if *self == first || *o == first => first,
-            (Val::Fin(_), inf) | (inf, _) => inf.clone(),
-        }
+/// `a + o`, where an infinity absorbs a value and `first`, an infinity, wins over the other: a
+/// lower bound is moved down first, an upper bound up.
+fn val_plus(a: &Val, o: &Val, first: Val) -> Val {
+    match (a, o) {
+        (Val::Fin(x), Val::Fin(y)) => Val::Fin(x + y),
+        _ if *a == first || *o == first => first,
+        (Val::Fin(_), inf) | (inf, _) => inf.clone(),
     }
 }
 
 /// An end of a demand as a [`Val`], the infinities as the infinities.
 fn end_val(e: &End) -> Val {
     match e {
-        NegInf => Val::Neg,
+        NegInf => Val::NegInf,
         Fin(v) => Val::Fin(Int::from(v)),
-        PosInf => Val::Pos,
+        PosInf => Val::PosInf,
     }
 }
 
@@ -15011,13 +15006,16 @@ impl Tag {
         }
         let at = |e: &End| match e {
             Fin(v) => Val::Fin(&self.slope * &Int::from(small(v))),
-            NegInf if self.slope.is_positive() => Val::Neg,
-            PosInf if self.slope.is_negative() => Val::Neg,
-            _ => Val::Pos,
+            NegInf if self.slope.is_positive() => Val::NegInf,
+            PosInf if self.slope.is_negative() => Val::NegInf,
+            _ => Val::PosInf,
         };
         let (u, v) = (at(&span.0), at(&span.1));
         let (least, greatest) = if u <= v { (u, v) } else { (v, u) };
-        (lo.plus(&least, Val::Neg), hi.plus(&greatest, Val::Pos))
+        (
+            val_plus(&lo, &least, Val::NegInf),
+            val_plus(&hi, &greatest, Val::PosInf),
+        )
     }
 }
 
@@ -15029,9 +15027,9 @@ fn value_at(x: &End, a: &Int, b: &Int) -> Val {
     match x {
         Fin(v) => Val::Fin(&(a * &Int::from(v)) + b),
         _ if a.is_zero() => Val::Fin(b.clone()),
-        NegInf if a.is_positive() => Val::Neg,
-        PosInf if a.is_negative() => Val::Neg,
-        _ => Val::Pos,
+        NegInf if a.is_positive() => Val::NegInf,
+        PosInf if a.is_negative() => Val::NegInf,
+        _ => Val::PosInf,
     }
 }
 
@@ -15153,8 +15151,8 @@ fn map_vals((lo, hi): &(Val, Val), mul: &Int, add: &Int) -> (Val, Val) {
     let f = |v: &Val| match v {
         Val::Fin(x) => Val::Fin(&(x * mul) + add),
         _ if mul.is_positive() => v.clone(),
-        Val::Neg => Val::Pos,
-        Val::Pos => Val::Neg,
+        Val::NegInf => Val::PosInf,
+        Val::PosInf => Val::NegInf,
     };
     if mul.is_positive() {
         (f(lo), f(hi))
@@ -20837,7 +20835,7 @@ mod tests {
         let top = IntervalSet::top();
         assert_eq!(
             bounds(&p(Prim::Abs, vec![x()]), top.clone()),
-            (fin(0), Val::Pos)
+            (fin(0), Val::PosInf)
         );
         assert_eq!(
             bounds(&p(Prim::Abs, vec![lin(2, -3)]), IntervalSet::of(-4, 6)),
@@ -20848,8 +20846,8 @@ mod tests {
             (fin(1), fin(13))
         );
         let two = |q: Prim, dom: IntervalSet| bounds(&p(q, vec![lin(1, 1), lin(-1, 10)]), dom);
-        assert_eq!(two(Prim::Min, top.clone()), (Val::Neg, fin(5)));
-        assert_eq!(two(Prim::Max, top.clone()), (fin(6), Val::Pos));
+        assert_eq!(two(Prim::Min, top.clone()), (Val::NegInf, fin(5)));
+        assert_eq!(two(Prim::Max, top.clone()), (fin(6), Val::PosInf));
         assert_eq!(two(Prim::Min, IntervalSet::of(0, 20)), (fin(-10), fin(5)));
         assert_eq!(two(Prim::Max, IntervalSet::of(0, 20)), (fin(6), fin(21)));
         // Parallel lines: one is chosen over the whole domain.

@@ -21847,107 +21847,16 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
                 ge.push(row);
             }
         }
-        // Eliminate unit equalities (and single-atom equalities) on atoms other than `keep`.
-        // Complexity tradeoff (XR-l139-neon-r4, found by AUDIT-kept-rows, b22-research3): naive
-        // version, passes over every equality until one changes nothing, each substitution
-        // reading every row: O(e·r) rows read for e equalities and r rows even when each atom
-        // is in two rows, quadratic on the chain `x_i == x_{i+1} + 1` of
-        // `two_var_tests::bench::a_chain_of_unit_equalities_scales`. Used: the rows holding each
-        // atom (`holds`), so a substitution reads only the rows that hold its atom, and a work
-        // list of equalities, which takes an equality again only after a substitution changed
-        // it. Whether an equality is used, and how, depends on its own terms alone, so an
-        // equality left unchanged since it was last read is still unused, and the list stops at
-        // the fixed point the passes stopped at. A substitution costs O(t log a) for each row
-        // holding its atom (t terms in its equality, a atoms), so the chain costs O(e log e)
-        // and the general case is bounded as the cost proof above states.
-        let ne = eq.len();
-        let mut holds: HashMap<Atom, BTreeSet<usize>> = HashMap::new();
-        for (j, row) in eq.iter().chain(ge.iter()).enumerate() {
-            for x in row.0.keys() {
-                holds.entry(x.clone()).or_default().insert(j);
-            }
-        }
-        let mut work = zed_graph::Worklist::all(ne, zed_graph::Order::Fifo);
-        let mut pivots: Vec<(Atom, Row)> = Vec::new();
-        while let Some(i) = work.pop() {
-            if eq[i].0.is_empty() {
-                if !eq[i].1.is_zero() {
-                    return Some(Reduced::Empty);
-                }
-                continue;
-            }
-            // A single-atom equality `a*x + k == 0` with `x != keep` gives `x` its value; else
-            // a term of `x != keep` with a unit coefficient is solved for.
-            let single = eq[i].0.len() == 1;
-            let free = |x: &Atom| keep != Some(x);
-            let pick = if single {
-                let (x, a) = eq[i].0.iter().next().expect("one term");
-                free(x).then(|| (x.clone(), a.clone()))
-            } else {
-                (eq[i].0.iter())
-                    .find(|(x, a)| free(x) && a.abs() == Int::ONE)
-                    .map(|(x, a)| (x.clone(), a.clone()))
-            };
-            let Some((x, a)) = pick else {
-                continue;
-            };
-            let val = if single {
-                let k = &eq[i].1;
-                if !k.mod_floor(&a).is_zero() {
-                    return Some(Reduced::Empty);
-                }
-                Some(-&k.div_floor(&a))
-            } else {
-                None
-            };
-            let (t, k) = std::mem::take(&mut eq[i]);
-            // `a x + sum_(y != x) t_y y + k == 0` with `a = ±1` gives `x = -a (sum t_y y + k)`
-            // (`1 / a = a`); a single-atom equality gives `x = val`.
-            pivots.push(match &val {
-                Some(v) => (x.clone(), (BTreeMap::new(), v.clone())),
-                None => (
-                    x.clone(),
-                    (
-                        (t.iter().filter(|(y, _)| **y != x))
-                            .map(|(y, v)| (y.clone(), -&(&a * v)))
-                            .collect(),
-                        -&(&a * &k),
-                    ),
-                ),
-            });
-            for y in t.keys() {
-                if let Some(set) = holds.get_mut(y) {
-                    set.remove(&i);
-                }
-            }
-            let holders = holds.remove(&x).unwrap_or_default();
-            for j in holders {
-                let row = if j < ne { &mut eq[j] } else { &mut ge[j - ne] };
-                let Some(m) = row.0.remove(&x) else {
-                    continue;
-                };
-                if let Some(val) = &val {
-                    row.1 = &row.1 + &(&m * val);
-                } else {
-                    meter::charge(t.len() as u64 + 1).ok()?;
-                    let f = -&(&m * &a);
-                    for (y, v) in t.iter().filter(|(y, _)| **y != x) {
-                        let s = &row.0.remove(y).unwrap_or(Int::ZERO) + &(&f * v);
-                        let set = holds.entry(y.clone()).or_default();
-                        if s.is_zero() {
-                            set.remove(&j);
-                        } else {
-                            row.0.insert(y.clone(), s);
-                            set.insert(j);
-                        }
-                    }
-                    row.1 = &row.1 + &(&f * &k);
-                }
-                if j < ne {
-                    work.push(j);
-                }
-            }
-        }
+        // Eliminate unit equalities (and single-atom equalities) on atoms other than `keep`
+        // (`zedc_affine::equalities::eliminate_units`, whose comment has the work-list
+        // tradeoff), charging each substitution into a row; the general cost is bounded as the
+        // cost proof above states.
+        use zedc_affine::equalities::{Eliminated, eliminate_units};
+        let pivots = match eliminate_units(&mut eq, &mut ge, keep, meter::charge) {
+            Err(_) => return None,
+            Ok(Eliminated::Empty) => return Some(Reduced::Empty),
+            Ok(Eliminated::Solved(p)) => p,
+        };
         let mut rows: Vec<Row> = Vec::with_capacity(ge.len() + 2 * eq.len());
         for (t, k) in ge {
             if t.is_empty() {
