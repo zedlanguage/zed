@@ -6904,10 +6904,18 @@ struct Block {
     added: Vec<PartKey>,
     /// A name of the block was given a set of more than one piece by a step outside the
     /// block's projection, or a name of the block, not the star's leaf, holds more than one
-    /// piece when the block is made or brought up to date ([`Block::holds_hole`],
+    /// piece when the block is made or brought up to date ([`Block::holds_hole_from`],
     /// [`Block::of`], [`Block::update`]), and the block has not been projected whole since
     /// ([`Block::gained_hole`], [`Scope::project_block`]).
     hole_pending: bool,
+    /// The names of the block, other than the star's leaf, that hold more than one piece in
+    /// [`Block::names_at`]: `{n in users | leaf != n and names_at[n] has more than one
+    /// piece}`. Kept so by the three writers of `users` and `names_at`: [`Block::add_part`]
+    /// adds a name that enters `users` and holds a hole in `names_at`, [`Block::remove_part`]
+    /// removes a name that leaves `users`, and [`Scope::keep`] brings the set from the old
+    /// `names_at` to the new ([`Block::sync_holed`]); `leaf` is not written after
+    /// [`Block::of`]. Read by [`Block::holds_hole_from`].
+    holed_users: imbl::OrdSet<Arc<str>>,
     /// For each part whose last projection recorded no refusal, what that projection read and
     /// left ([`ExactAt`]); [`Scope::project_block`] skips projecting the part again while all
     /// of it is unchanged. An entry goes with its part ([`Block::remove_part`]) and is replaced
@@ -7003,6 +7011,7 @@ impl Block {
             outer_names_at: names.clone(),
             added: Vec::new(),
             hole_pending: false,
+            holed_users: imbl::OrdSet::new(),
             exact_at: imbl::OrdMap::new(),
         };
         for (g, k) in &core {
@@ -7011,19 +7020,119 @@ impl Block {
         out.add_constraints();
         // A new block has no products of its own from before, so a name it finds with more
         // than one piece was given them outside its projection ([`Block::hole_pending`]).
-        // Cost: O(N) for N names, once per block made, which reads its N names already.
-        out.hole_pending = out.holds_hole(names);
+        // `names_at` is `names` here and `holed_users` was filled by `add_part` as the users
+        // entered, so the test is whether some name of the block, not the leaf, holds more than
+        // one piece in `names`. Cost: O(1) here, O(log N) per name as it enters.
+        out.hole_pending = !out.holed_users.is_empty();
         out
     }
 
     /// Whether a name of the block other than the star's leaf holds more than one piece in
-    /// `names`: the test by which [`Block::of`] and [`Block::update`] ask for the whole block
-    /// ([`Block::hole_pending`]). O(u log N) for the block's `u` names and `N` in scope; it
-    /// stops at the first such name.
-    fn holds_hole(&self, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
-        (self.users.keys()).any(|n| {
-            self.leaf.as_ref() != Some(n) && names.get(n).is_some_and(|p| p.ints().len() > 1)
-        })
+    /// `names`: the test by which [`Block::update`] asks for the whole block
+    /// ([`Block::hole_pending`]), as [`Block::of`] does. `changed` must hold every name of
+    /// `users`, other than the leaf, whose product in `names` is not `same_framed_opt` to its
+    /// product in [`Block::names_at`]; it may hold other names.
+    ///
+    /// Complexity tradeoff (PERF-hole-pending-every-name): naive version, every name of
+    /// `users` looked up in `names`, O(u log N) for the block's `u` names and `N` in scope,
+    /// on every update; a block that holds no hole is read through to its end each time, so
+    /// `k` disjunctions added one at a time to one block cost O(k² log k) in all
+    /// (`l01_39_reduced_product::scaling::bench::a_disjunction_beside_a_wide_one_in_its_block_costs_its_own_part`,
+    /// 11.67 times the work at 8k, where no name of the block ever holds a hole). Used: the
+    /// set of the block's holed names at `names_at` ([`Block::holed_users`]) and the names
+    /// changed since, O(c (log N + log u)) for c in `changed`, O(1) when none changed.
+    ///
+    /// Proof that it gives the naive version's answer. Write `U` for the names of `users`
+    /// other than the leaf, `h(m, n)` for "the product of `n` in map `m` has more than one
+    /// piece" (false when `n` is absent), `H0 = {n in U | h(names_at, n)}`, which is
+    /// `holed_users`, and `H1 = {n in U | h(names, n)}`, whose non-emptiness is the naive
+    /// answer.
+    /// 1. A name `n` of `U` not in `changed` has `same_framed_opt(names_at[n], names[n])`,
+    ///    by the condition on `changed`. That gives `h(names_at, n) = h(names, n)`: two
+    ///    present products are `same_framed` only with equal `ints()` (`same_framed`), so
+    ///    the same number of pieces; a product compared with an absent one is compared with
+    ///    `Product::top()` (`same_framed_opt`), so its `ints()` are one piece, and an absent
+    ///    one has no hole by the definition of `h`.
+    /// 2. So `H0` and `H1` differ only at names of `changed`.
+    /// 3. The loop visits each name of `changed` in `U`. If one is in `H1`, the answer
+    ///    `true` is the naive one, since `H1` is not empty.
+    /// 4. Otherwise no name of `changed` is in `H1`, and the loop removes each name of
+    ///    `changed` in `U` from `remaining`, a copy of `H0`. At its end `remaining` is
+    ///    `H0` less those names. A name of `remaining` is in `H0` and not in `changed`, so
+    ///    in `H1` by 1; a name of `H1` is not in `changed` (this case), so in `H0` by 1 and
+    ///    never removed. So `remaining = H1`, and `!remaining.is_empty()` is the naive
+    ///    answer.
+    fn holds_hole_from(
+        &self,
+        names: &imbl::OrdMap<Arc<str>, Product>,
+        changed: &[Arc<str>],
+    ) -> bool {
+        if changed.is_empty() {
+            return !self.holed_users.is_empty();
+        }
+        let mut remaining = self.holed_users.clone();
+        for n in changed {
+            if self.leaf.as_ref() == Some(n) || !self.users.contains_key(n) {
+                continue;
+            }
+            if names.get(n).is_some_and(|p| p.ints().len() > 1) {
+                return true;
+            }
+            remaining.remove(n);
+        }
+        !remaining.is_empty()
+    }
+
+    /// Brings [`Block::holed_users`] from [`Block::names_at`] to `names`, for
+    /// [`Scope::keep`], which then sets `names_at` to `names`. A name's membership depends
+    /// only on whether it is a user, whether it is the leaf, and the number of pieces of its
+    /// product, so only names whose product changed need a look: those the difference of the
+    /// two maps gives, less the updates between `same_framed` products (equal `ints()`, so the
+    /// same number of pieces). Each such name is put in the set or taken out by the
+    /// definition; a name the difference does not give has the same product in both maps.
+    /// The set is built again from `users` when that costs less than the difference can
+    /// ([`Block::users_cheaper_than_diff`]) or when more names changed than the block has, as
+    /// [`Block::update`] walks them. Cost: O(min(c, u) (log N + log u)) for c names changed,
+    /// u in the block and N in scope, or O(1) when the two maps are one.
+    fn sync_holed(&mut self, names: &imbl::OrdMap<Arc<str>, Product>) {
+        if self.names_at.ptr_eq(names) {
+            return;
+        }
+        if !self.users_cheaper_than_diff(names) {
+            let mut walked = 0;
+            let mut overflow = false;
+            for d in self.names_at.diff(names) {
+                let (n, holed) = match d {
+                    DiffItem::Update {
+                        old: (_, a),
+                        new: (_, b),
+                    } if same_framed(a, b) => continue,
+                    DiffItem::Add(n, p) | DiffItem::Update { new: (n, p), .. } => {
+                        (n, p.ints().len() > 1)
+                    }
+                    DiffItem::Remove(n, _) => (n, false),
+                };
+                walked += 1;
+                if walked > self.users.len() {
+                    overflow = true;
+                    break;
+                }
+                if holed && self.leaf.as_ref() != Some(n) && self.users.contains_key(n) {
+                    self.holed_users.insert(n.clone());
+                } else {
+                    self.holed_users.remove(n);
+                }
+            }
+            if !overflow {
+                return;
+            }
+        }
+        self.holed_users = (self.users.keys())
+            .filter(|n| {
+                self.leaf.as_ref() != Some(*n) && names.get(*n).is_some_and(|p| p.ints().len() > 1)
+            })
+            .cloned()
+            .collect();
     }
 
     /// Whether a name of the block changed since it was last kept and now holds more than one
@@ -7266,7 +7375,19 @@ impl Block {
         };
         for n in &names {
             let users = self.users.entry(n.clone()).or_default();
+            // `remove_part` removes a name whose parts are all gone, so `users` is empty here
+            // only for a name entering the block.
+            let entering = users.is_empty();
             users.of_role(role).insert(at.clone());
+            // A name entering the block joins [`Block::holed_users`] by its definition: when it
+            // is not the leaf and holds a hole in `names_at`. A name already in the block is
+            // in the set or not by the same definition already (the field's doc).
+            if entering
+                && self.leaf.as_ref() != Some(n)
+                && self.names_at.get(n).is_some_and(|p| p.ints().len() > 1)
+            {
+                self.holed_users.insert(n.clone());
+            }
             if recession.is_none() && puncture_key.is_none() {
                 if let Some(id) = chain_id {
                     *self
@@ -7555,6 +7676,7 @@ impl Block {
                 us.of_role(part.role).remove(at);
                 if us.is_empty() {
                     self.users.remove(n);
+                    self.holed_users.remove(n);
                 }
             }
             if part.recession.is_none() && part.puncture_key.is_none() {
@@ -7786,7 +7908,7 @@ impl Block {
     /// origin/main in 5f31032ee, counted 54,137 calls in `l01_39_scope_relations` and 15,042
     /// in `l01_39_reduced_product`, one of them not certifying all, none partial. The merge
     /// can change which work lists occur (`Block::reads_hole`, since replaced by
-    /// `Block::holds_hole`, `sync_bounds`,
+    /// `Block::holds_hole`, now `Block::holds_hole_from`, `sync_bounds`,
     /// `guard_preimage_listed`), so these counts are of that build.
     /// Each entry is used up once: the branch of [`Scope::project_block`] that queues its parts
     /// has removed `fired_chains[k]` and does not put it back.
@@ -9658,7 +9780,8 @@ impl Block {
         });
         // A block brought up to date asks for the whole block ([`Block::hole_pending`]) on the
         // rule [`Block::of`] uses for a block made new: some name of the block, not the star's
-        // leaf, holds more than one piece ([`Block::holds_hole`]). `holds_hole` reads only
+        // leaf, holds more than one piece ([`Block::holds_hole_from`], which gives the answer of
+        // reading every name of the block in `names`). That test reads only
         // `users`, `leaf` and `names`, so the kept block asks whenever the block made from
         // scratch does if the two have the same users and leaf. The leaf is the same: a block
         // whose leaf changed is made anew (the doc of this function).
@@ -9693,21 +9816,25 @@ impl Block {
         //
         // Complexity tradeoff: naive version, as here, every update of a block holding a hole
         // asks for one projection of the whole block, O(k) parts for a block of k parts; the
-        // narrower rule above was cheaper and wrong. Cost: the scan, O(u log N) for u names of
-        // the block, stopping at the first holed name, per update, beside the update's own
-        // O(u log N) comparison of names; and one whole-block projection per update of a
-        // holed block.
+        // narrower rule above was cheaper and wrong. Cost: the test, O(1) when no name of the
+        // block changed since its last projection and O(c (log N + log u)) for c changed
+        // (`changed_names`, which holds every name of the block, not the leaf, whose product
+        // is not `same_framed_opt` to its product in `names_at`: both paths above push each
+        // such name, and `leaf_only_tightened` skips only the leaf), beside the update's own
+        // comparison of names; and one whole-block projection per update of a holed block.
+        // The test read every name of the block, O(u log N) per update, until
+        // PERF-hole-pending-every-name: in
         // `scaling::bench::a_disjunction_beside_a_wide_one_in_its_block_costs_its_own_part`,
-        // k disjunctions added one at a time beside one wide one in a block that holds a hole,
-        // is O(k^2) under this rule: 11.67 times the work at 8k (4.28G to 5.77G instructions
-        // at k = 1024), past the limit of 10.5; it is parked as
-        // PERF-hole-pending-every-name, and a rule that projects again only the parts that
-        // read a holed name, with a proof that it gives the whole block's projection, is
-        // XR-hole-pending-partial-rule.
+        // k disjunctions added one at a time to one block of which no name ever holds a hole
+        // (a probe on hm1, 2026-11-26, found every update with no holed name and no
+        // whole-block projection), that read was O(k² log k) in all, 11.67 times the work at
+        // 8k (4.28G to 5.77G instructions at k = 1024), past the limit of 10.5
+        // (XR-hole-pending-partial-rule).
         // `deep_condition::bench::arms_of_a_chain_of_paired_choices_take_time_within_n_log_n`
-        // does 39% more work at 960 (12.5G to 17.4G instructions) at the same ratio, 8.40.
+        // did 39% more work at 960 under that read (12.5G to 17.4G instructions) at the same
+        // ratio, 8.40; with `holds_hole_from`, 12.52G at 960, ratio 8.55 (hm1, 2026-11-26).
         if !next.hole_pending {
-            next.hole_pending = next.holds_hole(names);
+            next.hole_pending = next.holds_hole_from(names, &changed_names);
         }
         Some((next, due))
     }
@@ -10483,7 +10610,9 @@ impl Scope {
 
     /// Keeps `block` as its projection left it, with the names' products as they are now.
     fn keep(&mut self, mut block: Block) {
-        block.names_at = self.names.view().clone();
+        let now = self.names.view().clone();
+        block.sync_holed(&now);
+        block.names_at = now;
         if !self.in_case {
             block.outer_names_at = block.names_at.clone();
         }
