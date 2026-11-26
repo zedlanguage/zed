@@ -608,8 +608,9 @@ mod tests {
 
     /// Knuth's search gives the least depth of each rule of the syntactic grammar at every
     /// layer, as the naive fixed point of `Depths::of` does; `Depths::new` reads the grammar
-    /// through `parts`, not `of`, so the two are written apart. Knuth's search: D. E. Knuth, "A generalization of Dijkstra's algorithm", IPL 6(1),
-    /// 1977, doi:10.1016/0020-0190(77)90002-3; the full comment is at `impl Depths`.
+    /// through `parts`, not `of`, so the two are written apart. Knuth's search: D. E. Knuth,
+    /// "A generalization of Dijkstra's algorithm", IPL 6(1), 1977,
+    /// doi:10.1016/0020-0190(77)90002-3; the full comment is at `impl Depths`.
     #[test]
     fn depths_match_the_naive_fixed_point_at_every_layer() {
         let g = Grammar::read_open(&[include_str!("../../../zed/grammar/syntax.peg")]).unwrap();

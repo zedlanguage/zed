@@ -1329,15 +1329,17 @@ enum Phase {
 /// to each node `x` (0 for [`Rounds::new`]), by Dijkstra's search on the edges of weight at
 /// least 0 with a round of the negative edges out of the nodes it settled after each, one step
 /// of a phase per call of [`Rounds::step`], so that utvpi can interleave it with Goldberg and
-/// Radzik's search, or all of it in one call of `Rounds::run`, negsssp's `bf_dijkstra`. After round `k` each label is at most the weight of every walk with `k`
-/// negative edges besides the source's, so a graph whose shortest paths have few negative
-/// edges takes few rounds, each O(E log V), whatever the order of its nodes; a label that falls
+/// Radzik's search, or all of it in one call of `Rounds::run`, negsssp's `bf_dijkstra`. After
+/// round `k` each label is at most the weight of every walk with `k` negative edges besides
+/// the source's, so a graph whose shortest paths have few negative edges takes few rounds,
+/// each O(E log V), whatever the order of its nodes; a label that falls
 /// in round `eta` shows a walk shorter than all with `eta` negative edges, and so a negative
 /// cycle (\[D\] Theorem 3.1; with `eta = V`, since a simple path has at most `V - 1` edges).
 ///
 /// In `Rounds::run` from `Rounds::with_parents`, a cycle of parent pointers is a negative
-/// cycle too (B. V. Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms", Math. Programming
-/// 85(2), 1999, doi:10.1007/s101070050058, read 2026-11-21, PDF from LibGen; Lemma 3, p. 282:
+/// cycle too (B. V. Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms",
+/// Math. Programming 85(2), 1999, doi:10.1007/s101070050058, read 2026-11-21, PDF from
+/// LibGen; Lemma 3, p. 282:
 /// "Any cycle in G_p is negative"); it is looked for after each round, from the nodes settled
 /// or fallen in it, each node visited once. That is their amortized search (sec. 6.4, p. 289),
 /// one O(n) search per round, not their walk to the root (sec. 6.3), which follows the parent
