@@ -30118,6 +30118,110 @@ mod tests {
         assert!(!hl.is_idle(&g1));
     }
 
+    /// [`Block::holed_users`] equals the set built from scratch after [`Block::of`] and after
+    /// each [`Block::sync_holed`], on each of its three paths: the walk of the two maps'
+    /// difference that ends, the walk that passes the block's number of names and builds the
+    /// set again, and the scan of the block's names. The block is the star of `a` over
+    /// `a >= x0 + x1 + x2 + x3` with `xi >= 0` (5 names, the leaf `a`); the scope adds `b0`..`b5`, which
+    /// sort before the `x`s, so the 6 of them changing fill the walk before it reaches the
+    /// holed names. A hole on the leaf stays out of the set.
+    #[test]
+    fn holed_users_match_the_set_from_scratch_on_each_path_of_sync_holed() {
+        let int = |lo: i64, hi: i64| {
+            Product::of_type_within(Type::int(), &IntervalSet::range(End::of(lo), End::of(hi)))
+        };
+        let holed = || {
+            let two = IntervalSet::range(End::of(0), End::of(0))
+                .join(&IntervalSet::range(End::of(2), End::of(2)));
+            Product::of_type_within(Type::int(), &two)
+        };
+        let mut lin = Lin::atom(Atom::Sym("a".into()));
+        for x in ["x0", "x1", "x2", "x3"] {
+            lin = lin.plus(&Lin::atom(Atom::Sym(x.into())).times(-1));
+        }
+        let mut rel = Conjuncts::default();
+        rel.and(Formula::Con(Con { lin, rel: Rel::Ge }));
+        // A bound on each hub, so each is in more conjuncts than the leaf, as a star needs
+        // ([`Conjuncts::star`]).
+        for x in ["x0", "x1", "x2", "x3"] {
+            let lin = Lin::atom(Atom::Sym(x.into()));
+            rel.and(Formula::Con(Con { lin, rel: Rel::Ge }));
+        }
+        let b_id = rel.star("a").expect("star block for a");
+        let from_scratch = |b: &Block, names: &imbl::OrdMap<Arc<str>, Product>| {
+            (b.users.keys())
+                .filter(|n| {
+                    b.leaf.as_ref() != Some(*n) && names.get(*n).is_some_and(|p| p.ints().len() > 1)
+                })
+                .cloned()
+                .collect::<imbl::OrdSet<Arc<str>>>()
+        };
+        // The items of the difference `sync_holed`'s walk counts: all but the updates between
+        // `same_framed` products.
+        let counted = |at: &imbl::OrdMap<Arc<str>, Product>,
+                       now: &imbl::OrdMap<Arc<str>, Product>| {
+            at.diff(now)
+                .filter(|d| {
+                    !matches!(d, DiffItem::Update { old: (_, a), new: (_, b) } if same_framed(a, b))
+                })
+                .count()
+        };
+        let set = |m: &imbl::OrdMap<Arc<str>, Product>, n: &str, p: Product| {
+            let mut m = m.clone();
+            m.insert(Arc::from(n), p);
+            m
+        };
+        let mut names0: imbl::OrdMap<Arc<str>, Product> = imbl::OrdMap::new();
+        for n in [
+            "a", "b0", "b1", "b2", "b3", "b4", "b5", "c", "x0", "x1", "x3",
+        ] {
+            names0.insert(Arc::from(n), Product::top());
+        }
+        names0.insert(Arc::from("x2"), holed());
+        let mut block = Block::of(&rel, b_id, &names0);
+        assert_eq!(block.users.len(), 5);
+        assert_eq!(block.leaf.as_deref(), Some("a"));
+        let want: imbl::OrdSet<Arc<str>> = [Arc::from("x2")].into_iter().collect();
+        assert_eq!(block.holed_users, want);
+        assert_eq!(block.holed_users, from_scratch(&block, &names0));
+        assert!(block.hole_pending);
+        let step = |block: &mut Block, now: imbl::OrdMap<Arc<str>, Product>, want: &[&str]| {
+            block.sync_holed(&now);
+            block.names_at = now;
+            let want: imbl::OrdSet<Arc<str>> = want.iter().map(|n| Arc::from(*n)).collect();
+            assert_eq!(block.holed_users, want);
+            assert_eq!(block.holed_users, from_scratch(block, &block.names_at));
+        };
+        // The walk that ends: 3 items (a, x0, x2), at most the block's 5 names; the leaf's
+        // hole stays out.
+        let names1 = set(
+            &set(&set(&names0, "a", holed()), "x0", holed()),
+            "x2",
+            Product::top(),
+        );
+        assert!(!block.users_cheaper_than_diff(&names1));
+        assert!(counted(&block.names_at, &names1) <= block.users.len());
+        step(&mut block, names1.clone(), &["x0"]);
+        // The walk that passes 5 names at `b5`, before `x0` and `x1`, and builds the set again.
+        let mut names2 = set(&set(&names1, "x0", Product::top()), "x1", holed());
+        for (i, b) in ["b0", "b1", "b2", "b3", "b4", "b5"].into_iter().enumerate() {
+            names2 = set(&names2, b, int(0, i as i64));
+        }
+        assert!(!block.users_cheaper_than_diff(&names2));
+        assert!(counted(&block.names_at, &names2) > block.users.len());
+        step(&mut block, names2.clone(), &["x1"]);
+        // The scan: 100 more names in scope make the block's names cheaper to read than the
+        // difference.
+        let mut names3 = set(&set(&names2, "x1", int(0, 1)), "x3", holed());
+        for i in 0..100 {
+            names3 = set(&names3, &format!("d{i:03}"), Product::top());
+        }
+        assert!(block.users_cheaper_than_diff(&names3));
+        step(&mut block, names3.clone(), &["x3"]);
+        // The maps shared: nothing to do.
+        step(&mut block, names3, &["x3"]);
+    }
+
     #[test]
     fn puncture_context_guard_and_base_tightening_are_exact() {
         // `x in [0..=1]`, `y in [0..=4]`, `z in [0..=4]`, `a in [0..]`, `a >= x + y + z`,
