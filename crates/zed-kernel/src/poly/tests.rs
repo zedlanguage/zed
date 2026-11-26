@@ -643,10 +643,9 @@ fn a_square_is_charged_two_of_its_three_transforms() {
         plan.dense - CHOICE_UNIT * (DENSE_COST + SLOT_COST * span)
     };
     // `n` terms at every index, half a word each packed, for the least `n = 1000 * 2^i` whose
-    // square `mul` takes by transforms (`squares_by_transform`): the production leaves apply
-    // here since the fast products moved to zed-bignum (DRY-bignum-crate-2026-11-26), where the
-    // test build's leaf of 48 put 1000 terms past it. `-3` has the bits of `3`, so the two
-    // products pack alike.
+    // square `mul` takes by transforms (`squares_by_transform`), so that the test holds with the
+    // unit tests' leaf of 48 (1000 terms) and with the measured leaves alike. `-3` has the bits
+    // of `3`, so the two products pack alike.
     let n = (0..12)
         .map(|i| 1000usize << i)
         .find(|&n| crate::num::squares_by_transform(n / 2 + 1))
@@ -947,11 +946,10 @@ fn a_chain_of_sums_is_one_sum() {
 
 #[test]
 fn a_square_is_chosen_at_its_share() {
-    // `t` terms about every `g` indices, squared. `t` is searched from 64 up: the test build
-    // squared from 48 packed words by transforms, but since the fast products moved to
-    // zed-bignum (DRY-bignum-crate-2026-11-26) the production leaves apply here, and a square
-    // goes to the transforms, and is charged two thirds of a product of two numbers, only at
-    // larger sizes (`num::squares_by_transform`).
+    // `t` terms about every `g` indices, squared. `t` is searched from 64 up: the unit tests
+    // square from 48 packed words by transforms, the measured leaves only at larger sizes, and
+    // only there is a square charged two thirds of a product of two numbers
+    // (`num::squares_by_transform`); the search holds with either.
     let square_of = |t: u128, g: u128| {
         let at: Vec<u128> = (0..t).map(|i| g * i + (i * 7) % g).collect();
         packed(&at, 3)

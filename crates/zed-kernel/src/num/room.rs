@@ -7,9 +7,9 @@
 use std::cell::Cell;
 use std::sync::OnceLock;
 
+use super::bignum::fast;
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, ToPrimitive, Zero};
-use zed_bignum::fast;
 use zed_numtheory::BitLen;
 
 /// A number the evaluator must build, read or compare, for which the system refused the memory

@@ -308,6 +308,38 @@ use zed_numtheory::{gcd_big_u64, inverse_mod_2_64, inverse_mod_u64};
 
 use zed_numtheory::BitLen;
 
+/// Whether this build takes the unit tests' small leaves ([`MUL_LEAF`] 48, [`TOOM_COST`] and
+/// [`DIV_COST`] infinite, [`RECIP_LEAF`] 4 bits, [`GCD_LEAF`] 16 words, [`PRINT_HANDOFF`] and
+/// [`PRINT_WHOLE`] 1) in place of the measured ones, so that tests on small numbers reach the
+/// transforms, the reciprocal, the half gcd and the split printing. True in zed-bignum's own
+/// unit tests (`cfg(test)`) and in the package zed-bignum-small, which compiles this crate's
+/// source a second time (its Cargo.toml) and which zed-kernel's unit tests take in place of
+/// zed-bignum (zed-kernel `num.rs`, `bignum`), as they took the small leaves while this file was
+/// in zed-kernel (TEST-kernel-small-leaves-after-bignum-move). False in every other build. The
+/// leaves never change a result, only which method computes it.
+///
+/// Why a second package and not a Cargo feature of zed-bignum. Cargo builds a package once per
+/// build, with the union of the features every package in the build asks for, and a
+/// dev-dependency's ask counts whenever a test target is built (resolver 2 and 3: "features
+/// enabled on dev-dependencies will not be unified when those same dependencies are used as a
+/// normal dependency, unless those dev-dependencies are currently being built", The Cargo Book,
+/// "Features", section "Feature resolver version 2", read 2026-11-26). So a feature that
+/// zed-kernel's dev-dependency turned on would be on in `cargo test --workspace`, the build of
+/// tools/run_tests.sh and of job.sh's prebuild, for every test binary that links zed-bignum,
+/// zed-tests' and zed-benches' benchmarks of the production leaves among them; and
+/// merge_check's step 0a refuses a package whose features alone differ from the workspace
+/// build's, which zed-tests' would. A second package has no such union: only a build that
+/// links zed-kernel's unit tests compiles it, and only that binary links it (zed-kernel is
+/// its one dependent, as a dev-dependency). Checked by the tests
+/// `zed_kernel::num::tests::the_unit_tests_take_the_small_leaves` (true there) and
+/// `zedc_int::int::tests::the_unit_tests_of_another_crate_take_the_measured_leaves` (false in
+/// a test build of a crate above zed-bignum); neither can see a build no test runs in.
+///
+/// The package's name comes from `CARGO_PKG_NAME`, which Cargo sets for each package it
+/// compiles, so this is a constant and the leaves cost nothing at run time.
+const SMALL_LEAVES: bool =
+    cfg!(test) || matches!(env!("CARGO_PKG_NAME").as_bytes(), b"zed-bignum-small");
+
 /// The 64-bit words at or below which the narrower factor goes to num-bigint's
 /// multiplication, the other methods' costs not computed. Measured on 2026-11-07 at load 34
 /// to 41 (BIGINT-fast-mul), the transform took 1.74 times num-bigint's time at 256 by 256
@@ -325,12 +357,9 @@ use zed_numtheory::BitLen;
 /// the transforms cheaper at these widths: `mul 4` crosses at 390 words and `mul 32` at 417
 /// (num-bigint 1.005 times the transform's instructions at 413 by 13,216 words, 0.992 at
 /// 417), and at 459 the transform was 1.038 times cheaper at 431 by 1724 words, so 400. The
-/// product does not depend on it; the unit tests use a smaller leaf, so that they reach the
-/// transforms at small sizes.
-#[cfg(not(test))]
-const MUL_LEAF: usize = 400;
-#[cfg(test)]
-const MUL_LEAF: usize = 48;
+/// product does not depend on it; the unit tests use a smaller leaf ([`SMALL_LEAVES`]), so that
+/// they reach the transforms at small sizes.
+const MUL_LEAF: usize = if SMALL_LEAVES { 48 } else { 400 };
 
 /// num-bigint 0.4.8's cost of a product of `s` by `l >= s` words, per `l s^0.465`, in the
 /// units of [`TRANSFORM_COST`]. Its multiplication is Toom-3 above 256 words, `s^log3(5)` =
@@ -353,12 +382,9 @@ const MUL_LEAF: usize = 48;
 /// 6.33 to 6.42 alone, and at 7.0 each of the three takes the method of its measured
 /// crossover at every size (exit status 0); at 5.8, `mul 4` took num-bigint's product at 431
 /// to 512 by 4 times the words, up to 1.038 times the transform's work. The product does not
-/// depend on it; the unit tests never take num-bigint's product above [`MUL_LEAF`], so that
-/// they reach the transforms.
-#[cfg(not(test))]
-const TOOM_COST: f64 = 7.0;
-#[cfg(test)]
-const TOOM_COST: f64 = f64::INFINITY;
+/// depend on it; the unit tests ([`SMALL_LEAVES`]) never take num-bigint's product above
+/// [`MUL_LEAF`], so that they reach the transforms.
+const TOOM_COST: f64 = if SMALL_LEAVES { f64::INFINITY } else { 7.0 };
 
 /// `log3(5) - 1`, the exponent of the narrower factor in [`TOOM_COST`]: Toom-3 makes five
 /// products of a third the size, `T(n) = 5 T(n/3) + O(n) = O(n^log3(5))`, `log3(5) =
@@ -437,10 +463,14 @@ const DIV_LEAF: u64 = 64 * 64;
 /// with the quotients 8.40 times and the rest 4.55 times from 131,072 to 524,288 bits
 /// (Callgrind, h5-req26), since both shapes were below their crossovers at n and past them at
 /// 8n.
-#[cfg(not(test))]
-const DIV_COST: f64 = DIV_COST_FIT;
-#[cfg(test)]
-const DIV_COST: f64 = f64::INFINITY;
+///
+/// Infinite in the unit tests ([`SMALL_LEAVES`]), so that past the leaf they never take
+/// num-bigint's division.
+const DIV_COST: f64 = if SMALL_LEAVES {
+    f64::INFINITY
+} else {
+    DIV_COST_FIT
+};
 
 /// [`DIV_COST`] as fitted and built, which the unit tests of the switch read, since their
 /// [`DIV_COST`] is infinite.
@@ -487,11 +517,8 @@ const DIV_SAME: f64 = 1.44;
 /// times at 32 words) and a Newton step from 417 (0.998), so 416 words. The reciprocal does
 /// not depend on it; the unit tests use the least that Newton's step allows, 4 (a step to `p`
 /// bits starts from `ceil((p + 3) / 2)`, fewer only for `p >= 5`), so that every step is
-/// reached on small numbers.
-#[cfg(not(test))]
-const RECIP_LEAF: u64 = 64 * 416;
-#[cfg(test)]
-const RECIP_LEAF: u64 = 4;
+/// reached on small numbers ([`SMALL_LEAVES`]).
+const RECIP_LEAF: u64 = if SMALL_LEAVES { 4 } else { 64 * 416 };
 
 /// The bits at or below which the gcd of what is left goes to num-bigint's gcd: near the
 /// crossover measured on 2026-11-05, 2.2 ms against 1.7 ms at 256 words and 12 ms against
@@ -504,11 +531,8 @@ const RECIP_LEAF: u64 = 4;
 /// counts on (PERF-crossover-heap): Stein's gcd does less work up to 307 words (1.002) and the
 /// half gcd from 311 (0.985; at 304 it did 1.011 times Stein's, against a spread of 1.0026), so
 /// 310 words. The gcd does not depend on it;
-/// the unit tests use a smaller leaf.
-#[cfg(not(test))]
-const GCD_LEAF: u64 = 64 * 310;
-#[cfg(test)]
-const GCD_LEAF: u64 = 64 * 16;
+/// the unit tests use a smaller leaf ([`SMALL_LEAVES`]).
+const GCD_LEAF: u64 = 64 * if SMALL_LEAVES { 16 } else { 310 };
 
 /// The valuation budget, in bits, at or below which [`half_low`] lifts the pair found from the
 /// residues rather than applying the matrix to the whole numbers: matrix entries of at most
@@ -533,12 +557,9 @@ const PRINT_LEAF: usize = 597;
 /// instructions, against 162.0, 372.4 and 1820.1 million at 496 and 172.5, 389.8 and 1877.8
 /// million splitting down to `10^597`; its bytes are 1.13 times the latter's and 0.91 times those
 /// at 496 (2026-11-12, load 42 to 51; COMPLEXITY.md K81). The digits do not depend on it.
-#[cfg(not(test))]
-pub const PRINT_HANDOFF: usize = 248;
-/// One in the unit tests, below every power's words, so that their small numbers reach the
-/// transforms.
-#[cfg(test)]
-pub const PRINT_HANDOFF: usize = 1;
+/// One in the unit tests ([`SMALL_LEAVES`]), below every power's words, so that their small
+/// numbers reach the transforms.
+pub const PRINT_HANDOFF: usize = if SMALL_LEAVES { 1 } else { 248 };
 
 /// The fewest words of a number that [`to_decimal`] splits ([`to_decimal_split`]); a narrower
 /// one is printed whole by num-bigint. The benchmark `crossover print-whole` (crate zed-benches)
@@ -557,11 +578,9 @@ pub const PRINT_HANDOFF: usize = 1;
 /// deferred with its limit not widened, and adds a test of the fixed cost at 1 and 8 words,
 /// where num-bigint measured 5.85: l01_24 `num_text::bench::
 /// the_fixed_cost_of_writing_an_end_of_one_and_of_eight_words_scales`.
-#[cfg(not(test))]
-pub const PRINT_WHOLE: usize = 7845;
-/// One in the unit tests, so that every number reaches the split.
-#[cfg(test)]
-pub const PRINT_WHOLE: usize = 1;
+///
+/// One in the unit tests ([`SMALL_LEAVES`]), so that every number reaches the split.
+pub const PRINT_WHOLE: usize = if SMALL_LEAVES { 1 } else { 7845 };
 
 /// The most bits of a number that the split writes as one leaf without building the powers,
 /// for parts handed to num-bigint below powers of more than `handoff` words:
@@ -2427,18 +2446,16 @@ fn rounded_div_pow2(x: &BigUint, e: u64) -> BigUint {
     q
 }
 
-/// `b^e`, by squaring with [`mul`]: left to right for a base of one word, so each step is a
-/// square and a product by that word, and right to left otherwise, so the squarings are of the
-/// base's powers and the products only at the exponent's ones.
+/// `b^e`, by squaring with [`mul`]: left to right for a base of at most [`POW_LEFT_WORDS`]
+/// words, so each step is a square and a product by the base, and right to left for a wider
+/// one, so the squarings are of the base's powers and the products only at the exponent's
+/// ones.
 // Complexity tradeoff (DRY-bignum-crate-2026-11-26, numeric.md group 6): this and zedc-int's
 // `expand_pow` (left to right) were the two copies; both are O(M(n)) for an `n`-word result,
-// with different constants. zed-kernel bench `powers_right_to_left_and_left_to_right` (hm1,
-// 2026-11-26, instructions, right to left / left to right): base 3 and `e = 2^k - 1`, 11.41M /
-// 7.14M at 4096 words and 125.1M / 70.4M at 32768; a base of `n/16` words and `e = 15`, 11.93M
-// / 14.09M and 115.7M / 142.2M. Neither order is cheaper at both, so each takes the case it
-// won; a base between one word and `n/16` words was not measured, and keeps right to left.
+// with different constants, and give the same power; the order is a measured switchover at
+// `POW_LEFT_WORDS`.
 pub fn pow(b: &BigUint, mut e: u64) -> BigUint {
-    if b.bits() <= 64 {
+    if b.bits() <= 64 * POW_LEFT_WORDS {
         let mut r = BigUint::one();
         for i in (0..64 - e.leading_zeros()).rev() {
             r = mul(&r, &r);
@@ -2461,6 +2478,19 @@ pub fn pow(b: &BigUint, mut e: u64) -> BigUint {
     }
     r
 }
+
+/// The widest base, in 64-bit words, for which [`pow`] squares left to right. A measured
+/// switchover (BENCH-pow-mid-width-base; zed-tests `bignum_tests::bench::
+/// powers_by_width_of_the_base`, hm1, 2026-11-26, instructions, `e = 2^k - 1` with `w e` about
+/// `n` words, left to right / right to left): at `n` = 4096, bases of 2 to 64 words 0.585 to
+/// 0.923 and 128 words 1.066; at `n` = 32768, 2 to 64 words 0.556 to 0.877 and 128 to 2048
+/// words 1.037 to 1.295. Left to right is cheaper up to 64 words at both sizes and right to
+/// left from 128, so the crossing is at a width of the base, not a fraction of the result;
+/// 64 is the widest measured width left to right wins at both. The exponent with every bit
+/// set is the case that separates the orders most: each takes one product per set bit, and
+/// with a single set bit both are squarings alone. Before, one word (the earlier measurements,
+/// base 3 and a base of `n/16` words, agreed with both).
+const POW_LEFT_WORDS: u64 = 64;
 
 // ------------------------------------------------------------------------------------------
 // Division
@@ -5277,6 +5307,8 @@ pub mod crossover {
 
     use super::MulBy;
 
+    /// `super::SMALL_LEAVES` as built: whether the leaves below are the unit tests' small ones.
+    pub const SMALL_LEAVES: bool = super::SMALL_LEAVES;
     /// `super::MUL_LEAF` as built, in words.
     pub const MUL_LEAF: usize = super::MUL_LEAF;
     /// `super::DIV_LEAF` as built, in bits.

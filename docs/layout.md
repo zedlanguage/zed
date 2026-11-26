@@ -134,6 +134,7 @@ types or ZIR. The libraries form a DAG; each sits as low as its dependencies all
 | zed-alloc-count | | the counting allocator |
 | zed-collections | numtheory, hash | sorted lists (merge, merge with values, subset, disjoint, `sort_dedup`), intervals, gallop search, interners, min-add segment tree, persistent treap with a lazy tag, join-based AVL, Patricia trie, priority search tree |
 | zed-bignum (new) | numtheory, collections, num-bigint | big-integer algorithms: product and remainder trees, fast division, gcd and printing, power by squaring, least and nth roots, coprime bases, CRT trees (the `m * 2^e` bound type is DRY-bignum-bound-type) |
+| zed-bignum-small (dev only) | as zed-bignum | zed-bignum's source built again with its unit tests' small leaves, for zed-kernel's unit tests alone (zed-bignum `fast::SMALL_LEAVES`) |
 | zed-testkit (new, dev only) | hash, alloc-count, meter-settings | `seed` and `scaling` (timers, n/8n ratios, inputs, load), now included by `#[path]` in 20 places |
 
 Above the libraries, two compiler crates are shared by the rest and hold the generic parts that

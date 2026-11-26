@@ -11,6 +11,8 @@ use std::path::PathBuf;
 zed_alloc_count::meter_entry_points!();
 
 pub mod bellman_ford_moore;
+#[cfg(test)]
+mod bignum_tests;
 pub mod check;
 pub mod deep;
 pub mod fences;

@@ -41,6 +41,11 @@ zed-bignum.workspace = true
 smallvec = { version = "1.16.4", features = ["union"] }
 
 [dev-dependencies]
+# zed-bignum's source with the unit tests' small leaves, which the unit tests take in place of
+# zed-bignum (src/num.rs, `bignum`) so that their small numbers reach the transforms, the
+# reciprocal and the half gcd (TEST-kernel-small-leaves-after-bignum-move). A package and not a
+# feature of zed-bignum: zed-bignum `fast::SMALL_LEAVES` says why.
+zed-bignum-small.workspace = true
 rustix.workspace = true
 zed-alloc-count.workspace = true
 zed-meter-settings.workspace = true

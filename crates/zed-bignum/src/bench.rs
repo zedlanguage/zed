@@ -1,10 +1,11 @@
 //! The benchmarks of zed-bignum whose sizes are set for the unit build's small leaves
-//! (`fast::MUL_LEAF` 48 and the others under `#[cfg(test)]`), moved from zed-kernel's
-//! `num/bench.rs` with the module (DRY-bignum-crate-2026-11-26): in zed-kernel's unit build the
-//! production leaves now apply, and there `square_roots_scale` took 10.92 times the
-//! instructions from 8192 to 65536 words (hm1, 2026-11-26), past the limit of 10.5, where it
-//! passed with the small leaves. The production figure is plan row
-//! PERF-sqrt-production-leaves-ratio.
+//! (`fast::MUL_LEAF` 48 and the others under `fast::SMALL_LEAVES`), moved from zed-kernel's
+//! `num/bench.rs` with the module (DRY-bignum-crate-2026-11-26). With the measured leaves
+//! `square_roots_scale` took 10.92 times the instructions from 8192 to 65536 words (hm1,
+//! 2026-11-26), past the limit of 10.5, where it passed with the small leaves; plan row
+//! PERF-sqrt-production-leaves-ratio. zed-kernel's unit tests take the small leaves again
+//! (zed-bignum-small, TEST-kernel-small-leaves-after-bignum-move), but the benchmark stays
+//! here, by the function it measures.
 
 use num_bigint::BigUint;
 use num_traits::Zero;

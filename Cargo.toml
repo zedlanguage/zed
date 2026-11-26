@@ -22,6 +22,7 @@ members = [
     "crates/zed-kernel",
     "crates/zed-numtheory",
     "crates/zed-bignum",
+    "crates/zed-bignum-small",
     "crates/zed-rt",
     "crates/zed-cert",
     "crates/zed-native",
@@ -51,6 +52,7 @@ zed-hash = { path = "crates/zed-hash" }
 zed-kernel = { path = "crates/zed-kernel" }
 zed-numtheory = { path = "crates/zed-numtheory" }
 zed-bignum = { path = "crates/zed-bignum" }
+zed-bignum-small = { path = "crates/zed-bignum-small" }
 zed-rt = { path = "crates/zed-rt" }
 zedc = { path = "crates/zedc" }
 zed-native = { path = "crates/zed-native" }

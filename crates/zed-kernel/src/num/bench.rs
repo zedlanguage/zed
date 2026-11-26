@@ -486,54 +486,6 @@ fn fingerprint_instructions() {
     }
 }
 
-/// DRY-bignum-crate-2026-11-26, numeric.md group 6: the two powers by squaring with the fast
-/// product, zed-bignum `fast::pow` (right to left: squares of the base, and a product of the
-/// running result by each square whose exponent bit is set) and zedc-int's `expand_pow` (left
-/// to right: squares of the running result, and a product by the base at each set bit), at a
-/// result of n and 8n words, for a one-word base and a base of n / 16 words, each with the
-/// exponent's bits all set (the most products). Prints the instructions of each. Neither had
-/// fewer at both shapes (numbers at `fast::pow`), so `fast::pow` now goes left to right for a
-/// one-word base and right to left otherwise, and should print a ratio near 1 for the one-word
-/// base and above 1 for the wide one.
-#[test]
-fn powers_right_to_left_and_left_to_right() {
-    fn left_to_right(base: &BigUint, e: u64) -> BigUint {
-        let mut m = BigUint::one();
-        for i in (0..64 - e.leading_zeros()).rev() {
-            m = mul_uint(&m, &m);
-            if e >> i & 1 == 1 {
-                m = mul_uint(&m, base);
-            }
-        }
-        m
-    }
-    let mut meter = crate::scaling::Meter::new();
-    for n in [1usize << 12, 1 << 15] {
-        let narrow = BigUint::from(3u32);
-        // 2^k - 1 with 3^(2^k - 1) of about n words: k = floor(log2(64 n / log2 3)).
-        let k = (64.0 * n as f64 / 3f64.log2()).log2().floor() as u32;
-        let wide = bench_number(n / 16, 29);
-        for (what, base, e) in [
-            ("one word", &narrow, (1u64 << k) - 1),
-            ("n/16 words", &wide, 15),
-        ] {
-            let want = pow_uint(base, e);
-            let rl = meter.least(|| {}, || assert_eq!(pow_uint(base, e).bits(), want.bits()));
-            let lr = meter.least(
-                || {},
-                || assert_eq!(left_to_right(base, e).bits(), want.bits()),
-            );
-            assert_eq!(left_to_right(base, e), want);
-            eprintln!(
-                "pow n={n} base={what} e={e}: pow_uint instr={} left_to_right instr={} ratio={:.3}",
-                rl.units,
-                lr.units,
-                lr.units as f64 / rl.units as f64
-            );
-        }
-    }
-}
-
 /// DRY-bignum-crate-2026-11-26, numeric.md group 8: lower bounds on `log2 prod p^e` for `m`
 /// primes near 2^40 with exponents near 2^100, at `m` and `8m`: the kernel's `room::least_log2`
 /// (`f64` `log2 p` in units of 2^-32, less 32 units), the exact one, zed-numtheory

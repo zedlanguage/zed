@@ -22,9 +22,16 @@ pub mod float_mod;
 mod float_text;
 mod room;
 
-// Moved to zed-bignum (DRY-bignum-crate-2026-11-26); the kernel names them as before.
-pub use zed_bignum::{coprime, trees};
-use zed_bignum::{digit_text, fast, least_root};
+// Moved to zed-bignum (DRY-bignum-crate-2026-11-26); the kernel names them as before. The unit
+// tests take the same source with the small leaves, zed-bignum-small (its Cargo.toml), so that
+// their small numbers reach the transforms as before the move
+// (TEST-kernel-small-leaves-after-bignum-move; `tests::the_unit_tests_take_the_small_leaves`).
+pub use bignum::{coprime, trees};
+use bignum::{digit_text, fast, least_root};
+#[cfg(not(test))]
+pub(crate) use zed_bignum as bignum;
+#[cfg(test)]
+pub(crate) use zed_bignum_small as bignum;
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -45,7 +52,8 @@ use coprime::coprime_base_exponents;
 use dec::Dec;
 #[doc(hidden)]
 pub use fast::crossover;
-#[cfg(feature = "method-counts")]
+// Not in the unit tests, whose zed-bignum-small Cargo cannot give the feature.
+#[cfg(all(feature = "method-counts", not(test)))]
 pub use fast::method_counts;
 use fast::{LEAF_DIGITS, read_digits_by};
 pub use fast::{
@@ -4396,6 +4404,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The unit tests take zed-bignum-small's leaves, not the measured ones, so that the tests
+    /// above and those of `fast`'s callers reach the transforms on small numbers: `MUL_LEAF` 48,
+    /// a product of two dense 49-word factors by rows, and one of two dense 256-word factors by
+    /// transforms (both num-bigint's at the measured leaf of 400; rows and transforms cross at
+    /// 199 dense words, `TRANSFORM_COST`, and 256 words cost 65,536 word products by rows
+    /// against about 7.1 * 512 * 9 = 32,717 by transforms on 512 points), `TOOM_COST` and
+    /// `DIV_COST` infinite. Fails if the kernel's tests link
+    /// zed-bignum in place of zed-bignum-small, as they did from DRY-bignum-crate-2026-11-26 to
+    /// TEST-kernel-small-leaves-after-bignum-move.
+    #[test]
+    fn the_unit_tests_take_the_small_leaves() {
+        const { assert!(crossover::SMALL_LEAVES) };
+        assert_eq!(crossover::MUL_LEAF, 48);
+        assert_eq!(crossover::TOOM_COST, f64::INFINITY);
+        assert_eq!(crossover::DIV_COST, f64::INFINITY);
+        let dense = (BigUint::one() << (64 * 49)) - 1u32;
+        assert_eq!(crossover::mul_method(&dense, &dense), "rows");
+        let wide = (BigUint::one() << (64 * 256)) - 1u32;
+        assert_eq!(crossover::mul_method(&wide, &wide), "transforms");
+        let narrow = (BigUint::one() << (64 * 48)) - 1u32;
+        assert_eq!(crossover::mul_method(&narrow, &dense), "num-bigint");
     }
 
     /// `read_decimal` gives num-bigint's value at every length from 1 to 2,100 digits, across
