@@ -38,9 +38,24 @@ mod bench {
     /// PERF-sqrt-production-leaves-ratio: [`sqrt_rem_uint`] of a number of n words is O(M(n))
     /// (proof at the function); zed-bignum `bench::square_roots_scale` holds the same with the
     /// small leaves.
+    ///
+    /// The sizes, by the precedent of DECISION-roots-bench-regime (time where n and 8n run on
+    /// one method): 2^14 and 2^17 words. Each level `j` of the recursion divides about `n /
+    /// 2^(j+1)` by `n / 2^(j+2)` words, and `fast::div_rem` takes num-bigint's division up to
+    /// 2048 by 1024 words and its reciprocal above, which costs 2.77 times as much one size
+    /// up (6.87 million instructions at 2048 by 1024, 19.05 million at 4096 by 2048; hm1,
+    /// 2026-11-26, `square_root_parts_by_size`). The cheap levels are a larger share of the
+    /// work at 2^13 words than at 2^16, so the old sizes 2^13 and 2^16 took 10.716 times
+    /// (38,694,839 and 414,649,981 instructions), over the limit, though each doubling costs
+    /// less than the one before: 2.86, 2.71, 2.63, 2.32, 2.18 and 2.12 times from 2^10 to 2^16
+    /// words, as O(M(n)) does with the transform product. At 2^14 and 2^17: 89,776,442 and
+    /// 880,590,719, 9.809 times, the same on two runs (hm1, 2026-11-26). The top division of
+    /// PERF-sqrt-production-leaves-ratio, on the same VM, before and after: 39,518,451 and
+    /// 38,694,839 at 2^13, 416,119,461 and 414,649,981 at 2^16, 105,956,831 and 89,776,442 at
+    /// 2^14, 1,198,777,803 and 880,590,719 at 2^17 (11.314 times before).
     #[test]
     fn square_roots_scale_with_the_measured_leaves() {
-        let n = 1 << 13;
+        let n = 1 << 14;
         let numbers = scaling::inputs(n, |m| number(m, 11));
         scaling::check_order("the square root of a number of n words", n, 1, |m| {
             let (s, r) = sqrt_rem_uint(&numbers[&m]);

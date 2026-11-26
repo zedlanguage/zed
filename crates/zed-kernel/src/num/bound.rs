@@ -100,22 +100,34 @@ impl Product<'_> {
     /// squaring from 1, each product rounded outward), times the coefficient, each product
     /// rounded outward. Every value is positive, so the ends of a product are the products of
     /// the ends.
+    ///
+    /// Fast path: a coefficient of 1 is not multiplied in. `Approx::mul` of `1` (exact, shift
+    /// 0) by `x` has the ends of `x` and its shift, rounded as [`Approx::truncate`] rounds, so
+    /// `x.truncate(k)` is the same value; `k >= 64` here ([`start`]), so `1` is exact. Measured
+    /// on l01_17 `kept_powers` "the order of (a b)^(2^64) and (b c)^(2^64)" (callgrind, hm1,
+    /// 2026-11-26, the one `x < y` at m = 2^15 bits): with this and the fast path of
+    /// [`Approx::pow`] for an exponent of 1, see the counts in the commit and the row.
     fn approx(&self, k: u64) -> Approx {
-        let mut b = Approx::of_uint(&self.coef, k);
+        let mut b = (!self.coef.is_one()).then(|| Approx::of_uint(&self.coef, k));
+        let times = |b: Option<Approx>, x: Approx| match b {
+            Some(b) => b.mul(&x, k),
+            None => x.truncate(k),
+        };
         for (p, e) in &self.pows {
             if *p == 2 {
                 // `2^e` is a bound exactly: the shift moves and nothing is rounded or squared.
-                b.shift += BigInt::from(e.clone());
+                b.get_or_insert_with(|| Approx::exact(BigInt::one())).shift +=
+                    BigInt::from(e.clone());
                 continue;
             }
-            b = b.mul(&Approx::exact(BigInt::from(*p)).pow(e, k), k);
+            b = Some(times(b, Approx::exact(BigInt::from(*p)).pow(e, k)));
         }
         // A wide atom's base is itself rounded outward to `k` bits first, so the power holds
         // `q^f` ([`cap`] counts this rounding).
         for (q, f) in &self.wide {
-            b = b.mul(&Approx::of_uint(q, k).pow(f, k), k);
+            b = Some(times(b, Approx::of_uint(q, k).pow(f, k)));
         }
-        b
+        b.unwrap_or_else(|| Approx::of_uint(&self.coef, k))
     }
 }
 
@@ -723,6 +735,58 @@ mod tests {
 
     fn power(p: u64, e: u64) -> Product<'static> {
         product(BigUint::one(), &[(p, e)])
+    }
+
+    /// The fast path of [`Product::approx`] for a coefficient of 1 gives the same ends and
+    /// shift as the product from the coefficient's bound, factor by factor, for coefficients
+    /// 1 and 3, with and without a power of 2 first, a small prime, and a wide atom to the
+    /// exponents 1 (the fast path of `Approx::pow`), 2 and `2^64 + 1`, at `k` = 64 and 200.
+    #[test]
+    fn a_coefficient_of_one_is_not_multiplied_in() {
+        let q = (BigUint::one() << 300u32) + 15u32;
+        for coef in [1u32, 3] {
+            for pows in [
+                vec![],
+                vec![(2u64, 70u64)],
+                vec![(2, 5), (3, 41)],
+                vec![(7, 1)],
+            ] {
+                for f in [
+                    BigUint::one(),
+                    BigUint::from(2u32),
+                    (BigUint::one() << 64u32) + 1u32,
+                ] {
+                    let mut x = product(BigUint::from(coef), &pows);
+                    x.wide.push((Cow::Owned(q.clone()), f.clone()));
+                    for k in [64u64, 200] {
+                        let mut want = Approx::of_uint(&x.coef, k);
+                        for (p, e) in &x.pows {
+                            if *p == 2 {
+                                want.shift += BigInt::from(e.clone());
+                            } else {
+                                want = want.mul(&Approx::exact(BigInt::from(*p)).pow(e, k), k);
+                            }
+                        }
+                        want = want.mul(&Approx::of_uint(&q, k).pow(&f, k), k);
+                        let got = x.approx(k);
+                        assert_eq!(
+                            (&got.lo, &got.hi, &got.shift),
+                            (&want.lo, &want.hi, &want.shift),
+                            "{coef} {pows:?} q^{f} at {k} bits"
+                        );
+                    }
+                }
+            }
+        }
+        // No factor but powers of 2, or none at all: the bound starts from the exact 1.
+        for pows in [vec![], vec![(2u64, 70u64)]] {
+            let got = product(BigUint::one(), &pows).approx(64);
+            let shift = pows.first().map_or(0, |p| p.1);
+            assert_eq!(
+                (got.lo, got.hi, got.shift),
+                (BigInt::one(), BigInt::one(), shift.into())
+            );
+        }
     }
 
     /// `1 < 3^200000` by the bit lengths alone; `2^84 < 3^53`, whose bit lengths overlap (85

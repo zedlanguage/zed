@@ -290,6 +290,15 @@ impl Approx {
     /// cannot catch: a `bits` so large that the dropped bits of one step pass `2^64`, which
     /// would need ends of `2^63` bits.
     pub fn pow(&self, exp: &BigUint, bits: u64) -> Approx {
+        // Fast path: an exponent of 1, as in the order of two powers with a common root
+        // (zed-kernel `bound::common_root`). The loop below takes one squaring of the exact 1,
+        // which is 1, and one product of 1 by the base, whose ends are the base's ends (by
+        // either branch of `mul`), truncated; steps 3 and 4 then give the shift `s * 1 + t`
+        // with `t` the bits that truncation dropped. That is `self.truncate(bits)`, with no
+        // product, `dropped` vector or shift multiplication.
+        if exp.is_one() {
+            return self.clone().truncate(bits);
+        }
         let base = Approx {
             lo: self.lo.clone(),
             hi: self.hi.clone(),
