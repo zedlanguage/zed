@@ -8,7 +8,7 @@ use num_bigint::BigUint;
 use zed_kernel::num::Rat;
 use zedc::store::interval::Num;
 use zedc::store::presburger::exact::EXACT_LIMIT_SET;
-use zedc::store::presburger::{Atom, Con, Formula, KeptSum, Lin, Refusal, Shared, decide_at};
+use zedc::store::presburger::{Atom, Con, Formula, KeptSum, Lin, Shared, decide_at};
 
 fn sym(n: &str) -> Lin {
     Lin::atom(Atom::Sym(n.into()))
@@ -75,10 +75,9 @@ pub(crate) fn second() -> Formula {
 /// alone: each has no point at `3^(2^40)`. Negative control: each has one at a small value
 /// that stands, as `3^(2^40)` does, above every other constant of its formula, so an answer
 /// that reads the constant only by that order answers both alike, and is wrong at one of them.
-/// The second, whose projection is the even integers, unbounded, is refused for
-/// `Refusal::Repeats` at both values: `Classed` keeps a class only with bounded ranges, so
-/// the projection is wider than exact, and the kept value is in the wider set. Row
-/// CLASSED-periodic-tail flips these two assertions to `Ok(false)` and `Ok(true)`.
+/// The second, whose projection is the even integers, unbounded, is answered by the residue of
+/// the value modulo 2 in the projection's periodic tail (row CLASSED-periodic-tail); before
+/// that row it was refused for `Refusal::Repeats` at both values, its ranges wider than exact.
 #[test]
 fn a_kept_constant_is_decided_at_its_value_not_by_its_order() {
     let v = wide();
@@ -90,22 +89,18 @@ fn a_kept_constant_is_decided_at_its_value_not_by_its_order() {
     );
     assert_eq!(
         decide_at(&second(), &k(), &v),
-        Err(Refusal::Repeats),
-        "3^(2^40) is even: refused until CLASSED-periodic-tail"
+        Ok(false),
+        "3^(2^40) is odd, so not even"
     );
     let control = Num::from((1i64 << 40) + 1);
     assert_eq!(decide_at(&first(), &k(), &control), Ok(true), "at 2^40 + 1");
-    assert_eq!(
-        decide_at(&second(), &k(), &Num::from(4)),
-        Err(Refusal::Repeats),
-        "at 4: refused until CLASSED-periodic-tail"
-    );
+    assert_eq!(decide_at(&second(), &k(), &Num::from(4)), Ok(true), "at 4");
 }
 
-/// Kept values that are members of an unbounded range, and not of a bounded one. A class
-/// (`3^(2^40)` is `0 mod 9` and `1 mod 2`) over unbounded values is refused for
-/// `Refusal::Repeats`, for the reason of the test above; CLASSED-periodic-tail flips the
-/// first of these to `Ok(true)`, and answers the class next to it and the odd values too.
+/// Kept values that are members of an unbounded range, and not of a bounded one, and of a
+/// class over unbounded values by their residue (`3^(2^40)` is `0 mod 9` and `1 mod 2`), read
+/// in the projection's periodic tail (row CLASSED-periodic-tail; refused for
+/// `Refusal::Repeats` before it).
 #[test]
 fn a_kept_constant_is_a_member_by_its_residue_and_its_range() {
     let v = wide();
@@ -120,9 +115,9 @@ fn a_kept_constant_is_a_member_by_its_residue_and_its_range() {
         le(kl().plus(&sym("x").times(-1)), 0),
     ]);
     let cases = [
-        (nine, Err(Refusal::Repeats), "#k0 == 9 * t"),
-        (nine_plus_one, Err(Refusal::Repeats), "#k0 == 9 * t + 1"),
-        (odd, Err(Refusal::Repeats), "#k0 == 2 * t + 1"),
+        (nine, Ok(true), "#k0 == 9 * t"),
+        (nine_plus_one, Ok(false), "#k0 == 9 * t + 1"),
+        (odd, Ok(true), "#k0 == 2 * t + 1"),
         (above, Ok(true), "#k0 >= x >= 0"),
         (below, Ok(false), "#k0 <= x <= 2^62"),
     ];

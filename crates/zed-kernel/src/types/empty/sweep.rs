@@ -259,24 +259,6 @@ fn shape(
 
 type Clause = (Vec<Row>, Vec<Row>);
 
-/// The least `p` such that `s` is `s[..p]` repeated, by the prefix function: O(|s|).
-fn period<T: Eq>(s: &[T]) -> usize {
-    let n = s.len();
-    let mut f = vec![0usize; n];
-    for i in 1..n {
-        let mut k = f[i - 1];
-        while k > 0 && s[i] != s[k] {
-            k = f[k - 1];
-        }
-        if s[i] == s[k] {
-            k += 1;
-        }
-        f[i] = k;
-    }
-    let p = n - f[n - 1];
-    if n.is_multiple_of(p) { p } else { n }
-}
-
 /// The start of the least rotation of `s`, by the two-index method: O(|s|).
 fn least_rotation<T: Ord>(s: &[T]) -> usize {
     let n = s.len();
@@ -561,7 +543,8 @@ impl Sweep {
         for cy in &cycles {
             let ls: Vec<(usize, usize, usize)> =
                 cy.iter().map(|&x| label(&self.links[x])).collect();
-            let p = period(&ls);
+            // The least period by the prefix function (zed-collections `period`, with its proof).
+            let p = zed_collections::period::least_period(&ls);
             let s = least_rotation(&ls[..p]);
             let key: Vec<(usize, usize, usize)> = (0..p).map(|j| ls[(s + j) % p]).collect();
             let base = *cycle_ids.entry(key).or_insert_with(|| {

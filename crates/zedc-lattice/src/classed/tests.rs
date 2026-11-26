@@ -1,7 +1,7 @@
 //! Tests of [`Classed`] with the plain-set shortcut of [`Classed::new`] taken and not taken
 //! ([`plain_shortcut::both`], VERIFY-classed-wider-class-callers).
 
-use super::{Classed, plain_shortcut};
+use super::{Classed, Tail, plain_shortcut};
 use crate::interval::{End, IntervalSet, Num};
 use crate::landmarks::Landmarks;
 use crate::lattice::{Congruence, Lattice};
@@ -321,4 +321,225 @@ fn the_members_check_gives_the_walks_answer() {
         caught > 0,
         "seed {seed}: the wrong check agreed with the walk on every case"
     );
+}
+
+/// A residue table modulo `n·reps`: a block of `n` letters with both kinds, repeated `reps`
+/// times, so that [`Tail::new`] has a table to cut to its least period.
+fn random_table(rng: &mut Rng) -> Vec<bool> {
+    let n = rng.int(2, 6) as usize;
+    let block: Vec<bool> = loop {
+        let b: Vec<bool> = (0..n).map(|_| rng.coin()).collect();
+        if b.contains(&true) && b.contains(&false) {
+            break b;
+        }
+    };
+    let reps = rng.int(1, 3) as usize;
+    (0..n * reps).map(|i| block[i % n]).collect()
+}
+
+/// Whether `table` marks the residue of `v`.
+fn marks(table: &[bool], v: i64) -> bool {
+    table[v.rem_euclid(table.len() as i64) as usize]
+}
+
+/// Sets with tails (row CLASSED-periodic-tail) read value by value against the set they stand
+/// for, listed: a random finite middle, a tail above, below, both (apart, or meeting with no
+/// value between), or one tail over every value, each table random and repeated up to three
+/// times. Every value within 15 of the middle is checked, and each again at a distance
+/// `M = 720720·10^9` above and below, a multiple of every table length here (up to 18), where
+/// only a tail can hold it. Negative controls: the wider set (tails dropped) differs from the
+/// listed one in some case, and so does a reading of the tail above by the residue of
+/// `v + 1`.
+#[test]
+fn tailed_sets_agree_with_the_values_listed() {
+    const W: i64 = 20;
+    const M: i64 = 720_720_000_000_000;
+    let (mut rng, seed) = Rng::fresh("tailed_sets_agree_with_the_values_listed");
+    let (mut wider_differs, mut shifted_differs) = (0, 0);
+    for case in 0..3000 {
+        let middle: Vec<bool> = (-W..=W).map(|_| rng.coin()).collect();
+        let in_middle = |v: i64| (-W..=W).contains(&v) && middle[(v + W) as usize];
+        let (up, down) = (random_table(&mut rng), random_table(&mut rng));
+        let kind = rng.below(4);
+        // The first value at or above (below) a random start that the table marks: the end of
+        // a tail is a member.
+        let mut u = rng.int(-W, W + 5);
+        while !marks(&up, u) {
+            u += 1;
+        }
+        let mut l = rng.int(-W - 5, W);
+        while !marks(&down, l) {
+            l -= 1;
+        }
+        let (above, below) = match kind {
+            0 => (Some(u), None),
+            1 => (None, Some(l)),
+            2 => {
+                // Apart, or close: `l` the first mark below `u`, and `u` then the first mark
+                // from `l + 1` up, so the ends meet where the table above marks `l + 1`.
+                if rng.coin() {
+                    let lo = l.min(u - 1);
+                    let mut l = lo;
+                    while !marks(&down, l) {
+                        l -= 1;
+                    }
+                    (Some(u), Some(l))
+                } else {
+                    let mut l = u - 1;
+                    while !marks(&down, l) {
+                        l -= 1;
+                    }
+                    let u2 = l + 1;
+                    let mut u = u2;
+                    while !marks(&up, u) {
+                        u += 1;
+                    }
+                    (Some(u), Some(l))
+                }
+            }
+            _ => (None, None),
+        };
+        let whole = kind == 3;
+        let truth = |v: i64| match (whole, above, below) {
+            (true, _, _) => marks(&up, v),
+            (_, Some(u), _) if v >= u => marks(&up, v),
+            (_, _, Some(l)) if v <= l => marks(&down, v),
+            _ => in_middle(v),
+        };
+        let mut pieces: Vec<(End, End)> = (-W - 30..=W + 30)
+            .filter(|&v| above.is_none_or(|u| v < u) && below.is_none_or(|l| v > l) && truth(v))
+            .map(|v| (End::of(v), End::of(v)))
+            .collect();
+        if let Some(u) = above {
+            pieces.push((End::of(u), End::PosInf));
+        }
+        if let Some(l) = below {
+            pieces.push((End::NegInf, End::of(l)));
+        }
+        let set = if whole {
+            let tail = Tail::new(End::NegInf, &up);
+            Classed::tailed(Classed::plain(IntervalSet::top()), None, Some(tail))
+        } else {
+            Classed::tailed(
+                Classed::plain(IntervalSet::from_pieces(pieces)),
+                below.map(|l| Tail::new(End::of(l), &down)),
+                above.map(|u| Tail::new(End::of(u), &up)),
+            )
+        };
+        assert!(set.tails.is_some(), "seed {seed}, case {case}");
+        let wider = set.without_tails();
+        for v in -W - 15..=W + 15 {
+            assert_eq!(
+                set.contains(v),
+                truth(v),
+                "seed {seed}, case {case}, {v}: {set:?}"
+            );
+            wider_differs += usize::from(wider.contains(v) != truth(v));
+            assert!(
+                !truth(v) || wider.contains(v),
+                "seed {seed}, case {case}: wider"
+            );
+            for far in [v + M, v - M] {
+                let want = match (whole, above, below) {
+                    (true, _, _) => marks(&up, far),
+                    (_, Some(_), _) if far > 0 => marks(&up, far),
+                    (_, _, Some(_)) if far < 0 => marks(&down, far),
+                    _ => false,
+                };
+                assert_eq!(
+                    set.contains_end(&End::of(far)),
+                    want,
+                    "seed {seed}, case {case}, {far}: {set:?}"
+                );
+            }
+            if above.is_some_and(|u| v >= u) {
+                shifted_differs += usize::from(marks(&up, v + 1) != truth(v));
+            }
+        }
+    }
+    assert!(
+        wider_differs > 0 && shifted_differs > 0,
+        "seed {seed}: the controls"
+    );
+}
+
+/// One set has one form: a table repeated is cut to its least period (corner: a table of
+/// period 2 written as 6 letters, and one whose least period is its length), so two writings
+/// of one tailed set are equal and hash alike, and a tailed set is never equal to a set of
+/// ranges.
+#[test]
+fn tailed_sets_of_one_set_are_equal() {
+    use std::hash::{BuildHasher, RandomState};
+    let (t, f) = (true, false);
+    let short = Tail::new(End::of(0), &[t, f]);
+    let long = Tail::new(End::of(0), &[t, f, t, f, t, f]);
+    assert_eq!(short, long);
+    assert_eq!(long.step, Num::from(2));
+    assert_eq!(&*long.have, &[t, f]);
+    let odd = Tail::new(End::of(0), &[t, t, f]);
+    assert_eq!(odd.step, Num::from(3));
+    let wider = || Classed::plain(IntervalSet::range(End::of(0), End::PosInf));
+    let a = Classed::tailed(wider(), None, Some(short));
+    let b = Classed::tailed(wider(), None, Some(long));
+    let hasher = RandomState::new();
+    assert_eq!(a, b);
+    assert_eq!(hasher.hash_one(&a), hasher.hash_one(&b));
+    assert!(a != IntervalSet::range(End::of(0), End::PosInf));
+    assert!(wider() == IntervalSet::range(End::of(0), End::PosInf));
+    assert_ne!(a, wider(), "the tails are read by ==");
+}
+
+/// Corners of the form: no tails gives the set as it was (here empty, so a tailed form of the
+/// empty set is never made); a middle of one value, class of modulus 0, beside a tail; a tail
+/// over every value (end `-inf`); and a tail whose end is a kept value too wide to build,
+/// `3^(2^40)`, read by its order and its residue modulo 6 (3, as `3^k` is 3 mod 6 for k >= 1).
+#[test]
+fn tailed_corners_read_their_members() {
+    let (t, f) = (true, false);
+    let empty = Classed::plain(IntervalSet::empty());
+    let same = Classed::tailed(empty.clone(), None, None);
+    assert!(same.tails.is_none() && same.is_empty() && same == empty);
+    // Modulus 0, the class of one value: with no tails, the set as it was.
+    let one = Classed::new(IntervalSet::of(5, 5), Congruence::new(0, 5));
+    let same = Classed::tailed(one.clone(), None, None);
+    assert!(same == one && same.contains(5) && !same.contains(6));
+    // The one value 5, then the even values from 10 up.
+    let ranges = IntervalSet::of(5, 5).join(&IntervalSet::range(End::of(10), End::PosInf));
+    let set = Classed::tailed(
+        Classed::plain(ranges),
+        None,
+        Some(Tail::new(End::of(10), &[t, f])),
+    );
+    let want = |v: i64| v == 5 || (v >= 10 && v % 2 == 0);
+    for v in -10..40 {
+        assert_eq!(set.contains(v), want(v), "{v}");
+    }
+    // A tail over every value: the multiples of 3.
+    let thirds = Classed::tailed(
+        Classed::plain(IntervalSet::top()),
+        None,
+        Some(Tail::new(End::NegInf, &[t, f, f])),
+    );
+    for v in -30..30 {
+        assert_eq!(thirds.contains(v), v % 3 == 0, "{v}");
+    }
+    // A tail from a kept value: `[3^(2^40), +inf)` with the residues 3 and 4 modulo 6.
+    let k = Num::from(
+        &zed_kernel::num::Rat::int(3.into())
+            .pow(&(num_bigint::BigUint::from(1u32) << 40u32))
+            .expect("a power of a prime is kept"),
+    );
+    let ranges = IntervalSet::of(0, 10).join(&IntervalSet::range(End::Fin(k.clone()), End::PosInf));
+    let table = [f, f, f, t, t, f];
+    let set = Classed::tailed(
+        Classed::plain(ranges),
+        None,
+        Some(Tail::new(End::Fin(k.clone()), &table)),
+    );
+    let at = |d: i64| set.contains_end(&End::Fin(&k + &Num::from(d)));
+    assert_eq!(
+        (at(-1), at(0), at(1), at(2), at(3), at(6), at(7)),
+        (false, true, true, false, false, true, true)
+    );
+    assert!(set.contains(5) && !set.contains(11));
 }

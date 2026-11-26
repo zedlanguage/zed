@@ -13,7 +13,7 @@ use crate::held::Held;
 use crate::intern::Interner;
 use crate::scaling;
 use crate::search::{first_true, gallop};
-use crate::{cartesian, intervals, sorted, spelling};
+use crate::{cartesian, intervals, period, sorted, spelling};
 
 /// The size of every benchmark here, run again at `8 * N`.
 const N: usize = 100_000;
@@ -310,5 +310,25 @@ fn the_spelling_index_takes_n_log_n() {
             got.last(),
             Some(&Some(names.last().expect("the long name").0))
         );
+    });
+}
+
+/// Small instances: `period::tests::the_least_period_is_found_against_every_divisor`. Two words
+/// of `m` letters: a block of 6 repeated (period 6, every step a match), and `m - 1` letters
+/// `true` and one `false` at the end (no period short of `m`, the prefix function falling back
+/// down the whole border chain at the last letter, which the amortized bound pays for).
+#[test]
+fn the_least_period_takes_n() {
+    let inputs = built(|m| {
+        let block = [true, true, false, true, false, false];
+        let repeated: Vec<bool> = (0..m).map(|i| block[i % 6]).collect();
+        let mut last: Vec<bool> = vec![true; m];
+        last[m - 1] = false;
+        (repeated, last)
+    });
+    scaling::check("the least period of n letters", N, |m| {
+        let (repeated, last) = &inputs[&m];
+        assert_eq!(period::least_period(repeated), 6);
+        assert_eq!(period::least_period(last), m);
     });
 }

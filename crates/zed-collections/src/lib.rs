@@ -31,6 +31,9 @@
 //! [`by_address`]: a map key that is the address of an `Arc` and holds it, so no address in a
 //! memo is freed and given to another value while the memo lives.
 //!
+//! [`period`]: the least period of a sequence that is a whole number of copies of a block, by
+//! the prefix function, O(n).
+//!
 //! [`spelling`]: the spelling index of step L1.29e, the name near in spelling to each written
 //! name of a unit and visible at its site, for all of them together in `O(n log n)`.
 
@@ -46,6 +49,7 @@ pub mod index;
 pub mod intern;
 pub mod intervals;
 pub mod min_add;
+pub mod period;
 pub mod search;
 pub mod sorted;
 pub mod spelling;

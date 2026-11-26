@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use crate::interval::{End, IntervalSet, Num};
 use crate::lattice::{Congruence, Lattice};
@@ -38,6 +39,104 @@ pub struct Classed {
     pub ranges: IntervalSet,
     /// The class; every integer (modulus 1) for a set of ranges alone.
     pub class: Congruence,
+    /// The ends of the set where its values repeat without end ([`Tails`], row
+    /// CLASSED-periodic-tail), `None` for a set of ranges met with a class alone. Where they
+    /// are given, `ranges` and `class` hold a wider set, each tail's ray whole, and the set is
+    /// read from the tails past their ends.
+    ///
+    /// Only membership ([`Classed::contains_end`]), `==` and `Hash` read the tails. Every other
+    /// operation (`meet`, `join`, `minus`, `met`, `pieces`, `hull`, `count`, `Display`) acts on
+    /// the wider set, as before row CLASSED-periodic-tail, and drops the tails, except that the
+    /// union or difference with an empty set gives the set itself, tails and all. Proof that
+    /// this is sound where it was before: the meet, union and hull of sets that hold the true
+    /// ones hold the true results. A difference whose subtrahend has tails takes away the wider
+    /// set, too much; that was so before this row as well, and is why zedc-presburger keeps the
+    /// cause `Refusal::Repeats` with every such set, which each consumer of a difference reads
+    /// as "not exact" and refuses on. A known flaw, not new here. Exact meet, union and
+    /// difference of tailed sets (tables of the lcm of the periods, the finite parts listed
+    /// between the ends) are not built: no caller needs them yet (row CLASSED-periodic-tail asks
+    /// for membership), and listing the finite part between two tails has no charge of work
+    /// here.
+    pub tails: Option<Arc<Tails>>,
+}
+
+/// One end of a set of integers whose values repeat without end there (row
+/// CLASSED-periodic-tail): from `end` on, away from the middle of the set, its members are
+/// exactly the values `v` with `have[v mod step]`. The set of the even integers is the tail
+/// above with `end` `-inf`, `step` 2 and `have` `[true, false]`.
+///
+/// Why such ends, and why they are enough. A set of integers definable in Presburger
+/// arithmetic, as every projection of a formula of zedc-presburger onto one symbol is, is
+/// ultimately periodic in each direction: Ginsburg and Spanier, "Semigroups, Presburger
+/// formulas, and languages", Pacific J. Math. 16:285–296, 1966, doi:10.2140/pjm.1966.16.285
+/// (title, volume and pages checked against Crossref 2026-11-26; the paper itself not read),
+/// as quoted in V. Marsault and J. Sakarovitch, "Ultimate periodicity of b-recognisable sets: a
+/// quasilinear procedure", arXiv:1301.2691 (paperclip full text, read 2026-11-26), lines 10
+/// and 24: "A set of numbers is recognisable if, and only if it is ultimately periodic (UP)",
+/// and "Rational sets of \mathbb{N}^d have been characterised by Ginsburg and Spanier as sets
+/// definable in the Presburger arithmetic". In dimension 1 a semilinear set is a finite union
+/// of progressions `{a + k·p : k >= 0}`, so past the largest `a` it agrees with the residues
+/// modulo the lcm of the `p`; on the integers each direction is one such set read on `v` or on
+/// `-v`. Cooper's elimination (D. C. Cooper, "Theorem proving in arithmetic without
+/// multiplication", Machine Intelligence 7:91–99, 1972; from memory, not read here) gives the
+/// same shape directly: its `φ_{-∞}` disjunct is a formula of divisibility constraints alone, so
+/// far enough out a projection is a union of residue classes. So a finite part between two such
+/// tails holds every projection exactly, which a finite union of ranges met with one class does
+/// not (the even integers, `#k0 == 9 * t`). The table is kept at its least period
+/// ([`Tail::new`]), as granularities are kept at their minimal period in C. Bettini, S.
+/// Mascetti and X. S. Wang, "Supporting temporal reasoning by mapping calendar expressions to
+/// minimal periodic sets", arXiv:1110.2213 (paperclip full text, read 2026-11-26), line 256:
+/// "each granularity can have different periodical representations and, for a given
+/// granularity, it is possible to identify a set of representations that are minimal i.e.
+/// adopting the smallest period length"; here the minimal one is what makes the form one for
+/// each set (proof at [`Classed::tailed`]).
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Tail {
+    /// For the tail above, the least value from which it holds, or `-inf` where it holds
+    /// every value; for the tail below, the greatest value up to which it holds. A member of
+    /// the set where finite.
+    pub end: End,
+    /// The period, the length of `have`, at least 2.
+    pub step: Num,
+    /// `have[r]`: whether the values `r mod step` are members. Neither all `true` nor all
+    /// `false`.
+    pub have: Arc<[bool]>,
+}
+
+impl Tail {
+    /// The tail from `end` with the residue table `have` modulo `have.len()`, kept at its least
+    /// period: the table cut to the shortest block that `have` repeats (zed-collections
+    /// `period::least_period`, O(n) for n residues, with its proof). Reading `v mod d` for a
+    /// divisor `d` of `n` in place of `v mod n` is the same where `have` is `have[..d]`
+    /// repeated, since `(v mod n) mod d == v mod d` for `d` dividing `n`. `have` must hold both
+    /// kinds of residue.
+    pub fn new(end: End, have: &[bool]) -> Tail {
+        debug_assert!(have.contains(&true) && have.contains(&false));
+        let d = zed_collections::period::least_period(have);
+        Tail {
+            end,
+            step: Num::from(d as i64),
+            have: have[..d].into(),
+        }
+    }
+
+    /// Whether the residue of `v` is marked: O(1) for a value of a word, and for a kept value
+    /// its residue by modular powering ([`Num::rem_euclid`]), nothing as wide as it built.
+    pub fn at(&self, v: &Num) -> bool {
+        let r = v
+            .rem_euclid(&self.step)
+            .to_i128()
+            .expect("a residue below the table's length");
+        self.have[r as usize]
+    }
+}
+
+/// The tails of a [`Classed`]: one below, one above, or both. A set periodic everywhere has
+/// only the tail above, with the end `-inf`.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Tails {
+    pub below: Option<Tail>,
+    pub above: Option<Tail>,
 }
 
 impl Classed {
@@ -52,6 +151,7 @@ impl Classed {
         let empty = || Classed {
             ranges: IntervalSet::empty(),
             class: Congruence::top(),
+            tails: None,
         };
         let (m, r) = match class {
             Congruence::Bottom => return empty(),
@@ -142,6 +242,7 @@ impl Classed {
         }
         let class = Congruence::new(g.clone(), a0);
         Classed {
+            tails: None,
             ranges: IntervalSet::from_pieces(
                 (runs.into_iter())
                     .map(|(lo, hi)| (End::Fin(lo), End::Fin(hi)))
@@ -240,7 +341,48 @@ impl Classed {
         Classed {
             ranges: set,
             class: Congruence::top(),
+            tails: None,
         }
+    }
+
+    /// `wider` with the tails `below` and `above` (row CLASSED-periodic-tail): the set whose
+    /// members are, from each tail's end on away from the middle, the values its table marks,
+    /// and between the tails' ends the members of `wider`. `wider` must hold the set (each
+    /// tail's ray whole), so that every operation that does not read the tails, and every
+    /// reader of `ranges` and `class`, gets a set that holds this one, the answer it got before
+    /// this row. A tail whose end is `-inf` (above) holds every value and comes alone.
+    ///
+    /// Proof that the form is one for each set, so that the derived `==` and `Hash` compare
+    /// sets. Let S be a set with an end above that repeats and is not every value from some
+    /// point on. (1) The table: the least `T` such that S agrees with a set of period `T` above
+    /// some value is unique, and any period that S has above some value is a multiple of it (two
+    /// periods `p` and `q` of S above a common value give the period `gcd(p, q)` there, as
+    /// `v + gcd = v + a·p - b·q` for some `a, b >= 0` with each step staying above that value;
+    /// the residues so reached are the same set). [`Tail::new`] cuts the table to its least
+    /// period as a word, which is that `T`, since a table of length `n` repeating a block of
+    /// length `d` dividing `n` is exactly a set of period `d`. (2) The end: the least value `u`
+    /// from which S agrees with that table is a function of S (`exact::ray_from` finds it, with
+    /// its proof). The same for the end below on `-v`. (3) `wider` is the form of
+    /// [`Classed::new`] of whatever the one caller (zedc-presburger `exact::ended`) gives, and
+    /// that is a function of S and the tails' ends: the rays from them whole and the finite part
+    /// between. So two forms of one set are equal field by field. Tests:
+    /// `tests::tailed_sets_agree_with_the_values_listed` (random tables and ends against the
+    /// values listed one by one) and `tests::tailed_sets_of_one_set_are_equal`.
+    pub fn tailed(wider: Classed, below: Option<Tail>, above: Option<Tail>) -> Classed {
+        debug_assert!(!(below.is_some() && above.as_ref().is_some_and(|t| t.end == End::NegInf)));
+        if below.is_none() && above.is_none() {
+            return wider;
+        }
+        Classed {
+            tails: Some(Arc::new(Tails { below, above })),
+            ..wider
+        }
+    }
+
+    /// The set with its tails dropped: `ranges` met with `class`, which holds it (each tail's
+    /// ray whole).
+    pub fn without_tails(&self) -> Classed {
+        Classed::new(self.ranges.clone(), self.class.clone())
     }
 
     /// Whether the set has no value.
@@ -248,14 +390,35 @@ impl Classed {
         self.ranges.is_empty()
     }
 
-    /// Whether `v` is a member: in a range and in the class. O(log p) for p ranges.
+    /// Whether `v` is a member: in a range and in the class, or past a tail's end and marked
+    /// in its table. O(log p) for p ranges.
     pub fn contains(&self, v: i64) -> bool {
-        self.ranges.contains(v) && self.class.contains(&Num::from(v))
+        self.contains_end(&End::of(v))
     }
 
     /// Whether the end `v` is a member; an infinite end is one where the ranges reach it, which
-    /// only a set of every integer's class does.
+    /// only a set of every integer's class does. A finite `v` past the end of a tail is read
+    /// from its table alone, by [`Tail::at`]: O(1) for a word, and for a kept value of many
+    /// digits its residue by modular powering, nothing as wide as the value built (the reason
+    /// for this row: `3^(2^40)` against the even integers). An infinite end of a set with
+    /// tails is answered from `ranges`, the wider set (the hull's end, as before this row).
+    // Proof. By [`Classed::tailed`], a member at or past the end of a tail (`v >= u` above,
+    // `v <= l` below, any `v` for an end `-inf`) is exactly a value whose residue the table
+    // marks, and every other member is a member of `ranges` met with `class`. A value past both
+    // ends (the rays meet, `l >= u`) is read from either; they agree there, both being the set.
     pub fn contains_end(&self, v: &End) -> bool {
+        if let (Some(tails), End::Fin(n)) = (&self.tails, v) {
+            if let Some(above) = &tails.above
+                && *v >= above.end
+            {
+                return above.at(n);
+            }
+            if let Some(below) = &tails.below
+                && *v <= below.end
+            {
+                return below.at(n);
+            }
+        }
         self.ranges.contains_end(v)
             && match v {
                 End::Fin(n) => self.class.contains(n),
@@ -683,9 +846,13 @@ pub mod plain_shortcut {
 
 impl PartialEq<IntervalSet> for Classed {
     /// Whether the two sets hold the same values: both in the one form of [`Classed::new`]
-    /// and compared, O(p log p) for p ranges, with no value listed.
+    /// and compared, O(p log p) for p ranges, with no value listed. A set with tails is never
+    /// a set of ranges: a tail's table marks some residue and not another, so it has holes
+    /// without end, which a finite union of ranges does not.
     fn eq(&self, other: &IntervalSet) -> bool {
-        Classed::new(self.ranges.clone(), self.class.clone()) == Classed::plain(other.clone())
+        self.tails.is_none()
+            && Classed::new(self.ranges.clone(), self.class.clone())
+                == Classed::plain(other.clone())
     }
 }
 
@@ -714,6 +881,14 @@ impl fmt::Debug for Classed {
     /// so that an answer of ranges alone reads as before row DOMAINS-classed-sets; else both
     /// fields, the class as `r mod m`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(tails) = &self.tails {
+            return f
+                .debug_struct("Classed")
+                .field("ranges", &self.ranges)
+                .field("class", &format_args!("{}", self.class))
+                .field("tails", tails)
+                .finish();
+        }
         match self.strided() {
             None => write!(f, "{:?}", self.ranges),
             Some(_) => f

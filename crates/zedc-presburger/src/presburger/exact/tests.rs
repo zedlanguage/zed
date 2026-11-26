@@ -1185,12 +1185,17 @@ fn holed_tails_agree_in_every_order_and_with_enumerated_points() {
                     }
                     // ended reads `E` alone: the same wherever the cells stopped and the
                     // kept tail starts (below `d`, where `E` is the tail's residues).
+                    // With `E` itself in the tail below, from `l` down (row
+                    // CLASSED-periodic-tail), read value by value against `e`.
+                    let table: Vec<bool> = (0..step).map(period).collect();
+                    let tail = zedc_lattice::classed::Tail::new(End::of(l), &table);
+                    let tailed = Classed::tailed(Classed::plain(want.clone()), Some(tail), None);
                     for cut in [d - 1, d - 4, d - 25] {
                         let kept = vec![Kept {
                             lo: End::NegInf,
                             hi: End::of(cut),
                             step: Int::from(step),
-                            have: (0..step).map(period).collect(),
+                            have: table.as_slice().into(),
                         }];
                         let mut work = Work {
                             used: 0,
@@ -1199,9 +1204,12 @@ fn holed_tails_agree_in_every_order_and_with_enumerated_points() {
                         };
                         assert_eq!(
                             ended(ClassUnion::plain(points(cut + 1)), kept, &mut work),
-                            Ok((Classed::plain(want.clone()), true)),
+                            Ok((tailed.clone(), true)),
                             "cut {cut}: {f}"
                         );
+                    }
+                    for x in -12 - 3 * step..=12 {
+                        assert_eq!(tailed.contains(x), e(x), "{x}: {f}");
                     }
                     checked += 1;
                 }
@@ -5938,6 +5946,7 @@ fn classed_join_all_matches_sequential_join_and_is_order_independent() {
     let raw_empty = Classed {
         ranges: IntervalSet::empty(),
         class: Congruence::new(Num::from(2), Num::from(1)),
+        tails: None,
     };
     assert_eq!(
         Classed::join_all(vec![

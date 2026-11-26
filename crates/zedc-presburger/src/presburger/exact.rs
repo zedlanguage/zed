@@ -1803,7 +1803,10 @@ impl Periodic {
 /// The answer of [`cover`] once the gap is empty: `found`, exact, where no tail was kept;
 /// else the set read from the exact set `E` of the values of `s` with a point alone, with
 /// `true` for the cause ([`Refusal::Repeats`]): `E` where its values have no holes without
-/// end, and each ray past the start of the period of those holes, whole.
+/// end, and each ray past the start of the period of those holes, whole, with `E` itself
+/// carried exactly in the [`Classed`]'s tails (row CLASSED-periodic-tail;
+/// [`Classed::tailed`]), so that a membership question is answered (`presburger::decide_at`)
+/// while every other reader gets the wider set and the cause, as before.
 ///
 /// Why `E` is known exactly here: `found` holds only values of `E` (each cell's values have
 /// points); `h`, the cover's input, holds every value of `E`, and each piece of it left the
@@ -1870,13 +1873,44 @@ fn ended(
         })
         .collect();
     let down = ray_from(&found.neg(), &negated, work)?.map(|u| u.map(|u| -&u));
+    // The tails of `E` (row CLASSED-periodic-tail): above from `u` with the table of the kept
+    // piece with no upper end, below up to `l` with the table of the one with no lower end,
+    // each in the residues of the values themselves (`kept` is sorted by `lo`, so these are its
+    // last and first pieces, `ray_from`'s `top` on each side; the negated tables above are for
+    // the walk down only). Proof that the set so read is `E`: `ray_from` gives `u` as a value of
+    // `E` from which `E` agrees with `P` at every value, so `E ∩ [u, +inf)` is the values there
+    // that `P`'s table marks; the same below on the values negated; and between the ends the
+    // answer below is `E` exactly (the doc above). Where `E` is one period everywhere
+    // (`Some(None)` on either side) it is that period's table at every value, the tail above
+    // with the end `-inf`; when it is so on one side only by the walk's reading, it is so on
+    // both, since a set equal to one periodic set everywhere has holes without end each way.
+    let tail_of = |k: &Kept, end: End| {
+        debug_assert_eq!(k.step, Int::from(k.have.len()));
+        zedc_lattice::classed::Tail::new(end, &k.have)
+    };
+    let first = kept.first().filter(|k| k.lo == End::NegInf);
+    let last = kept.last().filter(|k| k.hi == End::PosInf);
+    let whole = |k: &Kept| {
+        let above = tail_of(k, End::NegInf);
+        Classed::tailed(Classed::plain(IntervalSet::top()), None, Some(above))
+    };
     let (l, u) = match (down, up) {
-        (Some(None), _) | (_, Some(None)) => return Ok((Classed::plain(IntervalSet::top()), true)),
+        (_, Some(None)) => return Ok((whole(last.expect("the top kept piece")), true)),
+        (Some(None), _) => return Ok((whole(first.expect("the bottom kept piece")), true)),
         (Some(Some(l)), Some(Some(u))) if &l + &Int::from(1) >= u => {
-            return Ok((Classed::plain(IntervalSet::top()), true));
+            let below = tail_of(first.expect("the bottom kept piece"), fin(&l));
+            let above = tail_of(last.expect("the top kept piece"), fin(&u));
+            let top = Classed::plain(IntervalSet::top());
+            return Ok((Classed::tailed(top, Some(below), Some(above)), true));
         }
         (l, u) => (l.flatten(), u.flatten()),
     };
+    let below = l
+        .as_ref()
+        .map(|l| tail_of(first.expect("the bottom kept piece"), fin(l)));
+    let above = u
+        .as_ref()
+        .map(|u| tail_of(last.expect("the top kept piece"), fin(u)));
     let between = IntervalSet::range(
         l.as_ref()
             .map_or(End::NegInf, |l| fin(&(l + &Int::from(1)))),
@@ -1908,7 +1942,8 @@ fn ended(
             )?;
         }
     }
-    Ok((Classed::plain(IntervalSet::from_pieces(pieces)), true))
+    let wider = Classed::plain(IntervalSet::from_pieces(pieces));
+    Ok((Classed::tailed(wider, below, above), true))
 }
 
 fn negated_end(e: &End) -> End {

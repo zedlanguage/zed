@@ -20630,11 +20630,11 @@ pub fn project(f: &Formula, sym: &Atom) -> Result<One, Refusal> {
 /// against a wider one by the sign of their difference at 64 bits and then at twice as many,
 /// and its residue modulo a word is found by modular powering, `Kept::residue`). A refusal
 /// when the projection is refused, and when it is wider than exact (a disjunction left out
-/// of it, one of `causes`) and holds `value`, which then may have no point. Such a refusal
-/// comes for every projection whose values have gaps that repeat without end, as `x == sym
-/// && x mod 2 == 0`, refused for [`Refusal::Repeats`]: [`Classed`] keeps a class only with
-/// bounded ranges, so the residue of a kept value too wide for a word is read only once row
-/// CLASSED-periodic-tail keeps an unbounded class exactly.
+/// of it, one of `causes`) and holds `value`, which then may have no point. A projection whose
+/// values have gaps that repeat without end, as `x == sym && x mod 2 == 0`, comes with the
+/// cause [`Refusal::Repeats`] and a wider set of ranges, but also with the exact set in its
+/// tails (row CLASSED-periodic-tail, [`Classed::tailed`]), so it is answered: the residue of
+/// `value` modulo the tail's period, past the tail's end, and the ranges between.
 ///
 /// Why this and not `sym` as a variable whose only facts are its order against the other
 /// constants of `f` (the first text of DESIGN step L1.38a): `3 * x == 3^(2^40) + 1` with `x`
@@ -20648,19 +20648,29 @@ pub fn project(f: &Formula, sym: &Atom) -> Result<One, Refusal> {
 // projection, by definition of `P`. `project_each_classed` gives a set `S ⊇ P`, with `S = P`
 // when `causes` is empty (its contract, at `project`). Case `causes` empty: `v ∈ S` iff
 // `v ∈ P`, so the answer is exact. Case `causes` not empty: `v ∉ S` implies `v ∉ P`, so `false`
-// is exact; `v ∈ S` decides nothing, and the question is refused with the first cause.
-// `Classed::contains_end` tests `v` in the ranges and in the class, the set's meaning
-// ([`Classed`]). Complexity: the projection's cost, plus O(p) comparisons for the p ranges and
-// one residue, each O(log e · M(log m)) for an exponent `e` and a modulus `m` of a word, or
-// O(M(b)) for a difference compared at b bits. Tests:
-// `l01_38_presburger::kept_constants` (the first counterexample, red under the order alone;
-// the second refused for `Repeats` until CLASSED-periodic-tail).
+// is exact; `v ∈ S` decides nothing, and the question is refused with the first cause,
+// except in the case below. Case: the set has tails and every cause is `Repeats`. `Repeats`
+// is given only by `exact::exact_each_checked`, where a cover kept a tail, and then the set of
+// that symbol is the one `exact::ended` read from the exact set `E` of its values with a
+// point, with `E` itself in its tails, read by `Classed::contains_end` (proof at `ended` and
+// at `Classed::tailed`); the set comes to here unchanged (`project_each_with` writes the
+// answers back over the names given, a renaming of atoms, not of values; the memo keeps the
+// answer whole). So `v ∈ S`, read with the tails, is `v ∈ P`, exact, and `Repeats` says only
+// that the ranges alone are wider. Any other cause (a disjunction left out by the solver)
+// keeps the refusal. `Classed::contains_end` tests `v` in the ranges and in the class, the
+// set's meaning, or past a tail's end in its table ([`Classed`]). Complexity: the
+// projection's cost, plus O(p) comparisons for the p ranges and one residue, each
+// O(log e · M(log m)) for an exponent `e` and a modulus `m` of a word, or O(M(b)) for a
+// difference compared at b bits. Tests: `l01_38_presburger::kept_constants` (the first
+// counterexample, red under the order alone; the second, `3^(2^40)` against the even
+// integers, refused for `Repeats` before CLASSED-periodic-tail and now `false`).
 pub fn decide_at(f: &Formula, sym: &Atom, value: &Num) -> Result<bool, Refusal> {
     let mut each = project_each_classed(f, std::slice::from_ref(sym))?;
     let set = each.sets.remove(0)?;
     let member = set.contains_end(&End::Fin(value.clone()));
+    let exact = set.tails.is_some() && each.causes.iter().all(|c| *c == Refusal::Repeats);
     match (member, each.causes.into_iter().next()) {
-        (true, Some(cause)) => Err(cause),
+        (true, Some(cause)) if !exact => Err(cause),
         (member, _) => Ok(member),
     }
 }
