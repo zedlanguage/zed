@@ -591,6 +591,22 @@ pub(super) fn unions_inside(n: usize) -> String {
     src + &format!("u = e{n} < 1;\n")
 }
 
+/// [`unions_inside`] with each `e_i = (d_i, e_{i-1})`: the step of `e_i` meets the steps of
+/// `d_i` first, and those of `e_{i-1}`, most of them already met inside `d_i`, second.
+pub(super) fn unions_inside_reversed(n: usize) -> String {
+    let mut src = "g(positional c: bool) = if c { 1 } else { 2 };\na0 = (g(true), 0);\n\
+                   d0 = (a0, g(false));\ne0 = (d0, 0);\n"
+        .to_string();
+    for i in 1..=n {
+        src += &format!(
+            "a{i} = (a{}, 0);\nd{i} = (a{i}, g(false));\ne{i} = (d{i}, e{});\n",
+            i - 1,
+            i - 1
+        );
+    }
+    src + &format!("u = e{n} < 1;\n")
+}
+
 /// `a_n` holds `n` unions once each, `g_i` giving `2i | 2i + 1` in `a_i = (a_{i-1}, g_i(true))`,
 /// and `e_0 = (a_n, 0); e_k = (e_{k-1}, g_k(false))` uses one more of them twice at each link,
 /// then `u = e_n < 1;` (MSG-derive-print-union-names).
@@ -637,10 +653,11 @@ fn declared_parts(out: &str) -> Vec<&str> {
 #[test]
 fn rejecting_short_chains_of_names_holding_unions() {
     type Maker = (&'static str, fn(usize) -> String);
-    let makers: [Maker; 4] = [
+    let makers: [Maker; 5] = [
         ("unions", unions),
         ("unions_each_its_own", unions_each_its_own),
         ("unions_inside", unions_inside),
+        ("unions_inside_reversed", unions_inside_reversed),
         ("unions_named_one_by_one", unions_named_one_by_one),
     ];
     for (name, make) in makers {
@@ -655,7 +672,7 @@ fn rejecting_short_chains_of_names_holding_unions() {
                 .map(|p| p.to_string())
                 .collect();
             let want: Vec<String> = match name {
-                "unions" | "unions_inside" => vec!["1 | 2".into()],
+                "unions" | "unions_inside" | "unions_inside_reversed" => vec!["1 | 2".into()],
                 "unions_named_one_by_one" => (1..=n)
                     .map(|i| format!("{} | {}", 2 * i, 2 * i + 1))
                     .collect(),

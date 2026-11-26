@@ -8,7 +8,7 @@ use zed_tests::scaling;
 use crate::rejected;
 use crate::type_size::{
     compared, compared_with_1, doubling, growing, same, unions, unions_each_its_own, unions_inside,
-    unions_named_one_by_one,
+    unions_inside_reversed, unions_named_one_by_one,
 };
 
 /// Checks that the rejection of `make(8n)` is at most about 8 times as long as that of
@@ -147,6 +147,18 @@ fn rejecting_a_chain_of_n_names_each_using_a_union_once_and_twice_does_work_line
         "rejecting a chain of n names each using a union once and twice",
         800,
         unions_inside,
+    );
+}
+
+/// [`unions_inside_reversed`]: the step of each `e_i` meets the steps `d_i` reaches before
+/// those of `e_{i-1}`, which reaches most of them too (SCALE-derivation-lines-memo).
+#[test]
+fn rejecting_a_chain_of_n_names_each_using_a_union_once_and_twice_in_reverse_does_work_linear_in_n()
+{
+    works(
+        "rejecting a chain of n names each using a union once and twice, in reverse",
+        800,
+        unions_inside_reversed,
     );
 }
 
