@@ -57,8 +57,9 @@ impl Domain {
     ///    class (step 3), so the integers it adds to the interval are all outside the class
     ///    and the form still admits exactly `S`.
     /// 2. The class is the least class holding `S`, a function of `S` alone. When every piece
-    ///    is one point, `least_class` gives `v mod g`, with `g` the gcd of the differences,
-    ///    the least class holding those points. Otherwise some piece `[a, b]` has `a < b`
+    ///    is one point, `reduce_congruence` gives `v mod g`, with `g` the gcd of the
+    ///    differences, the least class holding those points (proved at it; before
+    ///    FAIL-lazy-join-random-seed this module walked the points itself). Otherwise some piece `[a, b]` has `a < b`
     ///    (or an infinite end), both finite ends members of `m`'s class, so `a` and `a + m`
     ///    are both in `S`; a class holding them has a modulus dividing `m`, and every
     ///    difference in `S` is a multiple of `m`, so `m` is the gcd and the class is least.
@@ -85,22 +86,12 @@ impl Domain {
                 finite: FiniteSet::Top,
             };
         }
-        // A piece holding two members holds two that differ by the modulus, so the class is
-        // already the least one; when every piece is one point the least class is the join of
-        // the points.
-        let points: Option<Vec<&Num>> = ints
-            .pieces()
-            .map(|p| match p {
-                (End::Fin(a), End::Fin(b)) if a == b => Some(a),
-                _ => None,
-            })
-            .collect();
-        let class = match (points, class) {
-            (Some(vs), _) => least_class(&vs),
-            // Normalized, so that one class has one representation (step 2 above).
-            (None, Congruence::Class { modulus, residue }) => Congruence::new(modulus, residue),
-            (None, Congruence::Bottom) => unreachable!("an empty domain returned above"),
+        // The least class holding the members (step 2 above), normalized so that one class has
+        // one representation.
+        let Congruence::Class { modulus, residue } = class else {
+            unreachable!("an empty domain returned above")
         };
+        let class = Congruence::new(modulus, residue);
         Domain {
             ints: runs(&ints, &class),
             class,
@@ -112,26 +103,6 @@ impl Domain {
     pub fn rank(&self) -> u64 {
         u64::from(self.normal() != *self)
     }
-}
-
-/// The least class holding each of `points`, one or more: `v mod g` for the first point `v`
-/// and the greatest common divisor `g` of the differences. It is exact at every size, a
-/// function of the points alone, so the normal form stays unique.
-// Proof that `v mod g` is the least class holding the points (proofs audit, proofdoc4g).
-// It holds them: each point `w` has `g | w - v`. A class `r mod m` that holds them all has
-// `m | w - v` for each `w` (two members of one class differ by a multiple of `m`), so `m |
-// g`, and every member `v + g·t` of `v mod g` is `v + m·(g/m)·t`, in `r mod m`. Modulus 0
-// is the one value: `g` = 0 exactly when every point is `v`, and a class `m` = 0 holding
-// them means the same. `Num::gcd` is at least 0 and `gcd(0, d) = |d|`, so the fold from 0
-// gives the gcd of the differences. Tests:
-// `m0_07_canonicalization::domains::one_set_of_integers_has_one_normal_form` (`{1, 5, 9}`
-// gives `1 mod 4`) and `…::the_normal_form_admits_the_same_integers_and_is_unique`.
-fn least_class(points: &[&Num]) -> Congruence {
-    let first = points[0];
-    let g = points[1..]
-        .iter()
-        .fold(Num::ZERO, |g, &v| g.gcd(&(v - first)));
-    Congruence::new(g, first.clone())
 }
 
 /// The pieces of `ints`, whose finite endpoints are members of `class`, joined wherever the
