@@ -14029,6 +14029,9 @@ fn by_halves_of(
 ) {
     let width = failed.len();
     let deepest = if split_halves { usize::MAX } else { 2 };
+    // For [`layers_of`]: how many disjuncts of each disjunction it has met in the set it reads,
+    // all 0 between calls.
+    let mut seen = vec![0usize; width];
     let mut stack = vec![(round, 0usize)];
     while let Some((s, depth)) = stack.pop() {
         let s: Vec<(usize, usize)> = (s.into_iter())
@@ -14048,12 +14051,47 @@ fn by_halves_of(
         if let [(i, at)] = s[..] {
             failed[i][at] = true;
             learning.0(i, at);
+        } else if split_halves && let Some(layers) = layers_of(&s, &mut seen) {
+            // Pushed last first, so that the first layer is searched first.
+            layers
+                .into_iter()
+                .rev()
+                .for_each(|l| stack.push((l, depth + 1)));
         } else {
             let mid = s.len() / 2;
             stack.push((s[mid..].to_vec(), depth + 1));
             stack.push((s[..mid].to_vec(), depth + 1));
         }
     }
+}
+
+/// The set `s` of [`by_halves_of`] cut into layers, the `k`-th disjunct of each disjunction in
+/// `s` in layer `k`, each layer in the order of `s`; `None` when no disjunction has two
+/// disjuncts in `s`. `seen` holds a 0 for each disjunction and is left so.
+// Complexity tradeoff (SCALE-near-disj-groups): a round forces every disjunct no point holds, so
+// it forces two disjuncts of one disjunction together, which often share no point. Halved, the
+// set fails down one path to the first such pair: `1 + 2 log2 s` searches of the whole formula,
+// 15 at `r = 64` disjunctions of two and 21 at 512 on `l01_38_omega_test::disj_groups::the_
+// middle_of_a_chain_of_three_atom_rows_whose_disjuncts_hold_is_projected_in_n_log_n` (the
+// pair of disjunction 0 fails together and each of it alone has a point; 10.4 times the
+// instructions at 8 times the size, limit 10.5). Cut first into layers, each with one disjunct of each disjunction, it costs the failed
+// search and one per layer, 3 there (9.04 times the instructions, 1.04 G and 9.44 G, Colab
+// job j4 of batch b28). A layer that fails is then halved as before, so a set
+// costs at most its number of layers more searches than halving alone, at most its size; a
+// set that does not fail is not cut. `O(|s|)`: only the disjunctions of `s` are counted and
+// set back.
+fn layers_of(s: &[(usize, usize)], seen: &mut [usize]) -> Option<Vec<Vec<(usize, usize)>>> {
+    let mut layers: Vec<Vec<(usize, usize)>> = Vec::new();
+    for &(i, at) in s {
+        let k = seen[i];
+        seen[i] += 1;
+        if k == layers.len() {
+            layers.push(Vec::new());
+        }
+        layers[k].push((i, at));
+    }
+    s.iter().for_each(|&(i, _)| seen[i] = 0);
+    (layers.len() > 1).then_some(layers)
 }
 
 /// A formula in negation normal form as its top-level constraints and its top-level
@@ -18407,6 +18445,50 @@ fn relaxed_empty(gs: &System) -> bool {
     true
 }
 
+/// Whether the rows over some two variables, with the bound rows of those two, have no integer
+/// point, which [`twovar::point`] decides exactly; then the system has none, since its points
+/// are points of those rows. Only the pairs of variables that two rows or more share are
+/// asked: one row with the bounds of its two variables is read by [`box_empty_in`].
+///
+/// Complexity tradeoff (FAIL-dark-cycle-both-ways-growth): the rows `3·x[b] - 2·x[a] >= 1`
+/// around a cycle both ways, every variable at most 0, have no point, since the two rows of one
+/// pair sum to `x[a] + x[b] >= 2`; but no elimination of them is exact, the box test reads one
+/// row at a time and so finds no crossing bound, and the dark shadow and its splinters then
+/// outgrew the solver's bound (`Refusal::Growth`, under every naming). Naive version: none; the
+/// question was refused. A complete rational test (a linear program over all the rows) would
+/// also find it, but the solver has no general one, and the real shadows of [`relaxed_empty`]
+/// stop at the first elimination that adds terms. Used: each pair's rows, `m` of them, are
+/// decided by [`twovar::point`] in `O(m log m)` (its proof at twovar.rs), and each row of two
+/// terms is in one pair ([`System::pairs`]), so all the pairs cost `O(m log m)` for `m` rows,
+/// plus four lookups of bound rows each. What is given up: a system empty only by rows of three
+/// variables or more, or by rows of several pairs together, is not found here. The answer reads
+/// the rows alone, not the names of the variables, and the order of the pairs changes only how
+/// soon a pair with no point is met. Test:
+/// `l01_38_omega_test::names::a_dark_cycle_turned_both_ways_with_no_point_is_decided`.
+fn pairs_empty(sys: &System) -> bool {
+    let bound_rows = |j: usize| {
+        [Int::ONE, -&Int::ONE]
+            .into_iter()
+            .filter_map(move |c| sys.rows.get_key_value([(j, c)].as_slice()))
+    };
+    sys.pairs
+        .iter()
+        .filter(|(_, ps)| ps.len() > 1)
+        .any(|(&(x, y), ps)| {
+            if meter::spent() {
+                return false;
+            }
+            let held = ps.iter().map(|p| {
+                let a = sys.ids[*p].as_ref().expect("a row held");
+                (a, &sys.rows[a])
+            });
+            let rows: Vec<(&[Term], &Int)> = (held.chain(bound_rows(x)).chain(bound_rows(y)))
+                .map(|(a, h)| (&**a, &h.k))
+                .collect();
+            twovar::point(&rows, x, Some(y), false).is_none()
+        })
+}
+
 /// The lower and the upper bound of each variable, where it has one.
 type Bounds = (Vec<Option<Int>>, Vec<Option<Int>>);
 
@@ -19431,13 +19513,14 @@ impl Omega {
                 let least = self.sys.least_unfilled(&[&self.sys.inexact]);
                 match self.untie(least, |fill| fill <= 0) {
                     Some((_, Ok(js))) => {
-                        // An empty real shadow, which keeps every integer point, shows the
+                        // An empty real shadow, which keeps every integer point, or a pair of
+                        // variables whose rows have no point ([`pairs_empty`]), shows the
                         // problem empty; from here on the dark shadow is solved, whose points
                         // are points of the problem, and the splinters of each dark elimination
                         // hold the points it misses.
                         if !self.tested {
                             self.tested = true;
-                            if relaxed_empty(&self.sys) {
+                            if relaxed_empty(&self.sys) || pairs_empty(&self.sys) {
                                 return Leaf::Empty;
                             }
                             if meter::spent() {
@@ -19514,10 +19597,11 @@ impl Omega {
             // stage. With coefficients up to 5, or a pair of rows with no point, the stage
             // never ran.
             //
-            // An empty real shadow shows the problem empty whatever was tied.
+            // An empty real shadow, or a pair with no point, shows the problem empty whatever was
+            // tied.
             if tie.is_some() && !self.tested {
                 self.tested = true;
-                if relaxed_empty(&self.sys) {
+                if relaxed_empty(&self.sys) || pairs_empty(&self.sys) {
                     return Leaf::Empty;
                 }
                 if meter::spent() {
@@ -19540,7 +19624,8 @@ impl Omega {
             // two rows that bound a variable past each other with the other terms at their
             // largest; a system with no rational point that no such pair shows (the rows of
             // `stages::CROSSING` raised by 1 to 7) is refused, since the resolvents that would
-            // find more (cross-review XR3 Q1) were not adopted. Why: an
+            // find more (cross-review XR3 Q1) were not adopted; only the rows over each pair of
+            // variables are decided together ([`pairs_empty`]). Why: an
             // elimination that adds terms multiplies lower by upper bounds, so the rows can grow
             // doubly exponentially in the variables eliminated (Fourier–Motzkin), and the dark
             // and gray shadows of the full Omega test add an exponential search on top; trying
@@ -19572,6 +19657,11 @@ impl Omega {
             if let Some(v) = box_point(&self.sys, &lo, &hi) {
                 start = v;
                 break;
+            }
+            // Rows changed since the test above, which ran once, are read again here, before
+            // a refusal: a pair of variables whose rows have no point shows the rows empty.
+            if self.sys.live > 3 && pairs_empty(&self.sys) {
+                return Leaf::Empty;
             }
             if self.sys.live <= 3 {
                 // `live3` decides three variables completely, so the order of tied ones
@@ -36597,9 +36687,12 @@ mod unit_interval_tests {
         );
         // Before the fix the classes read each class's own rows beside the rows its shadow
         // keeps: three rows twice and `11x <= 9y2 + 10`, which the others imply. Rows given
-        // twice answer as given once; the implied row makes the solver refuse with `Growth`
+        // twice answer as given once; the implied row made the solver refuse with `Growth`
         // (its documented refusal when every elimination left adds terms), the question of
-        // SOLVE-growth-implied-row.
+        // SOLVE-growth-implied-row. Since FAIL-dark-cycle-both-ways-growth the solver reads
+        // the rows over each pair of variables together ([`pairs_empty`]): over `x, y2`,
+        // `x - y2 >= 5` and the implied row give `2x <= -35`, against `3x >= -10`, so the
+        // system is decided with no point.
         let base: Vec<&Con> = core.iter().chain(&own).collect();
         let twice: Vec<&Con> = (base.iter().copied())
             .chain([&core[0], &core[5], &core[6]])
@@ -36609,7 +36702,7 @@ mod unit_interval_tests {
         let answer = |rows: &[&Con]| solve(rows, false).map(|m| m.is_some());
         assert_eq!(answer(&base), Ok(false));
         assert_eq!(answer(&twice), Ok(false));
-        assert_eq!(answer(&with_implied), Err(Refusal::Growth));
+        assert_eq!(answer(&with_implied), Ok(false));
     }
 
     /// Over `x` and `y0`: the core `y0 - 1 >= 0`, `-y0 >= 0` (with `x` in [-20, 20]), whose
@@ -36768,17 +36861,37 @@ mod cause_replay_tests {
     /// meets `3x + 2y >= -2 && 3x - 2y >= -2` (so `x >= 0`) nowhere. The projection onto `x, y`
     /// drops `s`, and with it `a, b, c, d`, and shows that over two atoms; the whole system keeps
     /// six atoms after `s` is dropped, none of which can be eliminated without adding terms, and
-    /// the solver refuses it with `Growth`.
-    #[test]
-    fn growth_survives_a_projection_with_no_point() {
+    /// the solver refused it with `Growth`. Since FAIL-dark-cycle-both-ways-growth the solver
+    /// reads the rows over each pair of variables together ([`pairs_empty`]), and the rows over
+    /// `x, y` have no point, so it answers `Ok(None)` (asserted below). With `z` (`zed` true),
+    /// `+2z` is added to the first of the six rows and to the first row of the disjunct, and
+    /// `-2z` to every other row on `x, y`, so no row is over two variables and no pair shows the
+    /// emptiness, while the sum of the first two rows and that of the disjunct's two, which hold
+    /// `z` no more, still do: `6x + 4 >= 0` and `-6x - 2 >= 0` leave `x` in [-2/3, -1/3], no
+    /// integer. The solver refuses that system with `Growth`, the refusal this test needs, and
+    /// the projection shows it has no point. With `±z` in alternation (b28's first try) the
+    /// solver decided it, `Ok(None)`; this placement is the first in order of a search over
+    /// 3,840 (`z`, `a`, `b`, `c` or `d` added at `±1` to `±3` to the eight rows on `x, y`) whose
+    /// whole system the solver refuses with `Growth` and which this test passes (Colab, batch
+    /// b28, job j5: none of the 256 placements of `z` at `±1` was refused with `Growth`; of the
+    /// first 74 at `±2`, 73 were, and 5 of those passed; the search stopped at the fifth).
+    fn gemini_rows(zed: bool) -> (Vec<Con>, Vec<Con>) {
         use Rel::Ge;
-        let cons = vec![
-            con(&[("x", 3), ("y", 2)], 2, Ge),
-            con(&[("x", 3), ("y", -2)], 2, Ge),
-            con(&[("x", 5), ("y", 2)], 10, Ge),
-            con(&[("x", 5), ("y", -2)], 10, Ge),
-            con(&[("x", -5), ("y", 2)], 10, Ge),
-            con(&[("x", -5), ("y", -2)], 10, Ge),
+        let z = |k: i64| if zed { vec![("z", k)] } else { Vec::new() };
+        let row = |pairs: &[(&'static str, i64)], k: i64, c: i64| {
+            let mut all = pairs.to_vec();
+            all.extend(z(k));
+            con(&all, c, Ge)
+        };
+        let mut cons = vec![
+            row(&[("x", 3), ("y", 2)], 2, 2),
+            row(&[("x", 3), ("y", -2)], -2, 2),
+            row(&[("x", 5), ("y", 2)], -2, 10),
+            row(&[("x", 5), ("y", -2)], -2, 10),
+            row(&[("x", -5), ("y", 2)], -2, 10),
+            row(&[("x", -5), ("y", -2)], -2, 10),
+        ];
+        cons.extend([
             con(&[("a", 2), ("b", 3), ("c", 2)], 5, Ge),
             con(&[("a", -2), ("b", 3), ("c", -2)], 5, Ge),
             con(&[("a", 2), ("b", -3), ("d", 2)], 5, Ge),
@@ -36790,11 +36903,21 @@ mod cause_replay_tests {
             con(&[("a", 2), ("b", 2), ("c", -3), ("d", 3)], 5, Ge),
             con(&[("a", -2), ("b", -2), ("c", 3), ("d", -3)], 5, Ge),
             con(&[("s", 1), ("x", 1), ("a", 1)], 0, Ge),
-        ];
+        ]);
         let d0 = vec![
-            con(&[("x", -3), ("y", 2)], -1, Ge),
-            con(&[("x", -3), ("y", -2)], -1, Ge),
+            row(&[("x", -3), ("y", 2)], 2, -1),
+            row(&[("x", -3), ("y", -2)], -2, -1),
         ];
+        (cons, d0)
+    }
+
+    #[test]
+    fn growth_survives_a_projection_with_no_point() {
+        let (cons, d0) = gemini_rows(false);
+        let full: Vec<&Con> = cons.iter().chain(&d0).collect();
+        let answer = solve(&full, true).map(|m| m.is_some());
+        assert_eq!(answer, Ok(false), "the rows over x, y have no point");
+        let (cons, d0) = gemini_rows(true);
         let full: Vec<&Con> = cons.iter().chain(&d0).collect();
         let mut p = Parts::default();
         p.cons = cons.clone();

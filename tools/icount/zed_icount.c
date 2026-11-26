@@ -63,6 +63,33 @@
  * not an x32 call, and above every number Linux has used (under 500 in 2026), so a kernel
  * release that adds calls will not reach it soon; a call with another first argument is passed
  * to the kernel unchanged.
+ *
+ * Counting only around the measured runs (FAIL-bench-pieces-past-limit-on-main, batch b28). A
+ * block gets the add only while counting is on. It is off when the process starts, a read turns
+ * it on, and the call with first argument ZED_ICOUNT_KEY_SET and second argument 0 or 1 turns
+ * it off or on and answers 1 if it was on, else 0. zed_tests::scaling's meter turns it off
+ * after its first read (Meter::new), and its first run's first read turns it on for the rest
+ * of the process (Meter::work). So a benchmark's set-up, the building of its inputs before
+ * its first run and the replay of a test in a new process up to its first run, runs under
+ * DynamoRIO with no add. Each change of state removes every block of the program's code from the cache
+ * (dr_delay_flush_region over each module), so that each block is built again as the new state
+ * says: a block built while counting was off and run after it is turned on would count nothing.
+ * Proof that a count between two reads is the one the client gave before this change: the
+ * first read turns counting on and queues the flush, and the reading thread does the flush
+ * itself before it next runs code from the cache (the steps in DynamoRIO's source are at
+ * flush_program_code); no other thread enters the cache meanwhile, since the meter's thread
+ * is the only one that runs while it reads; so every block entered after the read is built
+ * after the flush, with the add; and nothing turns it off
+ * before the second read except a call with ZED_ICOUNT_KEY_SET, which the meter makes only
+ * before its first run. Each block that runs is copied into the cache once more after each
+ * change, so the cost is one more copy of the code run after the first run's read, once a
+ * process, against the add on every block the set-up runs (1.5 times DynamoRIO's own slowdown
+ * on zedc's code, in the table at zed_tests::scaling). A switch off after every run as well
+ * made a test of 60 small runs 12 times slower (zed_tests::scaling::software_count). The
+ * translations of the blocks are kept
+ * (DR_EMIT_STORE_TRANSLATIONS), since DynamoRIO otherwise builds a block again with the
+ * client's events to find an instruction's place in it, and those events would then give the
+ * state as it is now, not as it was when the block was built.
  */
 
 #include "dr_api.h"
@@ -75,6 +102,8 @@
 
 #define ZED_ICOUNT_SYSNUM 0x5a45      /* "ZE"; also in zed_alloc_count::os::software_instructions */
 #define ZED_ICOUNT_KEY 0x7a6564696e73ULL /* "zedins"; the same */
+/* "zedset"; also in zed_alloc_count::os::software_counting */
+#define ZED_ICOUNT_KEY_SET 0x7a6564736574ULL
 #ifndef CLONE_THREAD
 #    define CLONE_THREAD 0x00010000
 #endif
@@ -105,6 +134,68 @@ typedef struct node {
 
 static void *lock;
 static hashtable_t by_tid;
+
+/* Whether the blocks built now get the add (file comment, "Counting only around the measured
+ * runs"). Off at the start; changed only by set_counting. One thread changes it at a time: the
+ * meter's thread, which reads and switches around its runs while the run's own threads have
+ * ended or not yet started. */
+static volatile bool counting;
+
+/* Removes every block of the program's code from the cache, so that each is built again as
+ * `counting` now says. dr_delay_flush_region only queues the flush (dr_tools.h of DynamoRIO
+ * 11.3.0: "The flush will be performed at the next safe point in time"). When it is done is
+ * in DynamoRIO 11.3.0's source: dr_delay_flush_region (core/lib/instrument.c) puts the request
+ * on the global list client_flush_requests; enter_nolinking (core/fragment.c), which
+ * dispatch_enter_fcache (core/dispatch.c) calls before each entry into the cache, takes the
+ * list and flushes each region; and a pre-system-call event that skips the call returns
+ * through dispatch ("We'll return here if decided to skip the syscall", dispatch.c). So the
+ * thread that switches does the flush before it runs any code from the cache again, unless
+ * another thread enters the cache first and takes the list, which the meter rules out (it
+ * switches only while no other thread of the run is running). The self-test's check 4
+ * measures it: a block built while off, run after a read, counts exactly its count from
+ * before. The module list is copied first, since its iterator
+ * holds the list's lock until it stops; a module loaded between the two passes is past the
+ * copy's end and is not flushed, which no test does (a benchmark loads no library while it
+ * switches). Code outside every module (generated code) is not flushed; the test binaries make
+ * none. */
+static void
+flush_program_code(void)
+{
+    uint cap = 0, n = 0;
+    dr_module_iterator_t *it = dr_module_iterator_start();
+    while (dr_module_iterator_hasnext(it)) {
+        dr_free_module_data(dr_module_iterator_next(it));
+        cap++;
+    }
+    dr_module_iterator_stop(it);
+    if (cap == 0)
+        return;
+    app_pc *ranges = dr_global_alloc(2 * cap * sizeof(*ranges));
+    it = dr_module_iterator_start();
+    while (n < cap && dr_module_iterator_hasnext(it)) {
+        module_data_t *m = dr_module_iterator_next(it);
+        ranges[2 * n] = m->start;
+        ranges[2 * n + 1] = m->end;
+        n++;
+        dr_free_module_data(m);
+    }
+    dr_module_iterator_stop(it);
+    for (uint i = 0; i < n; i++) {
+        if (ranges[2 * i + 1] > ranges[2 * i] &&
+            !dr_delay_flush_region(ranges[2 * i], ranges[2 * i + 1] - ranges[2 * i], 0, NULL))
+            DR_ASSERT_MSG(false, "zed_icount: dr_delay_flush_region failed");
+    }
+    dr_global_free(ranges, 2 * cap * sizeof(*ranges));
+}
+
+static void
+set_counting(bool on)
+{
+    if (counting == on)
+        return;
+    counting = on;
+    flush_program_code();
+}
 
 static node_t *
 node_create(thread_id_t tid)
@@ -200,8 +291,17 @@ event_pre_syscall(void *drcontext, int sysnum)
 {
     node_t *n = drmgr_get_tls_field(drcontext, node_field);
     if (sysnum == ZED_ICOUNT_SYSNUM) {
-        if ((uint64)dr_syscall_get_param(drcontext, 0) != ZED_ICOUNT_KEY || n == NULL)
+        uint64 key = (uint64)dr_syscall_get_param(drcontext, 0);
+        if (key == ZED_ICOUNT_KEY_SET) {
+            bool was = counting;
+            set_counting(dr_syscall_get_param(drcontext, 1) != 0);
+            dr_syscall_set_result(drcontext, was ? 1 : 0);
+            return false;
+        }
+        if (key != ZED_ICOUNT_KEY || n == NULL)
             return true;
+        /* Before the lock, so that the flush is queued with no client lock held. */
+        set_counting(true);
         dr_mutex_lock(lock);
         uint64 count = *n->own + n->acc;
         dr_mutex_unlock(lock);
@@ -291,14 +391,16 @@ event_bb_analysis(void *drcontext, void *tag, instrlist_t *bb, bool for_trace,
         count++;
     }
     *user_data = (void *)(ptr_uint_t)count;
-    return DR_EMIT_DEFAULT;
+    /* Kept, so that DynamoRIO never builds the block again to translate a place in it (file
+     * comment): event_app_instruction would then read `counting` as it is now. */
+    return DR_EMIT_STORE_TRANSLATIONS;
 }
 
 static dr_emit_flags_t
 event_app_instruction(void *drcontext, void *tag, instrlist_t *bb, instr_t *instr,
                       bool for_trace, bool translating, void *user_data)
 {
-    if (!drmgr_is_first_instr(drcontext, instr))
+    if (!counting || !drmgr_is_first_instr(drcontext, instr))
         return DR_EMIT_DEFAULT;
     uint count = (uint)(ptr_uint_t)user_data;
     if (count == 0)

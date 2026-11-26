@@ -144,3 +144,34 @@ pub fn software_instructions() -> Option<u64> {
     let count = unsafe { libc::syscall(ZED_ICOUNT_SYSCALL, ZED_ICOUNT_KEY) };
     u64::try_from(count).ok()
 }
+
+/// The key of the call that switches the counting of `zed_icount` on or off ("zedset" in
+/// ASCII); see [`software_counting`].
+#[cfg(target_os = "linux")]
+const ZED_ICOUNT_KEY_SET: libc::c_long = 0x7a65_6473_6574;
+
+/// Switches the counting of the DynamoRIO client `zed_icount` on (`on`) or off, and gives
+/// whether it was on; `None` when the process does not run under that client. While it is off
+/// the client adds nothing to the code it runs, so work outside the runs measured (a
+/// benchmark's inputs, the replay of a test in a new process) runs faster; a read
+/// ([`software_instructions`]) switches it on again (tools/icount/zed_icount.c, "Counting only
+/// around the measured runs"; FAIL-bench-pieces-past-limit-on-main). Proof that a state is
+/// never taken for an error: the client answers 0 or 1, and every error of libc's `syscall` is
+/// -1.
+#[cfg(target_os = "linux")]
+pub fn software_counting(on: bool) -> Option<bool> {
+    #[expect(unsafe_code, reason = "a system call")]
+    // SAFETY: as in `software_instructions`; both arguments are numbers, no pointer.
+    let was = unsafe {
+        libc::syscall(
+            ZED_ICOUNT_SYSCALL,
+            ZED_ICOUNT_KEY_SET,
+            libc::c_long::from(on),
+        )
+    };
+    match was {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
+}

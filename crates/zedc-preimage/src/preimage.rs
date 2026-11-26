@@ -15769,6 +15769,80 @@ fn split_under((node, f): Under, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
     }
 }
 
+/// The part below `cut` and the cut piece of [`split_under`], without the part above, which
+/// [`slice_treap`] drops: on the path, a node below `cut` is rebuilt as there, and a node at or
+/// above it is passed with no node made and no line read for it.
+///
+/// Why (SPREAD-s22-five-range-live-seeds): a slice of one arm at each level of an `if` chain
+/// ([`select`]) kept one part of each split and made both, so about half of the nodes the
+/// split made, and the join of the dropped half of the cut piece to them ([`put_first`] or
+/// [`put_last`]), were dropped at once. Proof that the parts are those of [`split_under`],
+/// node for node: the function follows the same path by the same tests on `node.span`,
+/// `node.lo` and `node.hi`; where `split_under` rebuilds a node into its part below or returns
+/// a whole tagged subtree there, so does this, from the same arguments; where it puts the node
+/// into the part above, the part below is the one of its left child's split, which this
+/// returns. The cut piece is the same piece with the same line ([`line_under`]). Test:
+/// `tests::a_join_and_a_split_under_a_map_are_those_of_the_mapped_copies`.
+fn split_below_under((node, f): Under, cut: i128) -> (Tree, Option<CutPiece>) {
+    if cut <= key(&node.span.0) {
+        return (None, None);
+    }
+    if cut > key(&node.span.1) {
+        return (Some(apply_tag(node, f)), None);
+    }
+    let g = tag_under(node, f);
+    let (lo, hi) = (&node.lo, &node.hi);
+    if cut <= key(lo) {
+        return match &node.left {
+            None => (None, None),
+            Some(c) => split_below_under((c, &g), cut),
+        };
+    }
+    let (a, b) = line_under(node, f);
+    let left = node.left.as_ref().map(|c| apply_tag(c, &g));
+    if cut > key(hi) {
+        let (rl, piece) = match &node.right {
+            None => (None, None),
+            Some(c) => split_below_under((c, &g), cut),
+        };
+        let kept = node_of(lo.clone(), hi.clone(), a, b, node.prio, left, rl);
+        (Some(kept), piece)
+    } else {
+        (left, Some((lo.clone(), hi.clone(), a, b)))
+    }
+}
+
+/// [`split_below_under`] on the other side: the cut piece and the part at or above `cut` of
+/// [`split_under`], without the part below. The proof is that one's, mirrored.
+fn split_above_under((node, f): Under, cut: i128) -> (Option<CutPiece>, Tree) {
+    if cut <= key(&node.span.0) {
+        return (None, Some(apply_tag(node, f)));
+    }
+    if cut > key(&node.span.1) {
+        return (None, None);
+    }
+    let g = tag_under(node, f);
+    let (lo, hi) = (&node.lo, &node.hi);
+    if cut > key(hi) {
+        return match &node.right {
+            None => (None, None),
+            Some(c) => split_above_under((c, &g), cut),
+        };
+    }
+    let (a, b) = line_under(node, f);
+    let right = node.right.as_ref().map(|c| apply_tag(c, &g));
+    if cut <= key(lo) {
+        let (piece, lr) = match &node.left {
+            None => (None, None),
+            Some(c) => split_above_under((c, &g), cut),
+        };
+        let kept = node_of(lo.clone(), hi.clone(), a, b, node.prio, lr, right);
+        (piece, Some(kept))
+    } else {
+        (Some((lo.clone(), hi.clone(), a, b)), right)
+    }
+}
+
 /// The pieces of `node`'s subtree with each value `v` made `min(v, c)` where `min`, and
 /// `max(v, c)` otherwise. A subtree whose values all lie on the kept side of `c` is kept, and
 /// one whose values all lie on the other side is mapped to `c` by a tag ([`map_vals`] with
@@ -15864,14 +15938,34 @@ fn clamp_treap(node: &Tree, min: bool, c: &Int) -> Option<Tree> {
 }
 
 /// The pieces of `root` within `lo..=hi`, whose finite ends lie strictly between the
-/// infinities ([`in_range`]), so that a cut is never confused with an infinity.
+/// infinities ([`in_range`]), so that a cut is never confused with an infinity: the part of
+/// [`split_at`] at `lo` above the cut, then the part of `split_at` at `hi + 1` below it, each
+/// made alone ([`split_above_under`], [`split_below_under`]) with the half of its cut piece
+/// joined as `split_at` joins it, so the treap is the one the two `split_at` gave, node for
+/// node.
+// Complexity tradeoff: the same `O(depth)` path a cut, with only the kept part's nodes made
+// and the dropped half of the cut piece not joined; the bench
+// `l01_25_preimage_catalog::bench::s22::chain_five_range_live_scales` slices each arm at each
+// level (SPREAD-s22-five-range-live-seeds).
 fn slice_treap(root: Tree, lo: &End, hi: &End) -> Tree {
-    let root = match lo {
-        Fin(v) => split_at(root, small(v)).1,
+    let root = match (lo, &root) {
+        (Fin(v), Some(node)) => {
+            let cut = small(v);
+            match split_above_under((node, &Tag::ID), cut) {
+                (None, above) => above,
+                (Some((_, phi, a, b)), above) => put_first((End::from(cut), phi, a, b), above),
+            }
+        }
         _ => root,
     };
-    match hi {
-        Fin(v) => split_at(root, small(v) + 1).0,
+    match (hi, &root) {
+        (Fin(v), Some(node)) => {
+            let cut = small(v) + 1;
+            match split_below_under((node, &Tag::ID), cut) {
+                (below, None) => below,
+                (below, Some((plo, _, a, b))) => put_last(below, (plo, End::from(cut - 1), a, b)),
+            }
+        }
         _ => root,
     }
 }
@@ -21007,6 +21101,30 @@ mod tests {
             same(&l, &wl);
             same(&r, &wr);
             assert_eq!(p, wp);
+            // Each side made alone, as [`slice_treap`] makes it (SPREAD-s22-five-range-live-seeds).
+            if let Some(n) = &root {
+                let (bl, bp) = split_below_under((n, &f), cut);
+                let (ap, ar) = split_above_under((n, &f), cut);
+                same(&bl, &wl);
+                same(&ar, &wr);
+                assert_eq!((&bp, &ap), (&wp, &wp));
+            }
+            // A slice against its definition before, two `split_at` each keeping one part, at
+            // ends inside pieces, past both ends, and infinite.
+            let end = |rng: &mut Rng, inf: End| match rng.below(5) {
+                0 => inf,
+                _ => End::of(rng.below(110) as i64 - 60),
+            };
+            let (lo, hi) = (end(&mut rng, NegInf), end(&mut rng, PosInf));
+            let want = match &lo {
+                Fin(v) => split_at(mapped.clone(), small(v)).1,
+                _ => mapped.clone(),
+            };
+            let want = match &hi {
+                Fin(v) => split_at(want, small(v) + 1).0,
+                _ => want,
+            };
+            same(&slice_treap(mapped.clone(), &lo, &hi), &want);
             checked.0 += usize::from(p.is_some());
             // A join of the two parts, each under a map of its own.
             let (fl, fr) = (tag(&mut rng), tag(&mut rng));

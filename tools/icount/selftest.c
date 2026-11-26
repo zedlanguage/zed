@@ -17,6 +17,12 @@
  *    instructions and the fixed costs of its start and end, which are below 10^6 instructions
  *    (pthread_create and the thread's exit run a few thousand); a client that did not fold an
  *    ended thread into its parent adds about nothing, and fails.
+ * 4. Switching (FAIL-bench-pieces-past-limit-on-main): the call with ZED_ICOUNT_KEY_SET answers
+ *    the state before it, 1 after a read and 0 after a switch off; a loop of 2 k2 instructions
+ *    run while counting is off adds under 10^4 to two reads around it that switch it back on
+ *    before the second read; and the loop counted after it ran while off counts exactly what it
+ *    counted before (check 1's d1), so the block built while off is not run after the switch
+ *    on. A client that kept the blocks built while off would count about 0 there, and fails.
  */
 
 #define _GNU_SOURCE
@@ -30,6 +36,7 @@
 
 #define ZED_ICOUNT_SYSNUM 0x5a45
 #define ZED_ICOUNT_KEY 0x7a6564696e73ULL
+#define ZED_ICOUNT_KEY_SET 0x7a6564736574ULL
 
 static long
 count(void)
@@ -37,7 +44,15 @@ count(void)
     return syscall(ZED_ICOUNT_SYSNUM, ZED_ICOUNT_KEY);
 }
 
-static void
+/* Turns counting on (1) or off (0); answers the state before. */
+static long
+set_counting(long on)
+{
+    return syscall(ZED_ICOUNT_SYSNUM, ZED_ICOUNT_KEY_SET, on);
+}
+
+/* Not inlined, so that every call runs the one block of check 4. */
+static __attribute__((noinline)) void
 spin(uint64_t k)
 {
     __asm__ volatile("1: dec %0\n\tjnz 1b" : "+r"(k) : : "cc");
@@ -134,5 +149,19 @@ main(int argc, char **argv)
           "threads: a joined thread's loop counts in the reader (within 10^4)", t1 - t0,
           2 * (k2 - 1));
     check(t0 > 0 && t0 < 1000000, "threads: a thread's fixed costs are below 10^6", t0, 0);
+    long on = set_counting(0), off = set_counting(0);
+    check(on == 1 && off == 0, "switching: the state before, after a read and after a switch off",
+          on * 10 + off, 10);
+    long a = count();
+    set_counting(0);
+    spin(k2);
+    set_counting(1);
+    long b = count();
+    check(b - a < 10000, "switching: a loop run while off is not counted (under 10^4)", b - a,
+          0);
+    set_counting(0);
+    spin(k1);
+    long d1c = counted_spin(k1);
+    check(d1c == d1, "switching: a loop first run while off counts as before once on", d1c, d1);
     return failures != 0;
 }

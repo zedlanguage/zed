@@ -62,7 +62,9 @@ fn relations_of_a_deep_test_take_time_near_linear_in_its_depth() {
 #[test]
 fn arms_of_a_chain_of_accounts_take_time_near_linear_in_its_depth() {
     // Each level names two new symbols, so a level that asked for every symbol below it would
-    // cost the depth once for each level.
+    // cost the depth once for each level. The chain is d log d (PROOF-account-chains-nlogn),
+    // which at 60 and 480 alone predicts 8 · ln 480 / ln 60 = 8 · 6.174 / 4.094 = 12.1 times;
+    // measured 10.21 in instructions (SCALE-near-limit-l0139).
     on_a_deep_stack(|| {
         let cases: BTreeMap<usize, (Term, Scope)> = [60, 480]
             .map(|d| {
@@ -85,7 +87,10 @@ fn arms_of_a_long_chain_of_accounts_take_time_within_n_log_n() {
     // in full, the nest below the level, each lookup cost the depth: 0.85 and 13.19 G
     // instructions at d = 240 and 1920, 15.5 times. Now 0.76 and 7.84 G, 10.2 times.
     // Doubled from d = 240 to 30,720, each doubling costs 2.09 to 2.15 times, with no trend
-    // up: d log d, no d² term (COMPLEXITY.md row PROOF-account-chains-nlogn).
+    // up: d log d, no d² term (COMPLEXITY.md row PROOF-account-chains-nlogn). At these sizes
+    // d log d alone predicts 8 · ln 1920 / ln 240 = 8 · 7.560 / 5.481 = 11.0 times, so the
+    // measured 10.2 is within the proved bound, though over the 9 preferred
+    // (SCALE-near-limit-l0139).
     on_a_deep_stack(|| {
         let cases: BTreeMap<usize, (Term, Scope)> = [240, 1920]
             .map(|d| {

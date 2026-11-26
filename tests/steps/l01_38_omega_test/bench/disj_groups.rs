@@ -211,24 +211,27 @@ mod row_sums {
     /// `overlap_rows` at k = 8 and 16 projected by the solver alone (ROW_SUMS_OFF), the path
     /// past the join's limit (PRES-solver-projection-uncounted). No polynomial method exists
     /// (one sum is SUBSET-SUM, proof at `project_each_with`), so this checks only that each
-    /// atom gets its exact set or a refusal, and prints the time and work: 2026-11-19, load
+    /// atom gets its exact set or a refusal, and prints the time: 2026-11-19, load
     /// about 40, k = 16 took 13.7 to 22.3 s and refused each atom (over 60 s before the
-    /// hull search skipped the gap between the two values of each atom).
+    /// hull search skipped the gap between the two values of each atom). Timed by the clock
+    /// alone, not by a `Meter`: a meter counting instructions runs the whole test again under
+    /// DynamoRIO with the count on, where k = 16 took 46.5 s and the test 49.2 s, past the
+    /// runner's 20 s (FAIL-bench-pieces-past-limit-on-main, Colab VM, batch b28 job j9), and no
+    /// assertion here reads the count; it was only printed.
     #[test]
     fn overlap_rows_by_the_solver_alone() {
         for k in [8, 16] {
             let case = overlap_rows(k);
             let (f, sets) = (case.formula(), case.brute());
             let atoms: Vec<Atom> = (0..k).map(v).collect();
-            let mut got = None;
             let t = std::time::Instant::now();
             ROW_SUMS_OFF.with(|o| o.set(true));
-            let units = work(|| got = Some(project_each(&f, &atoms)));
+            let got = project_each(&f, &atoms);
             ROW_SUMS_OFF.with(|o| o.set(false));
-            let (each, _) = got.expect("an answer").expect("a projection");
+            let (each, _) = got.expect("a projection");
             let answered = each.iter().filter(|s| s.is_ok()).count();
             eprintln!(
-                "overlap_rows({k}) by the solver alone: {:?}, {units} units, {answered} of {k} atoms answered",
+                "overlap_rows({k}) by the solver alone: {:?}, {answered} of {k} atoms answered",
                 t.elapsed()
             );
             for (i, (s, want)) in each.iter().zip(&sets).enumerate() {

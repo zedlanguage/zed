@@ -101,10 +101,17 @@ fn checking_nested_functions_beside_many_others_scales() {
 /// Checks that elaborating the unit `text(m)` is of order m, parsing and checking each size
 /// first, so that elaboration is timed alone, and that its last definition is `last`. (Until
 /// ELAB-scaling-isolation the checker, which `elaborate` runs first, was timed too: 9 and 16
-/// times elaboration's work on the two families below.)
+/// times elaboration's work on the two families below.) Each unit is built only in the process
+/// that runs its size (`scaling::check_inputs`; FAIL-bench-pieces-past-limit-on-main: built at
+/// both sizes in every process, `a_call_naming_many_arguments_scales` spent 58.5 s before its
+/// run at n on a Colab VM, batch b28 job j5).
 fn elaboration_scales(what: &str, n: usize, text: fn(usize) -> String, last: &str) {
-    let units = inputs(n, |m| checked(&text(m)));
-    scaling::check(what, n, |m| last_def_is(&units[&m], last));
+    scaling::check_inputs(
+        what,
+        n,
+        |m| checked(&text(m)),
+        |unit| last_def_is(unit, last),
+    );
 }
 
 #[test]
@@ -112,6 +119,42 @@ fn a_call_naming_many_arguments_scales() {
     // Each named argument was looked for among all the parameters, and the parameters each
     // default reads among all of them.
     elaboration_scales("a call naming n arguments", 8000, named, "y");
+}
+
+/// The whole check of a call naming n arguments, each for a parameter with a default, and of
+/// the same through a value, takes linear time. The benchmarks above time the elaboration
+/// alone, on units checked before the timing, so a check that grew faster went unseen: the
+/// output ports' pass looked for each named argument among all the callee's parameters,
+/// 26.9 times the time for 8 times n at 8000 (`check::ports::ports`, b28 job j10).
+#[test]
+fn a_call_naming_many_arguments_is_checked_in_linear_time() {
+    for (what, text) in [
+        (
+            "checking a call naming n arguments",
+            named as fn(usize) -> String,
+        ),
+        (
+            "checking a call of a value naming n arguments",
+            named_through_a_value,
+        ),
+    ] {
+        scaling::check_inputs(
+            what,
+            8000,
+            |m| {
+                let src = text(m);
+                let tokens = zedc::lex::lex_fence(&src).unwrap();
+                let tree = zedc::parse::parse(&src, &tokens, "Unit", zedc::parse::TOP).unwrap();
+                let stmts = zedc::ast::unit(&src, &tokens, &tree).unwrap();
+                let res = resolve(&stmts).unwrap();
+                (stmts, res)
+            },
+            |(stmts, res)| {
+                let info = zedc::check::walk::check(stmts, res);
+                assert!(info.errors.is_empty(), "{what}: {:?}", info.errors);
+            },
+        );
+    }
 }
 
 #[test]

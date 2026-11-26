@@ -165,6 +165,15 @@ pub fn ports(t: &Tables<'_>) -> Ports {
     let mut args: Vec<Arg> = Vec::new();
     let mut callees: HashSet<Span> = HashSet::new();
     let mut fed: HashMap<usize, Vec<usize>> = HashMap::new();
+    // Each called function's named parameters, by name: the first of each name, as a search
+    // of its parameters in order finds it. Complexity tradeoff: built once per function
+    // called, O(P) for its P parameters, then O(1) expected per named argument. The naive
+    // way, a search of the parameters for each named argument, is O(P) an argument, O(n²)
+    // for a call naming its n parameters: the whole check of l01_16's `named(n)` took 8.5 s
+    // at n = 64000 against 0.32 s at 8000, 26.9 times for 8 times n (b28 job j10), three
+    // quarters of it in that search (perf at 64000, job j11). Test:
+    // `l01_16_elaboration::bench::a_call_naming_many_arguments_is_checked_in_linear_time`.
+    let mut by_name: HashMap<usize, HashMap<&str, usize>> = HashMap::new();
     for c in &res.calls {
         callees.insert(c.callee);
         let Some(ids) = bound(&c.callee) else {
@@ -174,13 +183,22 @@ pub fn ports(t: &Tables<'_>) -> Ports {
             let Some(decl) = t.funcs.get(&f) else {
                 continue;
             };
+            let names = by_name.entry(f).or_insert_with(|| {
+                let mut names = HashMap::new();
+                for (i, p) in decl.params.iter().enumerate() {
+                    if !p.positional {
+                        names.entry(p.name.as_str()).or_insert(i);
+                    }
+                }
+                names
+            });
             let slots = (c.positional.iter().enumerate())
                 .filter_map(|(i, &a)| decl.params.get(i).filter(|p| p.positional).map(|p| (a, p)))
-                .chain(c.named.iter().filter_map(|(n, a)| {
-                    (decl.params.iter())
-                        .find(|p| !p.positional && p.name == *n)
-                        .map(|p| (*a, p))
-                }));
+                .chain(
+                    c.named
+                        .iter()
+                        .filter_map(|(n, a)| names.get(n.as_str()).map(|&i| (*a, &decl.params[i]))),
+                );
             for (span, p) in slots {
                 let Some(&q) = t.ids.get(&(p.span, p.name.as_str())) else {
                     continue;

@@ -640,7 +640,9 @@ fn walk(n: usize, start: bool) -> Sys {
 /// measured, as before. Asserted at both sizes in every process, under DynamoRIO, the answers
 /// at 8n in each of [`HOWS`] made the first phase of `a_chain_raise_narrows_in_near_linear_time`
 /// pass its limit of 20 s (rc 124 at 20.1 s on l43, b22-tests8 job f2,
-/// FAIL-bench-pieces-past-limit-on-main). A size run in a new process that fails its answers
+/// FAIL-bench-pieces-past-limit-on-main), and still 21.8 s with the answers asserted only in
+/// the process of each size (b28 job j9); that benchmark now asserts them at 8n in the order it
+/// measures alone ([`family_in`]). A size run in a new process that fails its answers
 /// ends that process with no count, and the check panics with its output.
 fn family(
     what: &str,
@@ -648,8 +650,23 @@ fn family(
     make: impl Fn(usize) -> Sys + Sync,
     want: impl Fn(usize) -> Vec<(String, i64, i64, Vec<i64>)>,
 ) {
+    family_in(what, n, &HOWS, make, want);
+}
+
+/// [`family`], with the answers at `8n` asserted in `hows_at_8n` alone, and at `n` in each of
+/// [`HOWS`]. For a family whose answers at `8n` in every order make the process of that size
+/// pass its limit under DynamoRIO; a test that is not a benchmark asserts them instead, with
+/// no DynamoRIO and no limit of 20 s on the set-up.
+fn family_in(
+    what: &str,
+    n: usize,
+    hows_at_8n: &[How],
+    make: impl Fn(usize) -> Sys + Sync,
+    want: impl Fn(usize) -> Vec<(String, i64, i64, Vec<i64>)>,
+) {
     let checked = |k: usize| {
-        family_answers(what, &[k], &make, &want);
+        let hows: &[How] = if k == n { &HOWS } else { hows_at_8n };
+        family_answers_in(what, &[k], hows, &make, &want);
         make(k)
     };
     scaling::check_inputs(&format!("{what}, one at a time"), n, checked, |sys| {
@@ -664,6 +681,17 @@ fn family_answers(
     make: impl Fn(usize) -> Sys,
     want: impl Fn(usize) -> Vec<(String, i64, i64, Vec<i64>)>,
 ) {
+    family_answers_in(what, sizes, &HOWS, make, want);
+}
+
+/// [`family_answers`] in each of `hows`.
+fn family_answers_in(
+    what: &str,
+    sizes: &[usize],
+    hows: &[How],
+    make: impl Fn(usize) -> Sys,
+    want: impl Fn(usize) -> Vec<(String, i64, i64, Vec<i64>)>,
+) {
     for &m in sizes {
         let sys = make(m);
         let w = want(m);
@@ -673,7 +701,7 @@ fn family_answers(
             .collect();
         same_answer(
             &format!("{what}, n = {m}"),
-            HOWS.iter()
+            hows.iter()
                 .map(|h| (format!("{h:?}"), sys.narrowed(*h)))
                 .collect(),
             &w,
@@ -715,14 +743,27 @@ fn the_families_have_their_answers_in_each_order() {
             ("z".into(), -1, r, vec![-1, 0]),
         ]
     });
-    family_answers("chain raise", &[1, 2, 6], chain_raise, |k| {
-        let k = k as i64;
-        let mut w: Vec<_> = (0..k)
-            .map(|i| (format!("x{i}"), k - 1, k + 1, vec![k, k + 1]))
-            .collect();
-        w.extend((0..k).map(|j| (format!("y{j}"), 0, 1, upto(1))));
-        w
-    });
+    family_answers("chain raise", &[1, 2, 6], chain_raise, chain_raise_answers);
+}
+
+/// The answers of [`chain_raise`] at `k`: each `x` in `k..=k + 1`, each `y` in `0..=1`.
+fn chain_raise_answers(k: usize) -> Vec<(String, i64, i64, Vec<i64>)> {
+    let k = k as i64;
+    let mut w: Vec<_> = (0..k)
+        .map(|i| (format!("x{i}"), k - 1, k + 1, vec![k, k + 1]))
+        .collect();
+    w.extend((0..k).map(|j| (format!("y{j}"), 0, 1, upto(1))));
+    w
+}
+
+/// The chain raise at 4096, 8 times the size of its benchmark: the same answer in each order.
+/// The benchmark (`bench::a_chain_raise_narrows_in_near_linear_time`) asserts the answers at
+/// 512 in each order, but at 4096 in the order it measures alone: in its process of 4096 under
+/// DynamoRIO, all three took 21.8 s of a limit of 20 s (b28 job j9), about 6 s of it without
+/// DynamoRIO, 4.25 s in the backward order (job j10).
+#[test]
+fn a_chain_raise_has_its_answers_in_each_order_at_eight_times_its_benchmark_size() {
+    family_answers("chain raise", &[4096], chain_raise, chain_raise_answers);
 }
 
 /// A walk whose start forces each `v` to at least `1 + w` and whose end asks `v5 + w <= 0`

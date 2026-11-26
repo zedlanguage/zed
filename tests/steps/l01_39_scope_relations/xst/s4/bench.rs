@@ -117,14 +117,13 @@ fn shifted_ping_pong_is_exact_or_refused_in_near_linear_time() {
 
 #[test]
 fn a_chain_raise_narrows_in_near_linear_time() {
-    family("chain raise", 512, chain_raise, |k| {
-        let k = k as i64;
-        let mut w: Vec<_> = (0..k)
-            .map(|i| (format!("x{i}"), k - 1, k + 1, vec![k, k + 1]))
-            .collect();
-        w.extend((0..k).map(|j| (format!("y{j}"), 0, 1, upto(1))));
-        w
-    });
+    family_in(
+        "chain raise",
+        512,
+        &[How::Forward],
+        chain_raise,
+        chain_raise_answers,
+    );
 }
 
 /// The chain raise given as one conjunction: near linear time, as in the forward order

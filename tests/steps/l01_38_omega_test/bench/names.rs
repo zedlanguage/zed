@@ -117,36 +117,31 @@ fn decide_scales_over_one_system_with_many_tied_variables() {
 
 #[test]
 fn decide_scales_over_a_renamed_chain_with_disjunctions() {
-    let (small, large) = (
-        chain_with_disjunctions(500, 500),
-        chain_with_disjunctions(500 * scaling::FACTOR, 500 * scaling::FACTOR),
+    // Each size is built only in the process that runs it, and its answer is checked on the
+    // run's own (FAIL-bench-pieces-past-limit-on-main: building and deciding both sizes before
+    // the meter took 19.2 s before the run at n on a Colab VM, batch b28 job j9).
+    scaling::check_inputs(
+        "decide on a chain with disjunctions",
+        500,
+        |n| chain_with_disjunctions(n, n),
+        |f| assert_eq!(decide(f), Ok(true)),
     );
-    assert_eq!((decide(&small), decide(&large)), (Ok(true), Ok(true)));
-    scaling::check("decide on a chain with disjunctions", 500, |n| {
-        let f = if n == 500 { &small } else { &large };
-        let _ = std::hint::black_box(decide(f));
-    });
 }
 
 #[test]
 fn decide_scales_over_a_chain_with_a_disjunction_every_fourth_stage() {
-    let (small, large) = (
-        chain_with_disjunctions(400, 4),
-        chain_with_disjunctions(400 * scaling::FACTOR, 4),
-    );
-    assert_eq!((decide(&small), decide(&large)), (Ok(true), Ok(true)));
-    for f in [&small, &large] {
-        let m = satisfiable(f).unwrap().expect("a point");
-        assert!(f.holds(&m), "{m:?}");
-    }
-    scaling::check_order(
+    // As above (18.5 s before the run at n, j9): the point of each size is found and checked
+    // as it is built, in the process that runs that size.
+    scaling::check_inputs(
         "decide on a chain with a disjunction every fourth stage",
         400,
-        1,
         |n| {
-            let f = if n == 400 { &small } else { &large };
-            let _ = std::hint::black_box(decide(f));
+            let f = chain_with_disjunctions(n, 4);
+            let m = satisfiable(&f).unwrap().expect("a point");
+            assert!(f.holds(&m), "{m:?}");
+            f
         },
+        |f| assert_eq!(decide(f), Ok(true)),
     );
 }
 

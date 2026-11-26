@@ -924,12 +924,17 @@ done < <(awk '
 # <step>::<name> too (selected above), so an alternative selects one of the binary's pieces when it
 # matches the group or the step, or when the text before its first :: matches either at its end.
 # The second can hold for a binary none of whose pieces it selects; that binary is built and its
-# pieces listed for nothing, which costs time but drops no test.
+# pieces listed for nothing, which costs time but drops no test. The text before the first ::
+# must match a part of the name that is not empty: an alternative that starts with ::, as
+# ::<test>$, matched the empty end of every name, so it built every binary and asked for the
+# short-addresses build, which a run outside zrun refuses (FAIL-run-tests-wants-colon-prefix).
+# Such an alternative names no binary, and the run stops below with the hint.
 wants() {
   [[ $2 =~ $1 || $3 =~ $1 ]] && return 0
   [[ $1 == *::* ]] || return 1
   local end="${1%%::*}$"
-  [[ $2 =~ $end || $3 =~ $end ]]
+  { [[ $2 =~ $end ]] && [ -n "${BASH_REMATCH[0]}" ]; } ||
+    { [[ $3 =~ $end ]] && [ -n "${BASH_REMATCH[0]}" ]; }
 }
 # Without --only every test binary is built. With it, only the binaries of the groups it selects
 # are built, and the libraries under them (author, 2026-11-10: rebuild only the test binaries

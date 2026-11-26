@@ -586,6 +586,43 @@ fn refuse_outside_a_bench() {
     );
 }
 
+/// Switches the count of DynamoRIO's client `zed_icount` on or off and gives whether it was on;
+/// `None` where this process does not run under the client (natively the call costs one
+/// refused system call, outside the reads of any count). [`Meter::in_software`] switches it
+/// off again after its first read, which switched it on, and the first read of the first run
+/// measured ([`Meter::work_on_the_c_heap`]) switches it on for the rest of the process, so a
+/// test's set-up and the inputs it builds before its first run, and its replay in a new
+/// process up to its first run, run under DynamoRIO without the client's add on every block
+/// (FAIL-bench-pieces-past-limit-on-main; the client's file comment, "Counting only around the
+/// measured runs", has the proof that a count between two reads does not change). A read
+/// switches it on, so a reader that does not switch it (`Meter::read`) counts as before.
+///
+/// Complexity tradeoff: COMPLEXITY.md has none for the meter. Naive (before batch b28): the add
+/// on every block the process runs, 1.5 times DynamoRIO's own slowdown on zedc's code (the
+/// table above), so a benchmark's set-up at 8n ran past the 20 s phase limit on Colab VMs while
+/// its runs took under a second (l01_16 `a_call_naming_many_arguments_scales`: 58.5 s before
+/// its run at n and 38.4 s before its run at 8n, runs of 0.17 s and 0.71 s; batch b28 job j5,
+/// l43). Each switch empties DynamoRIO's cache of the program's code, so the code run after it
+/// is copied into the cache again. Switched off after every run as well, two switches per run,
+/// a test of many small runs paid that copy each time:
+/// `l01_38_presburger::nest_empty::the_families_of_the_benchmarks_are_answered_false_at_small_depths`,
+/// 60 runs, took 19.2 s and 20.0 s (past its limit) against 1.6 s with main's client (batch
+/// b28, jobs j17 and j19). So it is switched three times a process: on and off at the meter's
+/// start, and on at the first run. What is given up: inputs built after the first run (a test
+/// that builds its input at 8n after its run at n, in the same process) run with the add, as
+/// they did before.
+fn software_count(on: bool) -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        zed_alloc_count::os::software_counting(on)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = on;
+        None
+    }
+}
+
 impl Meter {
     /// A meter of instructions where the hardware counts them, or where DynamoRIO's client
     /// `zed_icount` counts them in software, or else of the processor time of this thread and
@@ -617,16 +654,24 @@ impl Meter {
     /// a hardware counter that did would count DynamoRIO's own work too.
     #[cfg(target_os = "linux")]
     fn in_software() -> Option<Self> {
+        // Counting is off until this first read; it is switched off again below, so that what
+        // the test does before its first run (its inputs) runs with no count; the first run's
+        // first read switches it on for good (see [`software_count`]).
+        let was = software_count(true);
         zed_alloc_count::os::software_instructions()?;
         let read = || {
             zed_alloc_count::os::software_instructions()
                 .expect("zed_icount answered at the meter's start")
         };
-        Self::first_that_moves([(
+        let meter = Self::first_that_moves([(
             Box::new(read) as Read,
             "instructions (counted in software by DynamoRIO's zed_icount)",
             true,
-        )])
+        )]);
+        if was == Some(false) {
+            software_count(false);
+        }
+        meter
     }
 
     /// A meter of the instructions of the whole process where the kernel counts them, or else of

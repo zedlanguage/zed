@@ -846,13 +846,9 @@ fn a_cycle_turned_both_ways_and_a_longer_cycle_one_way_are_decided() {
                 } else {
                     sampled_namings(&rows, n, &mut rng, 60)
                 };
-                // Both ways with no point, the tie is taken and the splinters then outgrow
-                // the solver's bound, under every naming alike (FAIL-dark-cycle-both-ways-growth).
-                let want = if both && top == 0 {
-                    "Err(Growth)"
-                } else {
-                    want
-                };
+                // Both ways with no point, the two rows of one pair sum to `x[a] + x[b] >= 2`,
+                // which `pairs_empty` finds (FAIL-dark-cycle-both-ways-growth: before it, the
+                // splinters outgrew the solver's bound, `Err(Growth)` under every naming).
                 assert_eq!(
                     seen.into_keys().collect::<Vec<_>>(),
                     [want],
@@ -860,6 +856,43 @@ fn a_cycle_turned_both_ways_and_a_longer_cycle_one_way_are_decided() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn a_dark_cycle_turned_both_ways_with_no_point_is_decided() {
+    // FAIL-dark-cycle-both-ways-growth. The cycle `3·x[b] - 2·x[a] >= 1` turned both ways, every
+    // variable at most 0: the two rows of one pair sum to `x[a] + x[b] >= 2`, so there is no
+    // point, under every naming.
+    let dark_both = |n: usize| {
+        let mut rows = Vec::new();
+        for i in 0..n {
+            for (a, b) in [(i, (i + 1) % n), ((i + 1) % n, i)] {
+                let mut c = vec![0; n];
+                c[a] = -2;
+                c[b] = 3;
+                rows.push(ge(&c, -1));
+            }
+        }
+        for i in 0..n {
+            let mut c = vec![0; n];
+            c[i] = -1;
+            rows.push(ge(&c, 0));
+        }
+        rows
+    };
+    assert_eq!(
+        namings(&dark_both(4), 4).into_keys().collect::<Vec<_>>(),
+        ["Ok(false)"]
+    );
+    let (mut rng, seed) = Rng::fresh("a dark cycle both ways is decided");
+    for n in [5, 6] {
+        let seen = sampled_namings(&dark_both(n), n, &mut rng, 60);
+        assert_eq!(
+            seen.into_keys().collect::<Vec<_>>(),
+            ["Ok(false)"],
+            "n = {n}, seed {seed:#x}"
+        );
     }
 }
 
@@ -1060,13 +1093,20 @@ fn a_merged_column_of_either_sign_is_left_unmerged() {
 /// Times `decide` on `k` and `8k` disjoint copies of `base`, a system over `n` variables, each
 /// copy first checked to give the answer of one, so that neither size is answered by a quick
 /// refusal. Each row is written over all `n k` variables, so building the copies costs O(k²).
+/// Each size is built only in the process that runs it, and its answer is checked on the
+/// answer its run computes (`scaling::check_order_inputs`; FAIL-bench-pieces-past-limit-on-main:
+/// building both sizes and answering each before the meter took `decide_scales_over_copies_of_a_tie`
+/// 22.4 s before its run at n on a Colab VM, batch b28 job j9).
 pub(super) fn scales_over_copies(what: &str, base: &[Row], n: usize, k: usize) {
-    let (small, large) = (copies(base, n, k), copies(base, n, k * scaling::FACTOR));
-    assert_answered_as_one_copy(what, base, n, [&small, &large]);
-    scaling::check_order(what, k, 1, |m| {
-        let f = if m == k { &small } else { &large };
-        let _ = std::hint::black_box(decide(f));
-    });
+    let one = answer(&copies(base, n, 1));
+    eprintln!("{what}, one copy: {one}");
+    scaling::check_order_inputs(
+        what,
+        k,
+        1,
+        |m| copies(base, n, m),
+        |f| assert_eq!(answer(f), one, "{what}"),
+    );
 }
 
 /// `m` disjoint copies of `base`, a system over `n` variables, each row written over all `n m`

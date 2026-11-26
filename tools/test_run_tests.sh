@@ -565,6 +565,12 @@ out=$(run --list --only 'live3::')
 rc=$?
 check "a fresh listing that selects nothing stops the run" "1 NO PIECE MATCHES --only 'live3::'
 A test or a module is selected only with its binary's group, as <group>::<path>." "$rc $out"
+# A part that starts with :: names no binary: it matched the empty end of every name, built every
+# binary and asked for the short-addresses build (FAIL-run-tests-wants-colon-prefix).
+out=$(run --list --only '^zedc$|::a_dark_cycle_turned_both_ways_with_no_point_is_decided$')
+rc=$?
+check "a part that starts with :: stops the run" "1 --only: no test binary is selected by the part '::a_dark_cycle_turned_both_ways_with_no_point_is_decided\$' of '^zedc\$|::a_dark_cycle_turned_both_ways_with_no_point_is_decided\$'.
+A test or a module is selected only with its binary's group, as <group>::<path>." "$rc $out"
 out=$(run --list --only '(l01_38::x|y)')
 rc=$?
 check "a part whose binary cannot be read off stops the run" "2" "$rc"
