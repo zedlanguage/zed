@@ -105,8 +105,13 @@ impl Product<'_> {
     /// 0) by `x` has the ends of `x` and its shift, rounded as [`Approx::truncate`] rounds, so
     /// `x.truncate(k)` is the same value; `k >= 64` here ([`start`]), so `1` is exact. Measured
     /// on l01_17 `kept_powers` "the order of (a b)^(2^64) and (b c)^(2^64)" (callgrind, hm1,
-    /// 2026-11-26, the one `x < y` at m = 2^15 bits): with this and the fast path of
-    /// [`Approx::pow`] for an exponent of 1, see the counts in the commit and the row.
+    /// 2026-11-26, the one `x < y`), instructions at m = 2^15 and 2^18 bits: 427,590 and
+    /// 2,468,752 before the shared type (0334a7d82); 499,903 and 2,523,452 with it and no fast
+    /// path (+17% and +2.2%: a product of the exact 1 by each atom's bound, and a loop round for
+    /// each exponent of 1); 505,598 and 2,529,511 with `#[inline]` on the moved routines in
+    /// place of the fast paths (no gain); 336,823 and 2,013,963 with this fast path and that of
+    /// [`Approx::pow`] for an exponent of 1 (-21% and -18% against before)
+    /// (DRY-num-kept-powers-small-n-rise).
     fn approx(&self, k: u64) -> Approx {
         let mut b = (!self.coef.is_one()).then(|| Approx::of_uint(&self.coef, k));
         let times = |b: Option<Approx>, x: Approx| match b {
