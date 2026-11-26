@@ -13,6 +13,7 @@ publish.workspace = true
 crate-type = ["rlib", "dylib"]
 
 [dependencies]
+zed-numtheory.workspace = true
 zedc-int.workspace = true
 
 [dev-dependencies]

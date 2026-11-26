@@ -4,8 +4,11 @@
 //! Each routine here was written out at several sites of zedc-presburger and zedc-lattice
 //! before (DRY-affine-crate-2026-11-26; the sites are named at each routine). The coefficients
 //! are [`Coef`]: [`Int`] and [`Num`]. Module [`shadow`] reads a row in one variable as bounds
-//! and eliminates a variable from a pair of bounds (the real and the dark shadow).
+//! and eliminates a variable from a pair of bounds (the real and the dark shadow). Module
+//! [`plane`] holds the plane geometry of the two-variable readers: cross and dot products,
+//! angle order, Cramer's rule and the unimodular basis from Bezout.
 
+pub mod plane;
 pub mod shadow;
 
 use std::collections::BTreeMap;
@@ -36,32 +39,44 @@ pub trait Coef: Clone + Ord {
     fn neg(&self) -> Self;
 }
 
+// `#[inline]` on each method: they are not generic, so without it Rust compiles them once here
+// and does not inline them into the generic routines that call them from other crates (common
+// brief item 5, 2026-11-26). COUNTS
 impl Coef for Int {
     const ZERO: Int = Int::ZERO;
+    #[inline]
     fn is_zero(&self) -> bool {
         Int::is_zero(self)
     }
+    #[inline]
     fn is_negative(&self) -> bool {
         Int::is_negative(self)
     }
+    #[inline]
     fn is_unit(&self) -> bool {
         Int::is_unit(self)
     }
+    #[inline]
     fn gcd(&self, other: &Int) -> Int {
         Int::gcd(self, other)
     }
+    #[inline]
     fn div_floor(&self, d: &Int) -> Int {
         Int::div_floor(self, d)
     }
+    #[inline]
     fn mod_floor(&self, d: &Int) -> Int {
         Int::mod_floor(self, d)
     }
+    #[inline]
     fn add(&self, other: &Int) -> Int {
         self + other
     }
+    #[inline]
     fn mul(&self, other: &Int) -> Int {
         self * other
     }
+    #[inline]
     fn neg(&self) -> Int {
         -self
     }
@@ -69,30 +84,39 @@ impl Coef for Int {
 
 impl Coef for Num {
     const ZERO: Num = Num::ZERO;
+    #[inline]
     fn is_zero(&self) -> bool {
         Num::is_zero(self)
     }
+    #[inline]
     fn is_negative(&self) -> bool {
         *self < Num::ZERO
     }
+    #[inline]
     fn is_unit(&self) -> bool {
         *self == Num::ONE || *self == -&Num::ONE
     }
+    #[inline]
     fn gcd(&self, other: &Num) -> Num {
         Num::gcd(self, other)
     }
+    #[inline]
     fn div_floor(&self, d: &Num) -> Num {
         Num::div_floor(self, d)
     }
+    #[inline]
     fn mod_floor(&self, d: &Num) -> Num {
         Num::mod_floor(self, d)
     }
+    #[inline]
     fn add(&self, other: &Num) -> Num {
         self + other
     }
+    #[inline]
     fn mul(&self, other: &Num) -> Num {
         self * other
     }
+    #[inline]
     fn neg(&self) -> Num {
         -self
     }

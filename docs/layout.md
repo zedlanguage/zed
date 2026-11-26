@@ -141,8 +141,10 @@ rational `Q`) and `zedc-affine` (new; depends on zedc-int: affine forms over `BT
 merge that drops zero coefficients (`add_term`, `add_scaled`, `scaled`), gcd-normalized rows
 (`content`, `row_divisor`, `divide_row`), primitive-form keys (`primitive_form`), and in
 `shadow` rows in one variable read as bounds (`i128_row_bound`, `i128_meet`), Fourier-Motzkin
-pairs and the dark shadow (`i128_pair`, `dark_gap`, `dark_exact`); still to come, and then also
-over zed-collections: 2D geometry, unimodular bases, LLL, simplex and Gauss-Jordan). Text helpers stay in
+pairs and the dark shadow (`i128_pair`, `dark_gap`, `dark_exact`), and in `plane` the 2D
+geometry (`cross`, `dot`, `angle_cmp`, `angle_cmp_from`, `cramer`) and unimodular bases from
+Bezout (`Basis`), over `i128` and `Int` (depends also on zed-numtheory); still to come, and
+then also over zed-collections: LLL, simplex and Gauss-Jordan). Text helpers stay in
 `zed_kernel::text::prose` and `zedc_base` (`source`, `terminal`, `address`).
 
 Before writing an algorithm that is likely generic or reusable, search these crates and call what

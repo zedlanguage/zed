@@ -331,3 +331,183 @@ mod shadow {
         }
     }
 }
+
+mod plane {
+    use std::cmp::Ordering;
+
+    use crate::plane::*;
+    use zedc_int::int::Int;
+
+    /// The angle of `v` in `[0, 2π)` from the first axis, by `atan2`, and the direction of `v`
+    /// divided by the gcd of its coordinates: two directions of small coordinates have one angle
+    /// exactly when their primitive directions are equal, and two that differ are at least
+    /// about `1 / (2·20²)` apart, far above the error of `atan2`.
+    fn angle(v: (i64, i64)) -> f64 {
+        let a = (v.1 as f64).atan2(v.0 as f64);
+        if a < 0.0 {
+            a + std::f64::consts::TAU
+        } else {
+            a
+        }
+    }
+
+    fn primitive(v: (i64, i64)) -> (i64, i64) {
+        let g = zed_numtheory::gcd_u128(v.0.unsigned_abs().into(), v.1.unsigned_abs().into());
+        let g = i64::try_from(g).expect("small");
+        (v.0 / g, v.1 / g)
+    }
+
+    /// The order of `atan2`, equal on equal primitive directions.
+    fn by_atan2(u: (i64, i64), v: (i64, i64)) -> Ordering {
+        if primitive(u) == primitive(v) {
+            return Ordering::Equal;
+        }
+        angle(u).total_cmp(&angle(v))
+    }
+
+    fn nonzero(rng: &mut crate::seed::Rng, r: i64) -> (i64, i64) {
+        loop {
+            let v = (rng.int(-r, r), rng.int(-r, r));
+            if v != (0, 0) {
+                return v;
+            }
+        }
+    }
+
+    fn i(v: i64) -> i128 {
+        i128::from(v)
+    }
+
+    /// [`angle_cmp`] and [`angle_cmp_from`] against the order of `atan2`, on `i128` and on
+    /// [`Int`] alike, with [`cross`] and [`dot`] against their sums.
+    #[test]
+    fn the_angle_order_is_the_order_of_atan2() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("the_angle_order_is_the_order_of_atan2");
+        for _ in 0..3000 {
+            let (u, v, base) = (
+                nonzero(&mut rng, 20),
+                nonzero(&mut rng, 20),
+                nonzero(&mut rng, 20),
+            );
+            let (iu, iv) = ((i(u.0), i(u.1)), (i(v.0), i(v.1)));
+            let ib = (i(base.0), i(base.1));
+            assert_eq!(
+                cross((&iu.0, &iu.1), (&iv.0, &iv.1)),
+                Some(i(u.0 * v.1 - u.1 * v.0))
+            );
+            assert_eq!(
+                dot((&iu.0, &iu.1), (&iv.0, &iv.1)),
+                Some(i(u.0 * v.0 + u.1 * v.1))
+            );
+            let want = by_atan2(u, v);
+            let got = angle_cmp((&iu.0, &iu.1), (&iv.0, &iv.1));
+            assert_eq!(got, Some(want), "seed {seed}: {u:?} {v:?}");
+            let (bu, bv) = (Int::from(u.0), Int::from(u.1));
+            let (cu, cv) = (Int::from(v.0), Int::from(v.1));
+            assert_eq!(angle_cmp((&bu, &bv), (&cu, &cv)), Some(want));
+            // From `base`: the angles less the angle of `base`, in `[0, 2π)`.
+            let from = |w: (i64, i64)| {
+                let a = angle(w) - angle(base);
+                if a < 0.0 {
+                    a + std::f64::consts::TAU
+                } else {
+                    a
+                }
+            };
+            let want = if primitive(u) == primitive(v) {
+                Ordering::Equal
+            } else if primitive(u) == primitive(base) {
+                Ordering::Less
+            } else if primitive(v) == primitive(base) {
+                Ordering::Greater
+            } else {
+                from(u).total_cmp(&from(v))
+            };
+            let got = angle_cmp_from((&ib.0, &ib.1), (&iu.0, &iu.1), (&iv.0, &iv.1));
+            assert_eq!(got, Some(want), "seed {seed}: base {base:?}, {u:?} {v:?}");
+            let half = first_half((&ib.0, &ib.1), (&iu.0, &iu.1));
+            let in_first = primitive(u) == primitive(base) || from(u) < std::f64::consts::PI;
+            assert_eq!(half, Some(in_first), "seed {seed}: base {base:?}, {u:?}");
+        }
+    }
+
+    /// Past `i128` the products answer `None`, and the angle order still orders two directions
+    /// in two halves, which needs no product.
+    #[test]
+    fn the_products_answer_none_past_i128() {
+        let big = (i128::MAX, 2);
+        assert_eq!(cross((&big.0, &big.1), (&1, &3)), None);
+        assert_eq!(dot((&big.0, &big.1), (&2, &0)), None);
+        assert_eq!(
+            angle_cmp((&big.0, &big.1), (&i128::MAX, &-2)),
+            Some(Ordering::Less)
+        );
+        assert_eq!(angle_cmp((&big.0, &big.1), (&i128::MAX, &3)), None);
+        assert!(Basis::new(4i128, 6).is_none());
+    }
+
+    /// [`cramer`]'s point lies on both lines, and is `None` exactly on parallel lines.
+    #[test]
+    fn cramer_gives_the_point_on_both_lines() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("cramer_gives_the_point_on_both_lines");
+        for _ in 0..3000 {
+            let f = (i(rng.int(-9, 9)), i(rng.int(-9, 9)), i(rng.int(-30, 30)));
+            let g = (i(rng.int(-9, 9)), i(rng.int(-9, 9)), i(rng.int(-30, 30)));
+            let got = cramer((&f.0, &f.1, &f.2), (&g.0, &g.1, &g.2));
+            let parallel = f.0 * g.1 == f.1 * g.0;
+            let Some((x, y, d)) = got else {
+                assert!(parallel, "seed {seed}: {f:?} {g:?}");
+                continue;
+            };
+            assert!(!parallel && d > 0, "seed {seed}: {f:?} {g:?}");
+            assert_eq!(f.0 * x + f.1 * y, f.2 * d, "seed {seed}: {f:?} {g:?}");
+            assert_eq!(g.0 * x + g.1 * y, g.2 * d, "seed {seed}: {f:?} {g:?}");
+            let on_int = |v: i128| Int::from(i64::try_from(v).expect("small"));
+            let (fi, gi) = (
+                (on_int(f.0), on_int(f.1), on_int(f.2)),
+                (on_int(g.0), on_int(g.1), on_int(g.2)),
+            );
+            let want = (on_int(x), on_int(y), on_int(d));
+            assert_eq!(
+                cramer((&fi.0, &fi.1, &fi.2), (&gi.0, &gi.1, &gi.2)),
+                Some(want)
+            );
+        }
+    }
+
+    /// The basis of a primitive direction: `s·a + t·b == 1`; [`Basis::row`] writes `A·x + B·y`
+    /// in `u` and `w` with the same value at every point, and [`Basis::back`] undoes it; a
+    /// direction that is not primitive has none.
+    #[test]
+    fn the_basis_keeps_the_value_of_each_row() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("the_basis_keeps_the_value_of_each_row");
+        for _ in 0..3000 {
+            let (a, b) = nonzero(&mut rng, 40);
+            let (ia, ib) = (i(a), i(b));
+            let Some(basis) = Basis::new(ia, ib) else {
+                assert_ne!(primitive((a, b)), (a, b), "seed {seed}: ({a}, {b})");
+                continue;
+            };
+            assert_eq!(primitive((a, b)), (a, b), "seed {seed}");
+            assert_eq!(basis.s * ia + basis.t * ib, 1, "seed {seed}: ({a}, {b})");
+            let (pa, pb) = (rng.int(-50, 50), rng.int(-50, 50));
+            let (big_a, big_b) = (i(pa), i(pb));
+            let (e, d) = basis.row(&big_a, &big_b).expect("small");
+            assert_eq!(basis.back(&e, &d), Some((big_a, big_b)), "seed {seed}");
+            let (x, y) = (i(rng.int(-50, 50)), i(rng.int(-50, 50)));
+            let (u, w) = (ia * x + ib * y, -basis.t * x + basis.s * y);
+            assert_eq!(
+                big_a * x + big_b * y,
+                e * u + d * w,
+                "seed {seed}: ({a}, {b})"
+            );
+            // On `Int`, whose cofactors may be others: the same two checks.
+            let bi = Basis::new(Int::from(a), Int::from(b)).expect("primitive");
+            let one = &(&bi.s * &Int::from(a)) + &(&bi.t * &Int::from(b));
+            assert_eq!(one, Int::ONE, "seed {seed}: ({a}, {b})");
+            let (ai, bi2) = (Int::from(pa), Int::from(pb));
+            let (ei, di) = bi.row(&ai, &bi2).expect("Int");
+            assert_eq!(bi.back(&ei, &di), Some((ai, bi2)), "seed {seed}");
+        }
+    }
+}

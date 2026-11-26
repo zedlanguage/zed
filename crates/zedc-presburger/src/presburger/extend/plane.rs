@@ -78,6 +78,7 @@ use std::sync::Arc;
 use super::super::formula::Rel;
 use super::super::{Atom, Con, Formula, Id};
 use super::counts;
+use zedc_affine::plane::{self, Basis};
 use zedc_int::int::Int;
 
 /// A point with integer coordinates.
@@ -89,12 +90,18 @@ fn int(v: i64) -> Int {
     Int::from(v)
 }
 
+/// The routines of [`zedc_affine::plane`] answer `Some` always on [`Int`], which has no
+/// overflow.
+const ON_INT: &str = "the plane routines never fail on Int";
+
+/// [`plane::cross`] on [`Int`].
 fn cross(u: &P, v: &P) -> Int {
-    &(&u.0 * &v.1) - &(&u.1 * &v.0)
+    plane::cross((&u.0, &u.1), (&v.0, &v.1)).expect(ON_INT)
 }
 
+/// [`plane::dot`] on [`Int`].
 fn dot(u: &P, v: &P) -> Int {
-    &(&u.0 * &v.0) + &(&u.1 * &v.1)
+    plane::dot((&u.0, &u.1), (&v.0, &v.1)).expect(ON_INT)
 }
 
 fn neg(u: &P) -> P {
@@ -170,19 +177,10 @@ fn tighten(a: Int, b: Int, c: Int) -> Row {
     }
 }
 
-/// Where the lines of `r` and `s` meet, by Cramer's rule; `None` when they are parallel.
+/// Where the lines of `r` and `s` meet, by Cramer's rule ([`plane::cramer`]); `None` when they
+/// are parallel.
 fn meet(r: &Row, s: &Row) -> Option<Q> {
-    let d = &(&r.a * &s.b) - &(&s.a * &r.b);
-    if d.is_zero() {
-        return None;
-    }
-    let x = &(&r.c * &s.b) - &(&s.c * &r.b);
-    let y = &(&r.a * &s.c) - &(&s.a * &r.c);
-    Some(if d.is_negative() {
-        (-&x, -&y, -&d)
-    } else {
-        (x, y, d)
-    })
+    plane::cramer((&r.a, &r.b, &r.c), (&s.a, &s.b, &s.c))
 }
 
 fn integral(q: &Q) -> Option<P> {
@@ -190,23 +188,11 @@ fn integral(q: &Q) -> Option<P> {
         .then(|| (q.0.div_floor(&q.2), q.1.div_floor(&q.2)))
 }
 
-/// 0 for the half-turn from `base` (its own direction included), 1 for the other.
-fn half(base: &P, v: &P) -> u8 {
-    let c = cross(base, v);
-    if c.is_positive() || (c.is_zero() && dot(base, v).is_positive()) {
-        0
-    } else {
-        1
-    }
-}
-
-/// Whether `v` is strictly after `w` counterclockwise from `base`, `base` itself first.
+/// Whether `v` is strictly after `w` counterclockwise from `base`, `base` itself first
+/// ([`plane::angle_cmp_from`]).
 fn after(base: &P, v: &P, w: &P) -> bool {
-    let (hv, hw) = (half(base, v), half(base, w));
-    if hv != hw {
-        return hv > hw;
-    }
-    cross(w, v).is_positive()
+    let o = plane::angle_cmp_from((&base.0, &base.1), (&v.0, &v.1), (&w.0, &w.1));
+    o.expect(ON_INT).is_gt()
 }
 
 /// A value of `f` on the boundary: a vertex's, or the limit along an end ray.
@@ -1070,8 +1056,8 @@ fn step5(ep: Option<&Row>, c: &Row, eq: Option<&Row>) -> Option<Step5> {
 /// vertex, of which there are O(log A) (Harvey section 4).
 fn pairwise(e: &Row, c: &Row) -> Vec<Row> {
     let beta = cross(&e.n(), &c.n());
-    let (_, s, t) = e.a.bezout(&e.b);
-    let alpha = &(&c.a * &s) + &(&c.b * &t);
+    // `alpha` is the coefficient of `u = e.a x + e.b y` in `c`'s row ([`Basis::row`]).
+    let alpha = basis(e).row(&c.a, &c.b).expect(ON_INT).0;
     let gamma = &c.c - &(&alpha * &e.c);
     // X* = gamma alpha^-1 mod beta.
     let (_, inv, _) = alpha.bezout(&beta);
@@ -1089,10 +1075,15 @@ fn pairwise(e: &Row, c: &Row) -> Vec<Row> {
     corner_rows(e, &pts)
 }
 
+/// The unimodular basis of `e`'s normal ([`Basis`]), primitive since `e` is tightened.
+fn basis(e: &Row) -> Basis<Int> {
+    Basis::new(e.a.clone(), e.b.clone()).expect("a tightened row has a primitive normal")
+}
+
 /// The rows of the edges of the chain `pts` of the corner of `e` (in the coordinates `X`, `Y`
 /// of [`pairwise`], `X` growing), in `x` and `y`, tightened, equal neighbors once. O(|pts|).
 fn corner_rows(e: &Row, pts: &[P]) -> Vec<Row> {
-    let (_, s, t) = e.a.bezout(&e.b);
+    let basis = basis(e);
     let mut out: Vec<Row> = vec![];
     for w in pts.windows(2) {
         let ((x1, y1), (x2, y2)) = (&w[0], &w[1]);
@@ -1102,12 +1093,10 @@ fn corner_rows(e: &Row, pts: &[P]) -> Vec<Row> {
         // aa X + bb Y >= aa x1 + bb y1: the hull on the left of (x1, y1) to (x2, y2).
         let (aa, bb) = (-&(y2 - y1), x2 - x1);
         let k = &(&aa * x1) + &(&bb * y1);
-        // X = a x + b y - e.c, Y = -t x + s y.
-        let r = tighten(
-            &(&aa * &e.a) - &(&bb * &t),
-            &(&aa * &e.b) + &(&bb * &s),
-            &k + &(&aa * &e.c),
-        );
+        // X = a x + b y - e.c, Y = -t x + s y: `aa X + bb Y` in `x` and `y` is
+        // [`Basis::back`].
+        let (xa, xb) = basis.back(&aa, &bb).expect(ON_INT);
+        let r = tighten(xa, xb, &k + &(&aa * &e.c));
         if out.last() != Some(&r) {
             out.push(r);
         }

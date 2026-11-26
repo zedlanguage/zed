@@ -28,6 +28,10 @@ use zedc_int::int::{Int, i128_div_ceil, i128_div_floor};
 /// whose least integer is the ceiling; for `p < 0` it is `x <= q / -p`, whose greatest is the
 /// floor. Replaced the inline reads of zedc-preimage loops.rs (the box of a scope and the
 /// limit of a written term). O(1).
+// `#[inline]` on the four small routines here: they are not generic, so without it Rust compiles
+// them once here and does not inline them into their callers in zedc-presburger and
+// zedc-preimage (common brief item 5, 2026-11-26). COUNTS
+#[inline]
 pub fn i128_row_bound(p: i128, q: i128) -> Option<i128> {
     match p.signum() {
         1 => i128_div_ceil(q.checked_neg()?, p),
@@ -42,6 +46,7 @@ pub fn i128_row_bound(p: i128, q: i128) -> Option<i128> {
 /// row with `p == 0` and `q >= 0` holds everywhere and changes nothing. Replaced `meet` of
 /// zedc-presburger's two-pin reading and the inline loop of the row-sums plane's `shadow`.
 /// O(1).
+#[inline]
 pub fn i128_meet(p: i128, q: i128, lo: &mut Option<i128>, hi: &mut Option<i128>) -> Option<bool> {
     if p == 0 {
         return Some(q >= 0);
@@ -64,6 +69,7 @@ pub fn i128_meet(p: i128, q: i128, lo: &mut Option<i128>, hi: &mut Option<i128>)
 /// its constant (module note). Replaced the pair loops of the two-pin reading's `shadow` and
 /// of the row-sums plane's `shadow`, which wrote the same products. `yl - 1` and `-yu - 1`
 /// cannot overflow, as `yl > 0` and `-yu > 0` once `-yu` is formed. O(1).
+#[inline]
 pub fn i128_pair(
     (xl, yl, cl): (i128, i128, i128),
     (xu, yu, cu): (i128, i128, i128),
@@ -84,6 +90,7 @@ pub fn i128_pair(
 /// product written out in `dark_is_real`, the Omega test's `combine` and `lossless_pair` of
 /// zedc-presburger, and the slack of its exact projection's `shadow`. Two subtractions and
 /// one product.
+#[inline]
 pub fn dark_gap(a: &Int, b: &Int) -> Int {
     &(a - &Int::ONE) * &(b - &Int::ONE)
 }

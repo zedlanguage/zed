@@ -28,7 +28,8 @@
 //! (its values are a progression, as many pieces as values), or a number past `i128` is not
 //! taken here: the formula goes to the join, which is exact, as before.
 
-use zed_numtheory::{bezout_i128, gcd_u128 as gcd};
+use zed_numtheory::gcd_u128 as gcd;
+use zedc_affine::plane::Basis;
 use zedc_affine::shadow::{i128_meet, i128_pair};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
@@ -454,18 +455,15 @@ fn shadow(
     b: i128,
     scratch: &mut Scratch,
 ) -> Option<Option<(i128, i128)>> {
-    // `s·a + t·b == 1`; `q = u·x + v·y` with `(u, v) = (-t, s)` completes `p` to a unimodular
-    // basis, whose inverse is `x = v·p - b·q`, `y = -u·p + a·q`.
-    let (s, t) = bezout(a, b)?;
-    let (u, v) = (t.checked_neg()?, s);
+    // `q = -t·x + s·y` completes `p = a·x + b·y` to a unimodular basis ([`Basis`]).
+    let basis = Basis::new(a, b)?;
     // Each half-plane `A·p + B·q + C >= 0`, put by the sign of `B`.
     let Scratch { free, lower, upper } = scratch;
     free.clear();
     lower.clear();
     upper.clear();
     for h in polygon {
-        let big_a = h.a.checked_mul(v)?.checked_sub(h.b.checked_mul(u)?)?;
-        let big_b = h.b.checked_mul(a)?.checked_sub(h.a.checked_mul(b)?)?;
+        let (big_a, big_b) = basis.row(&h.a, &h.b)?;
         let row = (big_a, big_b, h.c);
         match big_b.signum() {
             0 => free.push((big_a, h.c)),
@@ -502,14 +500,6 @@ struct Scratch {
     free: Vec<(i128, i128)>,
     lower: Vec<(i128, i128, i128)>,
     upper: Vec<(i128, i128, i128)>,
-}
-
-/// `(s, t)` with `s·a + t·b == 1`, for `a` and `b` coprime ([`bezout_i128`], whose cofactors
-/// equal those of the signed Euclid this module used before; checked by
-/// `bezout_cofactors_give_the_gcd_and_are_the_least` in zed-numtheory).
-pub(in crate::presburger) fn bezout(a: i128, b: i128) -> Option<(i128, i128)> {
-    let (g, s, t) = bezout_i128(a, b)?;
-    (g == 1).then_some((s, t))
 }
 
 #[cfg(test)]

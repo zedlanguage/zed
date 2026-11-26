@@ -50,13 +50,13 @@ use std::collections::HashMap;
 
 use zed_collections::search::{try_first_true, try_last_true};
 use zed_kernel::bits::BitLen;
+use zedc_affine::plane::{self, Basis};
 use zedc_affine::shadow::{i128_meet, i128_pair};
 use zedc_int::int::{Int, Num, i128_div_ceil, i128_div_floor};
 use zedc_lattice::interval::{End, IntervalSet};
 use zedc_lattice::lattice::Congruence;
 
 use super::super::super::meter::{PIECE, TWO_PIN_READINGS, Work};
-use super::super::super::row_sums::plane::bezout;
 use super::super::super::{Atom, Classed, Con, Formula, Lin, Refusal, Rel};
 use super::super::projection::each_constraint;
 use super::{Def, Prep};
@@ -833,18 +833,14 @@ fn u_values(
     halves: &[Form],
     work: &mut Work,
 ) -> Result<Option<Vec<Run>>, Refusal> {
-    let Some((s, t)) = bezout(a, b) else {
+    let Some(basis) = Basis::new(a, b) else {
         return Ok(None);
     };
-    // Each half-plane as `E·u + D·w + C >= 0`, and the same with the two coordinates swapped.
+    // Each half-plane as `E·u + D·w + C >= 0` ([`Basis::row`]), and the same with the two
+    // coordinates swapped.
     let mut uw: Vec<Row> = Vec::with_capacity(halves.len());
     for &(ha, hb, hc) in halves {
-        let row = (|| {
-            let e = ha.checked_mul(s)?.checked_add(hb.checked_mul(t)?)?;
-            let d = hb.checked_mul(a)?.checked_sub(ha.checked_mul(b)?)?;
-            Some((e, d, hc))
-        })();
-        let Some(row) = row else {
+        let Some(row) = basis.row(&ha, &hb).map(|(e, d)| (e, d, hc)) else {
             return Ok(None);
         };
         uw.push(row);
@@ -1028,26 +1024,23 @@ fn shape_of(halves: &[Form], cuts: &[Form]) -> Shape {
 
 /// `f × g` of two normals; `None` past `i128`.
 fn cross(f: &Form, g: &Form) -> Option<i128> {
-    f.0.checked_mul(g.1)?.checked_sub(f.1.checked_mul(g.0)?)
+    plane::cross((&f.0, &f.1), (&g.0, &g.1))
 }
 
 /// `n · d`; `None` past `i128`.
 fn dot(n: (i128, i128), d: (i128, i128)) -> Option<i128> {
-    n.0.checked_mul(d.0)?.checked_add(n.1.checked_mul(d.1)?)
+    plane::dot((&n.0, &n.1), (&d.0, &d.1))
 }
 
 /// A point `(p·d, q·d, d)` with `d > 0`.
 type Pt = (i128, i128, i128);
 
 /// The point where the lines of two half-planes meet; `None` where parallel or past `i128`.
+/// [`plane::cramer`] solves `A·p + B·q = C`; the line here is `A·p + B·q + C = 0`, which
+/// negates `p·d` and `q·d` and keeps `d`.
 fn point(f: &Form, g: &Form) -> Option<Pt> {
-    let det = cross(f, g)?;
-    if det == 0 {
-        return None;
-    }
-    let p = g.2.checked_mul(f.1)?.checked_sub(f.2.checked_mul(g.1)?)?;
-    let q = f.2.checked_mul(g.0)?.checked_sub(g.2.checked_mul(f.0)?)?;
-    Some(if det > 0 { (p, q, det) } else { (-p, -q, -det) })
+    let (p, q, d) = plane::cramer((&f.0, &f.1, &f.2), (&g.0, &g.1, &g.2))?;
+    Some((p.checked_neg()?, q.checked_neg()?, d))
 }
 
 /// `A·p + B·q + C` at a point, times its `d > 0`.
@@ -1075,16 +1068,13 @@ fn hull(halves: &[Form]) -> Option<Vec<(Form, bool)>> {
     let boxed = [(1, 0, M), (-1, 0, M), (0, 1, M), (0, -1, M)];
     let mut all: Vec<(Form, bool)> = halves.iter().map(|&f| (f, false)).collect();
     all.extend(boxed.iter().map(|&f| (f, true)));
-    // The angle of the normal `(A, B)`: upper half first, then by the cross product.
-    let upper = |f: &Form| f.1 > 0 || (f.1 == 0 && f.0 > 0);
+    // The angle of the normal `(A, B)` ([`angle_cmp`]): upper half first, then by the cross
+    // product.
     let mut bad = false;
     all.sort_by(|(f, _), (g, _)| {
-        upper(g).cmp(&upper(f)).then_with(|| match cross(f, g) {
-            Some(c) => 0.cmp(&c),
-            None => {
-                bad = true;
-                std::cmp::Ordering::Equal
-            }
+        angle_cmp((f.0, f.1), (g.0, g.1)).unwrap_or_else(|| {
+            bad = true;
+            std::cmp::Ordering::Equal
         })
     });
     if bad {
@@ -1094,8 +1084,7 @@ fn hull(halves: &[Form]) -> Option<Vec<(Form, bool)>> {
     let mut kept: Vec<(Form, bool)> = Vec::with_capacity(all.len());
     for (f, b) in all {
         if let Some((g, gb)) = kept.last_mut()
-            && upper(g) == upper(&f)
-            && cross(g, &f)? == 0
+            && angle_cmp((g.0, g.1), (f.0, f.1))?.is_eq()
         {
             // `f = λ·g` on the normal, `λ > 0`: `f` is tighter where `C_f < λ·C_g`.
             let (kf, kg) = if g.0 != 0 { (f.0, g.0) } else { (f.1, g.1) };
@@ -1365,9 +1354,7 @@ struct Polygon {
 /// The order of the angles of two directions, counterclockwise from the first axis; `None`
 /// past `i128`.
 fn angle_cmp(f: (i128, i128), g: (i128, i128)) -> Option<std::cmp::Ordering> {
-    let upper = |v: (i128, i128)| v.1 > 0 || (v.1 == 0 && v.0 > 0);
-    let cross = f.0.checked_mul(g.1)?.checked_sub(f.1.checked_mul(g.0)?)?;
-    Some(upper(g).cmp(&upper(f)).then(0.cmp(&cross)))
+    plane::angle_cmp((&f.0, &f.1), (&g.0, &g.1))
 }
 
 /// The least `i` in `[lo, hi)` where `pred` fails, `pred` holding on a prefix (`hi` where it
@@ -1703,7 +1690,7 @@ fn poly_values(
     (a, b): (i128, i128),
     work: &mut Work,
 ) -> Result<Option<Vec<Run>>, Refusal> {
-    let Some((s, t)) = bezout(a, b) else {
+    let Some(basis) = Basis::new(a, b) else {
         return Ok(None);
     };
     let n = poly.n() as u64;
@@ -1714,8 +1701,7 @@ fn poly_values(
     let step = 4 * log;
     work.charge(step.saturating_mul(8))?;
     let to_uw = |(ha, hb, hc): Form| -> Option<Row> {
-        let e = ha.checked_mul(s)?.checked_add(hb.checked_mul(t)?)?;
-        let d = hb.checked_mul(a)?.checked_sub(ha.checked_mul(b)?)?;
+        let (e, d) = basis.row(&ha, &hb)?;
         Some((e, d, hc))
     };
     let to_wu = |f: Form| -> Option<Row> {
@@ -1723,7 +1709,7 @@ fn poly_values(
         Some((d, e, c))
     };
     // `u = a·p + b·q` and `w = -t·p + s·q`.
-    let (vu, vw) = ((a, b), (t.checked_neg(), s));
+    let (vu, vw) = ((a, b), (basis.t.checked_neg(), basis.s));
     let Some(vw) = vw.0.map(|x| (x, vw.1)) else {
         return Ok(None);
     };
@@ -1982,14 +1968,13 @@ fn open_values<K: Convex>(
         }
         return Ok(Some(out));
     }
-    let Some((s, t)) = bezout(a, b) else {
+    let Some(basis) = Basis::new(a, b) else {
         return Ok(None);
     };
     let step = log_pieces(k.n());
     work.charge(step.saturating_mul(4))?;
     let to_uw = |(ha, hb, hc): Form| -> Option<Row> {
-        let e = ha.checked_mul(s)?.checked_add(hb.checked_mul(t)?)?;
-        let d = hb.checked_mul(a)?.checked_sub(ha.checked_mul(b)?)?;
+        let (e, d) = basis.row(&ha, &hb)?;
         Some((e, d, hc))
     };
     let v = (a, b);
