@@ -104,17 +104,17 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use zed_kernel::priority::Priorities;
+use zed_collections::priority::Priorities;
 use zedc_presburger::presburger::Lin;
 
-/// The priorities of the divisors, drawn once per run ([`zed_kernel::priority`]): the run's
+/// The priorities of the divisors, drawn once per run ([`zed_collections::priority`]): the run's
 /// random polynomial of degree 4 at a random polynomial hash of the divisor's `Hash` stream
 /// ([`Priorities::hash`]). A `Lin`'s stream is its terms and constant, so distinct divisors
 /// have distinct streams and tie with probability at most `(S + 1)/p` a pair for streams of
 /// `S` symbols; the priorities are otherwise 5-wise independent and uniform, and every
 /// node's depth is `O(log n)` in expectation for every set of divisors (Seidel and Aragon,
 /// "Randomized search trees", Algorithmica 16, 1996, doi:10.1007/BF01940876, Theorem 3.3 and
-/// section 6; the full comment and the proof are in module [`zed_kernel::priority`]), where
+/// section 6; the full comment and the proof are in module [`zed_collections::priority`]), where
 /// the fixed hash this replaces had no bound for chosen divisors (COMPLEXITY.md K123). A set's
 /// number depends on the shape, and so on the draw, and is only compared for equality, never
 /// ordered or shown.

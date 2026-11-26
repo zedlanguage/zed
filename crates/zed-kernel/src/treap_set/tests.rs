@@ -495,7 +495,7 @@ fn the_seed_reaches_the_trees() {
     assert!(bigs.iter().all(|k| k.priority() <= b.key.priority()));
     println!(
         "SEEDPROBE primes={:?} int_root={} big_root={:?}",
-        crate::priority::fingerprint_primes(),
+        zed_collections::priority::fingerprint_primes(cfg!(test)),
         i.key,
         b.key
     );

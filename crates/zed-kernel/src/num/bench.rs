@@ -434,7 +434,7 @@ fn a_short_quotient_of_a_wide_number_scales() {
 #[test]
 fn fingerprint_instructions() {
     let mut meter = crate::scaling::Meter::new();
-    let [p1, p2] = crate::priority::fingerprint_primes();
+    let [p1, p2] = zed_collections::priority::fingerprint_primes(cfg!(test));
     let (d1, d2) = (ByDivision(p1), ByDivision(p2));
     let (m1, m2) = (
         Drawn(Montgomery64::new(p1), p1),

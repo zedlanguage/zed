@@ -215,6 +215,10 @@ struct Draw {
 
 impl Draw {
     /// `q(x mod P)`, by Horner's rule: `degree` multiplications.
+    // `#[inline]` here and on the other steps of a priority (zed-numtheory's `mul` and `add` have
+    // it too): the treaps that call them are in other crates, and a call across crates is not
+    // inlined without it (it was one crate, zed-kernel's, until DRY-persistent-trees-2026-11-26).
+    #[inline]
     fn at(&self, x: u64) -> u64 {
         let x = if x >= P { x - P } else { x };
         self.q[1..=self.degree]
@@ -229,6 +233,9 @@ impl Draw {
 pub struct Priorities {
     tag: u64,
     degree: usize,
+    /// Whether the draw is that of seed 0 when `ZED_TREAP_SEED` is unset
+    /// ([`Priorities::fixed_in_unit_tests`]).
+    fixed_in_unit_tests: bool,
     draw: OnceLock<Draw>,
 }
 
@@ -239,6 +246,7 @@ impl Priorities {
         Priorities {
             tag,
             degree: 4,
+            fixed_in_unit_tests: false,
             draw: OnceLock::new(),
         }
     }
@@ -249,16 +257,33 @@ impl Priorities {
         Priorities {
             tag,
             degree: 7,
+            fixed_in_unit_tests: false,
             draw: OnceLock::new(),
         }
     }
 
+    /// These priorities, drawn from seed 0 when `ZED_TREAP_SEED` is unset and `unit_test` is
+    /// true. A crate passes its own `cfg!(test)`, which is true only in that crate's unit tests,
+    /// so that a unit test of a treap's height checks one draw, the same on every run (a test
+    /// asserts only what holds for the draw it checks); zed-kernel does. Every other run, the
+    /// step tests included, draws from the system's random bytes when the variable is unset.
+    // The flag is the caller's, not this crate's `cfg!(test)`: that is true only in the unit tests
+    // of zed-collections, and zed-kernel's unit tests relied on seed 0 while this module was in
+    // zed-kernel (DRY-persistent-trees-2026-11-26 moved it here).
+    pub const fn fixed_in_unit_tests(mut self, unit_test: bool) -> Priorities {
+        self.fixed_in_unit_tests = unit_test;
+        self
+    }
+
+    #[inline]
     fn draw(&self) -> &Draw {
-        self.draw.get_or_init(|| draw(self.tag, self.degree))
+        self.draw
+            .get_or_init(|| draw(self.tag, self.degree, self.fixed_in_unit_tests))
     }
 
     /// The priority of the key `x`, a number: `q(x mod P)`. The 59 numbers from `P` up share
     /// their points with `0` to `58`, so at most 118 keys tie for that reason whatever the draw.
+    #[inline]
     pub fn of(&self, x: u64) -> u64 {
         self.draw().at(x)
     }
@@ -295,6 +320,7 @@ struct Stream {
 }
 
 impl Stream {
+    #[inline]
     fn symbol(&mut self, s: u64) {
         self.acc = add(mul(self.acc, self.r), s);
     }
@@ -302,6 +328,7 @@ impl Stream {
     /// A word as symbols below `p`: itself when it is below `p - 1`, else `p - 1` and then
     /// `w - (p - 1)`, at most 59. No word's symbols begin another's, so the words are read
     /// back from the symbols.
+    #[inline]
     fn word(&mut self, w: u64) {
         if w >= P - 1 {
             self.symbol(P - 1);
@@ -312,6 +339,7 @@ impl Stream {
     }
 
     /// `g`: the last word, completed with zero bytes, then the length.
+    #[inline]
     fn end(mut self) -> u64 {
         if self.filled > 0 {
             self.word(self.pending);
@@ -322,6 +350,7 @@ impl Stream {
 }
 
 impl std::hash::Hasher for Stream {
+    #[inline]
     fn write(&mut self, bytes: &[u8]) {
         self.len += bytes.len() as u64;
         let mut rest = bytes;
@@ -355,8 +384,8 @@ impl std::hash::Hasher for Stream {
 /// while they are `P` or more (probability `59 / 2^64` each), so each is uniform over `0..P`.
 /// The `degree + 1` coefficients are drawn first, then `r`, so a draw of degree 4 is the one a
 /// seed gave before degree 7 was added.
-fn draw(tag: u64, degree: usize) -> Draw {
-    draw_from(source(tag), degree)
+fn draw(tag: u64, degree: usize, fixed_in_unit_tests: bool) -> Draw {
+    draw_from(source(tag, fixed_in_unit_tests), degree)
 }
 
 /// [`draw`] from the words `next`.
@@ -445,9 +474,13 @@ fn draw_from(mut next: impl FnMut() -> u64, degree: usize) -> Draw {
 // and VM as above). The deterministic hashes (`value::digest`, the
 // type weights) keep `2^61 - 1`, which they need to be the same on every run, and whose fold
 // is cheaper than any reduction modulo a drawn prime (measured at `Rat::fingerprint`).
-pub fn fingerprint_primes() -> [u64; 2] {
+///
+/// `unit_test` is the caller's `cfg!(test)`, as for [`Priorities::fixed_in_unit_tests`]: when
+/// it is true and `ZED_TREAP_SEED` is unset, the primes are those of seed 0. The first call of a
+/// process draws them; every caller of a run passes the same flag (zed-kernel is the only one).
+pub fn fingerprint_primes(unit_test: bool) -> [u64; 2] {
     static PRIMES: OnceLock<[u64; 2]> = OnceLock::new();
-    *PRIMES.get_or_init(|| fingerprint_primes_from(source(21), source(22)).0)
+    *PRIMES.get_or_init(|| fingerprint_primes_from(source(21, unit_test), source(22, unit_test)).0)
 }
 
 /// [`fingerprint_primes`] from the words `next1` and `next2`, with the number of draws each
@@ -475,8 +508,9 @@ fn fingerprint_primes_from(
 }
 
 /// The 64-bit words of the draw of `tag`.
-fn source(tag: u64) -> Box<dyn FnMut() -> u64> {
-    if let Some(seed) = fixed_seed() {
+fn source(tag: u64, fixed_in_unit_tests: bool) -> Box<dyn FnMut() -> u64> {
+    let unset = (fixed_in_unit_tests || cfg!(test)).then_some(0);
+    if let Some(seed) = fixed_seed().or(unset) {
         return Box::new(seeded_words(seed, tag));
     }
     use std::io::Read;
@@ -497,14 +531,14 @@ fn seeded_words(seed: u64, tag: u64) -> impl FnMut() -> u64 {
     move || g.next_u64()
 }
 
-/// `ZED_TREAP_SEED`, read once. In this crate's unit tests it is 0 when unset, so that a test of
-/// a treap's height checks one draw, the same on every run (a test asserts only what holds for
-/// the draw it checks).
+/// `ZED_TREAP_SEED`, read once; `None` when it is unset. Then [`source`] takes seed 0 in the
+/// unit tests of this crate and of the crates that ask for it
+/// ([`Priorities::fixed_in_unit_tests`]), and the system's random bytes otherwise.
 fn fixed_seed() -> Option<u64> {
     static SEED: OnceLock<Option<u64>> = OnceLock::new();
     *SEED.get_or_init(|| {
         let Ok(s) = std::env::var("ZED_TREAP_SEED") else {
-            return cfg!(test).then_some(0);
+            return None;
         };
         Some(
             s.trim().parse().unwrap_or_else(|_| {

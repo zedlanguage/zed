@@ -41,7 +41,7 @@ name a paper; this list gives the file that cites it.
 |---|---|---|
 | Berkholz, Bonsma and Grohe, color refinement (with Paige and Tarjan) | `zed-kernel/src/refine.rs` | S32 |
 | Blelloch, Ferizovic and Sun, "Just Join" (with PAM) | `zed-kernel/src/types/bdd/list/treap.rs` | INTERVAL-persistent, K32, K122-K124, K138, KERNEL-bdd-rejoin-bytes |
-| Seidel and Aragon, treaps | `zed-kernel/src/priority.rs` | K122, K123, PA-bind-cost, ST-class-case-holes, KERNEL-bdd-rejoin-bytes |
+| Seidel and Aragon, treaps | `zed-collections/src/priority.rs` | K122, K123, PA-bind-cost, ST-class-case-holes, KERNEL-bdd-rejoin-bytes |
 | Okasaki and Gill, big-endian Patricia tries (with Morrison) | `zed-kernel/src/types/print/uses.rs` | K110, ENDS |
 | Karp and Rabin, fingerprints | `zed-kernel/src/text.rs` (`Text::poly_hash`) | K117 |
 | Hinze and Paterson, finger trees (with Kaplan and Tarjan) | `zed-kernel/src/text.rs` | C29, F223 |

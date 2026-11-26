@@ -53,11 +53,11 @@ use zed_hash::fnv1a_64;
 use crate::deep;
 use crate::frames::{Deep, Stack};
 use crate::num::Rat;
-use crate::priority::Priorities;
 use crate::treap_set::{Elem, HashConsTable, TreapSet};
 use crate::value::{Id, Items, Value};
 use bdd::{Bdd, Form, Literal, Op, Owned, Part, Tables, Walk};
 use bucket::Bucket;
+use zed_collections::priority::Priorities;
 
 /// A type: the set of values it denotes. The primary fingerprint orders structure first;
 /// a second fingerprint distinguishes retained names before the loop of `order` compares
@@ -179,11 +179,11 @@ fn scalar(v: &Value) -> u64 {
 /// on `2^64 + k (2^61 - 1)` for every `k`; the same fingerprint gives its seeded weight
 /// ([`Elem::seeded_weight`]), so a set of such values is a treap of expected depth O(log n)
 /// whatever its program chose, under the conjecture stated at
-/// [`fingerprint_primes`](crate::priority::fingerprint_primes). Values that still tie whatever
+/// [`fingerprint_primes`](zed_collections::priority::fingerprint_primes). Values that still tie whatever
 /// the draw (tuples and families of equal digests) remain under PERF-set-tied-digest-depth.
 impl Elem for Value {
     fn priority(&self) -> u64 {
-        static PRIORITIES: Priorities = Priorities::eight_wise(17);
+        static PRIORITIES: Priorities = Priorities::eight_wise(17).fixed_in_unit_tests(cfg!(test));
         match self {
             Value::Int(n) => PRIORITIES.of((*n as u64) ^ (1 << 63)),
             Value::Big(r) => PRIORITIES.hash(&(2u8, r.fingerprint())),

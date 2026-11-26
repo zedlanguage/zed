@@ -137,7 +137,8 @@ fn height(t: &Tree<Row>) -> usize {
 /// independent priorities, and its height is checked against Seidel and Aragon's Lemma 4.8
 /// (doi:10.1007/BF01940876; its bound is stated in `bdd/list/tests.rs`) at probability `1/n`,
 /// as `set/tests.rs` does. The unit tests of this crate fix the draw
-/// (`priority::fixed_seed`), so the height checked is that of one draw, the same on every run.
+/// (`zed_collections::priority::Priorities::fixed_in_unit_tests`), so the height checked is that
+/// of one draw, the same on every run.
 #[test]
 fn settings_chosen_against_a_fixed_hash_give_a_logarithmic_height() {
     let mut all: Vec<Key<Row>> = (0..1 << 16).map(|i| (atom(i), true)).collect();

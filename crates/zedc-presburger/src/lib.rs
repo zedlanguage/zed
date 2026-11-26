@@ -475,7 +475,7 @@
 //!   factors, if the priorities are 8-wise independent random variables ... In order to achieve
 //!   logarithmic expected access, insertion, and deletion time, 5-wise independence suffices";
 //!   sec. 6, "Limited Randomness", proves it. The uses rely on the 5-wise case with priorities
-//!   from `zed_kernel::priority`. Checked 2026-11-20: Crossref, and the authors' text
+//!   from `zed_collections::priority`. Checked 2026-11-20: Crossref, and the authors' text
 //!   (faculty.washington.edu/aragon/pubs/rst96.pdf) read for Theorems 3.1 and 3.3 and the title
 //!   of sec. 6; the proof in sec. 6 was not checked line by line.
 //! - G. E. Blelloch, D. Ferizovic and Y. Sun, "Just join for parallel ordered sets", SPAA 2016,

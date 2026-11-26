@@ -1,7 +1,7 @@
 //! The depth of the sets' treaps on structured keys (PROOF-treap-digest-priorities,
 //! PERF-xor-shape-free, COMPLEXITY.md K123). A node's priority is the run's random polynomial at
 //! its literal's digest ([`priority`]), so the bound holds for every input whose literals are
-//! distinct points, and literals at one point add their number (module [`crate::priority`];
+//! distinct points, and literals at one point add their number (module [`zed_collections::priority`];
 //! a program can write many, PERF-set-tied-digest-depth); the unit tests run one fixed draw (seed 0
 //! unless `ZED_TREAP_SEED` is set). These tests check keys built the way programs build them
 //! (consecutive numbers, names, rows that share a prefix or a suffix, digests that are consecutive
@@ -29,7 +29,7 @@
 //! constant α. In view of Theorem 5.1, this constant is α = c". The tests use only the
 //! constant, as a reference height, not the mode of convergence. The full
 //! citation of Seidel and Aragon, and the quotes of Lemmas 4.3 and 6.1, are in module
-//! `crate::priority`; Lemma 4.8 is quoted above, checked against their text the same day.)
+//! `zed_collections::priority`; Lemma 4.8 is quoted above, checked against their text the same day.)
 //!
 //! Equal priorities. Literals whose priorities are equal (atoms whose digests collide) are ordered
 //! by their literals ([`above`]), so they are not independent. Let the classes be the groups of

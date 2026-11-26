@@ -1195,7 +1195,7 @@ impl Rat {
     }
 
     /// The value's fingerprint for this run: `|N|` and `D` modulo each of the two primes `P1`
-    /// and `P2` of [`crate::priority::fingerprint_primes`], drawn once per run, as
+    /// and `P2` of [`zed_collections::priority::fingerprint_primes`], drawn once per run, as
     /// `[|N| mod P1 + s 2^63, D mod P1, |N| mod P2, D mod P2]`, `s` 1 for a negative value (each
     /// residue is below `2^61`, so the sign bit is free), the residues in Montgomery's held form
     /// ([`zed_numtheory::Montgomery64`], which tells residues apart as the plain ones do). Equal
@@ -1235,13 +1235,14 @@ impl Rat {
                 return [n | u64::from(neg) << 63, d, 0, 0];
             }
             tests::Form::Division => {
-                let [p1, p2] = crate::priority::fingerprint_primes();
+                let [p1, p2] = zed_collections::priority::fingerprint_primes(cfg!(test));
                 return self.fingerprint_in(&ByDivision(p1), &ByDivision(p2));
             }
             tests::Form::Montgomery => {}
         }
         let [f1, f2] = FORMS.get_or_init(|| {
-            crate::priority::fingerprint_primes().map(|p| Drawn(Montgomery64::new(p), p))
+            zed_collections::priority::fingerprint_primes(cfg!(test))
+                .map(|p| Drawn(Montgomery64::new(p), p))
         });
         self.fingerprint_in(f1, f2)
     }

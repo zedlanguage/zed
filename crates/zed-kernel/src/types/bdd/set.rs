@@ -19,7 +19,7 @@
 //! of them equal with probability `1/p`, so every node's expected depth is at most
 //! `T0 + n(n - 1)/p + 2c H_n`, `c` the constant of Seidel and Aragon's Lemma 6.1 ("Randomized
 //! search trees", Algorithmica 16(4/5), 1996, doi:10.1007/BF01940876, Lemma 4.3, Theorem 4.7
-//! and section 6; quoted, and the proof with ties, in module [`crate::priority`]). Not proved
+//! and section 6; quoted, and the proof with ties, in module [`zed_collections::priority`]). Not proved
 //! for every program: `T0` is a function
 //! of the fixed digests, and a program can name many atoms of one digest (each step of a digest,
 //! `digest::step`, can be inverted in each argument), whose set is then a path whatever the draw
@@ -36,9 +36,9 @@
 
 use std::sync::Arc;
 
-use crate::priority::Priorities;
 use crate::types::bucket::{self, Bucket};
 use crate::types::hash::mix;
+use zed_collections::priority::Priorities;
 
 /// The atoms of sets, each kind with its thread's table of set nodes. Every atom of a diagram
 /// (`bdd::Literal`) is one; the module needs no more of the atoms, so it imports nothing of the
@@ -126,17 +126,20 @@ impl<A: Atom> Drop for Set<A> {
     }
 }
 
-/// The priorities of the literals, drawn once per run (module [`crate::priority`]): two uses, so
+/// The priorities of the literals, drawn once per run (module [`zed_collections::priority`]): two uses, so
 /// that the taken and the refused literal of one atom are two independent points.
-static PRIORITIES: [Priorities; 2] = [Priorities::eight_wise(11), Priorities::eight_wise(12)];
+static PRIORITIES: [Priorities; 2] = [
+    Priorities::eight_wise(11).fixed_in_unit_tests(cfg!(test)),
+    Priorities::eight_wise(12).fixed_in_unit_tests(cfg!(test)),
+];
 
 /// The priority of `key`: the run's random polynomial of degree 7 at its atom's digest, one for
 /// each value of `taken`. Distinct points take 8-wise independent uniform priorities, which
 /// bounds every node's expected depth by `O(log n)` plus the literals that share a point
 /// (module comment; Seidel and Aragon 1996, doi:10.1007/BF01940876, Theorem 3.3 and section 6;
-/// the proof is in module [`crate::priority`]), and the work of a join of sets of `m <= n`
+/// the proof is in module [`zed_collections::priority`]), and the work of a join of sets of `m <= n`
 /// literals by `O(m log(1 + n/m))` in expectation (the finger bound, proved for 8-wise
-/// independence in module [`crate::priority`]; for degree 4 only `O(m log(n + m))` is proved).
+/// independence in module [`zed_collections::priority`]; for degree 4 only `O(m log(n + m))` is proved).
 /// Atoms whose digests are equal modulo `2^64 - 59` share a point: they tie whatever the draw,
 /// and each such atom adds at most one to a depth.
 // Complexity tradeoff (PERF-xor-shape-free, COMPLEXITY.md K123): the fixed hash this replaces,
@@ -356,7 +359,7 @@ fn rebuild<A: Atom>(path: Vec<(&Arc<Set<A>>, bool)>, mut node: Tree<A>) -> Tree<
 /// above the new one, then the subtree there split at the key and the path made again, as
 /// `bdd::list::treap::insert`.
 ///
-/// Proof of the cost, `O(1 + D)` expected, `D` the bound of module [`crate::priority`] on a
+/// Proof of the cost, `O(1 + D)` expected, `D` the bound of module [`zed_collections::priority`] on a
 /// node's expected depth (`T0 + n(n - 1)/p + 2c H_n` for `n` keys, `T0` the keys that share
 /// their point with another key; Seidel and Aragon, "Randomized search trees", Algorithmica
 /// 16(4/5), 464-497, 1996, doi:10.1007/BF01940876, checked 2026-11-19 at that module). The

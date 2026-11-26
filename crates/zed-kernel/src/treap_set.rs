@@ -37,7 +37,7 @@
 //! shares every subtree it leaves alone. The one exception is [`TreapSet::insert`], which
 //! changes in place the nodes no other set holds (`Arc::make_mut`), so no other set sees it.
 //! A node's priority is a function of its key drawn at random once per run
-//! ([`Elem::priority`], module [`crate::priority`]), ties broken by the order of the keys,
+//! ([`Elem::priority`], module [`zed_collections::priority`]), ties broken by the order of the keys,
 //! so in a run the keys of a set fix its shape whatever order they came in.
 //! So two sets made from one set by cuts and set operations share the subtrees where they agree,
 //! and an operation on them stops at the first pair of shared subtrees (`Arc::ptr_eq`): the
@@ -57,7 +57,7 @@
 //! `l01_39_reduced_product::arm_test_through_call::bench::tests_on_a_callee_of_k_literal_arms_scale`.
 //!
 //! The depth. Priorities are drawn by [`Priorities::eight_wise`]: the module comment of
-//! [`crate::priority`] proves the expected depth `O(log n)` for keys at distinct points of the
+//! [`zed_collections::priority`] proves the expected depth `O(log n)` for keys at distinct points of the
 //! draw, and the work of a join-based operation `O(m log(1 + n/m))` in expectation under 8-wise
 //! independence (plan row PROOF-join-work-limited-independence). Keys at one point tie whatever
 //! the draw; which keys share a point is said at each [`Elem`] implementation.
@@ -69,13 +69,13 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::priority::Priorities;
+use zed_collections::priority::Priorities;
 
 /// A key of a [`TreapSet`]: ordered, with a priority drawn once per run, a weight whose
 /// wrapping sum each subtree keeps, and a class whose union each subtree keeps.
 pub trait Elem: Ord + Clone {
     /// The key's priority: a random function of the key, one per kind of key, drawn once per
-    /// run (module [`crate::priority`]).
+    /// run (module [`zed_collections::priority`]).
     fn priority(&self) -> u64;
     /// A hash of the key, equal for equal keys; a set's [`TreapSet::sum`] is the wrapping sum
     /// of its keys' weights.
@@ -104,10 +104,10 @@ pub trait Elem: Ord + Clone {
 
 /// Integers tie only when equal: the point of `n` is `n` with its sign bit flipped, below `p`
 /// except for the 59 integers from `2^63 - 59` up, which share their points with the 59 from
-/// `i64::MIN`, so at most 118 keys tie whatever the draw (module [`crate::priority`]).
+/// `i64::MIN`, so at most 118 keys tie whatever the draw (module [`zed_collections::priority`]).
 impl Elem for i64 {
     fn priority(&self) -> u64 {
-        static PRIORITIES: Priorities = Priorities::eight_wise(18);
+        static PRIORITIES: Priorities = Priorities::eight_wise(18).fixed_in_unit_tests(cfg!(test));
         PRIORITIES.of((*self as u64) ^ (1 << 63))
     }
     /// Fibonacci hashing: odd multiplier, so distinct integers weigh differently.
@@ -125,11 +125,11 @@ impl Elem for i64 {
 /// weight is the hash of another draw, so that it is independent of the priority.
 impl Elem for Arc<str> {
     fn priority(&self) -> u64 {
-        static PRIORITIES: Priorities = Priorities::eight_wise(19);
+        static PRIORITIES: Priorities = Priorities::eight_wise(19).fixed_in_unit_tests(cfg!(test));
         PRIORITIES.hash(&**self)
     }
     fn weight(&self) -> u64 {
-        static WEIGHTS: Priorities = Priorities::new(20);
+        static WEIGHTS: Priorities = Priorities::new(20).fixed_in_unit_tests(cfg!(test));
         WEIGHTS.hash(&**self)
     }
     fn class(&self) -> u32 {
@@ -266,7 +266,7 @@ fn own_keyed<T>(n: &Node<T>) -> u64 {
 /// function's values are equal with probability `2^-64`. The default input is the weight, and
 /// a kind whose unequal keys can share a weight gives an input that tells them apart
 /// ([`Elem::seeded_weight`]: `Value` gives a big integer's or `rat`'s fingerprint,
-/// `crate::priority::fingerprint_primes`). So a bucket holds the sets equal to the one put in
+/// `zed_collections::priority::fingerprint_primes`). So a bucket holds the sets equal to the one put in
 /// and, in expectation, `O(1)` others. Where the inputs still tie (a fingerprint collision, or
 /// keys of a kind whose weights tie and which gives no other input, as types of one digest,
 /// plan row PERF-set-tied-digest-depth), the bucket is ordered, so a share costs `O(log b)`
@@ -673,7 +673,7 @@ impl<T: Elem> TreapSet<T> {
     // doi:10.1007/BF01940876, Crossref checked 2026-11-21; the abstract: "in the expected case
     // a search or an update takes logarithmic time, with the update requiring fewer than two
     // rotations"). Not proved here for the 8-wise independent draw ([`Priorities::eight_wise`]);
-    // the walk is at most the depth, `O(log n)` expected under it (module [`crate::priority`]).
+    // the walk is at most the depth, `O(log n)` expected under it (module [`zed_collections::priority`]).
     // Measured after, over seeds 0 to 15: 3.74M to 3.87M and 32.0M to 34.8M, at most 9.25
     // times (8.4 times the bytes); with the path changed in place and the subtree below still
     // made again, 4.86M and 42.7M, up to 10.2 times the bytes. Given up: none of the sharing;

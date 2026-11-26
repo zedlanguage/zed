@@ -15241,20 +15241,20 @@ fn compose(inner: (i128, i128), outer: (i128, i128)) -> Option<(i128, i128)> {
     Some((mul, add))
 }
 
-/// The priorities of the pieces, drawn once per run ([`zed_kernel::priority`]).
-static PIECE_PRIORITIES: zed_kernel::priority::Priorities =
-    zed_kernel::priority::Priorities::new(7);
+/// The priorities of the pieces, drawn once per run ([`zed_collections::priority`]).
+static PIECE_PRIORITIES: zed_collections::priority::Priorities =
+    zed_collections::priority::Priorities::new(7);
 
 /// The priority of the piece `lo..=hi`: the run's random polynomial of degree 4 at a random
 /// polynomial hash of its ends as numbers ([`key`], one-to-one on the ends [`in_range`] admits).
 /// Distinct pieces tie with probability at most `11/p` a pair (`p = 2^64 - 59`, a little more
 /// than `11/2^64`): the key is two `i128`s, 32 bytes, so the stream is 4 words and the word of
 /// its length, at most `S = 10` symbols (two a word), and two distinct streams tie with
-/// probability at most `(S + 1)/p` (module [`zed_kernel::priority`]); the priorities are otherwise
+/// probability at most `(S + 1)/p` (module [`zed_collections::priority`]); the priorities are otherwise
 /// 5-wise independent and uniform, and every node's depth is `O(log n)` in expectation for
 /// every set of pieces (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
 /// doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full comment and the proof are in
-/// module [`zed_kernel::priority`]), where the fixed
+/// module [`zed_collections::priority`]), where the fixed
 /// hash this replaces had no bound for chosen pieces (COMPLEXITY.md K123). The shape is never
 /// shown: the nodes' sums (`vals`, `span`, `dense`, `len`) and their tags are the same for every
 /// shape.

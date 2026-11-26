@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::sync::Arc;
 
-use zed_kernel::priority::Priorities;
+use zed_collections::priority::Priorities;
 
 use crate::presburger::{Atom, Lin};
 
@@ -24,7 +24,7 @@ struct Node {
     right: Tree,
 }
 
-/// The priorities of the pivots, drawn once per run ([`zed_kernel::priority`]).
+/// The priorities of the pivots, drawn once per run ([`zed_collections::priority`]).
 static PRIORITIES: Priorities = Priorities::new(9);
 
 /// The priority of a pivot: the run's random polynomial of degree 4 at a random polynomial hash
@@ -34,7 +34,7 @@ static PRIORITIES: Priorities = Priorities::new(9);
 /// `O(log n)` in expectation for every set of pivots (Seidel and Aragon, "Randomized search
 /// trees", Algorithmica 16, 1996, doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full
 /// comment and the proof are in module
-/// [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen pivots
+/// [`zed_collections::priority`]), where the fixed hash this replaces had no bound for chosen pivots
 /// (COMPLEXITY.md K123). The shape is never shown: [`Rows`] is read and printed in order.
 fn prio_of(key: &Atom) -> u64 {
     PRIORITIES.hash(key)

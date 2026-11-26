@@ -28,6 +28,10 @@
 //! [`cartesian`]: the Cartesian tree of items in key order by priority, each node made once over
 //! its children, in `O(n)`.
 //!
+//! [`priority`]: treap priorities drawn at random once per run, by a polynomial of limited
+//! independence over the prime `2^64 - 59` (Seidel and Aragon 1996; the full comment and the
+//! proofs are at the head of `priority.rs`), and the two primes of the kernel's fingerprints.
+//!
 //! [`by_address`]: a map key that is the address of an `Arc` and holds it, so no address in a
 //! memo is freed and given to another value while the memo lives.
 //!
@@ -50,6 +54,7 @@ pub mod intern;
 pub mod intervals;
 pub mod min_add;
 pub mod period;
+pub mod priority;
 pub mod search;
 pub mod sorted;
 pub mod spelling;

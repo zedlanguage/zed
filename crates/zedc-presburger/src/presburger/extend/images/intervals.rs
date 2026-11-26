@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use zed_kernel::priority::Priorities;
+use zed_collections::priority::Priorities;
 use zedc_int::int::Int;
 
 /// A set of intervals, `None` when empty.
@@ -21,7 +21,7 @@ pub(super) struct Node {
     right: Tree,
 }
 
-/// The priorities of the intervals, drawn once per run ([`zed_kernel::priority`]).
+/// The priorities of the intervals, drawn once per run ([`zed_collections::priority`]).
 static PRIORITIES: Priorities = Priorities::new(10);
 
 /// The number of priorities taken so far in the process.
@@ -36,7 +36,7 @@ static TAKEN: zed_graph::IdSource = zed_graph::IdSource::starting_at(0);
 /// below `P` for any run, so the priorities of the intervals of a tree are 5-wise independent
 /// and uniform, and every node's depth is `O(log n)` in expectation (Seidel and Aragon,
 /// "Randomized search trees", Algorithmica 16, 1996, doi:10.1007/BF01940876, Theorem 3.3 and
-/// section 6; the full comment and the proof are in module [`zed_kernel::priority`]), where
+/// section 6; the full comment and the proof are in module [`zed_collections::priority`]), where
 /// the fixed sequence this replaces had no bound for chosen intervals (COMPLEXITY.md K123). On
 /// one thread the numbers an operation takes depend
 /// only on the intervals, never on the shape. Not proved: while other threads take numbers at

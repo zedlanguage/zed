@@ -24,7 +24,6 @@ pub mod num;
 pub mod paths;
 pub mod poly;
 pub mod print;
-pub mod priority;
 pub mod provenance;
 pub mod refine;
 mod site_table;

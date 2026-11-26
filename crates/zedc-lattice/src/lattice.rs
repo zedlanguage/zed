@@ -268,7 +268,7 @@ impl Lattice for Congruence {
 // words per node more than a B-tree. The bounds: Blelloch, Ferizovic and Sun, "Just join for
 // parallel ordered sets", SPAA 2016, doi:10.1145/2935764.2935768, Theorem 4, on treaps of
 // Seidel and Aragon, Algorithmica 16, 1996, doi:10.1007/BF01940876; the full comments are at
-// the heads of zed-kernel `treap_set.rs` and `priority.rs`.
+// the heads of zed-kernel `treap_set.rs` and zed-collections `priority.rs`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FiniteSet<T: Elem> {
     /// Exactly these values.

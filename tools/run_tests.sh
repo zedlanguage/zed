@@ -1630,7 +1630,7 @@ fi
 # measurements, and a test binary started without it starts itself again with it; this export saves that second start and gives the settings to the programs the
 # tests run. Test run_tests_exports_the_settings_of_the_meter checks the two are equal.
 export GLIBC_TUNABLES=glibc.cpu.hwcaps=-ERMS,-FSRM:glibc.cpu.x86_rep_movsb_threshold=0xffffffffffffffff:glibc.cpu.x86_rep_stosb_threshold=0xffffffffffffffff
-# A benchmark measures one fixed draw of the treap priorities (crates/zed-kernel/src/priority.rs,
+# A benchmark measures one fixed draw of the treap priorities (crates/zed-collections/src/priority.rs,
 # PERF-treap-seeded-priorities), so its counts repeat from run to run and compare between trees:
 # under a fresh draw each run the ratios of the s22 chain benchmarks of l01_25_preimage_catalog
 # ranged from 8.1 to 10.49 in 4 runs (2026-11-16). A correctness run keeps a fresh draw, so each

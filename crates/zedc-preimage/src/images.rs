@@ -20,7 +20,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use imbl::ordmap::DiffItem;
-use zed_kernel::priority::Priorities;
+use zed_collections::priority::Priorities;
 use zedc_lattice::cell::Premises;
 use zedc_lattice::interval::IntervalSet;
 
@@ -190,7 +190,7 @@ fn join<L: Sum>(a: Tree<L>, b: Tree<L>) -> Tree<L> {
     }
 }
 
-/// The priorities of the inputs' names, drawn once per run ([`zed_kernel::priority`]).
+/// The priorities of the inputs' names, drawn once per run ([`zed_collections::priority`]).
 static PRIORITIES: Priorities = Priorities::new(6);
 
 /// The priority of `key`: the run's random polynomial of degree 4 at a random polynomial hash
@@ -199,7 +199,7 @@ static PRIORITIES: Priorities = Priorities::new(6);
 /// otherwise 5-wise independent and uniform, and every node's depth is `O(log h)` in
 /// expectation for every set of names (Seidel and Aragon, "Randomized search trees",
 /// Algorithmica 16, 1996, doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full comment
-/// and the proof are in module [`zed_kernel::priority`]), where the fixed hash this replaces
+/// and the proof are in module [`zed_collections::priority`]), where the fixed hash this replaces
 /// had no bound for chosen names (COMPLEXITY.md K123). In a run the shape depends on the names
 /// alone; it is never shown, and a subtree's sum is the same for every shape, since every
 /// [`Sum::plus`] here adds exact integers and joins sets of premises.

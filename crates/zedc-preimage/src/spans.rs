@@ -10,7 +10,7 @@
 //! another at that member cost `Θ(k·m)`. An index by `l` alone, or by `h` alone, visits each
 //! live span that starts (or ends) inside the run, `Θ(k·m)` again. Used: a treap (Seidel and
 //! Aragon, "Randomized search trees", Algorithmica 16, 1996, doi:10.1007/BF01940876; the full
-//! comment is in module [`zed_kernel::priority`]) ordered by `(l, h)` with a
+//! comment is in module [`zed_collections::priority`]) ordered by `(l, h)` with a
 //! priority drawn at random once per run ([`priority`]), each node holding the least `h` below
 //! it, as McCreight's priority search tree answers a three-sided query ("Priority search
 //! trees", SIAM J. Comput. 14, 1985, doi:10.1137/0214021, cited in this crate's `lib.rs`,
@@ -32,7 +32,7 @@
 
 use std::sync::Arc;
 
-use zed_kernel::priority::Priorities;
+use zed_collections::priority::Priorities;
 use zedc_lattice::interval::Num;
 
 use crate::address::Address;
@@ -77,7 +77,7 @@ impl std::fmt::Debug for Spans {
     }
 }
 
-/// The priorities of the spans, drawn once per run ([`zed_kernel::priority`]).
+/// The priorities of the spans, drawn once per run ([`zed_collections::priority`]).
 static PRIORITIES: Priorities = Priorities::new(4);
 
 /// The priority of the span `[l, h]`: the run's random polynomial of degree 4 at a random
@@ -89,13 +89,13 @@ static PRIORITIES: Priorities = Priorities::new(4);
 /// a pair of keys is read back into the pair: distinct pairs of keys write distinct streams.
 ///
 /// The bound. A stream is at most 48 bytes, 6 words and the length word, at most 14 symbols
-/// (two a word, module [`zed_kernel::priority`]), so two spans of distinct keys tie with
+/// (two a word, module [`zed_collections::priority`]), so two spans of distinct keys tie with
 /// probability at most `15/p < 1/2^58` a pair (`p = 2^64 - 59`); the priorities are otherwise
 /// 5-wise independent and uniform, and every node's depth is `O(log k)` in expectation for
 /// every set of spans (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
 /// doi:10.1007/BF01940876, Theorem 3.3 and section 6: 5-wise independence suffices for
 /// logarithmic expected depth; the full comment and the proof are in module
-/// [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen spans
+/// [`zed_collections::priority`]), where the fixed hash this replaces had no bound for chosen spans
 /// (COMPLEXITY.md K123). Two ends outside `i128` of one sign have one key, so spans that
 /// differ only in such ends tie whatever the draw, each adding at most one to a depth: not
 /// proved small for chosen spans with ends past `i128` (cost only: a priority sets a node's

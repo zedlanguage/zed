@@ -34,7 +34,7 @@ fn a_join_costs_near_the_rows_that_differ_wherever_they_sort() {
     // right is so with probability 1/k, independently of the others, so the spine of m pivots
     // holds R_m pivots, H_m = 1 + 1/2 + ... + 1/m in expectation (ln m + 0.577), with variance
     // H_m - (1 + 1/4 + ... + 1/m^2), near ln m - 1.07: 10.28 +- 2.94 at 16,384 and 12.36 +- 3.27
-    // at 131,072. (Under the 5-wise independent priorities of `zed_kernel::priority` the
+    // at 131,072. (Under the 5-wise independent priorities of `zed_collections::priority` the
     // expectation is O(log m), by Seidel and Aragon's bound cited there.) A join costs a constant
     // c0 and c1 per spine pivot, so m joins cost m (c0 + c1 R_m), and the ratio at 8n that the
     // means predict is from 8 (c1 = 0) to 8 H_8n / H_n = 8 * 12.36 / 10.28 = 9.62 (c0 = 0),
@@ -50,7 +50,7 @@ fn a_join_costs_near_the_rows_that_differ_wherever_they_sort() {
     // - Averaging: the joins of each size are shared among the K families `FAMILIES`, m / K
     //   joins each, a family k having the pivots `s{k}…`. Distinct pivots are distinct points of
     //   the run's priority polynomial, so each family has a treap shape of its own, independent
-    //   of the others under one draw (`zed_kernel::priority`). The work is then
+    //   of the others under one draw (`zed_collections::priority`). The work is then
     //   m c0 + (m / K) c1 (R_1 + ... + R_K), and the spread of the sum of spines is that of one
     //   spine over the square root of K.
     // Neither hides a cost of a join that grows with m: it is in the work at both sizes as

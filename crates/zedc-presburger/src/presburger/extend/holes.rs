@@ -14,7 +14,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::{Atom, Con, Formula, Lin, Rel, Shared};
-use zed_kernel::priority::Priorities;
+use zed_collections::priority::Priorities;
 use zedc_int::int::Int;
 
 /// A treap of disjoint intervals of the base coordinate, ordered by their lower ends, each
@@ -31,7 +31,7 @@ struct Node {
     right: Tree,
 }
 
-/// The priorities of the holes, drawn once per run ([`zed_kernel::priority`]).
+/// The priorities of the holes, drawn once per run ([`zed_collections::priority`]).
 static PRIORITIES: Priorities = Priorities::new(8);
 
 /// The priority of the interval `lo..=hi` of the base coordinate: the run's random polynomial
@@ -41,7 +41,7 @@ static PRIORITIES: Priorities = Priorities::new(8);
 /// independent and uniform, and every node's depth is `O(log n)` in expectation for every set
 /// of holes (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
 /// doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full comment and the proof are in
-/// module [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen
+/// module [`zed_collections::priority`]), where the fixed hash this replaces had no bound for chosen
 /// intervals (COMPLEXITY.md K123). The shape is never shown: the tree is a private field of
 /// [`Holes`], and each of its reads gives one answer for every tree over the same intervals:
 /// `len` is a size, `holds` a search by key, `intervals` an in-order walk (which `merged` and
