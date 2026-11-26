@@ -286,9 +286,10 @@ fn sharing_sets_of_one_sum_scales() {
 }
 
 /// A key whose weight is 0 whatever it is, so every set of such keys has one seeded sum: the
-/// keys of [`sharing_tied_sets_scales`], ordered and prioritized as `i64`.
+/// keys of [`sharing_tied_sets_scales`] and of `tests::comparing_tied_sets_allocates_nothing`,
+/// ordered and prioritized as `i64`.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-struct Tied(i64);
+pub(super) struct Tied(pub(super) i64);
 
 impl Elem for Tied {
     fn priority(&self) -> u64 {

@@ -502,8 +502,15 @@ fn combine<T: Elem>(op: Op, a: &Tree<T>, b: &Tree<T>) -> Tree<T> {
         Do(Tree<T>, Tree<T>),
         Make(Arc<Node<T>>, bool, Tree<T>, Tree<T>),
     }
-    let mut jobs = vec![Job::Do(a.clone(), b.clone())];
-    let mut done: Vec<Tree<T>> = Vec::new();
+    // Complexity tradeoff (TREAP-eq-alloc): each `Do` goes a level down the pivot's tree and
+    // splits the other, which does not raise it, so the recursion is at most `h(a) + h(b)` deep,
+    // with a `Make` and a `Do` pending in `jobs` and one result in `done` a level. 32 of each
+    // inline (1 KiB and 256 bytes) keep two `Vec` allocations off every call whose heights sum
+    // to at most 15, among them the one `at_once` answers at the root; the new nodes of the
+    // result are allocated as before.
+    let mut jobs: smallvec::SmallVec<[Job<T>; 32]> =
+        smallvec::smallvec![Job::Do(a.clone(), b.clone())];
+    let mut done: smallvec::SmallVec<[Tree<T>; 32]> = smallvec::SmallVec::new();
     while let Some(job) = jobs.pop() {
         match job {
             Job::Do(a, b) => {
@@ -929,8 +936,12 @@ impl<T: Elem> TreapSet<T> {
         let (Some(least), Some(greatest)) = (self.first(), self.last()) else {
             return true;
         };
-        let mut pairs: Vec<Pair<'_, T>> =
-            vec![(self.root.as_ref(), other.root.as_ref(), None, None, None)];
+        // Complexity tradeoff (TREAP-eq-alloc): steps 4 and 6 push two pairs a level down
+        // `other`'s tree, so the stack holds at most its height plus one; 32 pairs (1280 bytes)
+        // inline keep a tree of height up to 31 off the heap, where a `Vec` allocated on each
+        // call that reached the walk. A taller tree spills to one allocation.
+        let mut pairs: smallvec::SmallVec<[Pair<'_, T>; 32]> =
+            smallvec::smallvec![(self.root.as_ref(), other.root.as_ref(), None, None, None)];
         // Step 12: the last range found to hold no key of `self`, `(a, b)` with `a` `None` where
         // it has no lower bound.
         let mut free: Option<(Option<&T>, &T)> = None;
@@ -1089,7 +1100,15 @@ impl<T: Elem> PartialEq for TreapSet<T> {
         if self.len() != other.len() || self.sum() != other.sum() {
             return false;
         }
-        let mut stack = vec![(self.root.as_ref(), other.root.as_ref())];
+        // Complexity tradeoff (TREAP-eq-alloc): the stack holds one pending pair a level and the
+        // pair just pushed, at most the height plus one, so 32 pairs (512 bytes) inline keep any
+        // tree of height up to 31 off the heap, as `Iter` keeps its stack (K143 did the same for
+        // `types::order`). With a `Vec` each call that passed the size and sum test allocated
+        // one: 169,833 blocks (2.75 MB) in the escape decision on 1024 tied lists of big
+        // integers, 399,269 (7.38 MB) at 2048, and none untied, where the sums differ (DHAT,
+        // b22-free2 prof18 on a Colab VM, 2026-11-25). A taller tree spills to one allocation.
+        let mut stack: smallvec::SmallVec<[_; 32]> =
+            smallvec::smallvec![(self.root.as_ref(), other.root.as_ref())];
         while let Some(pair) = stack.pop() {
             match pair {
                 (None, None) => {}

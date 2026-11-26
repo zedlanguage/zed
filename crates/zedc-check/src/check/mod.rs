@@ -14639,10 +14639,8 @@ fn fold_noting(e: &Expr, c: Carrier, mut known: Option<&mut OpenSteps>) -> Optio
 enum RatFact {
     /// Its value.
     Value(Value),
-    /// A range that holds it, as `1r..` for `3r^2 + 1r`. Boxed: a `RatRange` holds two `Rat`s
-    /// (144 bytes each with the fingerprint cache), and a fact is made a few times per
-    /// expression, so the allocation costs less than a 296-byte enum would.
-    Range(Box<RatRange>),
+    /// A range that holds it, as `1r..` for `3r^2 + 1r`.
+    Range(RatRange),
 }
 
 /// The values `lo..=hi`, an end that is `None` having no bound, and whether the value is no
@@ -14862,11 +14860,6 @@ impl RatRange {
 }
 
 impl RatFact {
-    /// The fact that the value lies in `r`.
-    fn of_range(r: RatRange) -> RatFact {
-        RatFact::Range(Box::new(r))
-    }
-
     /// Whether the value is known to be no zero.
     fn nonzero(&self) -> bool {
         match self {
@@ -14879,7 +14872,7 @@ impl RatFact {
     fn range(&self) -> Option<RatRange> {
         match self {
             RatFact::Value(v) => RatRange::of(v),
-            RatFact::Range(r) => Some(RatRange::clone(r)),
+            RatFact::Range(r) => Some(r.clone()),
         }
     }
 }
@@ -14909,7 +14902,7 @@ fn rat_step(p: Prim, x: Option<RatFact>, y: Option<RatFact>) -> Option<RatFact> 
         (Prim::Neg, Some(RatFact::Value(x)), None) => {
             prim_folded(Prim::Neg, vec![x]).map(RatFact::Value)
         }
-        (Prim::Neg, Some(RatFact::Range(x)), None) => Some(RatFact::of_range(x.neg())),
+        (Prim::Neg, Some(RatFact::Range(x)), None) => Some(RatFact::Range(x.neg())),
         (p, Some(RatFact::Value(x)), Some(RatFact::Value(y))) if p != Prim::Pow || small(&x) => {
             prim_folded(p, vec![x, y]).map(RatFact::Value)
         }
@@ -14919,7 +14912,7 @@ fn rat_step(p: Prim, x: Option<RatFact>, y: Option<RatFact>) -> Option<RatFact> 
                 return Some(x);
             }
             let square = matches!(x, RatFact::Value(_));
-            x.range()?.pow(&k, square).map(RatFact::of_range)
+            x.range()?.pow(&k, square).map(RatFact::Range)
         }
         // An exponent the text does not give as a literal, as `2^100 - 1` in
         // `2r^2^100 / 2r^(2^100 - 1)`: a power of a base that is no zero is no zero, whatever
@@ -14933,7 +14926,7 @@ fn rat_step(p: Prim, x: Option<RatFact>, y: Option<RatFact>) -> Option<RatFact> 
         // rests on [`RatRange`]'s own tests.
         // Complexity tradeoff: O(1), no bound of the power is computed, so an exponent such as
         // `2^100 - 1` costs nothing here; a range with bounds would need the exponent's value.
-        (Prim::Pow, Some(x), None) if x.nonzero() => Some(RatFact::of_range(RatRange {
+        (Prim::Pow, Some(x), None) if x.nonzero() => Some(RatFact::Range(RatRange {
             lo: None,
             hi: None,
             nonzero: true,
@@ -14941,14 +14934,14 @@ fn rat_step(p: Prim, x: Option<RatFact>, y: Option<RatFact>) -> Option<RatFact> 
         (Prim::Div, Some(x), Some(y)) if y.nonzero() => {
             let x = x.range()?;
             let q = x.mul(&y.range()?.inverse()?)?;
-            Some(RatFact::of_range(RatRange {
+            Some(RatFact::Range(RatRange {
                 nonzero: x.nonzero(),
                 ..q
             }))
         }
-        (Prim::Mul, Some(x), Some(y)) => x.range()?.mul(&y.range()?).map(RatFact::of_range),
-        (Prim::Add, Some(x), Some(y)) => x.range()?.add(&y.range()?).map(RatFact::of_range),
-        (Prim::Sub, Some(x), Some(y)) => x.range()?.add(&y.range()?.neg()).map(RatFact::of_range),
+        (Prim::Mul, Some(x), Some(y)) => x.range()?.mul(&y.range()?).map(RatFact::Range),
+        (Prim::Add, Some(x), Some(y)) => x.range()?.add(&y.range()?).map(RatFact::Range),
+        (Prim::Sub, Some(x), Some(y)) => x.range()?.add(&y.range()?.neg()).map(RatFact::Range),
         _ => None,
     }
 }

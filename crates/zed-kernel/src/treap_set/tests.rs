@@ -500,3 +500,33 @@ fn the_seed_reaches_the_trees() {
         b.key
     );
 }
+
+/// TREAP-eq-alloc: `==` and `is_subset` of two sets of one size and one sum, and the union of a
+/// set with its copy, allocate nothing, since their stacks are inline. The keys are `Tied`, of
+/// weight 0, so any two sets of one size pass the size and sum test and are walked: the set
+/// against the same keys inserted in the other order (equal, no node shared) and against the
+/// set with its greatest key one higher (unequal). With the stacks `Vec`s (before 2026-11-26)
+/// each of the five calls allocated.
+#[test]
+fn comparing_tied_sets_allocates_nothing() {
+    use super::bench::Tied;
+    for n in [2i64, 8, 64] {
+        let a: TreapSet<Tied> = (0..n).map(Tied).collect();
+        let same: TreapSet<Tied> = (0..n).rev().map(Tied).collect();
+        let other: TreapSet<Tied> = (0..n - 1).chain([n]).map(Tied).collect();
+        let copy = a.clone();
+        assert!(!a.ptr_eq(&same) && !a.ptr_eq(&other));
+        assert_eq!((a.len(), a.sum()), (other.len(), other.sum()), "n {n}");
+        let before = zed_alloc_count::allocated();
+        let seen = (
+            a == same,
+            a == other,
+            a.is_subset(&same),
+            a.is_subset(&other),
+            a.union(&copy).ptr_eq(&a),
+        );
+        let bytes = zed_alloc_count::allocated() - before;
+        assert_eq!(seen, (true, false, true, false, true), "n {n}");
+        assert_eq!(bytes, 0, "n {n}: bytes allocated by the five calls");
+    }
+}

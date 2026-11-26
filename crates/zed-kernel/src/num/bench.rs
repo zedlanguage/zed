@@ -438,8 +438,7 @@ fn a_short_quotient_of_a_wide_number_scales() {
 /// residues modulo `2^61 - 1` (`M61`, what the priorities of big values read before the drawn
 /// primes, one modulus), the residues modulo the two drawn primes by 128-bit division
 /// (`ByDivision`), and the same in Montgomery form (`Drawn`, what `fingerprint` uses). Each
-/// count is of 64 numbers of a size, made before the count, and of fresh calls, not the cached
-/// value. Two numbers have one fingerprint in Montgomery form exactly when they have one by
+/// count is of 64 numbers of a size, made before the count. Two numbers have one fingerprint in Montgomery form exactly when they have one by
 /// division (the held residue is `x R mod p`, `R` a unit), which is asserted. The counts are
 /// printed (`bench FINGERPRINT`) and written at `Rat::fingerprint`; run again for each target
 /// platform and after a change to code generation.

@@ -152,10 +152,6 @@ pub struct Rat {
     pows: Box<[(u64, BigInt)]>,
     wide: Box<[(BigUint, BigInt)]>,
     ten: Option<Box<Ten>>,
-    /// [`Rat::fingerprint`], made at its first call and kept. A `Rat` is changed only while it
-    /// is being made (`from_kept_wide` sets `wide`), before anything reads this, and every
-    /// operation makes a new one with this empty, so it is always the value's.
-    fingerprint: OnceLock<[u64; 4]>,
 }
 
 /// What a term of [`Rat::normal`] is: a coefficient, a listed prime, or a wide atom.
@@ -290,7 +286,6 @@ impl Rat {
             pows: Box::default(),
             wide: Box::default(),
             ten: None,
-            fingerprint: OnceLock::new(),
         }
     }
 
@@ -390,7 +385,6 @@ impl Rat {
             pows: self.pows.clone(),
             wide: Box::default(),
             ten: None,
-            fingerprint: OnceLock::new(),
         }))
     }
 
@@ -439,7 +433,6 @@ impl Rat {
             pows: r.pows.clone(),
             wide: Box::default(),
             ten: None,
-            fingerprint: OnceLock::new(),
         };
         let (mut x, mut y) = (plain(self), plain(b));
         if !lacked.is_empty() {
@@ -477,7 +470,6 @@ impl Rat {
         };
         Ok(Some(Rat {
             wide: wide.into_boxed_slice(),
-            fingerprint: OnceLock::new(),
             ..p
         }))
     }
@@ -609,7 +601,6 @@ impl Rat {
             pows: pows.into_boxed_slice(),
             wide: wide.into_boxed_slice(),
             ten: None,
-            fingerprint: OnceLock::new(),
         })
     }
 
@@ -648,7 +639,6 @@ impl Rat {
             pows: self.pows.clone(),
             wide: self.wide.clone(),
             ten: None,
-            fingerprint: OnceLock::new(),
         }
     }
 
@@ -670,7 +660,6 @@ impl Rat {
         }
         Rat {
             wide: self.wide.clone(),
-            fingerprint: OnceLock::new(),
             ..Rat::extract(self.num.clone(), self.den.clone(), pows)
         }
     }
@@ -708,7 +697,6 @@ impl Rat {
                 t,
                 bin: OnceLock::new(),
             })),
-            fingerprint: OnceLock::new(),
             ..rest
         }
     }
@@ -757,7 +745,6 @@ impl Rat {
             pows: out.into_boxed_slice(),
             wide: Box::default(),
             ten: None,
-            fingerprint: OnceLock::new(),
         }
     }
 
@@ -909,7 +896,6 @@ impl Rat {
             pows: pows.into_boxed_slice(),
             wide: Box::default(),
             ten: None,
-            fingerprint: OnceLock::new(),
         })
     }
 
@@ -1228,9 +1214,7 @@ impl Rat {
     /// residues modulo the fixed `2^61 - 1` cannot give (`2^64` and `2^64 + (2^61 - 1)` share
     /// theirs). The bound, and what it leaves unproved, is at `fingerprint_primes`.
     ///
-    /// It is computed at the first call and kept with the value, so the treap priority and the
-    /// seeded weight of a value (zed-kernel `types.rs`, `impl Elem for Value`), and every later
-    /// insert of it, read it once.
+    /// It is computed at each call, not kept with the value (DECISION-rat-fingerprint-cache).
     // Complexity tradeoff: the residues cost two 128-bit divisions per digit of a coefficient
     // and per product with `mul_mod` and `rem_big_u64`, against two Montgomery products per
     // digit and one per product here; the fold of `2^61 - 1` ([`Rat::residues`]) needs neither,
@@ -1242,29 +1226,34 @@ impl Rat {
     //    8       37152  254.8      75371  508.2      68397  427.5
     //   64      155424 1021.6     311915 2057.1     251269 1717.9
     // so Montgomery is kept: fewer instructions and less time than division at every width
-    // measured (2.4%, 9.3% and 19.4% fewer instructions). Keeping it costs 40 bytes a `Rat`
-    // (a `OnceLock<[u64; 4]>`), against computing it twice per insert and again on every later
-    // insert of the value; a `Rat` already holds two big integers and two boxed lists.
+    // measured (2.4%, 9.3% and 19.4% fewer instructions).
+    //
+    // Complexity tradeoff (DECISION-rat-fingerprint-cache): keeping the fingerprint in the
+    // `Rat` (a `OnceLock<[u64; 4]>`) made every `Rat` 144 bytes, not 104, and its `Arc`
+    // allocation 160, not 120 (+33%), while the one measurement of it saved under 1% of the
+    // instructions: the escape decision on lists of big integers at 1024 and 8192 heads took
+    // 547.96M and 5642.7M instructions without it against 547.28M and 5639.1M with it (tied),
+    // 182.39M and 1552.1M against 180.94M and 1540.6M (untied), the same bytes (b22-free2 prof18
+    // on a Colab VM, 2026-11-25). Used: computed at each call, about 760 instructions at 2 words
+    // and 3900 at 64. It comes back only if a measurement shows it pays.
     pub fn fingerprint(&self) -> [u64; 4] {
         static FORMS: OnceLock<[Drawn; 2]> = OnceLock::new();
-        *self.fingerprint.get_or_init(|| {
-            #[cfg(test)]
-            match tests::fingerprint_form() {
-                tests::Form::M61 => {
-                    let (neg, n, d) = self.residues_in(&M61);
-                    return [n | u64::from(neg) << 63, d, 0, 0];
-                }
-                tests::Form::Division => {
-                    let [p1, p2] = crate::priority::fingerprint_primes();
-                    return self.fingerprint_in(&ByDivision(p1), &ByDivision(p2));
-                }
-                tests::Form::Montgomery => {}
+        #[cfg(test)]
+        match tests::fingerprint_form() {
+            tests::Form::M61 => {
+                let (neg, n, d) = self.residues_in(&M61);
+                return [n | u64::from(neg) << 63, d, 0, 0];
             }
-            let [f1, f2] = FORMS.get_or_init(|| {
-                crate::priority::fingerprint_primes().map(|p| Drawn(Montgomery64::new(p), p))
-            });
-            self.fingerprint_in(f1, f2)
-        })
+            tests::Form::Division => {
+                let [p1, p2] = crate::priority::fingerprint_primes();
+                return self.fingerprint_in(&ByDivision(p1), &ByDivision(p2));
+            }
+            tests::Form::Montgomery => {}
+        }
+        let [f1, f2] = FORMS.get_or_init(|| {
+            crate::priority::fingerprint_primes().map(|p| Drawn(Montgomery64::new(p), p))
+        });
+        self.fingerprint_in(f1, f2)
     }
 
     /// [`Rat::fingerprint`] with the residues modulo `P1` and `P2` in the forms `f1` and `f2`.
@@ -1590,7 +1579,6 @@ impl Rat {
                     .map(|(q, f)| (q.clone(), f / &m))
                     .collect(),
                 ten: None,
-                fingerprint: OnceLock::new(),
             };
             match root.text_room().and_then(|()| root.integer_built()) {
                 Ok(r) => push_root(&mut atoms, r.magnitude(), &m),
@@ -1734,7 +1722,6 @@ impl Rat {
             pows: Box::default(),
             wide: shared.into_boxed_slice(),
             ten: None,
-            fingerprint: OnceLock::new(),
         })
     }
 
@@ -2070,7 +2057,6 @@ impl Rat {
                     bin: OnceLock::new(),
                 })
             }),
-            fingerprint: OnceLock::new(),
         }
     }
 
@@ -2187,7 +2173,6 @@ impl Rat {
             pows: pows.into_boxed_slice(),
             wide: wide.into_boxed_slice(),
             ten: None,
-            fingerprint: OnceLock::new(),
         })
     }
 
@@ -2233,7 +2218,6 @@ impl Rat {
             mut pows,
             mut wide,
             ten,
-            fingerprint: _,
         } = self;
         for (_, e) in pows.iter_mut() {
             *e = -std::mem::take(e);
@@ -2251,7 +2235,6 @@ impl Rat {
             pows,
             wide,
             ten: None,
-            fingerprint: OnceLock::new(),
         };
         // `10^-t`: the exponents of 2 and 5 are now negative, so `with_ten` moves their
         // common part into the negated `t`, O(n).
@@ -2477,7 +2460,6 @@ impl Rat {
         // The wide atoms are coprime to every prime moved, so they stay as they are.
         Ok(Cow::Owned(Rat {
             wide: self.wide.clone(),
-            fingerprint: OnceLock::new(),
             ..Rat::extract(self.num.clone(), self.den.clone(), pows)
         }))
     }
@@ -3965,7 +3947,6 @@ impl Rat {
                     pows: pows.collect(),
                     wide: wide.collect(),
                     ten: None,
-                    fingerprint: OnceLock::new(),
                 }
                 .integer_text()
             };
@@ -4074,34 +4055,6 @@ mod tests {
             Ok("division") => Form::Division,
             _ => Form::Montgomery,
         })
-    }
-
-    /// The claim at `ignore-interior-mutability` in clippy.toml: filling a number's fingerprint
-    /// changes neither its hash as a value, nor its equality, nor its order. Each number, a plain
-    /// big integer and a kept power, is cloned while its fingerprint is empty, and is hashed and
-    /// compared with that clone and with a larger number before and after the fingerprint is
-    /// filled; the clone's stays empty.
-    #[test]
-    fn the_fingerprint_changes_no_hash_equality_or_order() {
-        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
-        let hash = |r: &Rat| {
-            BuildHasherDefault::<DefaultHasher>::default()
-                .hash_one(crate::value::Value::integer(r.clone()))
-        };
-        // 7^2000 > 3^1000 > 2^200 + 7.
-        let larger = power(7, 2000);
-        for x in [Rat::int((BigInt::from(1u8) << 200u32) + 7u8), power(3, 1000)] {
-            let fresh = x.clone();
-            let seen = |x: &Rat| (hash(x), *x == fresh, x.cmp(&larger), larger.cmp(x));
-            let before = seen(&x);
-            let fingerprint = x.fingerprint();
-            assert_eq!(x.fingerprint.get(), Some(&fingerprint));
-            assert!(fresh.fingerprint.get().is_none());
-            assert_eq!(seen(&x), before);
-            assert!(before.1, "equal to its clone");
-            assert_eq!((before.2, before.3), (Ordering::Less, Ordering::Greater));
-            assert_eq!(hash(&x), hash(&fresh));
-        }
     }
 
     /// `b^k` for a small base, kept as exponents.
