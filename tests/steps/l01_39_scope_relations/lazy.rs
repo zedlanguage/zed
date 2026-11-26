@@ -1522,11 +1522,12 @@ fn joins_beside_a_shared_tie_agree_with_and_without_inner_reductions() {
 /// The six steps left of seed 4014432025532948819 of `random_seeds` when every other is
 /// removed (FAIL-lazy-scope-random-seed). `n` is bound to `m`, so `n == m`, and `m - a3 >= 3`
 /// with `a3 - n >= 0` leaves no state. `a3 - n >= 0` reads `n <= 17` back through `n`'s term
-/// into `m <= 17`, and the reduction then gives `a3 == 14` and `n <= 14`. Only a later test of
-/// `n` reads `n <= 14` back into `m`, which empties `m`: the last step, which repeats the
-/// third. Before, that test changed nothing of `n` in the eager scope and so did not read its
-/// term, while the lazy scope, which settled `n` there, did: the lazy scope was empty and the
-/// eager one was not. Now each test reads its own names' terms, and both are empty.
+/// into `m <= 17`, and the reduction after the test then gives `a3 == 14` and `n <= 14`,
+/// which no read carried into `m`. In the eager scope a path decides the last test, so it
+/// read nothing; the lazy scope, where no path decides a test, read `n <= 14` into `m`
+/// there and was empty while the eager one was not. Now the terms of the names a reduction
+/// narrows are read once after it (`Scope::read_back_terms`), and both are empty at the
+/// fourth step.
 #[test]
 fn a_test_of_a_name_reads_its_term_after_a_reduction_narrowed_it() {
     let p = Premises::new();
@@ -1537,10 +1538,11 @@ fn a_test_of_a_name_reads_its_term_after_a_reduction_narrowed_it() {
         *s = assume(s, &diff_ge("m", "a3", 3), true);
         let (n, m): (Arc<str>, Arc<str>) = ("n".into(), "m".into());
         let pm = s.settled(&m);
-        s.bind(&n, pm, &Shared::new(Term::Var(m)));
+        s.bind(&n, pm, &Shared::new(Term::Var(m.clone())));
         *s = assume(s, &diff_ge("a4", "n", -1), false);
         *s = assume(s, &prim(Prim::Ge, var("a3"), int(14)), true);
         *s = assume(s, &diff_ge("a3", "n", 0), true);
+        assert!(s.bottom, "after a3 - n >= 0: {:?}", s.get(&m));
         *s = assume(s, &diff_ge("n", "a4", 2), true);
     }
     assert!(eager.bottom, "eager: {:?}", eager.get(&Arc::from("m")));

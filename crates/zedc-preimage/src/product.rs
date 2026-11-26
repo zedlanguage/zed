@@ -12547,7 +12547,11 @@ impl Scope {
             // 1981). Measured 8.1 to 8.7 at 8n in every order (ST-walk-orders).
             let certified = (s.seen.extension.as_deref()).is_some_and(Extension::certified);
             if s.bottom || !s.names.implicit() && !certified {
+                let before = s.names.clone();
                 reduce(&mut s);
+                if s.read_back_terms(&before, premises) {
+                    reduce(&mut s);
+                }
             }
         }
         s.narrow_kept_again(self, reduce);
@@ -14716,7 +14720,7 @@ impl Scope {
                     }
                 }
             }
-            self.through_terms(changed, convex, prem);
+            self.through_terms(changed, convex, prem, false);
             return (true, inputs, free);
         }
         if !inputs.is_empty() {
@@ -14855,7 +14859,7 @@ impl Scope {
                 }
             }
         }
-        self.through_terms(changed, convex, prem);
+        self.through_terms(changed, convex, prem, false);
         (exact, inputs, free)
     }
 
@@ -14929,7 +14933,9 @@ impl Scope {
     }
 
     /// Narrows the inputs of the integer bindings among `changed`, names a test has just
-    /// narrowed, that have no summary that holds ([`View::summary`]), by reading each one's
+    /// narrowed, that have no summary that holds ([`View::summary`]), or with `summaries` also
+    /// those that have one (for [`Scope::read_back_terms`], after the reduction, when no test
+    /// read the narrowing through the summary), by reading each one's
     /// term backward from its integers ([`let_narrowing`] of the demand of those integers), as
     /// a test reads a function it calls through its term ([`Scope::close`]): with `z = abs(x)`,
     /// `z > 5` narrows `x` to `..=-6, 6..`. The inputs a term narrows that are such bindings
@@ -14948,7 +14954,8 @@ impl Scope {
     // and the heap's topological order), each costing its own term, O(m (s + log n)) a test
     // for m bindings changed, of terms of size s. Tradeoffs: a binding whose integers this
     // test leaves as they were is not read, since the test that last narrowed it read it
-    // then; a test that narrows every link of a chain still costs every link, as the scope
+    // then, and a narrowing the reduction after it makes is read once by
+    // [`Scope::read_back_terms`]. A test that narrows every link of a chain still costs every link, as the scope
     // then differs from the one before in all of them, so n such tests cost Θ(n²) reads, the
     // size of the narrowings they give. Tests
     // `l01_39_reduced_product::let_terms::bench::reading_chains_of_terms_scales` (4n reads) and
@@ -14960,10 +14967,17 @@ impl Scope {
     // greater order and so has popped before `z`. `seen` drops a second push. The exact pins
     // of `l01_39_reduced_product::let_terms` check the narrowings against the interpreter;
     // they cannot catch a narrowing missed on a chain shape they do not build.
-    fn through_terms(&mut self, changed: Vec<Arc<str>>, convex: bool, prem: &Premises) {
+    fn through_terms(
+        &mut self,
+        changed: Vec<Arc<str>>,
+        convex: bool,
+        prem: &Premises,
+        summaries: bool,
+    ) -> bool {
         if changed.iter().any(|n| self.no_value(n)) {
-            return;
+            return false;
         }
+        let mut met = false;
         let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
         let mut todo: BinaryHeap<(u64, Arc<str>)> = BinaryHeap::new();
         let push = |n: Arc<str>,
@@ -14983,12 +14997,12 @@ impl Scope {
         let int = Type::int();
         while let Some((order, z)) = todo.pop() {
             if self.bottom {
-                return;
+                return true;
             }
             let Some(e) = self.bindings.get(&z).and_then(|b| b.term.clone()) else {
                 continue;
             };
-            if self.view().summary(&z).is_some() {
+            if !summaries && self.view().summary(&z).is_some() {
                 continue;
             }
             let later = |m: &Arc<str>| self.orders.get(m).is_some_and(|c| *c >= order);
@@ -15023,20 +15037,63 @@ impl Scope {
                     // state reaches the scope, as in [`Scope::atom_names`].
                     if emptied.is_empty() {
                         self.bottom = true;
-                        return;
+                        return true;
                     }
                     emptied
                 }
             };
             for (n, d) in &narrowed {
                 if self.meet_name(n, d, convex, prem) {
+                    met = true;
                     if self.no_value(n) {
-                        return;
+                        return true;
                     }
                     push(n.clone(), self, &mut seen, &mut todo);
                 }
             }
         }
+        met
+    }
+
+    /// Reads back, once, the terms of the integer bindings with a summary ([`View::summary`])
+    /// that the reduction just narrowed, the names of `self.names` that differ from `before`,
+    /// the names as they were before it ([`Scope::through_terms`] with `summaries`), and gives
+    /// whether that narrowed any name, so that the caller reduces again.
+    ///
+    /// A test reads the terms of the names it narrows that have no summary; a binding with a
+    /// summary is read through the summary, before the reduction, and [`Scope::through_terms`]
+    /// skips it. A narrowing the reduction then makes of such a name reached no name its term
+    /// reads (FAIL-lazy-scope-random-seed, seed
+    /// 4014432025532948819: `n` bound to `m`, `m - a3 >= 3`; `a3 - n >= 0` read `n <= 17`
+    /// into `m <= 17` through the summary, the reduction then gave `m == 17`, `a3 == 14` and
+    /// `n <= 14`, and `m <= 14`, which empties the scope, was left unread; a later test of `n`
+    /// read it only in the lazy scope, where no path decides the test, so the lazy scope was
+    /// empty and the eager one was not). Test
+    /// `l01_39_scope_relations::lazy::a_test_of_a_name_reads_its_term_after_a_reduction_narrowed_it`.
+    // Complexity tradeoff: naive version, the read-back and the reduction repeated until
+    // neither changes a name: that can descend without end (`n` bound to `m` with
+    // `m - n >= 1` lowers both bounds by one a round over unbounded names). Used: one
+    // read-back and one more reduction a test, so a test costs at most twice its reduction
+    // plus the read of the names the reduction changed, found by the persistent maps'
+    // difference, O(c (s + log n)) for c names changed, of terms of size s. Left: a narrowing
+    // the second reduction makes is not read back, so a chain of k such steps is followed one
+    // step a test; the eager and the lazy scope take the same steps. Only names with a
+    // summary are read back: reading every bound name the reduction narrowed was measured
+    // (2026-11-26, `counts::term_reads`) at 13, 33 and 129 reads for 3, 8 and 32 links of
+    // `let_terms`' nested chain (4n + 1, against 4n) and 14, 79 and 1087 for its else chain
+    // (n² + 2n - 1, against n (n + 1)), the same order, and changed none of the ranges those
+    // tests check; with summaries alone the counts are 4n and n (n + 1) as pinned.
+    fn read_back_terms(&mut self, before: &NameProducts, prem: &Premises) -> bool {
+        if self.bottom || self.bindings.is_empty() {
+            return false;
+        }
+        let none = imbl::OrdSet::new();
+        let changed: Vec<Arc<str>> = (self.names.changed(before, &none))
+            .filter(|n| self.bindings.get(*n).is_some_and(|b| b.term.is_some()))
+            .filter(|n| self.view().summary(n).is_some())
+            .cloned()
+            .collect();
+        !changed.is_empty() && self.through_terms(changed, false, prem, true)
     }
 
     /// Passes information between the domains of every product, the relation and the written
