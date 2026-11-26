@@ -44,7 +44,11 @@ mod copying_comparing_and_printing_scale_with_size {
     ];
 
     /// Copies, compares (with a second build) and writes the `Debug` text of term `k` of
-    /// [`TERMS`] at depth 20,000 and 8 times that.
+    /// [`TERMS`] at depth 20,000 and 8 times that. Nested lambdas are not copied: a lambda
+    /// holds its body shared (`Term::Lam(_, Shared)`), so the copy is one node at any depth,
+    /// 1.059 times the work at 8n (TEST-bench-replay-sweep), a check of nothing that grows
+    /// (BENCH-copy-nested-lambdas-flat). The other three terms hold their children in place,
+    /// so their copies visit every level.
     fn case(k: usize) {
         let n = 20_000;
         let names = NESTED.map(|(what, _)| what);
@@ -54,9 +58,11 @@ mod copying_comparing_and_printing_scale_with_size {
             let built = |m: usize| (build(m), build(m));
             let (small, large) = (built(n), built(scaling::FACTOR * n));
             let at = |m: usize| if m == n { &small } else { &large };
-            scaling::check(&format!("copying {what}"), n, |m| {
-                drop(std::hint::black_box(at(m).0.clone()));
-            });
+            if what != "nested lambdas" {
+                scaling::check(&format!("copying {what}"), n, |m| {
+                    drop(std::hint::black_box(at(m).0.clone()));
+                });
+            }
             scaling::check(&format!("comparing {what}"), n, |m| {
                 let (a, b) = at(m);
                 assert!(std::hint::black_box(a == b));

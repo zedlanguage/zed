@@ -15508,19 +15508,31 @@ fn put_last(root: Tree, p: CutPiece) -> Tree {
     join_treap(root, Some(make_node(lo, hi, a, b, None, None)))
 }
 
-/// The pieces of `node` but its last, in one walk down its right spine.
-fn drop_last(node: &Arc<PaNode>) -> Tree {
-    let (l, r) = push_down(node);
-    match r {
+/// The pieces of `apply_tag(node, f)` but its last, in one walk down its right spine.
+///
+/// The child the walk goes on into is passed with its map, not copied (as in [`join_under`],
+/// FAIL-s22-five-range-live-bytes): reading the children through [`push_down`] made a tagged
+/// copy of that child, which the next step rebuilt at once. Only the child kept whole is made
+/// ([`apply_tag`]). The proof that the result is that of the walk over the tagged copies, node
+/// for node, is [`join_under`]'s: `apply_tag(node, f)` has `node`'s ends and priority, the
+/// line [`line_under`], and children `apply_tag(c, tag_under(node, f))`.
+fn drop_last_under((node, f): Under) -> Tree {
+    let g = tag_under(node, f);
+    let l = node.left.as_ref().map(|c| apply_tag(c, &g));
+    match &node.right {
         None => l,
         Some(r) => {
-            let (lo, hi, a, b) = (
+            let (a, b) = line_under(node, f);
+            let rest = drop_last_under((r, &g));
+            Some(node_of(
                 node.lo.clone(),
                 node.hi.clone(),
-                node.a.clone(),
-                node.b.clone(),
-            );
-            Some(node_of(lo, hi, a, b, node.prio, l, drop_last(&r)))
+                a,
+                b,
+                node.prio,
+                l,
+                rest,
+            ))
         }
     }
 }
@@ -15535,43 +15547,62 @@ fn drop_last(node: &Arc<PaNode>) -> Tree {
 /// subtree, all below `new`'s piece, is kept. At the first node `n` that `new` outranks (`>`,
 /// since on a tie [`join_treap`] keeps the left piece above), `new` takes `n`'s place: every
 /// piece of `n`'s subtree but the last lies below `new`'s and has a priority at most `n`'s, so
-/// below `new`'s, and becomes its left subtree ([`drop_last`]); nothing lies above `new`'s
+/// below `new`'s, and becomes its left subtree ([`drop_last_under`]); nothing lies above `new`'s
 /// piece. When no node is outranked, the walk reaches the last piece, whose priority is at
 /// least `new`'s and whose ancestors' are too: `new` is joined after that piece's left subtree,
 /// the treap of those pieces and `new` ([`join_treap`]), in its place. The priorities are
 /// [`prio_of`] of each node's own ends throughout.
 fn replace_last(node: &Arc<PaNode>, new: &Arc<PaNode>) -> Arc<PaNode> {
-    let (lo, hi, a, b) = (
-        node.lo.clone(),
-        node.hi.clone(),
-        node.a.clone(),
-        node.b.clone(),
-    );
+    replace_last_under((node, &Tag::ID), new)
+}
+
+/// [`replace_last`] of `apply_tag(node, f)`, with the child the walk goes on into passed with
+/// its map rather than copied; the proof that the nodes are the same is [`drop_last_under`]'s.
+fn replace_last_under((node, f): Under, new: &Arc<PaNode>) -> Arc<PaNode> {
     if new.prio > node.prio {
         let (nlo, nhi, na, nb) = (new.lo.clone(), new.hi.clone(), new.a.clone(), new.b.clone());
-        return node_of(nlo, nhi, na, nb, new.prio, drop_last(node), None);
+        return node_of(nlo, nhi, na, nb, new.prio, drop_last_under((node, f)), None);
     }
-    let (l, r) = push_down(node);
-    match r {
-        // `l` and `new` are not both empty, so the join is a node.
-        None => join_treap(l, Some(new.clone())).unwrap_or_else(|| new.clone()),
-        Some(r) => node_of(lo, hi, a, b, node.prio, l, Some(replace_last(&r, new))),
+    let g = tag_under(node, f);
+    match &node.right {
+        // `node`'s left subtree and `new` are not both empty, so the join is a node.
+        None => join_under(node.left.as_ref().map(|c| (c, &g)), Some((new, &Tag::ID)))
+            .unwrap_or_else(|| new.clone()),
+        Some(r) => {
+            let (a, b) = line_under(node, f);
+            let l = node.left.as_ref().map(|c| apply_tag(c, &g));
+            let r = replace_last_under((r, &g), new);
+            node_of(
+                node.lo.clone(),
+                node.hi.clone(),
+                a,
+                b,
+                node.prio,
+                l,
+                Some(r),
+            )
+        }
     }
 }
 
-/// [`drop_last`] on the other side: the pieces of `node` but its first.
-fn drop_first(node: &Arc<PaNode>) -> Tree {
-    let (l, r) = push_down(node);
-    match l {
+/// [`drop_last_under`] on the other side: the pieces of `apply_tag(node, f)` but its first.
+fn drop_first_under((node, f): Under) -> Tree {
+    let g = tag_under(node, f);
+    let r = node.right.as_ref().map(|c| apply_tag(c, &g));
+    match &node.left {
         None => r,
         Some(l) => {
-            let (lo, hi, a, b) = (
+            let (a, b) = line_under(node, f);
+            let rest = drop_first_under((l, &g));
+            Some(node_of(
                 node.lo.clone(),
                 node.hi.clone(),
-                node.a.clone(),
-                node.b.clone(),
-            );
-            Some(node_of(lo, hi, a, b, node.prio, drop_first(&l), r))
+                a,
+                b,
+                node.prio,
+                rest,
+                r,
+            ))
         }
     }
 }
@@ -15580,21 +15611,42 @@ fn drop_first(node: &Arc<PaNode>) -> Tree {
 /// which holds that piece's inputs and more below them. `new` outranks a node on a tie (`>=`),
 /// since [`join_treap`] keeps the left piece above; the proof is [`replace_last`]'s mirrored.
 fn replace_first(new: &Arc<PaNode>, node: &Arc<PaNode>) -> Arc<PaNode> {
-    let (lo, hi, a, b) = (
-        node.lo.clone(),
-        node.hi.clone(),
-        node.a.clone(),
-        node.b.clone(),
-    );
+    replace_first_under(new, (node, &Tag::ID))
+}
+
+/// [`replace_first`] of `apply_tag(node, f)`, as [`replace_last_under`] on the other side.
+fn replace_first_under(new: &Arc<PaNode>, (node, f): Under) -> Arc<PaNode> {
     if new.prio >= node.prio {
         let (nlo, nhi, na, nb) = (new.lo.clone(), new.hi.clone(), new.a.clone(), new.b.clone());
-        return node_of(nlo, nhi, na, nb, new.prio, None, drop_first(node));
+        return node_of(
+            nlo,
+            nhi,
+            na,
+            nb,
+            new.prio,
+            None,
+            drop_first_under((node, f)),
+        );
     }
-    let (l, r) = push_down(node);
-    match l {
-        // `new` and `r` are not both empty, so the join is a node.
-        None => join_treap(Some(new.clone()), r).unwrap_or_else(|| new.clone()),
-        Some(l) => node_of(lo, hi, a, b, node.prio, Some(replace_first(new, &l)), r),
+    let g = tag_under(node, f);
+    match &node.left {
+        // `new` and `node`'s right subtree are not both empty, so the join is a node.
+        None => join_under(Some((new, &Tag::ID)), node.right.as_ref().map(|c| (c, &g)))
+            .unwrap_or_else(|| new.clone()),
+        Some(l) => {
+            let (a, b) = line_under(node, f);
+            let r = node.right.as_ref().map(|c| apply_tag(c, &g));
+            let l = replace_first_under(new, (l, &g));
+            node_of(
+                node.lo.clone(),
+                node.hi.clone(),
+                a,
+                b,
+                node.prio,
+                Some(l),
+                r,
+            )
+        }
     }
 }
 
@@ -20753,7 +20805,9 @@ mod tests {
     /// `split_copied`, which read every child through [`push_down`]): same ends, lines,
     /// priorities, tags, sums and shape, on random summaries with tags inside, under a random
     /// map at the root, at random cuts, some inside a piece and some past both ends
-    /// (FAIL-s22-five-range-live-bytes).
+    /// (FAIL-s22-five-range-live-bytes). Likewise [`drop_last_under`], [`drop_first_under`],
+    /// [`replace_last_under`] and [`replace_first_under`] against the walks they replace
+    /// (`drop_last_copied` and the rest), with a new leaf above the root and below it.
     #[test]
     fn a_join_and_a_split_under_a_map_are_those_of_the_mapped_copies() {
         fn join_copied(left: Tree, right: Tree) -> Tree {
@@ -20772,6 +20826,84 @@ mod tests {
                     let (lo, hi, a, b) = (r.lo.clone(), r.hi.clone(), r.a.clone(), r.b.clone());
                     Some(node_of(lo, hi, a, b, r.prio, nl, rr))
                 }
+            }
+        }
+        fn drop_last_copied(node: &Arc<PaNode>) -> Tree {
+            let (l, r) = push_down(node);
+            let (lo, hi, a, b) = (
+                node.lo.clone(),
+                node.hi.clone(),
+                node.a.clone(),
+                node.b.clone(),
+            );
+            match r {
+                None => l,
+                Some(r) => Some(node_of(lo, hi, a, b, node.prio, l, drop_last_copied(&r))),
+            }
+        }
+        fn drop_first_copied(node: &Arc<PaNode>) -> Tree {
+            let (l, r) = push_down(node);
+            let (lo, hi, a, b) = (
+                node.lo.clone(),
+                node.hi.clone(),
+                node.a.clone(),
+                node.b.clone(),
+            );
+            match l {
+                None => r,
+                Some(l) => Some(node_of(lo, hi, a, b, node.prio, drop_first_copied(&l), r)),
+            }
+        }
+        fn replace_last_copied(node: &Arc<PaNode>, new: &Arc<PaNode>) -> Arc<PaNode> {
+            let (lo, hi, a, b) = (
+                node.lo.clone(),
+                node.hi.clone(),
+                node.a.clone(),
+                node.b.clone(),
+            );
+            if new.prio > node.prio {
+                let (nlo, nhi, na, nb) =
+                    (new.lo.clone(), new.hi.clone(), new.a.clone(), new.b.clone());
+                return node_of(nlo, nhi, na, nb, new.prio, drop_last_copied(node), None);
+            }
+            let (l, r) = push_down(node);
+            match r {
+                None => join_copied(l, Some(new.clone())).unwrap_or_else(|| new.clone()),
+                Some(r) => node_of(
+                    lo,
+                    hi,
+                    a,
+                    b,
+                    node.prio,
+                    l,
+                    Some(replace_last_copied(&r, new)),
+                ),
+            }
+        }
+        fn replace_first_copied(new: &Arc<PaNode>, node: &Arc<PaNode>) -> Arc<PaNode> {
+            let (lo, hi, a, b) = (
+                node.lo.clone(),
+                node.hi.clone(),
+                node.a.clone(),
+                node.b.clone(),
+            );
+            if new.prio >= node.prio {
+                let (nlo, nhi, na, nb) =
+                    (new.lo.clone(), new.hi.clone(), new.a.clone(), new.b.clone());
+                return node_of(nlo, nhi, na, nb, new.prio, None, drop_first_copied(node));
+            }
+            let (l, r) = push_down(node);
+            match l {
+                None => join_copied(Some(new.clone()), r).unwrap_or_else(|| new.clone()),
+                Some(l) => node_of(
+                    lo,
+                    hi,
+                    a,
+                    b,
+                    node.prio,
+                    Some(replace_first_copied(new, &l)),
+                    r,
+                ),
             }
         }
         fn split_copied(root: Tree, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
@@ -20827,7 +20959,7 @@ mod tests {
                 add: (rng.below(11) as i128 - 5).into(),
             },
         };
-        let mut checked = (0, 0);
+        let mut checked = (0, 0, 0, 0);
         // 2000 rounds: about 330 joins of two sides, well over the 100 asked below for any
         // seed (600 rounds gave 99 at one seed).
         for _ in 0..2000 {
@@ -20853,9 +20985,45 @@ mod tests {
             );
             same(&joined, &want);
             checked.1 += usize::from(l.is_some() && r.is_some());
+            // The walks down one spine, under the map `f`, against the same walks over the
+            // tagged copy, with a new leaf that outranks the root at some draws and not at others.
+            if let Some(n) = &root {
+                let m = apply_tag(n, &f);
+                same(&drop_last_under((n, &f)), &drop_last_copied(&m));
+                same(&drop_first_under((n, &f)), &drop_first_copied(&m));
+                // The pieces lie in -40..=53 ([`random_treap`]); the new leaf lies past the
+                // last end, or before the first, as at [`put_last`] and [`put_first`].
+                let leaf = |rng: &mut Rng, x: i64| {
+                    let (a, b) = (rng.below(7) as i128 - 3, rng.below(21) as i128 - 10);
+                    let hi = End::of(x + rng.below(5) as i64);
+                    make_node(End::of(x), hi, a.into(), b.into(), None, None)
+                };
+                let x = 70 + rng.below(30) as i64;
+                let new = leaf(&mut rng, x);
+                let (last, last_copied) = (
+                    replace_last_under((n, &f), &new),
+                    replace_last_copied(&m, &new),
+                );
+                same(&Some(last), &Some(last_copied));
+                checked.2 += usize::from(new.prio > n.prio);
+                checked.3 += usize::from(new.prio <= n.prio);
+                let x = -110 + rng.below(30) as i64;
+                let new = leaf(&mut rng, x);
+                let (first, first_copied) = (
+                    replace_first_under(&new, (n, &f)),
+                    replace_first_copied(&new, &m),
+                );
+                same(&Some(first), &Some(first_copied));
+                checked.2 += usize::from(new.prio >= n.prio);
+                checked.3 += usize::from(new.prio < n.prio);
+            }
         }
-        // The draws reach the cases that matter: cuts inside a piece and joins of two sides.
-        assert!(checked.0 >= 50 && checked.1 >= 100, "{checked:?}");
+        // The draws reach the cases that matter: cuts inside a piece, joins of two sides, and
+        // a new leaf above the root and below it.
+        assert!(
+            checked.0 >= 50 && checked.1 >= 100 && checked.2 >= 50 && checked.3 >= 50,
+            "{checked:?}"
+        );
     }
 
     /// Chains of cuts one past an end, which merge pieces of one input into their neighbors
