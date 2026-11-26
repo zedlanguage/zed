@@ -14074,12 +14074,12 @@ fn by_halves_of(
 // 15 at `r = 64` disjunctions of two and 21 at 512 on `l01_38_omega_test::disj_groups::the_
 // middle_of_a_chain_of_three_atom_rows_whose_disjuncts_hold_is_projected_in_n_log_n` (the
 // pair of disjunction 0 fails together and each of it alone has a point; 10.4 times the
-// instructions at 8 times the size, limit 10.5). Cut first into layers, each with one disjunct of each disjunction, it costs the failed
-// search and one per layer, 3 there (9.04 times the instructions, 1.04 G and 9.44 G, Colab
-// job j4 of batch b28). A layer that fails is then halved as before, so a set
-// costs at most its number of layers more searches than halving alone, at most its size; a
-// set that does not fail is not cut. `O(|s|)`: only the disjunctions of `s` are counted and
-// set back.
+// instructions at 8 times the size, limit 10.5). Cut first into layers, each with one disjunct
+// of each disjunction, it costs the failed search and one per layer, 3 there (9.04 times the
+// instructions, 1.04 G and 9.44 G, Colab job j4 of batch b28). A layer that fails is then
+// halved as before, so a set costs at most its number of layers more searches than halving
+// alone, at most its size; a set that does not fail is not cut. `O(|s|)`: only the disjunctions
+// of `s` are counted and set back.
 fn layers_of(s: &[(usize, usize)], seen: &mut [usize]) -> Option<Vec<Vec<(usize, usize)>>> {
     let mut layers: Vec<Vec<(usize, usize)>> = Vec::new();
     for &(i, at) in s {

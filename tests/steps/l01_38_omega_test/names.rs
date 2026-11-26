@@ -1095,8 +1095,9 @@ fn a_merged_column_of_either_sign_is_left_unmerged() {
 /// refusal. Each row is written over all `n k` variables, so building the copies costs O(k²).
 /// Each size is built only in the process that runs it, and its answer is checked on the
 /// answer its run computes (`scaling::check_order_inputs`; FAIL-bench-pieces-past-limit-on-main:
-/// building both sizes and answering each before the meter took `decide_scales_over_copies_of_a_tie`
-/// 22.4 s before its run at n on a Colab VM, batch b28 job j9).
+/// building both sizes and answering each before the meter took
+/// `decide_scales_over_copies_of_a_tie` 22.4 s before its run at n on a Colab VM, batch b28
+/// job j9).
 pub(super) fn scales_over_copies(what: &str, base: &[Row], n: usize, k: usize) {
     let one = answer(&copies(base, n, 1));
     eprintln!("{what}, one copy: {one}");
