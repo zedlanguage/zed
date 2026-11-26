@@ -5,16 +5,20 @@
 //! A node is named by the address one past the end of the buffer of its own parts: the
 //! arguments of a call or a primitive, the arms of a `match`. The buffer is on the heap, so
 //! the name stays the same when the node is moved, and two nodes alive at once never share
-//! it. A node with no parts of its own has no name and no site; an error at one is placed by
-//! the nearest node around it that has one. The address is used only as a name, to look a
-//! node up while it is alive, never for order or in a memo (author decision node-ids).
+//! it. A send `p <- v` is named by the address one past the end of its value's node on the
+//! heap (RT-sites-push), which two sends of one source can share (a send to several ports, a
+//! copy), so its site is forgotten when that node is dropped, not the send. A node with no
+//! name has no site; an error at one is placed by the nearest node around it that has one.
+//! The address is used only as a name, to look a node up while it is alive, never for order
+//! or in a memo (author decision node-ids).
 //!
 //! While the front end and staging build the program they record sites
 //! ([`Recorder::start`]): elaboration marks the nodes it built for each expression
 //! ([`mark`]), a copy of a node takes the node's site ([`inherit`]), and a node that is dropped
-//! loses its site (`Drop for Term`), so that a buffer freed and used again for another node does
-//! not pass the site on. At the end the sites of the nodes the program holds are kept
-//! ([`Recorder::freeze`]); the rest of the run reads them and records nothing.
+//! loses its site (`Drop for Term`; a send's, when its value's node goes, `Drop for Held`), so
+//! that a buffer freed and used again for another node does not pass the site on. At the end
+//! the sites of the nodes the program holds are kept ([`Recorder::freeze`]); the rest of the
+//! run reads them and records nothing.
 //!
 //! Method: a table beside the code, keyed by a position in it, as DWARF's line number program
 //! maps machine addresses to source lines (DWARF Debugging Information Format Committee,
@@ -256,5 +260,71 @@ pub fn inherit(from: &Term, to: &Term) {
     }
     if let (Some(f), Some(t)) = (key(from), key(to)) {
         site_table::copy(f, t);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{Recorder, Sites, Span, key, mark};
+    use crate::site_table;
+    use crate::term::{Shared, Term};
+
+    /// A send `port <- v` with a value node of its own, as `Elab::push` builds one.
+    fn send(port: &str, v: &str) -> Term {
+        Term::Push(port.into(), Shared::new(Term::Var(v.into())))
+    }
+
+    /// The site this thread's table holds for the node named `k`.
+    fn site(k: usize) -> Option<Span> {
+        site_table::with(|t| t.get(&k).copied())
+    }
+
+    // RT-sites-push: a send is named by its value's node, which a copy of the send shares, so
+    // dropping one copy keeps the site for the other; dropping the last frees the node and its
+    // address, and a send built later at that address must not take the old site.
+    #[test]
+    fn a_send_keeps_its_site_while_its_value_lives_and_leaves_none_at_its_address() {
+        let recorder = Recorder::start(&Sites::default());
+        let span = Span { start: 3, end: 9 };
+        // Made before the drops below, so that no growth of it takes the freed node's memory.
+        let mut later = Vec::with_capacity(1000);
+        let first = send("p", "v");
+        let k = key(&first).expect("a send has a name");
+        mark(&first, span, &mut HashSet::new());
+        let copy = first.clone();
+        assert_eq!(key(&copy), Some(k));
+        drop(first);
+        assert_eq!(site(k), Some(span), "the copy keeps the site");
+        drop(copy);
+        assert_eq!(site(k), None, "the value's node is gone, and its site");
+        // The allocator gives the freed memory to a later node of the same size: glibc's
+        // per-thread cache hands out the chunk of a size freed last first. Each send is kept
+        // alive, so each takes a new address until one takes the freed one.
+        while later.len() < 1000 && later.last().and_then(key) != Some(k) {
+            later.push(send("q", "w"));
+        }
+        let again = later.last().expect("a send was built");
+        assert_eq!(key(again), Some(k), "no later send took the freed address");
+        assert_eq!(site(k), None, "the later send has no site");
+        let sites = recorder.freeze(later.iter());
+        assert_eq!(sites.of(again), None);
+    }
+
+    // The node a send names is freed with no drop at its address when its term is moved out
+    // (`Shared::unwrap_or_clone`), so the site goes there.
+    #[test]
+    fn a_value_moved_out_of_its_node_takes_the_site_of_its_send_with_it() {
+        let _recorder = Recorder::start(&Sites::default());
+        let span = Span { start: 1, end: 2 };
+        let v = Shared::new(Term::Var("v".into()));
+        let first = Term::Push("p".into(), v.clone());
+        let k = key(&first).expect("a send has a name");
+        mark(&first, span, &mut HashSet::new());
+        drop(first);
+        assert_eq!(site(k), Some(span), "the value's node lives on in `v`");
+        let _moved = Shared::unwrap_or_clone(v);
+        assert_eq!(site(k), None, "the value left its node, which is freed");
     }
 }

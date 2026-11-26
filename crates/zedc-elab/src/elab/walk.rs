@@ -3306,7 +3306,19 @@ impl<'a> Elab<'a> {
                 };
                 let out = m.t().map(|v| {
                     let t = self.temp();
-                    vec![(t.to_string(), t, self.push(s.span, port, v))]
+                    let pushed = self.push(s.span, port, v);
+                    // A send is a statement, not an expression, so no site frame marks it: it
+                    // takes the span of its statement here (RT-sites-push), before the block
+                    // around it would give it its own. The value is marked already, so this
+                    // marks only the send's nodes, O(P) for the P ports `push` tests.
+                    if zed_kernel::sites::recording() {
+                        let span = zed_kernel::sites::Span {
+                            start: s.span.start,
+                            end: s.span.end,
+                        };
+                        zed_kernel::sites::mark(&pushed, span, &mut self.sited);
+                    }
+                    vec![(t.to_string(), t, pushed)]
                 });
                 m.ret = Ret::Stmt(out);
             }

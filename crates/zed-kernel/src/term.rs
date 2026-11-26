@@ -883,6 +883,23 @@ struct Held {
 #[derive(Clone, Default)]
 struct ReadsMemo(OnceLock<Arc<[Arc<str>]>>);
 
+/// A node names the site of each send that holds it as its value ([`Term::site_key`]), and its
+/// address is free for another node once it is dropped, so its site is forgotten here and not
+/// when one of those sends is dropped: two sends may hold one node (a send to several ports,
+/// `crates/zedc-elab/src/elab/state.rs`, and a copy of a send), and the first dropped would
+/// otherwise take the site from the other. A node dropped where it was built, inside its
+/// `Arc`, is dropped at that address; one moved out ([`Shared::unwrap_or_clone`]) forgets the
+/// site before the move. `Arc::make_mut` changes a node in place or copies it, never moves it,
+/// as no weak reference to a node is made (nothing in this module calls `Arc::downgrade`).
+/// One thread-local flag is read per node dropped while no recording runs.
+impl Drop for Held {
+    fn drop(&mut self) {
+        if crate::site_table::recording() {
+            crate::site_table::forget(std::ptr::from_mut::<Held>(self).wrapping_add(1) as usize);
+        }
+    }
+}
+
 impl Shared {
     /// `t`, shared, with a new id.
     pub fn new(t: Term) -> Shared {
@@ -915,7 +932,22 @@ impl Shared {
 
     /// The term, moved out when `this` is its only holder, else copied.
     pub fn unwrap_or_clone(this: Shared) -> Term {
-        Arc::unwrap_or_clone(this.0).term
+        let key = this.send_site_key();
+        match Arc::try_unwrap(this.0) {
+            // The node leaves its allocation, which is freed with no drop there, so the site
+            // named by that allocation is forgotten here (see `Drop for Held`).
+            Ok(mut held) => {
+                crate::site_table::forget(key);
+                std::mem::replace(&mut held.term, Term::PrimFn(Prim::Tuple))
+            }
+            Err(shared) => shared.term.clone(),
+        }
+    }
+
+    /// The name of the send `Term::Push` that holds this node as its value, for its source
+    /// site ([`Term::site_key`]): the address one past the end of the node on the heap. O(1).
+    fn send_site_key(&self) -> usize {
+        std::ptr::from_ref::<Held>(&self.0).wrapping_add(1) as usize
     }
 
     /// The number of holders of the subterm.
@@ -1172,8 +1204,19 @@ fn free_terms(ts: &mut Vec<Term>) {
 
 impl Term {
     /// The name of this node while it is alive, for its source site ([`crate::sites::key`]):
-    /// the address one past the end of its own parts, or `None` when it has none. O(1).
+    /// the address one past the end of its own parts, or `None` when it has none. A send
+    /// `p <- v` is named by its value's node on the heap (RT-sites-push), which it may share
+    /// with another send of the same source: one to several ports, or a copy. O(1).
     pub(crate) fn site_key(&self) -> Option<usize> {
+        match self {
+            Term::Push(_, v) => Some(v.send_site_key()),
+            _ => self.own_site_key(),
+        }
+    }
+
+    /// [`Term::site_key`] of a node whose name lives and dies with the node itself: all but a
+    /// send, whose name its value's node forgets when it is dropped (`Drop for Held`).
+    fn own_site_key(&self) -> Option<usize> {
         match self {
             Term::App(_, args) | Term::Prim(_, args) if !args.is_empty() => Some(parts_end(args)),
             Term::Match(_, arms) if !arms.is_empty() => Some(parts_end(arms)),
@@ -1232,7 +1275,7 @@ pub(crate) fn parts_end<T>(xs: &[T]) -> usize {
 impl Drop for Term {
     fn drop(&mut self) {
         if crate::site_table::recording()
-            && let Some(k) = self.site_key()
+            && let Some(k) = self.own_site_key()
         {
             crate::site_table::forget(k);
         }

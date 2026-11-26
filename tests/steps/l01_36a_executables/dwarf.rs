@@ -282,9 +282,8 @@ fn gdb_stops_at_a_function_and_at_source_lines_and_walks_the_stack() {
         &[
             "break zed_root",
             &format!("break {name}:2"),
-            // Line 5, the last with a row: the send of line 6 has no source site, so no row
-            // (RT-sites-push).
-            &format!("break {name}:5"),
+            // Line 6, the send, has a row: a send takes its statement's site (RT-sites-push).
+            &format!("break {name}:6"),
             "run",
             "bt",
             "continue",
@@ -297,10 +296,10 @@ fn gdb_stops_at_a_function_and_at_source_lines_and_walks_the_stack() {
     // `zed_root`'s breakpoint may share line 2's address, and gdb then reports one stop there.
     let lines = stops(&out, name);
     assert!(
-        (1..=5).contains(&lines[0])
+        (1..=6).contains(&lines[0])
             && lines.windows(2).all(|w| w[0] <= w[1])
             && lines.contains(&2)
-            && lines.last() == Some(&5),
+            && lines.last() == Some(&6),
         "stops {lines:?} in {}:\n{out}",
         file.display()
     );
@@ -335,8 +334,8 @@ fn next_visits_a_functions_lines_in_source_order() {
         visited.first() == Some(&2) && visited.windows(2).all(|w| w[0] < w[1]),
         "lines {visited:?}:\n{out}"
     );
-    // Line 6, the send, has no row (RT-sites-push), so the fourth `next` leaves `zed_root`.
-    assert_eq!(visited, [2, 3, 4, 5], "{out}");
+    // Line 6, the send, has a row (RT-sites-push), so the fourth `next` stops there.
+    assert_eq!(visited, [2, 3, 4, 5, 6], "{out}");
 }
 
 #[test]
