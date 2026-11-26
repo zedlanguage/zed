@@ -1276,7 +1276,14 @@ pub trait Edges {
 }
 
 /// A graph's own edges `u → (v, w)`, all in one set of rows.
+// `#[inline]` on both impls: `Rounds` is generic, so its `step` and `run` are compiled in the
+// crate that calls them, and an impl for a concrete type is not inlined across crates without
+// it. Without it, on 2026-11-26 under callgrind, `edge` was a call of its own, 62.5M
+// instructions in `the_joined_union_family_scales` and 49.4M in `bad_gor_scales`, and the
+// call cost `Rounds::step` another 20.5M and 16.0M: the benches took 2.3-2.4% more
+// instructions than before the rounds were merged.
 impl Edges for [Vec<(usize, Int)>] {
+    #[inline]
     fn edge(&self, _: bool, x: usize, e: usize) -> Option<(usize, &Int)> {
         self[x].get(e).map(|(y, w)| (*y, w))
     }
@@ -1285,6 +1292,7 @@ impl Edges for [Vec<(usize, Int)>] {
 /// Compressed rows: the edges of weight at least 0 (or all the edges) in the first, the
 /// negative edges, and only those, in the second, so a pass of them passes no others.
 impl Edges for (Rows<'_>, Rows<'_>) {
+    #[inline]
     fn edge(&self, negative: bool, x: usize, e: usize) -> Option<(usize, &Int)> {
         let Rows { start, to, w } = if negative { self.1 } else { self.0 };
         let i = start[x] + e;
