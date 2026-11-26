@@ -130,14 +130,20 @@ fn least(meter: &mut Meter, k: usize, run: &impl Fn(usize)) -> u64 {
 }
 
 /// Holds the instructions of `run` at n and 8n under the limit for work of order
-/// `n^power`, and returns the ratio.
-fn ratio(what: &str, n: usize, power: u32, run: impl Fn(usize)) -> f64 {
+/// `n^power`, and returns the ratio; `None` when the test ran again alone, in a new process,
+/// which measured and passed (`scaling::ran_alone_in_a_new_process`), and the caller returns.
+fn ratio(what: &str, n: usize, power: u32, run: impl Fn(usize)) -> Option<f64> {
     let mut meter = Meter::new();
+    // Counted here and held by `hold`, not by a check: beside other tests on a machine with no
+    // counter of instructions the test runs again alone (BENCH-self-counted-meters-processor-time).
+    if scaling::ran_alone_in_a_new_process(&meter) {
+        return None;
+    }
     let (small, large) = (
         least(&mut meter, n, &run),
         least(&mut meter, FACTOR * n, &run),
     );
-    hold(what, meter.unit(), small, large, power)
+    Some(hold(what, meter.unit(), small, large, power))
 }
 
 #[test]
@@ -599,7 +605,9 @@ fn joined_read_under(what: &str, bound: f64, read: impl Fn(i64) -> Term) {
     let terms = scaling::inputs(N_CONCAT, |k| read_at_each_step(k, &read));
     let run = |k: usize| assert_eq!(eval(&terms[&k]).unwrap(), Value::Int(k as i64 + 1));
     let what = format!("`{what}` after each of n `[x] ++ a`, instructions");
-    let r = ratio(&what, N_CONCAT, 1, run);
+    let Some(r) = ratio(&what, N_CONCAT, 1, run) else {
+        return;
+    };
     assert!(r < bound, "{what}: {r:.2} times at 8n, over {bound:.2}");
 }
 
@@ -734,7 +742,9 @@ fn a_union_holding_a_joined_list_builds_no_map() {
             }
         };
         let what = format!("`{what}` after each of n `[x] ++ a`, instructions");
-        let r = ratio(&what, N_CONCAT, 1, |k| rust_read_at_each_step(k, &read));
+        let Some(r) = ratio(&what, N_CONCAT, 1, |k| rust_read_at_each_step(k, &read)) else {
+            return;
+        };
         assert!(
             r < scaling::PREFERRED,
             "{what}: {r:.2} times at 8n, over {:.2}",

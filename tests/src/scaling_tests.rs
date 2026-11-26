@@ -968,8 +968,12 @@ fn a_meter_of_processor_time_measures_only_in_a_process_running_the_test_alone()
         elsewhere: false,
     };
     if ran_alone_in_a_new_process(&meter) {
+        // A helper called again in the same test returns too (BENCH-self-counted-meters-...).
+        assert!(ran_alone_in_a_new_process(&meter));
         return;
     }
+    // In the process that runs the test alone, every call measures here.
+    assert!(!ran_alone_in_a_new_process(&meter));
     let thread = std::thread::current();
     let test = thread.name().expect("a test's thread has its name");
     assert!(

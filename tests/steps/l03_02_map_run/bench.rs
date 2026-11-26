@@ -54,6 +54,12 @@ fn sum_term(n: usize) -> Term {
 /// near 8.
 fn under_nine(what: &str, n: usize, run: impl Fn(usize)) {
     let mut meter = Meter::new();
+    // Counted here and held by `hold_linear`, not by a check: beside other tests on a machine with
+    // no counter of instructions the test runs again alone, in a new process
+    // (BENCH-self-counted-meters-processor-time).
+    if scaling::ran_alone_in_a_new_process(&meter) {
+        return;
+    }
     let mut least = |k: usize| (0..3).map(|_| meter.work(|| run(k)).units).min().unwrap();
     let (small, large) = (least(n), least(FACTOR * n));
     hold_linear(what, meter.unit(), small, large);

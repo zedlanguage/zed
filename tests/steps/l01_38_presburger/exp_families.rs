@@ -784,6 +784,12 @@ pub(super) fn output_sensitive(
     family: fn(usize) -> Formula,
     runs: usize,
 ) {
+    // The counts are made here and held by `hold`, not by a check: beside other tests on a
+    // machine with no counter of instructions the test runs again alone, in a new process
+    // (BENCH-self-counted-meters-processor-time).
+    if scaling::ran_alone_in_a_new_process(&Meter::new()) {
+        return;
+    }
     let (first, last) = (sizes[0], sizes[sizes.len() - 1]);
     assert_eq!(
         last,

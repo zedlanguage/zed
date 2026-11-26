@@ -304,7 +304,18 @@ pub fn hold_in_phases(
 ///
 /// Complexity tradeoff: one more process start and one more run of the test's set-up, against a
 /// count that cannot measure the work.
+///
+/// Once the new process has passed, later calls on the same thread give true at once, with no
+/// second process, so that a helper the test calls several times, or in a loop, returns at each
+/// call (BENCH-self-counted-meters-processor-time); libtest runs each test on a thread of its own.
 pub fn ran_alone_in_a_new_process(meter: &Meter) -> bool {
+    thread_local! {
+        /// Whether this thread's test has run alone in a new process, which passed.
+        static RAN_ALONE: Cell<bool> = const { Cell::new(false) };
+    }
+    if RAN_ALONE.get() {
+        return true;
+    }
     let thread = std::thread::current();
     let Some(test) = thread.name().filter(|t| *t != "main") else {
         return false;
@@ -337,6 +348,7 @@ pub fn ran_alone_in_a_new_process(meter: &Meter) -> bool {
         "{test}: the new process ran no test, since `{test}`, this thread's name, is not that of \
          a test of this binary; call this on the test's own thread"
     );
+    RAN_ALONE.set(true);
     true
 }
 

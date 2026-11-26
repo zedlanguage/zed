@@ -243,6 +243,12 @@ fn two_disjunctions_empty_blocks_charge_work_per_block() {
         ]))
     };
     let mut meter = crate::scaling::Meter::new();
+    // Counted here and held by the asserts below, not by a check: beside other tests on a machine
+    // with no counter of instructions the test runs again alone, in a new process
+    // (BENCH-self-counted-meters-processor-time).
+    if crate::scaling::ran_alone_in_a_new_process(&meter) {
+        return;
+    }
     let mut counts = Vec::new();
     for m in [32usize, 256] {
         let f = make(m);
@@ -536,6 +542,10 @@ fn a_stride_meeting_a_kept_piece_scales_linearly() {
     };
     let h = IntervalSet::range(fin(&Int::from(-10)), End::PosInf);
     let mut meter = crate::scaling::Meter::new();
+    // As in `two_disjunctions_empty_blocks_charge_work_per_block`.
+    if crate::scaling::ran_alone_in_a_new_process(&meter) {
+        return;
+    }
     let mut counts = Vec::new();
     for n in [64i64, 512] {
         let f = make(n);
