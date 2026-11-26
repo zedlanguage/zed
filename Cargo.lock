@@ -1632,6 +1632,7 @@ dependencies = [
  "zed-kernel",
  "zed-meter-settings",
  "zed-numtheory",
+ "zedc-affine",
  "zedc-int",
  "zedc-lattice",
  "zedc-preimage",

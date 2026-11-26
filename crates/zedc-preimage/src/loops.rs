@@ -41,7 +41,8 @@ use std::sync::Arc;
 
 use zed_graph::{Compression, Diff, Keep, Linking, UnionFind};
 use zed_kernel::text::prose::and_list;
-use zedc_int::int::{Int, i128_div_ceil, i128_div_floor};
+use zedc_affine::shadow::{i128_meet, i128_row_bound};
+use zedc_int::int::{Int, i128_div_ceil};
 use zedc_presburger::presburger::{Atom, Con, Formula, Lin, Rel};
 use zedc_stage::defs::written_name;
 
@@ -273,20 +274,11 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
         let (Some(x), Some(c)) = (x.to_i128(), a.c.to_i128()) else {
             continue;
         };
-        // `x * v + c >= 0`. A bound that does not fit in `i128` is left out: the box only
-        // grows, so fewer parts are found to hold on all of it, which adds edges, never drops
-        // one.
-        if x > 0 {
-            let Some(l) = c.checked_neg().and_then(|n| i128_div_ceil(n, x)) else {
-                continue;
-            };
-            blo[*v] = Some(blo[*v].map_or(l, |y| y.max(l)));
-        } else {
-            let Some(h) = x.checked_neg().and_then(|d| i128_div_floor(c, d)) else {
-                continue;
-            };
-            bhi[*v] = Some(bhi[*v].map_or(h, |y| y.min(h)));
-        }
+        // `x * v + c >= 0`, met into the box by the shared `i128_meet`. A bound that does not
+        // fit in `i128` (`None`, the box left as it was) is left out: the box only grows, so
+        // fewer parts are found to hold on all of it, which adds edges, never drops one. A
+        // coefficient of 0 puts no bound and leaves the box as it was, as before.
+        let _ = i128_meet(x, c, &mut blo[*v], &mut bhi[*v]);
     }
     let least = |a: &A| -> Option<i128> {
         let mut m = a.c.to_i128()?;
@@ -1121,11 +1113,9 @@ impl Say<'_> {
                 // `xc * v + cc >= 0`: v >= ceil(-cc / xc), or v <= floor(cc / -xc). The term
                 // writes `to`, whose side is `to % 2 == side`, and `write_of` gives side 0 to
                 // `xc >= 0` and side 1 to `xc < 0`, so the divisor is above zero unless `xc` is
-                // 0; the division is right for either sign and answers `None` for 0.
-                let at = match side {
-                    0 => i128_div_ceil(cc.checked_neg()?, xc)?,
-                    _ => i128_div_floor(cc, xc.checked_neg()?)?,
-                };
+                // 0; so the end the side reads is the one end the row puts, the shared
+                // `i128_row_bound`, which answers `None` for 0.
+                let at = i128_row_bound(xc, cc)?;
                 let at_start = at.checked_sub(off)?;
                 limit = if side == 0 {
                     limit.min(at_start)

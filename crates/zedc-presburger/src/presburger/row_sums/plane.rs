@@ -29,7 +29,7 @@
 //! taken here: the formula goes to the join, which is exact, as before.
 
 use zed_numtheory::{bezout_i128, gcd_u128 as gcd};
-use zedc_int::int::{i128_div_ceil, i128_div_floor};
+use zedc_affine::shadow::{i128_meet, i128_pair};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
 use super::rows::Rows;
@@ -473,31 +473,21 @@ fn shadow(
             _ => upper.push(row),
         }
     }
-    for &(al, bl, cl) in lower.iter() {
-        for &(au, bu, cu) in upper.iter() {
-            if bl != 1 && bu != -1 {
+    for &l in lower.iter() {
+        for &u in upper.iter() {
+            if l.1 != 1 && u.1 != -1 {
                 return None;
             }
-            // `(-(A_l·p + C_l)) / B_l <= (A_u·p + C_u) / (-B_u)`.
-            let pa = bl.checked_mul(au)?.checked_sub(bu.checked_mul(al)?)?;
-            let pc = bl.checked_mul(cu)?.checked_sub(bu.checked_mul(cl)?)?;
-            free.push((pa, pc));
+            // `(-(A_l·p + C_l)) / B_l <= (A_u·p + C_u) / (-B_u)`, the exact shadow, as a unit
+            // `B` makes the dark shadow the real one.
+            free.push(i128_pair(l, u, false)?);
         }
     }
     // `A·p + C >= 0` for each.
     let (mut lo, mut hi): (Option<i128>, Option<i128>) = (None, None);
     for &(pa, pc) in free.iter() {
-        match pa.signum() {
-            0 if pc < 0 => return Some(None),
-            0 => {}
-            1 => {
-                let l = i128_div_ceil(pc.checked_neg()?, pa)?;
-                lo = Some(lo.map_or(l, |v| v.max(l)));
-            }
-            _ => {
-                let h = i128_div_floor(pc, pa.checked_neg()?)?;
-                hi = Some(hi.map_or(h, |v| v.min(h)));
-            }
+        if !i128_meet(pa, pc, &mut lo, &mut hi)? {
+            return Some(None);
         }
     }
     // The box bounds the polygon, so both ends are found (module note); else the join answers.

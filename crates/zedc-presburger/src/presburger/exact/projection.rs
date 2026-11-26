@@ -497,7 +497,7 @@ fn shadow(rows: &[Con], x: &Atom, m: &Model) -> Shadow {
     let (i, j) = (least(&lower), least(&upper));
     let (a, tl) = &lower[i];
     let (b, tu) = &upper[j];
-    let slack = &(a - &Int::ONE) * &(b - &Int::ONE);
+    let slack = zedc_affine::shadow::dark_gap(a, b);
     // `a·β - b·α - (a - 1)·(b - 1)` at `m`, with `α = -tl`, `β = tu`.
     let gap = &(&(&value(tu, m) * a) + &(&value(tl, m) * b)) - &slack;
     Shadow {

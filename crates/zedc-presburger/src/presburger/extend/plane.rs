@@ -979,28 +979,23 @@ enum Step5 {
 fn section_has_point(c: &Row, ep: Option<&Row>, eq: Option<&Row>) -> bool {
     let p0 = c.bezout();
     let d = c.dir();
-    let (mut lo, mut hi): (Option<Int>, Option<Int>) = (None, None);
+    let mut range: zedc_int::int::IntRange = (None, None);
     for r in [ep, eq].into_iter().flatten() {
-        // r at p0 + t d: s t >= r.c - r.f(p0).
+        // r at p0 + t d: s t >= r.c - r.f(p0), that is `s·t + k >= 0` with `k = r.f(p0) - r.c`,
+        // read by the shared `row_range`.
         let s = dot(&r.n(), &d);
-        let k = &r.c - &r.f(&p0);
-        match sign(&s) {
-            1 => {
-                let v = k.div_ceil(&s);
-                lo = Some(lo.map_or(v.clone(), |o| o.max(v)));
+        let k = &r.f(&p0) - &r.c;
+        if s.is_zero() {
+            if k.is_negative() {
+                return false;
             }
-            -1 => {
-                let v = k.div_floor(&s);
-                hi = Some(hi.map_or(v.clone(), |o| o.min(v)));
-            }
-            _ if k.is_positive() => return false,
-            _ => {}
+            continue;
+        }
+        if zedc_int::int::meet_range(&mut range, zedc_int::int::row_range(&s, &k, false).0) {
+            return false;
         }
     }
-    match (lo, hi) {
-        (Some(l), Some(h)) => l <= h,
-        _ => true,
-    }
+    true
 }
 
 /// Whether `s` is redundant between its neighbors `r` and `t`: they meet at an angle below 180

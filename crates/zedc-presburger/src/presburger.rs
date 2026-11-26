@@ -11535,14 +11535,11 @@ impl Side1 {
     /// divisor of the terms of `b·r + a·s` and `c` its constant, the form takes the values `g·t
     /// + c`, so the two rows hold for the same `t` when `c` and `c - (a - 1)·(b - 1)` round down
     /// to one multiple of `g`; without terms, when the constant is below 0 or at least
-    /// `(a - 1)·(b - 1)`. `lin` is [`Side1::combine`] of the pair. O(the terms of the pair).
+    /// `(a - 1)·(b - 1)`, the test and its proof at [`zedc_affine::shadow::dark_exact`]. `lin`
+    /// is [`Side1::combine`] of the pair. O(the terms of the pair).
     fn dark_is_real(&self, hi: &Side1, lin: &Lin) -> bool {
-        let gap = &(&self.a - &Int::ONE) * &(&(-&hi.a) - &Int::ONE);
-        if lin.terms.is_empty() {
-            return lin.constant.is_negative() || lin.constant >= gap;
-        }
-        let g = zedc_affine::content(lin.terms.values());
-        lin.constant.div_floor(&g) == (&lin.constant - &gap).div_floor(&g)
+        let gap = zedc_affine::shadow::dark_gap(&self.a, &-&hi.a);
+        zedc_affine::shadow::dark_exact(&lin.constant, &gap, lin.terms.values())
     }
 }
 
@@ -18642,7 +18639,7 @@ fn combine(lo: &Row, hi: &Row, j: usize, dark: bool) -> Row {
     Row {
         a: merge(&hi.a, a, &lo.a, b, j),
         k: if dark {
-            &k - &(&(a - &Int::ONE) * &(b - &Int::ONE))
+            &k - &zedc_affine::shadow::dark_gap(a, b)
         } else {
             k
         },
@@ -18654,34 +18651,21 @@ fn combine(lo: &Row, hi: &Row, j: usize, dark: bool) -> Row {
 /// by [`Row::normal`] (the test of [`System::lossless`]).
 ///
 /// Let `a`, `b` be the coefficients of `x[j]` in `lo` and `-hi`, both at least 1, `k` the
-/// constant of the real row, `d = (a - 1)(b - 1) >= 0` and `g` the gcd of its coefficients.
-/// The dark row is the real one with constant `k - d`. When `d = 0` the rows are equal. When no
-/// term is left (`g = 0`) the real row holds iff `k >= 0` and the dark one iff `k >= d`, the
-/// same iff `k >= d` or `k < 0`. Otherwise both normalize to the same coefficients, with
-/// constants `⌊k/g⌋` and `⌊(k-d)/g⌋`; writing `k = q·g + r`, `0 <= r < g`, the second is
-/// `q + ⌊(r-d)/g⌋`, and `r - d < g`, so the two are equal iff `r >= d`. The gcd only shrinks as
-/// coefficients are read, and `r < g`, so once it is at most `d` the pair is lossy (the final
-/// `g'` divides it, `g' <= d`, `r < g' <= d`): the loop stops there.
+/// constant of the real row and `d = (a - 1)(b - 1) >= 0`. The dark row is the real one with
+/// constant `k - d`, and both normalize to the same coefficients, so they are the same row
+/// exactly when they have the same integer points: [`zedc_affine::shadow::dark_exact`], with
+/// the proof and the early stop once the gcd of the coefficients read is at most `d`. The
+/// coefficients are not merged when `d == 0`.
 fn lossless_pair(lo: (&[Term], &Int), hi: (&[Term], &Int), j: usize) -> bool {
     let a = sorted_get(lo.0, &j).expect("the row holds the variable");
     let b = &-sorted_get(hi.0, &j).expect("the row holds the variable");
-    let d = &(a - &Int::ONE) * &(b - &Int::ONE);
+    let d = zedc_affine::shadow::dark_gap(a, b);
     if d.is_zero() {
         return true;
     }
     let k = &(hi.1 * a) + &(lo.1 * b);
-    let mut g = Int::ZERO;
-    for (_, c) in merge(hi.0, a, lo.0, b, j).iter() {
-        g = g.gcd(c);
-        if g <= d {
-            return false;
-        }
-    }
-    if g.is_zero() {
-        k >= d || k.is_negative()
-    } else {
-        k.mod_floor(&g) >= d
-    }
+    let row = merge(hi.0, a, lo.0, b, j);
+    zedc_affine::shadow::dark_exact(&k, &d, row.iter().map(|(_, c)| c))
 }
 
 /// An equality as its structure gives it: the colors of its variables with their

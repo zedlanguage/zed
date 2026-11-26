@@ -3,7 +3,10 @@
 //! division of a row by the gcd of its coefficients, and the primitive form of a list of terms.
 //! Each routine here was written out at several sites of zedc-presburger and zedc-lattice
 //! before (DRY-affine-crate-2026-11-26; the sites are named at each routine). The coefficients
-//! are [`Coef`]: [`Int`] and [`Num`].
+//! are [`Coef`]: [`Int`] and [`Num`]. Module [`shadow`] reads a row in one variable as bounds
+//! and eliminates a variable from a pair of bounds (the real and the dark shadow).
+
+pub mod shadow;
 
 use std::collections::BTreeMap;
 

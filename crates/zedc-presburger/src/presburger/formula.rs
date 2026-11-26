@@ -921,22 +921,12 @@ pub(super) fn one_bound(c: &Con) -> Option<(&Atom, Option<Int>, Option<Int>)> {
         return None;
     }
     let (a, coef) = c.lin.terms.first_key_value()?;
-    // `coef·a + k` compared with zero.
-    let k = &c.lin.constant;
-    let m = coef.abs();
-    let (lo, hi) = match c.rel {
-        // `a >= -k / coef`, rounded up.
-        Rel::Ge if coef.is_positive() => (Some(-&k.div_floor(&m)), None),
-        // `a <= k / |coef|`, rounded down.
-        Rel::Ge => (None, Some(k.div_floor(&m))),
-        Rel::Eq if k.mod_floor(&m).is_zero() => {
-            let v = -&k.div_floor(&m);
-            let v = if coef.is_positive() { v } else { -&v };
-            (Some(v.clone()), Some(v))
-        }
+    // `coef·a + k` compared with zero, read by the shared `row_range`.
+    let ((lo, hi), no_root) = zedc_int::int::row_range(coef, &c.lin.constant, c.rel == Rel::Eq);
+    if no_root {
         // No integer `a` has `coef·a == -k`.
-        Rel::Eq => (Some(Int::ONE), Some(Int::ZERO)),
-    };
+        return Some((a, Some(Int::ONE), Some(Int::ZERO)));
+    }
     Some((a, lo, hi))
 }
 

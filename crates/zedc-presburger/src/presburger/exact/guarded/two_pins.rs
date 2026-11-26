@@ -50,6 +50,7 @@ use std::collections::HashMap;
 
 use zed_collections::search::{try_first_true, try_last_true};
 use zed_kernel::bits::BitLen;
+use zedc_affine::shadow::{i128_meet, i128_pair};
 use zedc_int::int::{Int, Num, i128_div_ceil, i128_div_floor};
 use zedc_lattice::interval::{End, IntervalSet};
 use zedc_lattice::lattice::Congruence;
@@ -2127,44 +2128,22 @@ fn merge_runs(runs: Vec<(i128, i128)>) -> Vec<(i128, i128)> {
 /// A row `x·X + y·Y + c >= 0` over two integer unknowns.
 type Row = (i128, i128, i128);
 
-/// Bounds on integer `X` from `p·X + q >= 0`, met into `(lo, hi)`; `Some(false)` where it never
-/// holds, `None` past `i128`.
-fn meet(p: i128, q: i128, lo: &mut Option<i128>, hi: &mut Option<i128>) -> Option<bool> {
-    match p.signum() {
-        0 => Some(q >= 0),
-        1 => {
-            let l = i128_div_ceil(q.checked_neg()?, p)?;
-            *lo = Some(lo.map_or(l, |v| v.max(l)));
-            Some(true)
-        }
-        _ => {
-            let h = i128_div_floor(q, p.checked_neg()?)?;
-            *hi = Some(hi.map_or(h, |v| v.min(h)));
-            Some(true)
-        }
-    }
-}
-
 /// The bounds on `X` once `Y` is eliminated from `rows` (Fourier-Motzkin, each pair of a lower
-/// and an upper bound on `Y`): the real shadow, or with `dark` Pugh's dark shadow, whose every
-/// integer `X` has an integer `Y` ([module note](self)). `Some(None)` where empty, `None` past
-/// `i128`. O(h²) for h rows.
+/// and an upper bound on `Y`, [`zedc_affine::shadow::i128_pair`]): the real shadow, or with
+/// `dark` Pugh's dark shadow, whose every integer `X` has an integer `Y` ([module note](self)).
+/// `Some(None)` where empty, `None` past `i128`. O(h²) for h rows.
 fn shadow(rows: &[Row], dark: bool) -> Option<Option<(Option<i128>, Option<i128>)>> {
     let (mut lo, mut hi) = (None, None);
     let mut holds = true;
     for &(x, y, c) in rows {
         if y == 0 {
-            holds &= meet(x, c, &mut lo, &mut hi)?;
+            holds &= i128_meet(x, c, &mut lo, &mut hi)?;
         }
     }
-    for &(xl, yl, cl) in rows.iter().filter(|r| r.1 > 0) {
-        for &(xu, yu, cu) in rows.iter().filter(|r| r.1 < 0) {
-            let p = yl.checked_mul(xu)?.checked_sub(yu.checked_mul(xl)?)?;
-            let mut q = yl.checked_mul(cu)?.checked_sub(yu.checked_mul(cl)?)?;
-            if dark {
-                q = q.checked_sub((yl - 1).checked_mul(yu.checked_neg()? - 1)?)?;
-            }
-            holds &= meet(p, q, &mut lo, &mut hi)?;
+    for &l in rows.iter().filter(|r| r.1 > 0) {
+        for &u in rows.iter().filter(|r| r.1 < 0) {
+            let (p, q) = i128_pair(l, u, dark)?;
+            holds &= i128_meet(p, q, &mut lo, &mut hi)?;
         }
     }
     let empty = !holds || matches!((lo, hi), (Some(l), Some(h)) if l > h);
@@ -2177,7 +2156,7 @@ fn fiber(rows: &[Row], x: i128) -> Option<Option<(Option<i128>, Option<i128>)>> 
     let (mut lo, mut hi) = (None, None);
     let mut holds = true;
     for &(xr, y, c) in rows {
-        holds &= meet(y, xr.checked_mul(x)?.checked_add(c)?, &mut lo, &mut hi)?;
+        holds &= i128_meet(y, xr.checked_mul(x)?.checked_add(c)?, &mut lo, &mut hi)?;
     }
     let empty = !holds || matches!((lo, hi), (Some(l), Some(h)) if l > h);
     Some((!empty).then_some((lo, hi)))
