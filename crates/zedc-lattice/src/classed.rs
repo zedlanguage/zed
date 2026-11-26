@@ -69,18 +69,19 @@ pub struct Classed {
 /// arithmetic, as every projection of a formula of zedc-presburger onto one symbol is, is
 /// ultimately periodic in each direction: Ginsburg and Spanier, "Semigroups, Presburger
 /// formulas, and languages", Pacific J. Math. 16:285–296, 1966, doi:10.2140/pjm.1966.16.285
-/// (title, volume and pages checked against Crossref 2026-11-26; the paper itself not read),
-/// as quoted in V. Marsault and J. Sakarovitch, "Ultimate periodicity of b-recognisable sets: a
+/// (read 2026-11-26 from the journal's scanned pages), p. 288: "THEOREM 1.3. The family of
+/// Presburger sets of N^n is identical with the family of semilinear sets of N^n.
+/// Furthermore, each description is effectively calculable from the other.", with, from its
+/// abstract, "a subset of lattice points being semilinear if it is the finite union of cosets
+/// of finitely generated sub-semigroups of the set of all lattice points with nonnegative
+/// coordinates"; and as restated in V. Marsault and J. Sakarovitch, "Ultimate periodicity of b-recognisable sets: a
 /// quasilinear procedure", arXiv:1301.2691 (paperclip full text, read 2026-11-26), lines 10
 /// and 24: "A set of numbers is recognisable if, and only if it is ultimately periodic (UP)",
 /// and "Rational sets of \mathbb{N}^d have been characterised by Ginsburg and Spanier as sets
 /// definable in the Presburger arithmetic". In dimension 1 a semilinear set is a finite union
 /// of progressions `{a + k·p : k >= 0}`, so past the largest `a` it agrees with the residues
 /// modulo the lcm of the `p`; on the integers each direction is one such set read on `v` or on
-/// `-v`. Cooper's elimination (D. C. Cooper, "Theorem proving in arithmetic without
-/// multiplication", Machine Intelligence 7:91–99, 1972; from memory, not read here) gives the
-/// same shape directly: its `φ_{-∞}` disjunct is a formula of divisibility constraints alone, so
-/// far enough out a projection is a union of residue classes. So a finite part between two such
+/// `-v`. So a finite part between two such
 /// tails holds every projection exactly, which a finite union of ranges met with one class does
 /// not (the even integers, `#k0 == 9 * t`). The table is kept at its least period
 /// ([`Tail::new`]), as granularities are kept at their minimal period in C. Bettini, S.
@@ -135,7 +136,9 @@ impl Tail {
 /// only the tail above, with the end `-inf`.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Tails {
+    /// The tail toward minus infinity: the values at or below its end.
     pub below: Option<Tail>,
+    /// The tail toward plus infinity: the values at or above its end.
     pub above: Option<Tail>,
 }
 

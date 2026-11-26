@@ -6286,8 +6286,9 @@ fn two_disjunctions_past_the_allowance_decline_before_forming_pairs() {
 /// piece: not read (not in the gap), the stride pushed back with the same `have`, and the same
 /// question asked again until the work limit (`Err(Questions)`, red on fccab4727).
 /// With the kept pieces' values read into `have` (residues 0 and 2), the question of 1 and 3
-/// finds none and the cover ends: the even integers from 0 up are held by `[0, +inf)`, given
-/// with the cause (`true`, [`ended`]). Catches the loop of gap G; cannot catch a kept piece's
+/// finds none and the cover ends: the even integers from 0 up are held exactly by `[0, +inf)`
+/// with a tail of the even residues past 0 (row CLASSED-periodic-tail), given with the cause
+/// (`true`, [`ended`]). Catches the loop of gap G; cannot catch a kept piece's
 /// residues read too wide (that would drop a piece with points, which `outside` never sees
 /// here since the gap has no piece in the stride's span).
 #[test]
@@ -6325,9 +6326,19 @@ fn a_strides_question_that_finds_a_point_in_a_kept_piece_ends() {
     );
     println!("{got:?}, work {} of {}", work.used, work.limit);
     let (set, cause) = got.expect("the cover ends");
+    // The kept piece from 0 up is held exactly by its tail (row CLASSED-periodic-tail): the
+    // wider set [0, +inf) with the even residues past 0.
+    let tail = zedc_lattice::classed::Tail::new(End::of(0), &[true, false]);
     assert_eq!(
         set,
-        Classed::plain(IntervalSet::range(fin(&Int::from(0)), End::PosInf))
+        Classed::tailed(
+            Classed::plain(IntervalSet::range(fin(&Int::from(0)), End::PosInf)),
+            None,
+            Some(tail)
+        )
     );
+    for v in -12i64..=60 {
+        assert_eq!(set.contains(v), v >= 0 && v % 2 == 0, "s = {v}");
+    }
     assert!(cause, "a kept piece gives the cause");
 }

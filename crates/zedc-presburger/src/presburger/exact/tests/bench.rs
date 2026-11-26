@@ -507,7 +507,8 @@ fn a_gap_of_classes_less_its_classes_is_linear_in_them() {
 
 /// Gap G closed (row LIMITS-exact-join-remove, `cells_cover`): the cover of `s` over
 /// `(s >= 0 ∧ s == 2·y) ∨ (40 <= s <= 40 + 4·n ∧ s == 4·z)`, `h` = [-10, +inf), with the points
-/// `s = 0` and `s = 40` read first, so the piece [0, +inf) is kept with the even residues and
+/// `s = 0` and `s = 40` read first, so the piece [0, +inf) is kept with the even residues (held
+/// exactly by a tail past 0, row CLASSED-periodic-tail) and
 /// the stride of step 4 over [40, 40 + 4·n] meets it. Its work, instructions and bytes at n and
 /// 8n grow at most linearly (the stride's values listed, O(n); `kept_residues` reads one piece
 /// of one marked residue, O(1)): within 10.5, the goal 9. Negative control: on the code before
@@ -558,7 +559,8 @@ fn a_stride_meeting_a_kept_piece_scales_linearly() {
             );
             let (set, cause) = got.expect("the cover ends");
             let want = IntervalSet::range(fin(&Int::from(0)), End::PosInf);
-            assert_eq!(set, Classed::plain(want));
+            let tail = zedc_lattice::classed::Tail::new(End::of(0), &[true, false]);
+            assert_eq!(set, Classed::tailed(Classed::plain(want), None, Some(tail)));
             assert!(cause, "a kept piece gives the cause");
             used = work.used;
         });

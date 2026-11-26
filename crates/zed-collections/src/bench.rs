@@ -314,14 +314,15 @@ fn the_spelling_index_takes_n_log_n() {
 }
 
 /// Small instances: `period::tests::the_least_period_is_found_against_every_divisor`. Two words
-/// of `m` letters: a block of 6 repeated (period 6, every step a match), and `m - 1` letters
-/// `true` and one `false` at the end (no period short of `m`, the prefix function falling back
-/// down the whole border chain at the last letter, which the amortized bound pays for).
+/// for each `m`: a block of 6 repeated `m` times (6·m letters, period 6, every step a match; the
+/// length is a multiple of 6, since the period must divide it), and `m - 1` letters `true` and
+/// one `false` at the end (no period short of `m`, the prefix function falling back down the
+/// whole border chain at the last letter, which the amortized bound pays for).
 #[test]
 fn the_least_period_takes_n() {
     let inputs = built(|m| {
         let block = [true, true, false, true, false, false];
-        let repeated: Vec<bool> = (0..m).map(|i| block[i % 6]).collect();
+        let repeated: Vec<bool> = (0..6 * m).map(|i| block[i % 6]).collect();
         let mut last: Vec<bool> = vec![true; m];
         last[m - 1] = false;
         (repeated, last)
