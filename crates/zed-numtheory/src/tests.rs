@@ -1664,11 +1664,11 @@ fn sums_and_products_modulo_a_word_agree_with_128_bits() {
 mod m64_59 {
     use crate::m64_59::{P, add, mul};
 
-    /// `P` is prime, so `0..P` is a field and the values of zed-kernel's priority polynomials at
-    /// distinct points are independent (the module comment of `zed_kernel::priority`), and it is
-    /// the largest prime below `2^64`, as its doc says. Red when `P` is changed to `2^64 - 57`
-    /// (composite) or to `2^64 - 83` (a smaller prime): checked 2026-11-19, in zed-kernel, before
-    /// the move.
+    /// `P` is prime, so `0..P` is a field and the values of the treaps' priority polynomials at
+    /// distinct points are independent (the module comment of `zed_collections::priority`), and
+    /// it is the largest prime below `2^64`, as its doc says. Red when `P` is changed to
+    /// `2^64 - 57` (composite) or to `2^64 - 83` (a smaller prime): checked 2026-11-19, in
+    /// zed-kernel, before the move.
     #[test]
     fn p_is_the_largest_prime_below_2_to_the_64() {
         assert!(crate::is_prime(P));

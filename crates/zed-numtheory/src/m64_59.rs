@@ -1,5 +1,5 @@
 //! Arithmetic modulo the prime `P = 2^64 - 59`, the largest below `2^64`: the field of
-//! zed-kernel's treap priorities (`zed_kernel::priority`, whose module comment gives the
+//! the treap priorities (`zed_collections::priority`, whose module comment gives the
 //! sources), moved here from there (DRY-num-words-2026-11-26) so that one copy of each
 //! routine serves every crate, as [`crate::m61`] does for `2^61 - 1`.
 //!
