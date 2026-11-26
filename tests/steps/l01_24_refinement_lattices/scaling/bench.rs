@@ -196,6 +196,50 @@ fn interval_set_operations_scale() {
     );
 }
 
+/// p one-point joins, each followed by the reduction against a class: the set of points `3i +
+/// 1` grows by one at its top, and each reduction against every integer narrows the class to
+/// the least one holding the points, `1 mod 3` from two points on (FAIL-lazy-join-random-seed).
+/// The gcd of their differences is kept at each node (zedc-lattice
+/// `IntervalSet::point_spacing`), so a reduction after a join reads all but the join's path
+/// from the nodes and costs `O(log p)`, and the p of them `O(p log p)`; the points walked at
+/// each would cost `Θ(p²)`, the case of CHECK-literal-union-spaced. Its small instance is
+/// zedc-lattice revision.rs `a_set_grown_one_point_at_a_time_has_its_least_class_after_each_join`.
+///
+/// Cost against the code before the fix (Colab v5e2, zed_icount): 967.8M instructions at p =
+/// 40,000, was 519.0M (+86%; ratio 9.50, was 9.43). The code before gave a wrong class here,
+/// every integer for every set of two points or more, which the small instance shows by
+/// failing on it; the cost over it is the cost of the least class `1 mod 3`. Where it goes
+/// (callgrind, debug, 4,000 joins): about 33M over the code before, the gcd fold of
+/// zedc-lattice `Spacing` (`point` 5.5M, `join_word` 5.4M, `gcd_u64` 3.5M, `node` 3.4M,
+/// `subtree` 3.3M, the `OnceLock` of each new node 3.0M, comparisons of `Num` 2.6M, the rest
+/// under 2M each). Why it cannot be much cheaper: a join replaces the nodes of one path,
+/// `O(log p)` of them, and each new node of height `SPACING_KEPT_FROM` or more has no gcd
+/// until one is computed from its children, so the least class after each join takes
+/// `Θ(log p)` gcds; the walk below the kept height and the height itself are the measured
+/// minimum (the table at zedc-lattice `SPACING_KEPT_FROM`), and each gcd is of machine words.
+#[test]
+fn reductions_of_a_growing_set_of_points_scale() {
+    use zedc::store::lattice::Congruence;
+    scaling::check_order(
+        "p one-point joins each reduced against a class",
+        40_000,
+        1,
+        |n| {
+            // Every integer: the class the reduction gives is the points' own.
+            let class = Congruence::new(1, 0);
+            let mut grown = IntervalSet::empty();
+            let mut last = class.clone();
+            for i in 0..n as i64 {
+                grown = grown.join(&IntervalSet::single(3 * i + 1));
+                let (x, c) = revision::reduce_congruence(&grown, &class);
+                assert_eq!(x.len(), i as usize + 1);
+                last = c;
+            }
+            assert_eq!(last, Congruence::new(3, 1));
+        },
+    );
+}
+
 /// A set grown at its front by p joins of a one-piece set wholly below it, every other one
 /// touching its first piece (PERF-ref-abs-gap-under-9, zedc-lattice `below_then`): each join
 /// is one `O(log p)` path, so the p of them cost `O(p log p)` (`union` has the same bound with

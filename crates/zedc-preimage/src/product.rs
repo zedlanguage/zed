@@ -19358,6 +19358,8 @@ impl Scope {
     fn framed(&self, part: &Formula) -> (Formula, Vec<Atom>) {
         let mentioned = part.atoms();
         let mut parts: Vec<Formula> = Vec::with_capacity(mentioned.len());
+        // The class `lo mod step` of each name written as a progression below.
+        let mut progressions: BTreeMap<&Atom, Congruence> = BTreeMap::new();
         for a in &mentioned {
             let Atom::Sym(n) = a else { continue };
             let prod = self.get(n);
@@ -19380,6 +19382,7 @@ impl Scope {
                 singleton_progression(set)
             };
             if let Some((lo, hi, step)) = prog {
+                progressions.insert(a, Congruence::new(&step, &lo));
                 let var = Lin::atom(a.clone());
                 parts.push(Formula::Con(Con::ge(&var, &Lin::constant(lo.clone()))));
                 parts.push(Formula::Con(Con::ge(&Lin::constant(hi), &var)));
@@ -19393,10 +19396,22 @@ impl Scope {
         // Each name's congruence, `x == m * k + r` with `k` free, so that the projection
         // already lies in the class: otherwise the class moves an endpoint, the relation moves
         // another name's to match, and the two pass a bound back and forth without end.
+        // A name written as a progression `x == step * k + lo` above already lies in its
+        // class when the progression's class `lo mod step` is within it (their meet is the
+        // progression's class), and its row is left out: a second free name for the same
+        // stride made the solver refuse a projection with a tie (FAIL-lazy-join-random-seed,
+        // D-3 of `l01_39_reduced_product::pendants::REVIEWED_PARTS`: `c` in {0, 2} took
+        // `c == 2 * k` and `c == 2 * j` once {0, 2} kept its class `0 mod 2`, and the sum
+        // `#w0` was refused). Exact: `x == step * k + lo` for some `k` gives `x ≡ lo (mod
+        // step)`, so `x` is in every class that holds the class `lo mod step`, and the left-out
+        // row holds at every point the rest allows. O(log M) for the meet, M the moduli.
         for a in &mentioned {
             if let Atom::Sym(n) = a
                 && let Congruence::Class { modulus, residue } = &self.get(n).cell.congruence.element
                 && *modulus > Num::ONE
+                && !progressions
+                    .get(a)
+                    .is_some_and(|p| p.meet(&self.get(n).cell.congruence.element) == *p)
             {
                 let k = Lin::atom(Atom::Sym(format!("{n} mod").into()));
                 let rhs = k

@@ -188,6 +188,14 @@ impl Lattice for Congruence {
                     Bottom
                 }
             }
+            // The class modulo 1 holds every integer, so the meet is the other class, without
+            // the Chinese remainder theorem below (a reduction against every integer meets it
+            // once per point set, zedc-lattice revision.rs `reduce_congruence`).
+            (Class { modulus, .. }, c) | (c, Class { modulus, .. })
+                if modulus.to_i64() == Some(1) =>
+            {
+                c.clone()
+            }
             (
                 Class {
                     modulus: m,

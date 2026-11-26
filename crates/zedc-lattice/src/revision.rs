@@ -657,8 +657,33 @@ fn pow_end(x: &Num, k: &Exponent, dir: Dir) -> End {
 }
 
 /// The reduction between an interval and a congruence (sec:constraints): each piece's
-/// endpoints move inward to the nearest members of the class, and a single value fixes the
-/// other domain.
+/// endpoints move inward to the nearest members of the class, and an interval of single
+/// points narrows the class to the least one holding them, `least mod g` for the gcd `g` of
+/// their differences (one value when there is one point), so that one set of integers has one
+/// pair of domains whichever way it was reached: the form the exact projection gives
+/// (`Classed::new`) and the canonicalizer's (zedc-zir `Domain::normal`). Before
+/// FAIL-lazy-join-random-seed only one point fixed the class, and `m` in `{1, 3}` kept every
+/// integer as its class when a test on `m` alone narrowed it, but `1 mod 2` when a projection
+/// wrote it, so two scopes holding the same set compared unequal.
+///
+/// Proof that the class is the least one holding the reduced interval `x`, and that a second
+/// reduction changes nothing. The gcd is [`IntervalSet::point_spacing`]'s (proved there). `v
+/// mod g` for the least point `v` holds every point `w`, as `g | w - v`. A class `r mod m`
+/// holding them all has `m | w - v` for each `w` (two members of one class differ by a
+/// multiple of `m`), so `m | g`, and every member `v + g·t` of `v mod g` is `v + m·(g/m)·t`,
+/// in `r mod m`: `v mod g` is the least. (This proof and the walk it replaces were zedc-zir
+/// canon/domain.rs `least_class`, which now reads the class from here.) Every
+/// point of `x` is in `c`, as `in_class` moved each end onto `c`'s members, so `c` holds them
+/// and `c.meet(v mod g)` is `v mod g`. Each end of `x` is then a member of the new class, so
+/// `in_class` against it leaves `x` as it is, and the class it gives is the same. Test:
+/// `tests::a_set_of_points_narrows_the_class_to_the_least_one`.
+///
+/// Complexity tradeoff: naive version, the points walked at each reduction, `O(p)`, which a
+/// set of `k` literals 3 apart tested `k` times pays `Θ(k²)` (the case of
+/// CHECK-literal-union-spaced at [`IntervalSet::in_class`]). Used: the gcd kept at each node
+/// ([`IntervalSet::point_spacing`]), `O(log p)` for a set made from one already reduced by a
+/// change along one path, `O(1)` when the root's piece holds two integers. Given up: one more
+/// `OnceLock` a node.
 pub fn reduce_congruence(x: &IntervalSet, c: &Congruence) -> (IntervalSet, Congruence) {
     let Congruence::Class {
         modulus: m,
@@ -679,6 +704,10 @@ pub fn reduce_congruence(x: &IntervalSet, c: &Congruence) -> (IntervalSet, Congr
     let c = match x.bounds() {
         None => Congruence::Bottom,
         Some((Fin(a), Fin(b))) if a == b => c.meet(&Congruence::single(a.clone())),
+        Some((Fin(a), Fin(_))) => match x.point_spacing() {
+            Some(g) if g != Num::ONE => c.meet(&Congruence::new(g, a.clone())),
+            _ => c.clone(),
+        },
         Some(_) => c.clone(),
     };
     (x, c)
@@ -1060,6 +1089,75 @@ mod tests {
         assert_eq!(at(&Op::Div, &End::of(-5), &NegInf, Up), End::of(1));
         assert_eq!(at(&Op::Div, &five, &End::of(0), Down), NegInf);
         assert_eq!(at(&Op::Div, &PosInf, &End::of(0), Up), PosInf);
+    }
+
+    /// An interval of single points narrows the class to the least one holding them, the
+    /// gcd of their differences, whichever class it met: `{1, 3}` gives `1 mod 2` against
+    /// every integer (FAIL-lazy-join-random-seed: a test on `m` alone kept every integer, and
+    /// a projection wrote `1 mod 2`), the points left after the class removed some, and a
+    /// second reduction changes nothing. A piece of two integers or an infinite end keeps the
+    /// class.
+    #[test]
+    fn a_set_of_points_narrows_the_class_to_the_least_one() {
+        let pts = |vs: &[i64]| {
+            vs.iter().fold(IntervalSet::empty(), |s, &v| {
+                s.join(&IntervalSet::single(v))
+            })
+        };
+        let every = Congruence::new(1, 0);
+        assert_eq!(
+            reduce_congruence(&pts(&[1, 3]), &every),
+            (pts(&[1, 3]), Congruence::new(2, 1))
+        );
+        assert_eq!(
+            reduce_congruence(&pts(&[1, 5, 9]), &every).1,
+            Congruence::new(4, 1)
+        );
+        // 5 and 6 are not 1 mod 3, so 1, 7 and 13 remain, 1 mod 6.
+        assert_eq!(
+            reduce_congruence(&pts(&[1, 5, 6, 7, 13]), &Congruence::new(3, 1)),
+            (pts(&[1, 7, 13]), Congruence::new(6, 1))
+        );
+        // Coprime differences give every integer back.
+        assert_eq!(reduce_congruence(&pts(&[0, 2, 5]), &every).1, every);
+        let wide = pts(&[1, 3]).join(&IntervalSet::of(9, 10));
+        assert_eq!(
+            reduce_congruence(&wide, &every),
+            (wide.clone(), every.clone())
+        );
+        let open = pts(&[1]).join(&IntervalSet::range(End::of(5), PosInf));
+        assert_eq!(reduce_congruence(&open, &every).1, every);
+        for (x, c) in [
+            (pts(&[-6, 0, 9, 21]), every.clone()),
+            (pts(&[2, 5, 8, 9, 14]), Congruence::new(3, 2)),
+        ] {
+            let (x1, c1) = reduce_congruence(&x, &c);
+            assert_eq!(
+                reduce_congruence(&x1, &c1),
+                (x1.clone(), c1.clone()),
+                "{x} {c:?}"
+            );
+        }
+    }
+
+    /// The input of the bench `reductions_of_a_growing_set_of_points_scale` (l01_24 scaling),
+    /// small: the points `3i + 1` joined one at a time at the top, each set reduced against
+    /// every integer, give `1 mod 3` from two points on (one point gives its own value).
+    /// Without FAIL-lazy-join-random-seed's fix every set of two points or more kept every
+    /// integer as its class, so the bench's cost over that base is the cost of this answer.
+    #[test]
+    fn a_set_grown_one_point_at_a_time_has_its_least_class_after_each_join() {
+        let every = Congruence::new(1, 0);
+        let mut grown = IntervalSet::empty();
+        for i in 0..64i64 {
+            grown = grown.join(&IntervalSet::single(3 * i + 1));
+            let want = if i == 0 {
+                Congruence::single(Num::from(1))
+            } else {
+                Congruence::new(3, 1)
+            };
+            assert_eq!(reduce_congruence(&grown, &every).1, want, "{i} joins");
+        }
     }
 
     /// The reductions with a fact that holds nothing, the bottom congruence, and with one

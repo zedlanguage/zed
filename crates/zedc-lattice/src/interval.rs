@@ -190,6 +190,10 @@ struct Node {
     /// A modulus `m > 1` and residue `r` such that every finite end of the subtree's pieces is
     /// `r` modulo `m`: set by the first [`in_class`] that finds it so.
     in_class: OnceLock<(Num, Num)>,
+    /// The gcd of the differences of the subtree's members: 0 for one point, 1 when a piece
+    /// holds two integers or more: set by the first [`spacing`] that asks for it, which is
+    /// outside tests never for a node lower than [`SPACING_KEPT_FROM`].
+    spacing: OnceLock<Num>,
     /// The hash of the subtree's pieces in order, `hash.h = Σ h_i · R^(count - 1 - i)` modulo
     /// `P`, with `hash.pow = R^count` modulo `P`.
     hash: PolyHash,
@@ -260,6 +264,7 @@ fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
         gap: OnceLock::new(),
         members: OnceLock::new(),
         in_class: OnceLock::new(),
+        spacing: OnceLock::new(),
         hash,
     })
 }
@@ -296,6 +301,238 @@ fn members(n: &Node) -> &Option<Num> {
         }
         Some(c)
     })
+}
+
+/// The gcd of the differences of the members of `n`'s subtree ([`Node::spacing`]), computed
+/// for the nodes that do not hold it yet and kept in them, lazily for the reason [`gap`] gives.
+///
+/// Proof that it is that gcd, `G(S)` for the members `S` of the subtree, with `gcd(0, d) =
+/// |d|`, so that the gcd of no differences is 0 (the `gcd` of `Num` is at least 0).
+/// (a) A set `S` lies in one class `a + gℤ`, `a ∈ S`, exactly when `g | s - a` for every `s`
+///     in `S`: `s ∈ a + gℤ` means `s - a = g·t` for an integer `t`. Two members of `a + gℤ`
+///     differ by a multiple of `g`, so then `g` divides every difference `s - s'`, and
+///     conversely `g | s - a` for each `s` puts `S` in `a + gℤ`. The least class holding `S`
+///     is `a + Gℤ` for the greatest such `g` in the order of divisibility, `G(S)`, the gcd of
+///     every difference `s - s'`.
+/// (b) `G(S)` is the gcd of the consecutive differences `s_{i+1} - s_i` of `S` in sorted
+///     order. Write `D` for their gcd. Each consecutive difference is one of the differences,
+///     all of which `G(S)` divides, so `G(S) | D`; and each difference `s_j - s_i`, `i < j`, is the sum of the consecutive
+///     ones from `i` to `j`, each a multiple of `D`, so `D | G(S)`. Both are at least 0, so
+///     they are equal.
+/// (c) A node holds, in order, its left subtree `L`, its piece, and its right subtree `R`, and
+///     every member of `L` is below the piece and every member of `R` above it. When the
+///     piece is one point `v`, the consecutive differences of the subtree are those of `L`,
+///     `v - last(L)` (when `L` is not empty), `first(R) - v` (when `R` is not empty), and those
+///     of `R`: sorted order joins the three in that order, and the only pairs that become
+///     neighbors across them are `last(L), v` and `v, first(R)`. By (b) the gcd of those of
+///     `L` is `G(L)` and of those of `R` is `G(R)`, so `G = gcd(G(L), v - last(L), first(R) -
+///     v, G(R))`, the fold below. `last(L)` and `first(R)` are finite: only the outer ends of
+///     a set are infinite, and they are the subtree's own ends, not `L`'s upper or `R`'s lower.
+/// (d) A piece holding two adjacent integers `u, u + 1` (two integers or more, or an infinite
+///     end) gives the difference 1, and `gcd(1, x) = 1`, so `G = 1` at once without reading
+///     the children; a child with `G = 1` gives 1 the same way through the fold.
+/// (e) One point has no difference, `G = 0`, stored as 0: the class `v + 0ℤ` is `{v}`. The
+///     empty set has no node, so nothing is stored; [`IntervalSet::point_spacing`] gives
+///     `None` for it. [`crate::revision::reduce_congruence`] reads neither: it answers an
+///     empty interval with the bottom class and one point with that point's class before it
+///     asks, and it leaves the class as it is when the gcd is 1.
+/// (f) The fold walks a subtree lower than `kept_from` point by point and reads a taller one
+///     by its kept gcd, and the answer is the same at every `kept_from`. In sorted order the
+///     points of a subtree `T` are consecutive among those of the whole, so by (b) its share
+///     of the consecutive differences is `first(T) - p` for the point `p` before it (when
+///     there is one) and the consecutive differences inside `T`, whose gcd is `G(T)` by (b).
+///     The gcd is associative and commutative, so folding `first(T) - p` and `G(T)` and then
+///     continuing from `last(T)` gives what folding every point of `T` gives. When `G(T) = 1`
+///     the answer is 1 by (d), and otherwise every piece of `T` is one point, so `first(T)`
+///     and `last(T)` are finite.
+///
+/// Test: `tests::point_spacing_is_the_gcd_of_the_differences` (the gcd of every pairwise
+/// difference, computed directly, as the reference on random sets with one point, pieces of
+/// two integers, negative points and rays to either infinity, and on sets that share
+/// subtrees, at `kept_from` 255, [`SPACING_KEPT_FROM`] and 0).
+fn spacing(n: &Node, kept_from: u8) -> &Num {
+    n.spacing.get_or_init(|| {
+        let mut f = Spacing {
+            g: Gcd::Empty,
+            last: None,
+            kept_from,
+        };
+        f.node(n);
+        f.g.num()
+    })
+}
+
+/// The least height of a node that keeps its gcd in [`Node::spacing`]; a smaller subtree is
+/// walked point by point each time its parent's gcd is computed. The answer is the same at
+/// every height (proof (f) at [`spacing`]; the test reads it at 0, this height and 255), so
+/// the height is a measured switchover between two costs: a lower one keeps more gcds and
+/// computes one at more of the new nodes a join makes, a higher one walks more points under
+/// each kept node.
+///
+/// Measured (FAIL-lazy-join-random-seed, dry-hash, Colab v5e2, release, zed_icount
+/// instructions at the smaller size of each l01_24 bench, and callgrind on the debug probes of
+/// 20,000 points past `i64`, base and the least probe's limit 238.7M and 243.5M, big-first
+/// 258.1M and 263.3M):
+///
+/// | height | reductions (40,000 joins) | least_class (200,000) | pieces_moved (180,000) | sum     | least probe | big-first probe |
+/// |--------|---------------------------|-----------------------|------------------------|---------|-------------|-----------------|
+/// | 3      | 940.4M                    | 1531.6M               | 2775.7M                | 5247.7M | 193.1M      | 212.1M          |
+/// | 4      | 972.6M                    | 1501.5M               | 2743.7M                | 5217.8M | 187.3M      | 206.3M          |
+/// | 5      | 1068.3M                   | 1486.5M               | 2727.6M                | 5282.4M | 184.0M      | 203.0M          |
+/// | 6      | 1289.8M                   | 1478.9M               | 2719.6M                | 5488.3M | 182.4M      | 201.4M          |
+/// | base   | 519.0M                    | 1751.9M               | 2620.4M                | 4891.3M | 238.7M      | 258.1M          |
+///
+/// 4 has the least sum. 3 is 3.3% cheaper on the reductions and 2.0% and 1.2% dearer on the
+/// other two; at 2 the reductions cost as at 3 (909.4M against 911.0M, an earlier run with the
+/// gcd in one word) and the other two more. Base, before the fix, computes no class for a set
+/// of points (the reductions and pieces_moved inputs, tests
+/// `revision::tests::a_set_grown_one_point_at_a_time_has_its_least_class_after_each_join` and
+/// l01_24 `classes_affine_bounds_and_powers_past_i64_on_several_pieces`), and walks every
+/// point as a `Num` for the least class.
+const SPACING_KEPT_FROM: u8 = 4;
+
+/// The gcd of the differences folded so far by [`Spacing`].
+///
+/// Complexity tradeoff: naive version, every difference and gcd as a `Num`, which costs a
+/// `Num` built, compared and dropped at each point, and for points past `i64` a `BigInt`
+/// subtraction and gcd. Used: a `u128` while every difference fits one, as for points in
+/// `i128` (`i128::abs_diff` is exact in a `u128`, and `i64::abs_diff` in a `u64` for the
+/// points of one word, the common case), with `gcd_u64` while both operands fit 64 bits and
+/// `gcd_u128` above; a `Num` from the first difference that does not. The answer is the same:
+/// the gcd of the same values. The points of the l01_24 benches past `i64` are below `2^106`.
+enum Gcd {
+    /// No difference yet.
+    Empty,
+    /// The gcd, in two words.
+    Word(u128),
+    /// The gcd, once a difference did not fit two words.
+    Wide(Num),
+}
+
+impl Gcd {
+    /// The gcd as a `Num`: 0 for no difference (e).
+    fn num(self) -> Num {
+        match self {
+            Gcd::Empty => Num::ZERO,
+            Gcd::Word(g) => {
+                i128::try_from(g).map_or_else(|_| Num::from(num_bigint::BigInt::from(g)), Num::from)
+            }
+            Gcd::Wide(g) => g,
+        }
+    }
+}
+
+/// `gcd(a, b)` of two words, by `gcd_u64` when both fit 64 bits, which is the case for the
+/// points of one word.
+fn gcd_word(a: u128, b: u128) -> u128 {
+    match (u64::try_from(a), u64::try_from(b)) {
+        (Ok(a), Ok(b)) => u128::from(zed_numtheory::gcd_u64(a, b)),
+        _ => zed_numtheory::gcd_u128(a, b),
+    }
+}
+
+/// The fold of (c) at [`spacing`], over the points of one or more subtrees in sorted order.
+struct Spacing<'a> {
+    /// The gcd of the differences folded so far.
+    g: Gcd,
+    /// The greatest point folded so far.
+    last: Option<&'a Num>,
+    /// The least height of a subtree read by its kept gcd, [`SPACING_KEPT_FROM`] but in tests.
+    kept_from: u8,
+}
+
+impl<'a> Spacing<'a> {
+    /// `x`, at least 0, folded into the gcd; `true` when the gcd is 1, which nothing after
+    /// changes (d).
+    fn join(&mut self, x: &Num) -> bool {
+        if let Some(w) = x.to_i128() {
+            return self.join_word(w.unsigned_abs());
+        }
+        let g = match std::mem::replace(&mut self.g, Gcd::Empty) {
+            Gcd::Empty => x.clone(),
+            Gcd::Word(g) => x.gcd(&Gcd::Word(g).num()),
+            Gcd::Wide(g) => g.gcd(x),
+        };
+        let one = g == Num::ONE;
+        self.g = Gcd::Wide(g);
+        one
+    }
+
+    /// [`Spacing::join`] of a value in two words.
+    fn join_word(&mut self, x: u128) -> bool {
+        match &mut self.g {
+            Gcd::Empty => self.g = Gcd::Word(x),
+            Gcd::Word(g) => *g = gcd_word(*g, x),
+            Gcd::Wide(g) => {
+                let w = g.gcd(&Gcd::Word(x).num());
+                *g = w;
+                return *g == Num::ONE;
+            }
+        }
+        matches!(self.g, Gcd::Word(1))
+    }
+
+    /// The gcd 1, by a piece of two integers or more (d).
+    fn one(&mut self) -> bool {
+        self.g = Gcd::Word(1);
+        true
+    }
+
+    /// The point `v`, above every point folded so far.
+    fn point(&mut self, v: &'a Num) -> bool {
+        let one = match self.last {
+            Some(u) => match (v.to_i64(), u.to_i64()) {
+                (Some(a), Some(b)) => self.join_word(u128::from(a.abs_diff(b))),
+                _ => match (v.to_i128(), u.to_i128()) {
+                    (Some(a), Some(b)) => self.join_word(a.abs_diff(b)),
+                    _ => self.join(&(v - u)),
+                },
+            },
+            None => false,
+        };
+        self.last = Some(v);
+        one
+    }
+
+    /// `n`'s piece and the subtrees of its children, in order.
+    fn node(&mut self, n: &'a Node) -> bool {
+        let (Fin(v), Fin(hi)) = &n.piece else {
+            return self.one();
+        };
+        if v != hi {
+            return self.one();
+        }
+        if let Some(l) = n.left.as_deref()
+            && self.subtree(l)
+        {
+            return true;
+        }
+        self.point(v) || n.right.as_deref().is_some_and(|r| self.subtree(r))
+    }
+
+    /// The points of `n`'s subtree: by its kept gcd when it is tall enough to keep one.
+    fn subtree(&mut self, n: &'a Node) -> bool {
+        if n.height < self.kept_from {
+            return self.node(n);
+        }
+        let s = spacing(n, self.kept_from);
+        if s.to_i64() == Some(1) {
+            return self.one();
+        }
+        if self.point(finite(&n.first)) {
+            return true;
+        }
+        self.last = Some(finite(&n.last));
+        self.join(s)
+    }
+}
+
+/// A finite end: one of a subtree whose pieces are all points.
+fn finite(e: &End) -> &Num {
+    let Fin(e) = e else {
+        unreachable!("only the outer ends of a set are infinite")
+    };
+    e
 }
 
 /// `t` with each piece's lower end raised and upper end lowered to the nearest integer that is
@@ -1022,6 +1259,31 @@ impl IntervalSet {
         self.root
             .as_ref()
             .map_or(Some(Num::ZERO), |n| members(n).clone())
+    }
+
+    /// The gcd `g` of the differences of the members, so that `least mod g` is the least class
+    /// holding a set whose least member is `least`: 0 for one point, 1 when a piece holds two
+    /// integers or more (an infinite end included), and `None` for the empty set (the proof at
+    /// `spacing`). Kept at each node of height [`SPACING_KEPT_FROM`] or more, and walked
+    /// below it, fewer than `2^SPACING_KEPT_FROM` points under each kept node: `O(p)` the
+    /// first time, `O(log p)` after a change to a set already asked that keeps all but a path
+    /// of its tree, `O(1)` when the root's piece is wider than one point.
+    pub fn point_spacing(&self) -> Option<Num> {
+        self.point_spacing_kept_from(SPACING_KEPT_FROM)
+    }
+
+    /// [`IntervalSet::point_spacing`] with the subtrees of height `kept_from` or more read by
+    /// their kept gcds: the same answer at every height (proof at [`spacing`]).
+    fn point_spacing_kept_from(&self, kept_from: u8) -> Option<Num> {
+        self.root.as_deref().map(|n| {
+            let mut f = Spacing {
+                g: Gcd::Empty,
+                last: None,
+                kept_from,
+            };
+            f.subtree(n);
+            f.g.num()
+        })
     }
 
     /// The least and the greatest endpoint, or `None` for the empty set: `O(1)`.
@@ -2594,6 +2856,121 @@ mod tests {
             _ = (a.members(), b.members());
             for s in [a.join(&b), a.meet(&b), a.minus(&b), a.clone()] {
                 assert_eq!(s.members(), Some(Num::from(width(&s))), "{s:?}");
+            }
+        }
+    }
+
+    /// `point_spacing` is the gcd of the differences of the members: against the gcd of every
+    /// pairwise difference, computed directly over the members, on random finite sets of
+    /// points on a random step around a random base, negative points among them, of no point,
+    /// one point or more, some with a piece of two integers (`[v, v + 1]`) added; and on sets
+    /// that joins, meets and differences made from trees already asked, whose nodes keep the
+    /// gcds read before. An infinite end gives 1.
+    #[test]
+    fn point_spacing_is_the_gcd_of_the_differences() {
+        let pairwise = |s: &IntervalSet| -> Option<Num> {
+            let mut vs: Vec<i64> = Vec::new();
+            for (lo, hi) in s.pieces() {
+                // An infinite end holds two adjacent integers.
+                let (Fin(a), Fin(b)) = (lo, hi) else {
+                    return Some(Num::ONE);
+                };
+                vs.extend(a.to_i64().unwrap()..=b.to_i64().unwrap());
+            }
+            let mut g = Num::ZERO;
+            for (i, u) in vs.iter().enumerate() {
+                for w in &vs[i + 1..] {
+                    g = g.gcd(&Num::from(w - u));
+                }
+            }
+            (!vs.is_empty()).then_some(g)
+        };
+        assert_eq!(IntervalSet::empty().point_spacing(), None);
+        assert_eq!(IntervalSet::single(-7).point_spacing(), Some(Num::ZERO));
+        assert_eq!(set(&[(1, 1), (3, 3)]).point_spacing(), Some(Num::from(2)));
+        assert_eq!(
+            set(&[(-11, -11), (-3, -3), (1, 1)]).point_spacing(),
+            Some(Num::from(4))
+        );
+        assert_eq!(set(&[(3, 4)]).point_spacing(), Some(Num::ONE));
+        assert_eq!(set(&[(1, 1), (3, 4)]).point_spacing(), Some(Num::ONE));
+        assert_eq!(
+            IntervalSet::range(End::of(0), PosInf).point_spacing(),
+            Some(Num::ONE)
+        );
+        assert_eq!(
+            set(&[(2, 2)])
+                .join(&IntervalSet::range(NegInf, End::of(-4)))
+                .point_spacing(),
+            Some(Num::ONE)
+        );
+        let (mut rng, seed) = Rng::fresh("point_spacing_is_the_gcd_of_the_differences");
+        for _ in 0..300 {
+            let mut make = || {
+                let step = rng.int(1, 12);
+                let base = rng.int(-50, 50);
+                let mut s = (0..rng.int(0, 40))
+                    .map(|_| base + step * rng.int(-20, 20))
+                    .fold(IntervalSet::empty(), |s, v| s.join(&IntervalSet::single(v)));
+                if rng.below(6) == 0 {
+                    let v = rng.int(-300, 300);
+                    s = s.join(&IntervalSet::of(v, v + 1));
+                }
+                // A ray below or above every point, so that a subtree tall enough to keep its
+                // gcd can begin or end at an infinite end.
+                match rng.below(8) {
+                    0 => s = s.join(&IntervalSet::range(NegInf, End::of(-2000))),
+                    1 => s = s.join(&IntervalSet::range(End::of(2000), PosInf)),
+                    _ => {}
+                }
+                s
+            };
+            let (a, b) = (make(), make());
+            _ = (a.point_spacing(), b.point_spacing());
+            for s in [a.join(&b), a.meet(&b), a.minus(&b), b.minus(&a), a.clone()] {
+                let want = pairwise(&s);
+                // The answer does not depend on the height from which subtrees keep their gcd:
+                // none (a walk over every point, which keeps nothing), `SPACING_KEPT_FROM`
+                // (which keeps the gcds of the tall subtrees, each by a walk below the
+                // height), and every node (which keeps the rest and reads the tall ones).
+                for h in [u8::MAX, SPACING_KEPT_FROM, 0] {
+                    let got = s.point_spacing_kept_from(h);
+                    assert_eq!(got, want, "seed {seed}, height {h}: {s:?}");
+                }
+                // The image `k·x + c` of a set of points, past `i64` or across its ends, so
+                // that differences and gcds leave a machine word: its gcd is `k` times.
+                let Some(pts) = s
+                    .pieces()
+                    .map(|(lo, hi)| match (lo, hi) {
+                        (Fin(a), Fin(b)) if a == b => a.to_i64(),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<i64>>>()
+                else {
+                    continue;
+                };
+                let two = |e: u32| Num::from(num_bigint::BigInt::from(1) << e);
+                for (k, c) in [
+                    (Num::ONE, two(70)),
+                    (Num::from(3), Num::from(i128::from(i64::MAX) - 150)),
+                    (Num::ONE, Num::from(i128::from(i64::MIN) + 150)),
+                    (Num::from((1i128 << 64) + 1), Num::from(-(1i128 << 66))),
+                    // Across the ends of `i128` and past them, where a difference or the gcd
+                    // leaves two words.
+                    (Num::from(5), Num::from(i128::MAX - 300)),
+                    (Num::ONE, Num::from(i128::MIN + 150)),
+                    (&two(70) + &Num::ONE, two(130)),
+                ] {
+                    let image = pts.iter().fold(IntervalSet::empty(), |t, &x| {
+                        let v = Fin(&(&k * &Num::from(i128::from(x))) + &c);
+                        t.join(&IntervalSet::range(v.clone(), v))
+                    });
+                    let want = want.as_ref().map(|g| g * &k);
+                    for h in [u8::MAX, SPACING_KEPT_FROM, 0] {
+                        let got = image.point_spacing_kept_from(h);
+                        assert_eq!(got, want, "seed {seed}, height {h}, {k}x + {c}: {s:?}");
+                    }
+                }
             }
         }
     }

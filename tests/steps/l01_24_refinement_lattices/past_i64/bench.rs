@@ -15,6 +15,9 @@ fn modulus() -> Num {
 
 /// The normal form of n offsets past `i64` (one gcd per point).
 /// TEST-bench-move-l0123, author P169: n was 2000, now 200_000; 1x 0.40 s at load 53.
+/// FAIL-lazy-join-random-seed (Colab v5e2, zed_icount): 1490.3M instructions at n = 200,000,
+/// was 1751.9M (-14.9%): the gcd of the differences in two machine words (zedc-lattice `Gcd`),
+/// where it was a `BigInt` subtraction and gcd a point.
 #[test]
 fn the_least_class_of_points_past_i64_scales_linearly() {
     let step = two_big(64);
@@ -112,6 +115,13 @@ fn differences_of_powers_by_an_exponent_of_n_bits_scale_with_its_bits() {
 
 /// The reduction of n pieces onto a class past `i64`.
 /// TEST-bench-move-l0123, author P169: n was 2000, now 180_000; 1x 0.65 s at load 38.
+/// FAIL-lazy-join-random-seed (Colab v5e2, zed_icount): 2733.0M instructions at n = 180,000,
+/// was 2620.4M (+4.3%, ratio 8.000 both). Each piece keeps one point, 2m apart, and the class
+/// is now their least one, `first mod 2m`, where the code before kept `1 mod m`
+/// (`classes_affine_bounds_and_powers_past_i64_on_several_pieces` asserts it and fails on
+/// that code). The cost is one gcd a point, of the differences in two machine words
+/// (zedc-lattice `Gcd`): about 690 instructions a point; with the differences as `BigInt`s it
+/// was 16.7%.
 #[test]
 fn pieces_moved_onto_a_class_past_i64_scale_linearly() {
     let m = modulus();

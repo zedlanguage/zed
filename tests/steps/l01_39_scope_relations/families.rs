@@ -1872,12 +1872,20 @@ fn wide_against_the_oracle() {
 /// where the cover alone had lowered seed 4 to (8, 3)) raised 16 seeds and lowered none
 /// (2026-11-18): seeds 2, 10, 16, 18, 22, 26, 36, 40, 46, 48, 50, 64, 66, 78, 86 and 98, with 4
 /// at its earlier (9, 3); each record checked by `check_sound` and every odd seed too.
-/// The sums are now (141, 129), (137, 123), (135, 125) and (138, 123): seed 108 rose from (7, 7)
-/// to (9, 9) on main (all 9 records equal to the oracle's, each checked by `check_sound`).
+/// The sums were then (141, 129), (137, 123), (135, 125) and (138, 123): seed 108 rose from
+/// (7, 7) to (9, 9) on main (all 9 records equal to the oracle's, each checked by
+/// `check_sound`). The least class of a set of points, whichever path reached the set
+/// (`IntervalSet::point_spacing` in `revision::reduce_congruence`, FAIL-lazy-join-random-seed,
+/// 2026-11-26), raised 12 seeds and lowered none: seeds 4 (9, 3), 22 (9, 6), 26 (9, 6), 32
+/// (9, 4), 40 (9, 0), 70 (9, 7), 80 (9, 5), 82 (9, 8), 86 (9, 6), 116 (9, 6), 122 (9, 0) and
+/// 126 (9, 6), each now (9, 9): their records had the oracle's ends, and lacked only the
+/// class the oracle prints (`y=[2..=2, 5..=5, 8..=8] 2 mod 3`). All 128 seeds were run and
+/// checked by `check_sound`. The sums are now (141, 141), (137, 137), (135, 135) and
+/// (138, 138): every record with the oracle's ends has the oracle's facts.
 const AUDIT_EVEN: [(usize, usize); 64] = [
     (9, 9),
     (9, 9),
-    (9, 3),
+    (9, 9),
     (9, 9),
     (9, 9),
     (9, 9),
@@ -1886,16 +1894,16 @@ const AUDIT_EVEN: [(usize, usize); 64] = [
     (9, 9),
     (9, 9),
     (8, 8),
-    (9, 6),
-    (9, 9),
-    (9, 6),
     (9, 9),
     (9, 9),
-    (9, 4),
+    (9, 9),
+    (9, 9),
+    (9, 9),
+    (9, 9),
     (6, 6),
     (9, 9),
     (9, 9),
-    (9, 0),
+    (9, 9),
     (9, 9),
     (6, 6),
     (9, 9),
@@ -1910,15 +1918,15 @@ const AUDIT_EVEN: [(usize, usize); 64] = [
     (9, 9),
     (9, 9),
     (8, 8),
-    (9, 7),
+    (9, 9),
     (9, 9),
     (9, 9),
     (9, 9),
     (7, 7),
-    (9, 5),
-    (9, 8),
     (9, 9),
-    (9, 6),
+    (9, 9),
+    (9, 9),
+    (9, 9),
     (9, 9),
     (6, 6),
     (9, 9),
@@ -1933,12 +1941,12 @@ const AUDIT_EVEN: [(usize, usize); 64] = [
     (8, 8),
     (9, 9),
     (9, 9),
-    (9, 6),
     (9, 9),
     (9, 9),
-    (9, 0),
     (9, 9),
-    (9, 6),
+    (9, 9),
+    (9, 9),
+    (9, 9),
 ];
 
 /// The audit's records of one seed drawn at random, checked for soundness, and for an even seed
@@ -1951,7 +1959,7 @@ fn audit_seeds_against_the_oracle() {
         .chunks(16)
         .map(|c| c.iter().fold((0, 0), |s, e| (s.0 + e.0, s.1 + e.1)))
         .collect();
-    assert_eq!(sums, [(141, 129), (137, 123), (135, 125), (138, 123)]);
+    assert_eq!(sums, [(141, 141), (137, 137), (135, 135), (138, 138)]);
     let (mut rng, run) = zed_tests::instances::Rng::fresh("audit seeds");
     let seed = rng.below(128) as u64;
     let r = audit(seed..seed + 1);
@@ -1993,7 +2001,10 @@ fn audit_seed_108_keeps_the_oracles_facts_in_every_record() {
 /// y its exact set {-8, -5, -2, 1, 4, 7} in one step, where the box gives [-8, 7] and then
 /// narrows it again; with one move of y the block of seven parts was never projected whole,
 /// and a stayed [-8, 8] where the whole block gives [-8, 2]: 6 records of 9. A move that
-/// leaves a hole now asks for the whole block too (`project_block`).
+/// leaves a hole now asks for the whole block too (`project_block`). Its facts were those of
+/// the oracle in 6 records of 9, the other 3 lacking only the class of a set of points; the
+/// least class of such a set, whichever path reached it (FAIL-lazy-join-random-seed), gives
+/// all 9.
 #[test]
 fn audit_seed_126_keeps_its_exact_ends() {
     let r = audit(126..127);
@@ -2003,7 +2014,7 @@ fn audit_seed_126_keeps_its_exact_ends() {
     );
     assert_eq!(
         got,
-        (9, 6),
+        (9, 9),
         "audit seed 126: records with the oracle's ends and facts"
     );
     assert_eq!(got, AUDIT_EVEN[63]);
@@ -2016,7 +2027,9 @@ fn audit_seed_126_keeps_its_exact_ends() {
 /// the block, x kept {-4, -1, 2, 5}, y {-1, 2, 5, 8} and z [0, 3], where the whole block gives
 /// x {-1, 2, 5}, y {2, 5, 8} and z [1, 3]: 8 records of 9 with the oracle's ends. A name that
 /// comes into a block with a hole made outside it now asks for the whole block too
-/// (`Block::hole_pending`).
+/// (`Block::hole_pending`). The sets of points x and y print their least class, `2 mod 3`,
+/// whichever path reached them (FAIL-lazy-join-random-seed), as the oracle prints them: the
+/// facts of all 9 records are the oracle's, where they were in 3.
 #[test]
 fn audit_seed_4_keeps_its_exact_sets_with_the_cover() {
     let alone = zed_tests::step_helpers::l01_38_presburger::solver_alone(|| audit(4..5));
@@ -2024,7 +2037,7 @@ fn audit_seed_4_keeps_its_exact_sets_with_the_cover() {
     assert!(r[4].ends, "audit seed 4 step 4: the oracle's ends");
     assert_eq!(
         r[4].got,
-        "a=[-8..=8] x=[-1..=-1, 2..=2, 5..=5] y=[2..=2, 5..=5, 8..=8] z=[1..=3]"
+        "a=[-8..=8] x=[-1..=-1, 2..=2, 5..=5] 2 mod 3 y=[2..=2, 5..=5, 8..=8] 2 mod 3 z=[1..=3]"
     );
     assert_eq!(
         r[4].got, alone[4].got,
@@ -2036,7 +2049,7 @@ fn audit_seed_4_keeps_its_exact_sets_with_the_cover() {
     );
     assert_eq!(
         got,
-        (9, 3),
+        (9, 9),
         "audit seed 4: records with the oracle's ends and facts"
     );
     assert_eq!(got, AUDIT_EVEN[2]);
@@ -2511,7 +2524,9 @@ fn projection_shortcut_cases() {
 /// Since FAIL-preimage-threshold-hull-unrefused (the threshold solve leaves a hub of two values
 /// with a hole between its ranges to the parts) G1 and G4 give the exact x {1, 2, 4} where they
 /// gave the hull `1..=4`, and C2 the exact y {1, 3} (y = x - 1, x in {2, 4}) where it gave
-/// `1..=3`.
+/// `1..=3`. Since FAIL-lazy-join-random-seed a set of points prints its least class whichever
+/// path reached it: C2's x {2, 4} as `0 mod 2` and y {1, 3} as `1 mod 2`, C4's x {1, 4, 7} as
+/// `1 mod 3`, the same integers as before.
 const WANT_SHORTCUT_CASES: &str = "
 P1 eq-then-ne: x=[0..=1, 3..=4] y=[0..=1, 3..=4]
 P2 ne-then-eq: x=[0..=1, 3..=4] y=[0..=1, 3..=4]
@@ -2665,9 +2680,9 @@ G5 x <= 2y <= x + 1: x=[0..=4] y=[0..=2]
 E1 G5 then y >= 1: x=[1..=5] y=[1..=3]
 A26 audit seed 26 steps 0-4: a=[-8..=5] x=[-8..=3] y=[-8..=5] z=[-4..=8]
 C1 x = 2w, x = 2y + 1: bottom
-C2 x = 2w, x = y + 1: x=[2..=2, 4..=4] y=[1..=1, 3..=3] w=[1..=2]
+C2 x = 2w, x = y + 1: x=[2..=2, 4..=4] 0 mod 2 y=[1..=1, 3..=3] 1 mod 2 w=[1..=2]
 C3 x = 2w + 1, x = 2y: bottom
-C4 x = 3w + 1, x >= y: x=[1..=1, 4..=4, 7..=7] y=[0..=3] w=[0..=2]
+C4 x = 3w + 1, x >= y: x=[1..=1, 4..=4, 7..=7] 1 mod 3 y=[0..=3] w=[0..=2]
 ";
 
 mod answers;

@@ -813,6 +813,47 @@ mod a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does {
     fn seed_1_leaves_a_leaf_stale_after_a_join() {
         assert!(part([1]) > 0, "no join left a leaf stale");
     }
+
+    /// FAIL-lazy-join-random-seed: at seed 317638431778198305 the arms give `m` the points `{1,
+    /// 3}`, the eager arm with `1 mod 2` from a projection and the lazy arm, not projected,
+    /// with every integer as its class, so the join settled `m` to two products of one set.
+    /// The domain reduction now gives a set of points its least class (zedc-lattice
+    /// `reduce_congruence`), so the two agree.
+    #[test]
+    fn seed_317638431778198305_gives_m_one_class_by_either_path() {
+        part([317_638_431_778_198_305]);
+    }
+}
+
+/// A scope of one name narrowed to the points `{1, 3}` by tests on it alone gives it the class
+/// `1 mod 2`, eagerly and lazily, as a projection writing those points does
+/// (FAIL-lazy-join-random-seed): one set of integers has one product whichever way it was
+/// reached. Before the fix both kept every integer as the class.
+#[test]
+fn tests_on_one_name_leaving_two_points_give_it_their_least_class() {
+    let p = Premises::new();
+    let m: Arc<str> = "m".into();
+    for lazy in [false, true] {
+        let mut s = ints(&names(&["m"]));
+        if lazy {
+            s = s.lazy();
+        }
+        for t in [
+            prim(Prim::Ge, var("m"), int(1)),
+            prim(Prim::Le, var("m"), int(3)),
+            prim(Prim::Ne, var("m"), int(2)),
+        ] {
+            s = s.assume(&t, true, &p);
+        }
+        let got = s.get(&m);
+        let points = IntervalSet::single(1).join(&IntervalSet::single(3));
+        assert_eq!(*got.ints(), points, "lazy {lazy}");
+        assert_eq!(
+            got.cell.congruence.element,
+            zedc::store::lattice::Congruence::new(2, 1),
+            "lazy {lazy}"
+        );
+    }
 }
 
 /// Joins whose two cases keep the values of each hub, so that the stars at the hubs, stale

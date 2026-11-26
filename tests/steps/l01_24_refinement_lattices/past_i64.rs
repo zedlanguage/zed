@@ -437,13 +437,19 @@ fn classes_affine_bounds_and_powers_past_i64_on_several_pieces() {
             })
             .collect(),
     );
-    let (moved, _) = reduce_congruence(&x, &class(&m, &Num::ONE));
+    let (moved, moved_class) = reduce_congruence(&x, &class(&m, &Num::ONE));
     assert_eq!(moved.len(), count as usize);
     for i in 0..count {
         let lo = &n(MAX) + &(&m * &n(2 * i));
         let first = &lo + &(&Num::ONE - &lo).rem_euclid(&m);
         assert!(moved.contains_end(&End::Fin(first)), "piece {i}: {moved}");
     }
+    // `MAX` is not 1 mod m, so each piece, m + 1 integers long, keeps one member of the class,
+    // and the points are 2m apart: the least class holding them is `first mod 2m`, the class
+    // of the bench `pieces_moved_onto_a_class_past_i64_scale_linearly`. Before
+    // FAIL-lazy-join-random-seed the class stayed `1 mod m`.
+    let first = &n(MAX) + &(&Num::ONE - &n(MAX)).rem_euclid(&m);
+    assert_eq!(moved_class, class(&(&m * &n(2)), &first));
 }
 
 mod bench;
