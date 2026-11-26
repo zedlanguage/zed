@@ -1088,14 +1088,25 @@ impl Sweep {
                 state[x] = 1;
                 path.push(x);
                 let l = &self.links[x];
-                if l.tail == NONE || l.head == NONE || l.sides != NONE || !self.es[l.e].is_empty() {
+                // `BTreeSet::is_empty` by its path, here and below: the `imports` tool does not
+                // type indexing into an `Interner`, and would draw a bare `.is_empty()` to
+                // `Type::is_empty` in empty.rs, an import cycle (s_01f_import_graph).
+                if l.tail == NONE
+                    || l.head == NONE
+                    || l.sides != NONE
+                    || !BTreeSet::is_empty(&self.es[l.e])
+                {
                     break;
                 }
                 x = l.tail;
             }
             for &z in path.iter().rev() {
                 let l = &self.links[z];
-                if l.tail != NONE && l.head != NONE && l.sides == NONE && self.es[l.e].is_empty() {
+                if l.tail != NONE
+                    && l.head != NONE
+                    && l.sides == NONE
+                    && BTreeSet::is_empty(&self.es[l.e])
+                {
                     lengths[z] = if l.tail == carrier && kinds[l.head] == Some((false, Some(q))) {
                         Some(1)
                     } else if kinds[l.head].is_some_and(|k| k.0) {
