@@ -47,6 +47,9 @@
 //!
 //! The walks of the persistent operations keep stacks of their own; the in-place operations and
 //! the drop of a tree recurse, as deep as the tree and no deeper, so `O(log n)` expected.
+//!
+//! Module [`lazy`] splits and joins trees whose items hold maps still to apply below them, a
+//! lazy tag passed by argument, so that a whole tree moves by a map in `O(1)`.
 
 use std::borrow::Borrow;
 use std::cmp::Ordering;
@@ -643,6 +646,8 @@ where
         }
     }
 }
+
+pub mod lazy;
 
 #[cfg(test)]
 mod tests;

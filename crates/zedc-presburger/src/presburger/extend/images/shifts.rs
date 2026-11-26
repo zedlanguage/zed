@@ -157,7 +157,7 @@ impl Shift {
     fn apply(&self, set: &Intervals) -> Intervals {
         let m = &*self.m;
         let mut rest = set.clone();
-        let mut out = None;
+        let mut out = Intervals::default();
         for (i, off) in self.offs.iter().enumerate() {
             let (part, after) = intervals::cut(&rest, self.end(i));
             rest = after;

@@ -1240,6 +1240,19 @@ mod the_questions_of_a_chain_of_residue_intervals_with_no_period_scale {
         questions_scale_unit("random cuts and moves, by 2^31 - 1", 220, random_cuts_chain);
     }
 
+    // The same at 4n and 32n links, so that a tree of intervals deeper than `O(log n)` (a
+    // priority that grows along the keys makes a path) shows in the ratio. The largest size
+    // under the runner's limit: at 8n and 64n the first phase, which a count of instructions
+    // runs twice, took 20,098 ms against the 20 s limit (v5e1, 2026-11-26).
+    #[test]
+    fn random_cuts_and_moves_at_4n_and_32n() {
+        questions_scale_unit(
+            "random cuts and moves at 4n and 32n, by 2^31 - 1",
+            880,
+            random_cuts_chain,
+        );
+    }
+
     #[test]
     fn random_cuts_and_small_moves() {
         questions_scale_unit(

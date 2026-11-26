@@ -15,103 +15,61 @@ use std::sync::Arc;
 
 use super::{Atom, Con, Formula, Lin, Rel, Shared};
 use zed_collections::priority::Priorities;
+use zed_collections::treap;
 use zedc_int::int::Int;
 
-/// A treap of disjoint intervals of the base coordinate, ordered by their lower ends, each
-/// node's priority drawn once per run from its ends ([`prio_of`]), so that in a run one set of
-/// intervals has one shape whatever the order they were cut in.
-type Tree = Option<Arc<Node>>;
+/// A treap of disjoint intervals of the base coordinate, ordered by their lower ends
+/// ([`zed_collections::treap`]), each node's priority drawn once per run from its lower end
+/// ([`Hole::priority`]), so that in a run one set of intervals has one shape whatever the order
+/// they were cut in.
+type Tree = treap::Tree<Hole>;
 
-struct Node {
+/// The interval `lo..=hi` of the base coordinate, keyed by its lower end.
+#[derive(Clone)]
+struct Hole {
     lo: Int,
     hi: Int,
-    prio: u64,
-    size: usize,
-    left: Tree,
-    right: Tree,
 }
 
 /// The priorities of the holes, drawn once per run ([`zed_collections::priority`]).
 static PRIORITIES: Priorities = Priorities::new(8);
 
-/// The priority of the interval `lo..=hi` of the base coordinate: the run's random polynomial
-/// of degree 4 at a random polynomial hash of its ends ([`Priorities::hash`]; `Int`'s stream is
-/// one-to-one, so distinct intervals have distinct streams and tie with probability at most
-/// `(S + 1)/p` a pair for streams of `S` symbols). The priorities are otherwise 5-wise
-/// independent and uniform, and every node's depth is `O(log n)` in expectation for every set
-/// of holes (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
-/// doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full comment and the proof are in
-/// module [`zed_collections::priority`]), where the fixed hash this replaces had no bound for
-/// chosen intervals (COMPLEXITY.md K123). The shape is never shown: the tree is a private field of
-/// [`Holes`], and each of its reads gives one answer for every tree over the same intervals:
-/// `len` is a size, `holds` a search by key, `intervals` an in-order walk (which `merged` and
-/// `clauses` read), and `cut` splits and joins by key, so the intervals it leaves depend only
-/// on the intervals it was given. So the priorities choose the cost alone.
-fn prio_of(lo: &Int, hi: &Int) -> u64 {
-    PRIORITIES.hash(&(lo, hi))
-}
+impl treap::Item for Hole {
+    type Key = Int;
+    type Sum = ();
 
-fn size(t: &Tree) -> usize {
-    t.as_ref().map_or(0, |n| n.size)
-}
-
-/// The node of `lo..=hi` with the priority `prio` over `left` and `right`.
-fn node(lo: Int, hi: Int, prio: u64, left: Tree, right: Tree) -> Tree {
-    let size = size(&left) + size(&right) + 1;
-    Some(Arc::new(Node {
-        lo,
-        hi,
-        prio,
-        size,
-        left,
-        right,
-    }))
-}
-
-/// The intervals of `t` whose lower end is below `k`, and the others. O(log n) expected,
-/// copying the path it walks.
-fn split(t: &Tree, k: &Int) -> (Tree, Tree) {
-    let Some(n) = t else {
-        return (None, None);
-    };
-    let again = |left: Tree, right: Tree| node(n.lo.clone(), n.hi.clone(), n.prio, left, right);
-    match n.lo < *k {
-        true => {
-            let (a, b) = split(&n.right, k);
-            (again(n.left.clone(), a), b)
-        }
-        false => {
-            let (a, b) = split(&n.left, k);
-            (a, again(b, n.right.clone()))
-        }
+    fn key(&self) -> &Int {
+        &self.lo
     }
-}
 
-/// The intervals of `a` and then of `b`, every one of `a` below every one of `b`. O(log n)
-/// expected.
-fn join(a: Tree, b: Tree) -> Tree {
-    match (a, b) {
-        (None, t) | (t, None) => t,
-        (Some(x), Some(y)) => match x.prio >= y.prio {
-            true => {
-                let right = join(x.right.clone(), Some(y));
-                node(x.lo.clone(), x.hi.clone(), x.prio, x.left.clone(), right)
-            }
-            false => {
-                let left = join(Some(x), y.left.clone());
-                node(y.lo.clone(), y.hi.clone(), y.prio, left, y.right.clone())
-            }
-        },
+    /// The priority of the interval of lower end `lo`: the run's random polynomial of degree 4
+    /// at a random polynomial hash of `lo` ([`Priorities::hash`]; `Int`'s stream is one-to-one,
+    /// and the intervals of one tree are disjoint, so they have distinct lower ends, distinct
+    /// streams, and tie with probability at most `(S + 1)/p` a pair for streams of `S`
+    /// symbols). The priorities are otherwise 5-wise independent and uniform, and every node's
+    /// depth is `O(log n)` in expectation for every set of holes (Seidel and Aragon, "Randomized
+    /// search trees", Algorithmica 16, 1996, doi:10.1007/BF01940876, Theorem 3.3 and section 6;
+    /// the full comment and the proof are in module [`zed_collections::priority`]), where the
+    /// fixed hash this replaces had no bound for chosen intervals (COMPLEXITY.md K123). The
+    /// shape is never shown: the tree is a private field of [`Holes`], and each of its reads
+    /// gives one answer for every tree over the same intervals: `len` is a size, `holds` a
+    /// search by key, `intervals` an in-order walk (which `merged` and `clauses` read), and
+    /// `cut` splits and joins by key, so the intervals it leaves depend only on the intervals it
+    /// was given. So the priorities choose the cost alone.
+    fn priority(&self) -> u64 {
+        PRIORITIES.hash(&self.lo)
     }
+
+    fn sum(&self, _: Option<&()>, _: Option<&()>) {}
 }
 
 /// The last interval of `t`.
-fn last(t: &Tree) -> Option<&Node> {
+fn last(t: &Tree) -> Option<&Hole> {
     let mut n = t.as_deref()?;
-    while let Some(r) = n.right.as_deref() {
+    while let Some(r) = n.right().as_deref() {
         n = r;
     }
-    Some(n)
+    Some(n.item())
 }
 
 /// The holes over one atom: intervals of integers it lies outside of.
@@ -143,7 +101,7 @@ impl Holes {
 
     /// The number of disjoint intervals kept.
     pub(super) fn len(&self) -> usize {
-        size(&self.tree)
+        treap::len(&self.tree)
     }
 
     /// The hole `lo..=hi` added, merged with those it meets or touches. O(log n) expected.
@@ -170,22 +128,25 @@ impl Holes {
         };
         let wide = &self.scale.abs() - &Int::ONE;
         let (mut p, mut q) = (&p - &wide, &q + &wide);
-        let (mut below, rest) = split(&self.tree, &p);
+        let (mut below, _, _) = treap::split(&self.tree, &p);
         if let Some(n) = last(&below)
             && n.hi >= &p - &Int::ONE
         {
             let l = n.lo.clone();
             q = q.max(n.hi.clone());
-            below = split(&below, &l).0;
+            below = treap::split(&below, &l).0;
             p = l;
         }
-        let (met, above) = split(&rest, &(&q + &Int::from(2)));
-        if let Some(n) = last(&met) {
+        // The intervals of lower end `q + 1` and below, the last met, and those above. The
+        // last one at or below `q + 1` is the last met if any interval has its lower end in
+        // `p..=q + 1`; otherwise it lies below `p` and is either the one merged above, whose
+        // `hi` is already in `q`, or one that ends below `p - 1`, so the `max` keeps `q`.
+        let (at_most, at, above) = treap::split(&self.tree, &(&q + &Int::ONE));
+        if let Some(n) = at.map(|n| n.item()).or_else(|| last(&at_most)) {
             q = q.max(n.hi.clone());
         }
-        let prio = prio_of(&p, &q);
-        let one = node(p, q, prio, None, None);
-        self.tree = join(join(below, one), above);
+        let one = treap::insert(&None, Hole { lo: p, hi: q });
+        self.tree = treap::join(treap::join(below, one), above);
     }
 
     /// Whether `y` lies in a hole. O(log n) expected.
@@ -193,9 +154,10 @@ impl Holes {
         let s = &(&self.scale * y) + &self.shift;
         let mut t = self.tree.as_deref();
         while let Some(n) = t {
-            t = match (s.cmp(&n.lo), s.cmp(&n.hi)) {
-                (Ordering::Less, _) => n.left.as_deref(),
-                (_, Ordering::Greater) => n.right.as_deref(),
+            let h = n.item();
+            t = match (s.cmp(&h.lo), s.cmp(&h.hi)) {
+                (Ordering::Less, _) => n.left().as_deref(),
+                (_, Ordering::Greater) => n.right().as_deref(),
                 _ => return true,
             };
         }
@@ -214,18 +176,7 @@ impl Holes {
     /// The holes as intervals of `y`, in increasing order, those adjacent joined. Time of the
     /// intervals.
     pub(super) fn intervals(&self) -> Vec<(Int, Int)> {
-        let mut base: Vec<(&Int, &Int)> = Vec::with_capacity(self.len());
-        let mut stack: Vec<&Node> = Vec::new();
-        let mut t = self.tree.as_deref();
-        while t.is_some() || !stack.is_empty() {
-            while let Some(n) = t {
-                stack.push(n);
-                t = n.left.as_deref();
-            }
-            let n = stack.pop().expect("a node");
-            base.push((&n.lo, &n.hi));
-            t = n.right.as_deref();
-        }
+        let base: Vec<(&Int, &Int)> = treap::iter(&self.tree).map(|h| (&h.lo, &h.hi)).collect();
         let (c, d) = (&self.scale, &self.shift);
         // The values `y` with `p <= c * y + d <= q`.
         let ys = |p: &Int, q: &Int| match c.is_positive() {

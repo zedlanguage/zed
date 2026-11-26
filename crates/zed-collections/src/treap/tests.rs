@@ -240,3 +240,156 @@ fn a_large_treap_is_dropped_on_a_small_stack() {
         drop(t);
     });
 }
+
+/// An item of a tree moved by lazy shifts: its key, a shift still to add to the keys below it,
+/// and a number of its own, which fixes its priority. Its summary is the largest key of its
+/// subtree, which depends on the shift: the children's summaries are read under it.
+#[derive(Clone, Debug)]
+struct Sh {
+    key: i64,
+    off: i64,
+    id: u64,
+}
+
+impl Item for Sh {
+    type Key = i64;
+    type Sum = i64;
+    fn key(&self) -> &i64 {
+        &self.key
+    }
+    fn priority(&self) -> u64 {
+        zed_hash::mix(self.id)
+    }
+    fn sum(&self, left: Option<&i64>, right: Option<&i64>) -> i64 {
+        let below = left.into_iter().chain(right).map(|s| s + self.off);
+        below.fold(self.key, i64::max)
+    }
+}
+
+struct Shifts;
+
+use lazy::Lazy;
+
+impl Lazy<Sh> for Shifts {
+    fn pending(&self, item: &Sh) -> bool {
+        item.off != 0
+    }
+    fn under(&self, parent: &Sh, child: &Sh) -> Sh {
+        Sh {
+            key: child.key + parent.off,
+            off: child.off + parent.off,
+            id: child.id,
+        }
+    }
+    fn cleared(&self, item: &Sh) -> Sh {
+        Sh { off: 0, ..*item }
+    }
+}
+
+/// `t` with `d` added to every key: its root's item mapped.
+fn shifted(t: &Tree<Sh>, d: i64) -> Tree<Sh> {
+    let n = t.as_deref()?;
+    let by = Sh {
+        key: 0,
+        off: d,
+        id: 0,
+    };
+    let item = Shifts.under(&by, &n.item);
+    Some(lazy::mapped(n, item))
+}
+
+/// The current keys and numbers of `t` in order, the shifts above each node added, and whether
+/// each node's size, summary and heap order (by priority, ties by the current key) hold.
+fn shifted_entries(t: &Tree<Sh>) -> (Vec<(i64, u64)>, bool) {
+    /// The largest current key of `t`, whose items are under the shift `off`, or `None` if a
+    /// node is unsound; its entries pushed on `out`.
+    fn walk(t: &Tree<Sh>, off: i64, out: &mut Vec<(i64, u64)>) -> Option<i64> {
+        let Some(n) = t.as_deref() else {
+            return Some(i64::MIN);
+        };
+        let key = n.item.key + off;
+        let below = off + n.item.off;
+        let left = walk(&n.left, below, out)?;
+        out.push((key, n.item.id));
+        let right = walk(&n.right, below, out)?;
+        let top = key.max(left).max(right);
+        let heap = [&n.left, &n.right]
+            .into_iter()
+            .flatten()
+            .all(|c| (c.prio, c.item.key + below) < (n.prio, key));
+        let ok = n.len == 1 + len(&n.left) + len(&n.right) && n.sum + off == top && heap;
+        ok.then_some(top)
+    }
+    let mut out = Vec::new();
+    let ok = walk(t, 0, &mut out).is_some();
+    (out, ok)
+}
+
+/// A version of [`lazy_trees_agree_with_shifted_lists`]: a tree and the list of its keys and
+/// ids, sorted by key.
+type Version = (Tree<Sh>, Vec<(i64, u64)>);
+
+#[test]
+fn lazy_trees_agree_with_shifted_lists() {
+    let mut rng = crate::seed::Rng::new(11);
+    let mut next = |m: u64| rng.below_u64(m);
+    let mut ids = 0u64;
+    // Versions of trees and the lists they hold, each sorted by key with distinct keys.
+    let mut trees: Vec<Version> = vec![(None, Vec::new())];
+    for _ in 0..3000 {
+        let i = next(trees.len() as u64) as usize;
+        let (t, want) = trees[i].clone();
+        let (t, want) = match next(4) {
+            0 => {
+                // A shift of the whole tree.
+                let d = next(41) as i64 - 20;
+                let want = want.iter().map(|&(k, id)| (k + d, id)).collect();
+                (shifted(&t, d), want)
+            }
+            1 => {
+                // A split, either side kept.
+                let k = next(200) as i64 - 100;
+                let (a, b) = lazy::split_below(&t, &k, &Shifts);
+                let at = want.partition_point(|&(x, _)| x < k);
+                match next(2) {
+                    0 => (a, want[..at].to_vec()),
+                    _ => (b, want[at..].to_vec()),
+                }
+            }
+            2 => {
+                // A join with another version, shifted past this one's last key.
+                let (u, other) = trees[next(trees.len() as u64) as usize].clone();
+                let top = want.last().map_or(0, |&(k, _)| k);
+                let bottom = other.first().map_or(0, |&(k, _)| k);
+                let d = top - bottom + 1 + next(3) as i64;
+                let mut want = want.clone();
+                want.extend(other.iter().map(|&(k, id)| (k + d, id)));
+                (lazy::join(t, shifted(&u, d), &Shifts), want)
+            }
+            _ => {
+                // A new item past the last key.
+                ids += 1;
+                let key = want.last().map_or(0, |&(k, _)| k) + 1 + next(3) as i64;
+                let one = lazy::single(Sh {
+                    key,
+                    off: 0,
+                    id: ids,
+                });
+                let mut want = want.clone();
+                want.push((key, ids));
+                (lazy::join(t, one, &Shifts), want)
+            }
+        };
+        let (got, sound) = shifted_entries(&t);
+        assert!(sound, "sizes, summaries and heap order");
+        assert_eq!(got, want);
+        trees.push((t, want));
+        if trees.len() > 40 {
+            trees.swap_remove(next(40) as usize);
+        }
+    }
+    // Every version kept still holds its list: no walk changed a node another tree shares.
+    for (t, want) in &trees {
+        assert_eq!(&shifted_entries(t).0, want);
+    }
+}
