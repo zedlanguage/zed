@@ -73,69 +73,13 @@ use zed_numtheory::BitLen;
 use zed_numtheory::m61::{self, P as MERSENNE_61};
 use zed_numtheory::{Montgomery64, factor, is_prime, mul_mod, pow_mod_big, rem_big_u64};
 
-/// How [`Rat::round_whole`] rounds a number to a whole one: the rules of `round` (ties to
-/// even), `round(x, ties: #away)`, `floor`, `ceil`, `trunc` and `awayFromZero` (DESIGN.md
-/// sec:facets, "Rounding to a whole number").
-// Source of the two names to the nearest: IEEE Std 754-2019, "IEEE Standard for Floating-Point
-// Arithmetic", IEEE, 2019, doi:10.1109/IEEESTD.2019.8766229, section 4.3, "Rounding-direction
-// attributes". Sketch: roundTiesToEven delivers the representable value nearest the exact
-// result and, of two equally near, the one with an even least significant digit;
-// roundTiesToAway delivers, of two equally near, the one larger in magnitude. Here the
-// "representable values" are the whole numbers, so even means an even whole number. Read
-// 2026-11-20 in the 2019 text (the copy named at the `sqrt` rule in `eval.rs`), 4.3.1,
-// "Rounding-direction attributes to nearest", p. 27: roundTiesToEven, "the floating-point
-// number nearest to the infinitely precise result shall be delivered; if the two nearest
-// floating-point numbers bracketing an unrepresentable infinitely precise result are equally
-// near, the one with an even least significant digit shall be delivered; if that is not
-// possible, the one larger in magnitude shall be delivered"; roundTiesToAway, "if the two
-// nearest ... are equally near, the one with larger magnitude shall be delivered". The case
-// "if that is not possible" (two odd neighbors, for one-digit precision) cannot happen for
-// whole numbers, of which one of any two neighbors is even. And 4.3.2, "Directed rounding
-// attributes", p. 27: roundTowardPositive gives the number "closest to and no less than the
-// infinitely precise result", roundTowardNegative the one "closest to and no greater than"
-// it, roundTowardZero the one "closest to and no greater in magnitude than" it; these are
-// `ceil`, `floor` and `trunc` here.
-//
-// Every one of these rules is monotone: x <= y gives round(x) <= round(y). The standard
-// states this only for conversions to and from character sequences (5.12.2, NOTE 1, p. 46,
-// "Conversions are monotonic"), so here is the proof from the definitions above, for any
-// set of representable values (floats with their infinities, or whole numbers). Directed:
-// roundTowardNegative(x) is the greatest value <= x, and every value <= x is <= y, so it is
-// <= roundTowardNegative(y); roundTowardPositive is the mirror image, and roundTowardZero is
-// roundTowardNegative on x >= 0 and roundTowardPositive on x <= 0, both monotone and both 0
-// at 0. To nearest: let r = round(x), s = round(y), x <= y, and suppose s < r. Let f(t) =
-// |t - s| - |t - r|; for s < r it is -(r - s) up to s, 2t - r - s between, r - s from r on,
-// so f does not decrease. r nearest to x gives f(x) >= 0, s nearest to y gives f(y) <= 0, so
-// 0 <= f(x) <= f(y) <= 0 and f(x) = f(y) = 0, which forces x = y = (r + s) / 2: one tie
-// broken two ways. But both tie rules pick one of the two neighbors by a fixed property (even
-// digit, or larger magnitude), so they pick the same one, r = s, a contradiction. Overflow:
-// 4.3.1 sends every result of magnitude at least b^emax (b - b^(1-p) / 2) to the infinity of
-// its sign. If y is at or past that bound, round(y) = +inf is above every value; if x is at
-// or past its negative, round(x) = -inf is below every value; otherwise x and y both lie
-// inside, where the nearest values are finite and the proof above applies. (Whole numbers
-// have no largest one, so this case does not arise for `Rat::round_whole`.) zedc-lattice
-// `grade.rs` relies on this proof.
-// Departure: the
-// standard rounds to a float format; `Rat::round_whole` rounds an exact rational to an integer,
-// so no precision or overflow enters. Tests: `l01_18_scalar_interpreter::rounding`, which
-// checks ties at both signs under both rules (it catches a tie sent the wrong way, not a
-// misreading of the standard shared by the test and the code). Other sites that name these
-// rules point here.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Rounding {
-    /// To the nearest, a tie to the even neighbor (IEEE 754 roundTiesToEven).
-    TiesEven,
-    /// To the nearest, a tie away from zero (IEEE 754 roundTiesToAway).
-    TiesAway,
-    /// Toward −∞.
-    Floor,
-    /// Toward +∞.
-    Ceil,
-    /// Toward zero.
-    Trunc,
-    /// Away from zero.
-    AwayFromZero,
-}
+/// How [`Rat::round_whole`] and [`Rat::round_to_scale`] round: the six rules of DESIGN.md
+/// sec:facets, "Rounding to a whole number".
+// Moved to zed-bignum `round.rs` with LIB-rat-round-scale, with its full comment (the IEEE
+// 754-2019 citation, section 4.3, and the proof that every rule is monotone, which zedc-lattice
+// `grade.rs` relies on). The sites that name "zed-kernel `num.rs`, enum `Rounding`" for that
+// comment land here and read it there.
+pub use bignum::round::Rounding;
 
 /// An exact number `num/den * prod p^e`: `num/den` reduced with `den` positive, the primes
 /// `p` distinct and in increasing order, each `e` nonzero, and `num` and `den` divisible by
@@ -2538,25 +2482,43 @@ impl Rat {
         let q = n.div_euclid(&d)?;
         let r = n.rem_euclid(&d)?;
         let half = r.twice_integer().try_cmp(&d)?;
-        let neg = self.is_negative();
-        let up = match rule {
-            Rounding::Floor => false,
-            Rounding::Ceil => true,
-            Rounding::Trunc => neg,
-            Rounding::AwayFromZero => !neg,
-            Rounding::TiesEven => match half {
-                Ordering::Equal => !q.is_even(),
-                o => o == Ordering::Greater,
-            },
-            Rounding::TiesAway => match half {
-                Ordering::Equal => !neg,
-                o => o == Ordering::Greater,
-            },
-        };
-        match up {
+        // The table of the six rules, shared with zed-bignum `round::div_round` (its proof at
+        // `Rounding::rounds_up`).
+        match rule.rounds_up(self.is_negative(), !q.is_even(), half) {
             true => q.add(&Rat::int(BigInt::one())),
             false => Ok(q),
         }
+    }
+
+    /// It rounded by `rule` to a multiple of `10^-scale`: to `scale` decimal places for a
+    /// positive `scale`, to a whole number at 0 ([`Rat::round_whole`]), and to a multiple of
+    /// `10^|scale|` for a negative one (`1250` to scale `-2` is `1200` under `TiesEven`). No
+    /// rule is a default (plan row LIB-rat-round-scale, from Pith's `decimal.div`, which takes
+    /// both; PITH-VS-ZED.md). [`TooLarge`] as [`Rat::round_whole`] and [`Rat::mul`].
+    ///
+    /// Method: `round_whole(x 10^scale) 10^-scale`, exact since multiplying by `10^scale` maps
+    /// the multiples of `10^-scale` one to one onto the whole numbers, preserving order and
+    /// sign, so the nearest multiple, the one below, and the rest are the images of the
+    /// nearest whole number, the one below, and so on; a tie maps to a tie, and the multiple
+    /// `m 10^-scale` is even in the sense of `TiesEven` exactly when `m` is (the rule of
+    /// Java's `BigDecimal.setScale` and Python's `Decimal.quantize`, which read "even" on the
+    /// last digit kept, the parity of `m`).
+    ///
+    /// Complexity tradeoff: none given up. `10^scale` is kept as the powers `2^scale 5^scale`
+    /// ([`Rat::from_kept`]), so the two products only add exponents and build nothing; the
+    /// cost is that of [`Rat::round_whole`] on `x 10^scale`, whose quotient has about
+    /// `scale log2 10` bits more than `x`'s whole part, which the answer must hold. Scaling
+    /// test: `bench::rounding_to_a_scale_scales`.
+    pub fn round_to_scale(&self, scale: &BigInt, rule: Rounding) -> Result<Rat, TooLarge> {
+        if scale.is_zero() {
+            return self.round_whole(rule);
+        }
+        let ten_to = |s: BigInt| {
+            Rat::from_kept(BigInt::one(), BigInt::one(), vec![(2, s.clone()), (5, s)])
+                .expect("2^s 5^s with s nonzero is in the kept form")
+        };
+        let whole = self.mul(&ten_to(scale.clone()))?.round_whole(rule)?;
+        whole.mul(&ten_to(-scale))
     }
 
     /// The nearest `f64`, ties to even: correctly rounded from the exact value, without

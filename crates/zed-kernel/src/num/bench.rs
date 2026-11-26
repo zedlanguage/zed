@@ -601,3 +601,33 @@ fn the_merges_of_kept_powers_scale_with_their_atoms() {
         }
     });
 }
+
+/// LIB-rat-round-scale: [`Rat::round_to_scale`] of `-a/b`, `a` of n words and `b` the fixed
+/// number of 1024 words of the remainder benches above, to 30 places under three rules.
+/// `10^30` is kept as `2^30 5^30`, so each is one product that adds exponents,
+/// [`Rat::round_whole`] (a Euclidean quotient and remainder by the 1024-word `b`, the blocks
+/// of `fast::div_rem_blocks`, O(n) for this divisor) and one product back, which reduces the
+/// n-word quotient by `2^30 5^30`, O(n). A denominator of n words would make `Rat::new`'s
+/// reduction a gcd of wide numbers, O(M(n) log n), over 60 s at 8n (the first run, at 2,048
+/// and 16,384 words, ran past 60 s), whose scaling test is row RADIX-nlog2-10_5's.
+#[test]
+fn rounding_to_a_scale_scales() {
+    let n = 1 << 14;
+    let b = BigInt::from(bench_number(1024, 9));
+    let xs = crate::scaling::inputs(n, |m| {
+        let a = -BigInt::from(bench_number(m, 5));
+        Rat::new(a, b.clone()).expect("nonzero")
+    });
+    let scale = BigInt::from(30);
+    let rules = [Rounding::TiesEven, Rounding::Floor, Rounding::AwayFromZero];
+    crate::scaling::check_order(
+        "an n-by-1024-word rational rounded to 30 places",
+        n,
+        1,
+        |m| {
+            for rule in rules {
+                assert!(xs[&m].round_to_scale(&scale, rule).unwrap().is_negative());
+            }
+        },
+    );
+}

@@ -40,3 +40,47 @@ fn square_roots_scale() {
         assert!(!s.is_zero() && r <= &s << 1u32);
     });
 }
+
+/// LIB-rat-round-scale: [`crate::round::div_round`] of a number of 2n words by one of n words,
+/// each rule, a negative numerator; one division by [`crate::fast::div_rem`], O(M(n)) (the
+/// tradeoff at the function).
+#[test]
+fn rounded_quotients_scale() {
+    use crate::round::{Rounding, div_round};
+    use num_bigint::BigInt;
+    let n = 1 << 12;
+    let pairs = crate::scaling::inputs(n, |m| {
+        (-BigInt::from(bench_number(2 * m, 13)), bench_number(m, 17))
+    });
+    crate::scaling::check_order(
+        "a 2n-word number divided by an n-word one and rounded",
+        n,
+        1,
+        |m| {
+            let (a, b) = &pairs[&m];
+            for rule in [Rounding::TiesEven, Rounding::Floor, Rounding::AwayFromZero] {
+                assert!(!div_round(a, b, rule).is_zero());
+            }
+        },
+    );
+}
+
+/// LIB-rat-round-scale: [`crate::round::allocate`] of a total of 64 words over n weights of one
+/// word each; n products and divisions of fixed size and a sort of the indices, O(n log n)
+/// comparisons (the tradeoff at the function), held to n log n.
+#[test]
+fn allocations_scale() {
+    use crate::round::allocate;
+    use num_bigint::BigInt;
+    let n = 1 << 12;
+    let total = BigInt::from(bench_number(64, 19));
+    let weights = crate::scaling::inputs(n, |m| {
+        (0..m as u64)
+            .map(|i| BigUint::from(i.wrapping_mul(6364136223846793005) >> 3))
+            .collect::<Vec<_>>()
+    });
+    crate::scaling::check_n_log_n("a split of a 64-word total over n weights", n, |m| {
+        let parts = allocate(&total, &weights[&m]).expect("weights");
+        assert_eq!(parts.len(), m);
+    });
+}

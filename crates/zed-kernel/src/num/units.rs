@@ -837,6 +837,65 @@ mod rat {
         );
     }
 
+    /// `round_to_scale` by each rule against [`rounded`] on `n 10^s / d` (or `n / (d 10^-s)`
+    /// for `s < 0`), scaled back, at scales -2 to 3 and 200, on [`values`], on `n / d` for `n`
+    /// in -13..=13 and `d` in 1..=8, and on `±3^101 / 2`. Then Pith's example (docs/numbers.md
+    /// at Pith 183a9199): 0.125, 0.135, 0.145 and 0.155 rounded to cents add up to 0.58 with
+    /// ties away and 0.56 with ties to even; and a negative scale, `1250` and `-1350` to
+    /// hundreds by ties to even, `1200` and `-1400`.
+    #[test]
+    fn rounding_to_a_scale_meets_each_rule() {
+        let rules = [
+            Rounding::TiesEven,
+            Rounding::TiesAway,
+            Rounding::Floor,
+            Rounding::Ceil,
+            Rounding::Trunc,
+            Rounding::AwayFromZero,
+        ];
+        let mut xs = values();
+        for n in -13..=13 {
+            for d in 1..=8 {
+                xs.push(q(n, d));
+            }
+        }
+        let half = power(3, 101).div(&int(2)).unwrap().expect("not zero");
+        xs.extend([half.neg(), half]);
+        for x in &xs {
+            let (n, d) = exact(x);
+            for s in [-2i32, -1, 0, 1, 2, 3, 200] {
+                let ten = num_traits::pow(BigInt::from(10), s.unsigned_abs() as usize);
+                for rule in rules {
+                    let want = match s >= 0 {
+                        true => (rounded(&(&n * &ten), &d, rule), ten.clone()),
+                        false => (rounded(&n, &(&d * &ten), rule) * &ten, BigInt::one()),
+                    };
+                    let got = x.round_to_scale(&BigInt::from(s), rule).unwrap();
+                    holds(&got, want, &format!("{x} to scale {s} {rule:?}"));
+                }
+            }
+        }
+        let cents = BigInt::from(2);
+        let sum = |rule: Rounding| {
+            ["0.125", "0.135", "0.145", "0.155"]
+                .iter()
+                .map(|t| dec(t).round_to_scale(&cents, rule).unwrap())
+                .fold(int(0), |a, b| a.add(&b).unwrap())
+        };
+        assert_eq!(exact(&sum(Rounding::TiesAway)), exact(&dec("0.58")));
+        assert_eq!(exact(&sum(Rounding::TiesEven)), exact(&dec("0.56")));
+        let hundreds = BigInt::from(-2);
+        let even = |t: &str| {
+            exact(
+                &dec(t)
+                    .round_to_scale(&hundreds, Rounding::TiesEven)
+                    .unwrap(),
+            )
+        };
+        assert_eq!(even("1250"), exact(&int(1200)));
+        assert_eq!(even("-1350"), exact(&int(-1400)));
+    }
+
     /// `to_f64` and `to_f32` on `n / d` small enough that the float division is the correctly
     /// rounded oracle, on decimals against `literal_f64` and `literal_f32`, and at the ends of
     /// each format: the largest finite, a value half an ulp above it (a tie, which goes to the
