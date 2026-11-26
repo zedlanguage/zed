@@ -13994,7 +13994,7 @@ impl LetPa {
     /// each input (the caller's tree keeps one per input). (3) `Tot::bounds` reads the
     /// sums and counts as `Sep::bounds` reads the terms one by one: no value wins (the sum
     /// has a value only where every term has one), then no domain, then the infinite end that
-    /// moves a bound outward ([`val_plus`]). The one difference: `Sep::bounds` stops at the
+    /// moves a bound outward (`val_plus`). The one difference: `Sep::bounds` stops at the
     /// first term with no domain or no value, so with both it may give `None` where this
     /// gives the empty set, which is also sound. Test: `l01_39a_bit_words::bench::scaling::
     /// a_chain_of_sums_under_a_test_of_each_input_reads_each_summary_from_the_one_before` and
