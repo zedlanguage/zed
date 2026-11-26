@@ -41,7 +41,11 @@ pub trait Coef: Clone + Ord {
 
 // `#[inline]` on each method: they are not generic, so without it Rust compiles them once here
 // and does not inline them into the generic routines that call them from other crates (common
-// brief item 5, 2026-11-26). COUNTS
+// brief item 5, 2026-11-26). Measured on one VM against
+// eba97bf71, in instructions at n, two runs each: omega lossless_bands 1,221.5M to 1,221.1M,
+// eliminations 60.95M to 60.95M, extend r5_diamond_unions 1,857.2M to 1,857.2M, l01_39
+// chain 1,322.4M to 1,322.1M, all within 0.05% (8n the same); the cost the item names was
+// not seen here, and the marks are kept against a later change of inlining heuristics.
 impl Coef for Int {
     const ZERO: Int = Int::ZERO;
     #[inline]

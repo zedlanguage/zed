@@ -383,6 +383,9 @@ mod plane {
     #[test]
     fn the_angle_order_is_the_order_of_atan2() {
         let (mut rng, seed) = crate::seed::Rng::fresh("the_angle_order_is_the_order_of_atan2");
+        // Seed 16148036221008483195: `atan2` put `(-18, 1)` just under a half-turn from
+        // `(18, -1)`; the opposite direction is out of the first half.
+        assert_eq!(first_half((&18i128, &-1), (&-18, &1)), Some(false));
         for _ in 0..3000 {
             let (u, v, base) = (
                 nonzero(&mut rng, 20),
@@ -426,7 +429,10 @@ mod plane {
             let got = angle_cmp_from((&ib.0, &ib.1), (&iu.0, &iu.1), (&iv.0, &iv.1));
             assert_eq!(got, Some(want), "seed {seed}: base {base:?}, {u:?} {v:?}");
             let half = first_half((&ib.0, &ib.1), (&iu.0, &iu.1));
-            let in_first = primitive(u) == primitive(base) || from(u) < std::f64::consts::PI;
+            // Exactly opposite `base` is out, though `from` may round it below π.
+            let opposite = primitive(u) == (-primitive(base).0, -primitive(base).1);
+            let in_first =
+                primitive(u) == primitive(base) || (!opposite && from(u) < std::f64::consts::PI);
             assert_eq!(half, Some(in_first), "seed {seed}: base {base:?}, {u:?}");
         }
     }

@@ -30,7 +30,11 @@ pub trait Coord: Sized + Ord {
 
 // `#[inline]` on each method: they are not generic, so without it Rust compiles them once here
 // and does not inline them into the generic routines that call them from other crates (common
-// brief item 5, 2026-11-26). COUNTS
+// brief item 5, 2026-11-26). Measured on one VM against
+// eba97bf71, in instructions at n, two runs each: omega lossless_bands 1,221.5M to 1,221.1M,
+// eliminations 60.95M to 60.95M, extend r5_diamond_unions 1,857.2M to 1,857.2M, l01_39
+// chain 1,322.4M to 1,322.1M, all within 0.05% (8n the same); the cost the item names was
+// not seen here, and the marks are kept against a later change of inlining heuristics.
 impl Coord for i128 {
     #[inline]
     fn zero() -> Self {
@@ -168,9 +172,13 @@ pub fn cramer<T: Coord>(f: (&T, &T, &T), g: (&T, &T, &T)) -> Option<(T, T, T)> {
 /// - b·w) + B·(t·u + a·w)`. A row `P·u + Q·w` is `(P·a - Q·t)·x + (P·b + Q·s)·y`
 /// ([`Basis::back`]), by putting the two coordinates in.
 pub struct Basis<T> {
+    /// The first coordinate of the direction.
     pub a: T,
+    /// The second coordinate of the direction.
     pub b: T,
+    /// The Bezout cofactor of `a`.
     pub s: T,
+    /// The Bezout cofactor of `b`.
     pub t: T,
 }
 
