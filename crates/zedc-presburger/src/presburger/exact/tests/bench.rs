@@ -580,3 +580,35 @@ fn a_stride_meeting_a_kept_piece_scales_linearly() {
     assert!(instr < 10.5, "{instr:.2}x instructions per 8x n");
     assert!(bytes < 10.5, "{bytes:.2}x bytes per 8x n");
 }
+
+/// The exact meet, union and difference of two sets with tails (zedc-lattice `classed::tails`,
+/// row CLASSED-periodic-tail) cost linear time in the answer's table: the multiples of `p` from
+/// 0 and the multiples of `q = p + 1` from 0, coprime, so each answer's table has `p·q` letters
+/// at its least period (`p = round(√n)`, so about n, and 7.99 times at 8n for n = 100 000). Each
+/// run checks each answer's step and a few members, O(1) each.
+#[test]
+fn tailed_operations_scale_with_the_table() {
+    use zedc_lattice::classed::Tail;
+    let multiples = |p: usize| {
+        let mut table = vec![false; p];
+        table[0] = true;
+        let wider = Classed::plain(IntervalSet::range(End::of(0), End::PosInf));
+        Classed::tailed(wider, None, Some(Tail::new(End::of(0), &table)))
+    };
+    let make = |n: usize| {
+        let p = (n as f64).sqrt().round() as usize;
+        (p as i64, multiples(p), multiples(p + 1))
+    };
+    crate::scaling::check_inputs("tailed_operations", 100_000, make, |(p, a, b)| {
+        let (p, q) = (*p, p + 1);
+        let (meet, join, minus) = (a.meet(b), a.join(b), a.minus(b));
+        for set in [&meet, &join, &minus] {
+            let tails = set.tails.as_deref().expect("an answer with a tail");
+            let above = tails.above.as_ref().expect("a tail above");
+            assert_eq!(above.step, Num::from(p * q));
+        }
+        assert!(meet.contains(p * q) && meet.contains(0) && !meet.contains(p));
+        assert!(join.contains(p) && join.contains(q) && !join.contains(1) && !join.contains(-p));
+        assert!(minus.contains(p) && !minus.contains(q) && !minus.contains(p * q));
+    });
+}

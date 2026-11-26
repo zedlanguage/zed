@@ -543,3 +543,229 @@ fn tailed_corners_read_their_members() {
     );
     assert!(set.contains(5) && !set.contains(11));
 }
+
+/// A set described by its parts: `down`'s values up to `b0`, the values `mid` marks between
+/// (`mid[i]` for `b0 + 1 + i`), and `up`'s values from `a0` on; a table of one letter is every
+/// value or none.
+struct Desc {
+    down: Vec<bool>,
+    b0: i64,
+    mid: Vec<bool>,
+    a0: i64,
+    up: Vec<bool>,
+}
+
+impl Desc {
+    fn has(&self, v: i64) -> bool {
+        if v >= self.a0 {
+            marks(&self.up, v)
+        } else if v <= self.b0 {
+            marks(&self.down, v)
+        } else {
+            self.mid[(v - self.b0 - 1) as usize]
+        }
+    }
+}
+
+/// A random description: tables of one letter (a quarter of them) or of both kinds, ends within
+/// `W`, and a middle of random values, of the table above run on (where the tables are equal,
+/// a set periodic everywhere), or of one class within a range (a strided piece).
+fn random_desc(rng: &mut Rng) -> Desc {
+    const W: i64 = 20;
+    let table = |rng: &mut Rng| match rng.below(4) {
+        0 => vec![rng.coin()],
+        _ => random_table(rng),
+    };
+    let up = table(rng);
+    let down = if rng.below(4) == 0 {
+        up.clone()
+    } else {
+        table(rng)
+    };
+    let a0 = rng.int(-W, W);
+    let b0 = a0 - 1 - rng.int(0, 2 * W);
+    let values = b0 + 1..a0;
+    let mid = match rng.below(4) {
+        0 => values.map(|v| marks(&up, v)).collect(),
+        1 => {
+            let (m, r) = (rng.int(2, 4), rng.int(0, 3));
+            let (x, y) = (rng.int(b0 + 1, a0), rng.int(b0 + 1, a0));
+            values
+                .map(|v| (x..=y).contains(&v) && v.rem_euclid(m) == r % m)
+                .collect()
+        }
+        _ => values.map(|_| rng.coin()).collect(),
+    };
+    Desc {
+        down,
+        b0,
+        mid,
+        a0,
+        up,
+    }
+}
+
+/// The description of `f` of the two sets, value by value: tables of the product of the
+/// lengths (a multiple of their lcm), the outer ends, the middle listed.
+fn op_desc(a: &Desc, b: &Desc, f: fn(bool, bool) -> bool) -> Desc {
+    let table = |s: &[bool], t: &[bool]| -> Vec<bool> {
+        (0..s.len() * t.len())
+            .map(|i| f(s[i % s.len()], t[i % t.len()]))
+            .collect()
+    };
+    let (b0, a0) = (a.b0.min(b.b0), a.a0.max(b.a0));
+    Desc {
+        down: table(&a.down, &b.down),
+        b0,
+        mid: (b0 + 1..a0).map(|v| f(a.has(v), b.has(v))).collect(),
+        a0,
+        up: table(&a.up, &b.up),
+    }
+}
+
+/// The table cut to its least period, by trying each divisor of its length.
+fn least(t: &[bool]) -> Vec<bool> {
+    let n = t.len();
+    let d = (1..=n)
+        .find(|d| n.is_multiple_of(*d) && (0..n).all(|i| t[i] == t[i % d]))
+        .expect("n itself");
+    t[..d].to_vec()
+}
+
+/// The one form of the described set, built value by value as zedc-presburger
+/// `exact::ended` defines it: for a table above of both kinds, `p` one past the greatest value
+/// where the set and the table differ (scanned down past `b0` by twice the product of the two
+/// tables' lengths, where two tables that differ do) and `u` the first value the table marks
+/// from `p`; none, a set periodic everywhere, one tail from `-inf`; the same below; both ends
+/// meeting, a wider set of every integer; else the values between the ends as points, with
+/// the rays.
+fn canonical(d: &Desc) -> Classed {
+    let (up, down) = (least(&d.up), least(&d.down));
+    let span = (up.len() * down.len()) as i64;
+    let (lo, hi) = (d.b0 - 2 * span - 2, d.a0 + 2 * span + 2);
+    let whole = |t: &[bool]| {
+        let top = Classed::plain(IntervalSet::top());
+        Classed::tailed(top, None, Some(Tail::new(End::NegInf, t)))
+    };
+    let u = (up.len() > 1).then(|| {
+        (lo..d.a0)
+            .rev()
+            .find(|&v| d.has(v) != marks(&up, v))
+            .map(|p| (p + 1..).find(|&u| marks(&up, u)).expect("a mark"))
+    });
+    let l = (down.len() > 1).then(|| {
+        (d.b0 + 1..=hi)
+            .find(|&v| d.has(v) != marks(&down, v))
+            .map(|q| {
+                // A table of both kinds marks a value in any run of its length.
+                (q - down.len() as i64..q)
+                    .rev()
+                    .find(|&l| marks(&down, l))
+                    .expect("a mark")
+            })
+    });
+    let (u, l) = match (u, l) {
+        (Some(None), _) => return whole(&up),
+        (_, Some(None)) => return whole(&down),
+        (u, l) => (u.flatten(), l.flatten()),
+    };
+    let tail = |t: &[bool], e: i64| Tail::new(End::of(e), t);
+    if let (Some(u), Some(l)) = (u, l)
+        && l + 1 >= u
+    {
+        let top = Classed::plain(IntervalSet::top());
+        return Classed::tailed(top, Some(tail(&down, l)), Some(tail(&up, u)));
+    }
+    let mut pieces: Vec<(End, End)> = (lo..=hi)
+        .filter(|&v| l.is_none_or(|l| v > l) && u.is_none_or(|u| v < u) && d.has(v))
+        .map(|v| (End::of(v), End::of(v)))
+        .collect();
+    match u {
+        Some(u) => pieces.push((End::of(u), End::PosInf)),
+        None if up[0] => pieces.push((End::of(d.a0), End::PosInf)),
+        None => {}
+    }
+    match l {
+        Some(l) => pieces.push((End::NegInf, End::of(l))),
+        None if down[0] => pieces.push((End::NegInf, End::of(d.b0))),
+        None => {}
+    }
+    Classed::tailed(
+        Classed::plain(IntervalSet::from_pieces(pieces)),
+        l.map(|l| tail(&down, l)),
+        u.map(|u| tail(&up, u)),
+    )
+}
+
+/// The exact meet, union and difference of sets with tails (module `tails`), on 1 500 random
+/// pairs of described sets (tails of tables up to 18 letters, so the answer's table is up to
+/// 324 before its cut; sets of one letter's tables, so sets without tails; sets periodic
+/// everywhere; strided middles), against the description of the answer built value by value:
+/// every value from 40 below the outer end below to 40 above the outer end above, and values
+/// near `±10^15`, read by membership; and the answer equal, by `==`, to the one form built
+/// value by value from that description ([`canonical`]), so that a set made by these and the
+/// same set made any other way are one value. Also: union and meet commute;
+/// `(A ∩ B) ∪ (A \ B) == A`; [`Classed::join_all`] of the two is their union; and [`Classed::meet_ranges`] is the meet with the plain set. Negative control:
+/// the operations on the wider sets (tails dropped, as before this row) give a wrong value in
+/// some case, and some answer has tails.
+#[test]
+fn tailed_operations_agree_with_the_values_listed() {
+    const FAR: i64 = 1_000_000_000_000_000;
+    type Op = (
+        &'static str,
+        fn(bool, bool) -> bool,
+        fn(&Classed, &Classed) -> Classed,
+    );
+    let ops: [Op; 3] = [
+        ("meet", |a, b| a && b, |x, y| x.meet(y)),
+        ("join", |a, b| a || b, |x, y| x.join(y)),
+        ("minus", |a, b| a && !b, |x, y| x.minus(y)),
+    ];
+    let (mut rng, seed) = Rng::fresh("tailed_operations_agree_with_the_values_listed");
+    let (mut wider_wrong, mut tailed_answers) = (0, 0);
+    for case in 0..1500 {
+        let (da, db) = (random_desc(&mut rng), random_desc(&mut rng));
+        let (a, b) = (canonical(&da), canonical(&db));
+        for (name, f, op) in &ops {
+            let want = op_desc(&da, &db, *f);
+            let got = op(&a, &b);
+            let window = want.b0 - 40..=want.a0 + 40;
+            for v in window
+                .clone()
+                .chain([FAR, FAR + 1, FAR + 5, -FAR, -FAR - 1, -FAR - 7])
+            {
+                assert_eq!(
+                    got.contains(v),
+                    want.has(v),
+                    "seed {seed}, case {case}, {name}, {v}: {a:?} {b:?} gave {got:?}"
+                );
+            }
+            assert_eq!(
+                got,
+                canonical(&want),
+                "seed {seed}, case {case}, {name}: {a:?} {b:?}"
+            );
+            tailed_answers += usize::from(got.tails.is_some());
+            let old = op(&a.without_tails(), &b.without_tails());
+            wider_wrong += usize::from(window.clone().any(|v| old.contains(v) != want.has(v)));
+        }
+        let at = format!("seed {seed}, case {case}");
+        assert_eq!(a.join(&b), b.join(&a), "{at}");
+        assert_eq!(a.meet(&b), b.meet(&a), "{at}");
+        assert_eq!(a.meet(&b).join(&a.minus(&b)), a, "{at}");
+        assert_eq!(
+            Classed::join_all([a.clone(), b.clone()]),
+            a.join(&b),
+            "{at}"
+        );
+        assert_eq!(
+            a.meet_ranges(&b.ranges),
+            a.meet(&Classed::plain(b.ranges.clone())),
+            "{at}"
+        );
+    }
+    assert!(
+        wider_wrong > 0 && tailed_answers > 0,
+        "seed {seed}: the controls"
+    );
+}

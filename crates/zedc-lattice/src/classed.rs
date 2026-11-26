@@ -44,19 +44,18 @@ pub struct Classed {
     /// are given, `ranges` and `class` hold a wider set, each tail's ray whole, and the set is
     /// read from the tails past their ends.
     ///
-    /// Only membership ([`Classed::contains_end`]), `==` and `Hash` read the tails. Every other
-    /// operation (`meet`, `join`, `minus`, `met`, `pieces`, `hull`, `count`, `Display`) acts on
-    /// the wider set, as before row CLASSED-periodic-tail, and drops the tails, except that the
-    /// union or difference with an empty set gives the set itself, tails and all. Proof that
-    /// this is sound where it was before: the meet, union and hull of sets that hold the true
-    /// ones hold the true results. A difference whose subtrahend has tails takes away the wider
-    /// set, too much; that was so before this row as well, and is why zedc-presburger keeps the
-    /// cause `Refusal::Repeats` with every such set, which each consumer of a difference reads
-    /// as "not exact" and refuses on. A known flaw, not new here. Exact meet, union and
-    /// difference of tailed sets (tables of the lcm of the periods, the finite parts listed
-    /// between the ends) are not built: no caller needs them yet (row CLASSED-periodic-tail asks
-    /// for membership), and listing the finite part between two tails has no charge of work
-    /// here.
+    /// Membership ([`Classed::contains_end`]), `==`, `Hash`, and [`Classed::meet`],
+    /// [`Classed::meet_ranges`], [`Classed::join`], [`Classed::join_all`] and
+    /// [`Classed::minus`] read the tails; those operations are exact and give the one form
+    /// (module `tails`: the tables of the lcm of the periods, the stretch between the ends
+    /// listed, as the form keeps it). The readers of the ranges themselves (`met`, `pieces`,
+    /// `hull`, `count`, `Display`, `type_text`) read the wider set, which holds the set, and
+    /// [`Classed::minus_unlisted`] gives `None` for a set with tails. zedc-presburger still keeps
+    /// the cause `Refusal::Repeats` with every set with tails, and its consumers of a difference
+    /// still refuse on it; with the exact difference here that refusal can be narrowed, which
+    /// is not done in this row. Listing between the ends charges no work here, as zedc-lattice has
+    /// no work meter; it costs what [`Classed::join`] and [`Classed::minus`] of two classes cost
+    /// without tails (module `tails`, complexity).
     pub tails: Option<Arc<Tails>>,
 }
 
@@ -502,6 +501,9 @@ impl Classed {
         if other.is_empty() {
             return self.clone();
         }
+        if self.tails.is_some() || other.tails.is_some() {
+            return tails::combined(self, other, tails::Op::Join);
+        }
         if self.class == other.class {
             return Classed::new(self.ranges.join(&other.ranges), self.class.clone());
         }
@@ -548,6 +550,13 @@ impl Classed {
     // against the fold of `Classed::join`, rays included); it checks agreement with the fold,
     // so an error the fold shares is not caught.
     pub fn join_all(sets: impl IntoIterator<Item = Classed>) -> Classed {
+        // Sets with tails are joined in after the rest, one by one, exact ([`Classed::join`]).
+        let (tailed, sets): (Vec<Classed>, Vec<Classed>) =
+            sets.into_iter().partition(|c| c.tails.is_some());
+        if !tailed.is_empty() {
+            let rest = Classed::join_all(sets);
+            return tailed.iter().fold(rest, |set, t| set.join(t));
+        }
         let mut at: HashMap<Congruence, usize> = HashMap::new();
         let mut groups: Vec<(Congruence, Vec<(End, End)>)> = Vec::new();
         for c in sets {
@@ -610,6 +619,9 @@ impl Classed {
     /// The intersection: the ranges met, in the meet of the classes (by the Chinese remainder
     /// theorem, `Congruence::meet`), exact, as `(A ∩ C) ∩ (B ∩ D) = (A ∩ B) ∩ (C ∩ D)`.
     pub fn meet(&self, other: &Classed) -> Classed {
+        if self.tails.is_some() || other.tails.is_some() {
+            return tails::combined(self, other, tails::Op::Meet);
+        }
         Classed::new(
             self.ranges.meet(&other.ranges),
             self.class.meet(&other.class),
@@ -619,6 +631,10 @@ impl Classed {
     /// The intersection with the ranges `other`, in this set's class: `(A ∩ C) ∩ B = (A ∩ B) ∩
     /// C`, exact, with no value listed. O(p log p) for p ranges.
     pub fn meet_ranges(&self, other: &IntervalSet) -> Classed {
+        if self.tails.is_some() {
+            let other = Classed::plain(other.clone());
+            return tails::combined(self, &other, tails::Op::Meet);
+        }
         Classed::new(self.ranges.meet(other), self.class.clone())
     }
 
@@ -667,6 +683,10 @@ impl Classed {
     // projection of a stride makes (a range with the odd values taken, then the even ones),
     // and the listed difference in every other, O(v) as before.
     pub fn minus(&self, other: &Classed) -> Classed {
+        if !self.is_empty() && !other.is_empty() && (self.tails.is_some() || other.tails.is_some())
+        {
+            return tails::combined(self, other, tails::Op::Minus);
+        }
         (self.minus_unlisted(other))
             .unwrap_or_else(|| Classed::plain(self.met().minus(&other.met())))
     }
@@ -677,6 +697,10 @@ impl Classed {
     pub fn minus_unlisted(&self, other: &Classed) -> Option<Classed> {
         if self.is_empty() || other.is_empty() {
             return Some(self.clone());
+        }
+        // A set with tails is [`Classed::minus`]'s, which lists between the ends.
+        if self.tails.is_some() || other.tails.is_some() {
+            return None;
         }
         let met = self.class.meet(&other.class);
         // `C \ D`, where it is one class or none (`Bottom`).
@@ -902,6 +926,8 @@ impl fmt::Debug for Classed {
         }
     }
 }
+
+mod tails;
 
 #[cfg(test)]
 mod tests;
