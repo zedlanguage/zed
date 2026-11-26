@@ -188,7 +188,8 @@ thread_local! {
 }
 
 /// A set is freed in a loop, a node whose last handle goes handing its children on, so a set of
-/// any height is dropped on a small stack (as `zed_collections::treap` does).
+/// any height is dropped on a small stack (`zed_collections::treap` drops recursively instead,
+/// and says what the loop cost there).
 impl<T> Drop for Node<T> {
     fn drop(&mut self) {
         let mut stack: Vec<Node<T>> = Vec::new();

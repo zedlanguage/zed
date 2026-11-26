@@ -133,9 +133,104 @@ fn one_set_of_keys_has_one_shape() {
     assert_eq!(up.as_ref().map(|n| n.item), down.as_ref().map(|n| n.item));
 }
 
+/// The tree's shape: its keys in preorder, `None` for each empty child, read by the accessors.
+fn shape(t: &Tree<E>) -> Vec<Option<u64>> {
+    let (mut out, mut stack) = (Vec::new(), vec![t]);
+    while let Some(t) = stack.pop() {
+        match t.as_deref() {
+            None => out.push(None),
+            Some(n) => {
+                assert_eq!(n.rank(), (n.item().priority(), &n.item().0));
+                assert_eq!(*n.sum(), n.sum);
+                out.push(Some(n.item().0));
+                stack.push(n.right());
+                stack.push(n.left());
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn the_in_place_operations_give_the_persistent_trees() {
+    let mut rng = crate::seed::Rng::new(11);
+    let mut next = |m: u64| rng.below_u64(m);
+    let (mut p, mut q): (Tree<E>, Tree<E>) = (None, None);
+    let mut copies = Vec::new();
+    for step in 0..4000 {
+        let k = next(300);
+        if next(3) == 0 {
+            p = remove(&p, &k);
+            remove_mut(&mut q, &k);
+        } else {
+            p = insert(&p, E(k, step));
+            insert_mut(&mut q, E(k, step));
+        }
+        assert!(sound(&q));
+        assert_eq!(shape(&q), shape(&p));
+        assert_eq!(entries(&q), entries(&p));
+        // A copy shares the nodes of `q`, so the changes after it copy them, and it stays as it
+        // was.
+        if next(8) == 0 {
+            copies.push((q.clone(), entries(&q)));
+        }
+    }
+    assert!(copies.len() > 100);
+    for (c, want) in copies {
+        assert!(sound(&c));
+        assert_eq!(entries(&c), want);
+    }
+}
+
+/// An entry without a summary, for `get_mut`.
+#[derive(Clone)]
+struct U(u64, u64);
+
+impl Item for U {
+    type Key = u64;
+    type Sum = ();
+    fn key(&self) -> &u64 {
+        &self.0
+    }
+    fn priority(&self) -> u64 {
+        zed_hash::mix(self.0)
+    }
+    fn sum(&self, _: Option<&()>, _: Option<&()>) {}
+}
+
+#[test]
+fn get_mut_changes_the_item_in_place_and_leaves_copies_alone() {
+    let mut t: Tree<U> = None;
+    for k in 0..100 {
+        insert_mut(&mut t, U(k, k));
+    }
+    let copy = t.clone();
+    for k in (0..100).step_by(3) {
+        get_mut(&mut t, &k).expect("a key of the tree").1 = 1000 + k;
+    }
+    assert!(get_mut(&mut t, &500).is_none());
+    for k in 0..100 {
+        let want = if k % 3 == 0 { 1000 + k } else { k };
+        assert_eq!(get(&t, &k).map(|u| u.1), Some(want));
+        assert_eq!(get(&copy, &k).map(|u| u.1), Some(k));
+    }
+    // A tree no other shares is changed where it is: no node is copied, the root included.
+    drop(copy);
+    let root = t.as_ref().map(Arc::as_ptr);
+    get_mut(&mut t, &50).expect("a key of the tree").1 = 7;
+    insert_mut(&mut t, U(51, 8));
+    remove_mut(&mut t, &500);
+    assert_eq!(t.as_ref().map(Arc::as_ptr), root);
+    assert_eq!(get(&t, &50).map(|u| u.1), Some(7));
+}
+
 #[test]
 fn a_large_treap_is_dropped_on_a_small_stack() {
-    // A tree of 100,000 keys, dropped on a thread of 64 KiB of stack.
+    // A tree of 100,000 keys, dropped on a thread of 64 KiB of stack. The drop recurses as deep
+    // as the tree. With independent priorities a treap is a random binary search tree, whose
+    // nodes lie about 2 ln n = 23 levels deep in expectation and whose height is near
+    // 4.31 ln n = 50 (Devroye, "A note on the height of binary search trees", J. ACM 1986,
+    // doi:10.1145/5925.5930); the stack holds far more levels than that.
     crate::scaling::on_a_stack(1 << 16, || {
         let mut t: Tree<E> = None;
         for k in 0..100_000 {

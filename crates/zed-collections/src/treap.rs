@@ -34,17 +34,19 @@
 //! and [`Item::sum`] is `f` and `g` of the item's own summary. The paper lists treaps among the
 //! trees PAM implements. Tested by `treap::tests`: the treap against a `BTreeMap` under random
 //! operations (wrong keys, values, sizes, summaries or heap order), one shape for one set of
-//! keys; no test measures the work.
+//! keys, the in-place operations against the persistent ones; no test measures the work.
 //!
 //! A tree is shared, never changed: an operation makes new nodes along the paths it changes and
-//! shares every subtree it leaves alone. A node's priority is a function of its key drawn at
-//! random once per run ([`Item::priority`], module [`crate::priority`]), ties broken by the order
-//! of the keys, so in a run the keys of a tree fix its shape whatever order they came in. Seidel
-//! and Aragon's bound on the expected depth, `O(log n)` for every set of keys, holds for keys at
-//! distinct points of the draw (module [`crate::priority`]).
+//! shares every subtree it leaves alone. The in-place operations (`get_mut`, `insert_mut`,
+//! `remove_mut`) give the same trees, changing the nodes a tree alone holds and copying those it
+//! shares with another, which is left as it was. A node's priority is a function of its key drawn
+//! at random once per run ([`Item::priority`], module [`crate::priority`]), ties broken by the
+//! order of the keys, so in a run the keys of a tree fix its shape whatever order they came in.
+//! Seidel and Aragon's bound on the expected depth, `O(log n)` for every set of keys, holds for
+//! keys at distinct points of the draw (module [`crate::priority`]).
 //!
-//! Every walk keeps a stack of its own, and a tree is dropped in a loop, so the stack needed does
-//! not depend on a tree's height.
+//! The walks of the persistent operations keep stacks of their own; the in-place operations and
+//! the drop of a tree recurse, as deep as the tree and no deeper, so `O(log n)` expected.
 
 use std::borrow::Borrow;
 use std::cmp::Ordering;
@@ -84,28 +86,18 @@ pub type Tree<I> = Option<Arc<Node<I>>>;
 /// the items after it.
 pub type Split<'a, I> = (Tree<I>, Option<&'a Arc<Node<I>>>, Tree<I>);
 
-/// A tree is freed in a loop, a node whose last handle goes handing its children on, so a tree
-/// of any height is dropped on a small stack.
-impl<I: Item> Drop for Node<I> {
-    fn drop(&mut self) {
-        // Only children whose last handle this is are walked; the stack allocates nothing
-        // until one is, and a node popped from it has no children left when it drops.
-        let mut stack: Vec<Node<I>> = Vec::new();
-        let free = |c: Tree<I>, stack: &mut Vec<Node<I>>| {
-            if let Some(c) = c
-                && let Ok(n) = Arc::try_unwrap(c)
-            {
-                stack.push(n);
-            }
-        };
-        free(self.left.take(), &mut stack);
-        free(self.right.take(), &mut stack);
-        while let Some(mut n) = stack.pop() {
-            free(n.left.take(), &mut stack);
-            free(n.right.take(), &mut stack);
-        }
-    }
-}
+// A tree is freed by the drop the compiler makes, which frees a node's children before the
+// node and so recurses as deep as the tree, `O(log n)` expected (`crate::priority`), as the
+// in-place operations below do. Complexity tradeoff: a `Drop` that freed the nodes in a loop,
+// the children whose last handle a node held kept on a vector, dropped a tree of any height
+// on a small stack; but it ran again for each node taken from the vector, and the loop of
+// the hull benchmark "the join of hulls, a row among the others" (zedc-presburger
+// `hull/rows.rs`, 16,384 joins of a hull of 16,384 rows, each freeing the path a change
+// copied) took 537,530,703 instructions under callgrind with it, about 47 M of them in
+// dropping nodes, against 522,945,510 with the drop the compiler makes, about 11 M in
+// dropping nodes, as the recursive treap that file had before spent (l41 and l42,
+// 2026-11-26, the profiling build, glibc's allocator). Tested by
+// `treap::tests::a_large_treap_is_dropped_on_a_small_stack`.
 
 // Every function of this module is `#[inline]`. The release profile builds a crate as 16 codegen
 // units, with no inlining across them but local ThinLTO's of small functions, and a generic
@@ -407,6 +399,249 @@ where
         }
     }
     t.clone()
+}
+
+impl<I: Item> Node<I> {
+    /// The node's item.
+    #[inline]
+    pub fn item(&self) -> &I {
+        &self.item
+    }
+
+    /// The tree of the items before this one.
+    #[inline]
+    pub fn left(&self) -> &Tree<I> {
+        &self.left
+    }
+
+    /// The tree of the items after this one.
+    #[inline]
+    pub fn right(&self) -> &Tree<I> {
+        &self.right
+    }
+
+    /// The summary of the node's subtree.
+    #[inline]
+    pub fn sum(&self) -> &I::Sum {
+        &self.sum
+    }
+
+    /// The node's place in the heap order, the higher above: its priority, ties broken by the
+    /// key. Two trees of one set of keys have one shape in a run, so a walk of two trees side by
+    /// side can open the higher of two roots first and meet the subtrees they share at one place.
+    #[inline]
+    pub fn rank(&self) -> (u64, &I::Key) {
+        (self.prio, self.item.key())
+    }
+}
+
+/// A copy of a node that another tree shares, made by the in-place operations before they change
+/// it: its children stay shared with the original.
+impl<I: Item> Clone for Node<I>
+where
+    I::Sum: Clone,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Node {
+            item: self.item.clone(),
+            prio: self.prio,
+            len: self.len,
+            sum: self.sum.clone(),
+            left: self.left.clone(),
+            right: self.right.clone(),
+        }
+    }
+}
+
+// The in-place operations. Complexity tradeoff: the persistent `insert` and `remove` make every
+// node on the paths they change again, an allocation each; these change in place the nodes that
+// this tree alone holds and copy only those another tree shares (`Arc::make_mut`), so a tree
+// changed many times between copies allocates near nothing but its new nodes. The walks, the
+// shapes and the `O(log n)` expected bounds are those of `insert` and `remove`; the results are
+// the same trees. They recurse only as deep as the tree: `insert_at` one call a node of the path
+// to the new node's place and `split_mut` one a node of the path below it, so at most the depth
+// of the tree in all; `remove_at` one a node of the path to the key, and `join_mut` one a node of
+// the right spine of the key's left subtree and of the left spine of its right one, each at most
+// the depth below the key, so at most twice the depth. The depth is `O(log n)` expected
+// (`crate::priority`). Complexity tradeoff: kept in a vector instead, a path that grows as the
+// walk goes down allocated four or five times an operation, and the hull benchmarks of
+// zedc-presburger (`hull/rows.rs`) did 9% to 19% more instructions and 8% to 26% more bytes
+// than with the recursive treap that file had before (v5e1, 2026-11-26); recursive, they did
+// 0.25% to 1.0% more instructions (l42, 2026-11-26). Tested by
+// `treap::tests::the_in_place_operations_give_the_persistent_trees`, which also checks that
+// copies taken before a change are left as they were.
+
+/// The node `n` made this tree's alone, copied if another tree shares it, to change in place.
+#[inline]
+fn own<I: Item>(n: &mut Arc<Node<I>>) -> &mut Node<I>
+where
+    I::Sum: Clone,
+{
+    Arc::make_mut(n)
+}
+
+/// The size and summary of `n` made again from its item and children.
+#[inline]
+fn refresh<I: Item>(n: &mut Node<I>) {
+    n.len = 1 + len(&n.left) + len(&n.right);
+    n.sum = n.item.sum(
+        n.left.as_deref().map(|c| &c.sum),
+        n.right.as_deref().map(|c| &c.sum),
+    );
+}
+
+/// The items of `t` before `key` and those after it, `t` holding no item of `key`: `split` in
+/// place.
+#[inline]
+fn split_mut<I: Item>(t: Tree<I>, key: &I::Key) -> (Tree<I>, Tree<I>)
+where
+    I::Sum: Clone,
+{
+    let Some(mut n) = t else {
+        return (None, None);
+    };
+    let m = own(&mut n);
+    match m.item.key().cmp(key) {
+        Ordering::Less => {
+            let (below, above) = split_mut(m.right.take(), key);
+            m.right = below;
+            refresh(m);
+            (Some(n), above)
+        }
+        Ordering::Greater => {
+            let (below, above) = split_mut(m.left.take(), key);
+            m.left = above;
+            refresh(m);
+            (below, Some(n))
+        }
+        Ordering::Equal => unreachable!("split_mut is given a tree without the key"),
+    }
+}
+
+/// The items of `a` and of `b`, every key of `a` before every key of `b`: `join` in place.
+#[inline]
+fn join_mut<I: Item>(a: Tree<I>, b: Tree<I>) -> Tree<I>
+where
+    I::Sum: Clone,
+{
+    match (a, b) {
+        (None, x) | (x, None) => x,
+        (Some(mut x), Some(mut y)) => {
+            if above(&x, &y) {
+                let m = own(&mut x);
+                m.right = join_mut(m.right.take(), Some(y));
+                refresh(m);
+                Some(x)
+            } else {
+                let m = own(&mut y);
+                m.left = join_mut(Some(x), m.left.take());
+                refresh(m);
+                Some(y)
+            }
+        }
+    }
+}
+
+/// The item of `key`, to change, if the tree has it: one walk down, the nodes passed that another
+/// tree shares copied first, `O(log n)`. The nodes are copied whether or not the key is found, so
+/// a caller that may ask for an absent key in a shared tree asks [`get`] first. For items without
+/// a summary only, since nothing above the item is made again after the change; the change must
+/// keep the item's key and priority, which fix its place.
+#[inline]
+pub fn get_mut<'a, I, Q>(t: &'a mut Tree<I>, key: &Q) -> Option<&'a mut I>
+where
+    I: Item<Sum = ()>,
+    I::Key: Borrow<Q>,
+    Q: Ord + ?Sized,
+{
+    let mut t = t;
+    loop {
+        let n = own(t.as_mut()?);
+        t = match key.cmp(n.item.key().borrow()) {
+            Ordering::Less => &mut n.left,
+            Ordering::Greater => &mut n.right,
+            Ordering::Equal => return Some(&mut n.item),
+        };
+    }
+}
+
+/// Puts `item` into `t` in place of the item of its key, or adds it: [`insert`] in place.
+#[inline]
+pub fn insert_mut<I: Item>(t: &mut Tree<I>, item: I)
+where
+    I::Sum: Clone,
+{
+    let prio = item.priority();
+    insert_at(t, item, prio);
+}
+
+/// [`insert_mut`] of `item`, of priority `prio`, into the subtree `t`: the walk of `insert`, down
+/// while the nodes stand above the new one.
+#[inline]
+fn insert_at<I: Item>(t: &mut Tree<I>, item: I, prio: u64)
+where
+    I::Sum: Clone,
+{
+    match t {
+        Some(n) if (n.prio, n.item.key()) > (prio, item.key()) => {
+            let left = item.key() < n.item.key();
+            let m = own(n);
+            insert_at(if left { &mut m.left } else { &mut m.right }, item, prio);
+            refresh(m);
+        }
+        Some(n) if n.item.key() == item.key() => {
+            let m = own(n);
+            m.item = item;
+            refresh(m);
+        }
+        // The subtree split never holds the key: the proof is at `insert`, and `split_mut`
+        // checks it.
+        _ => {
+            let (l, r) = split_mut(t.take(), item.key());
+            *t = Some(node(item, prio, l, r));
+        }
+    }
+}
+
+/// Takes the item of `key` out of `t`, if it has one: [`remove`] in place. A tree without the key
+/// is left as it is, none of its nodes copied.
+#[inline]
+pub fn remove_mut<I: Item, Q: Ord + ?Sized>(t: &mut Tree<I>, key: &Q)
+where
+    I::Key: Borrow<Q>,
+    I::Sum: Clone,
+{
+    if get(t, key).is_some() {
+        remove_at(t, key);
+    }
+}
+
+/// [`remove_mut`] of `key` from the subtree `t`, which holds it.
+#[inline]
+fn remove_at<I: Item, Q: Ord + ?Sized>(t: &mut Tree<I>, key: &Q)
+where
+    I::Key: Borrow<Q>,
+    I::Sum: Clone,
+{
+    let n = t.as_mut().expect("remove_mut found the key above");
+    match key.cmp(n.item.key().borrow()) {
+        Ordering::Equal => {
+            // The node taken out is not copied: its children are taken from it if this tree
+            // alone holds it, and shared with the other tree otherwise.
+            let (l, r) = match Arc::get_mut(n) {
+                Some(m) => (m.left.take(), m.right.take()),
+                None => (n.left.clone(), n.right.clone()),
+            };
+            *t = join_mut(l, r);
+        }
+        side => {
+            let left = side == Ordering::Less;
+            let m = own(n);
+            remove_at(if left { &mut m.left } else { &mut m.right }, key);
+            refresh(m);
+        }
+    }
 }
 
 #[cfg(test)]

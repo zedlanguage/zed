@@ -3,25 +3,35 @@
 //! broken by the pivot's order. A map made from another by a few changes copies the paths to
 //! the changed pivots and shares every other subtree with it, and since both have the one shape
 //! their keys give, the subtrees they share sit at the same places in both. The difference of
-//! the two is found by a walk that passes over a shared subtree at once.
+//! the two is found by a walk that passes over a shared subtree at once. The treap is
+//! [`zed_collections::treap`] (plan row DRY-persistent-trees-2026-11-26), changed in place.
 
 use std::cmp::Ordering;
 use std::fmt;
 use std::sync::Arc;
 
 use zed_collections::priority::Priorities;
+use zed_collections::treap::{self, Item, Node, Tree};
 
 use crate::presburger::{Atom, Lin};
 
-type Tree = Option<Arc<Node>>;
-
+/// A row and its pivot: an item of the treap.
 #[derive(Clone)]
-struct Node {
+struct Row {
     key: Atom,
     val: Arc<Lin>,
-    prio: u64,
-    left: Tree,
-    right: Tree,
+}
+
+impl Item for Row {
+    type Key = Atom;
+    type Sum = ();
+    fn key(&self) -> &Atom {
+        &self.key
+    }
+    fn priority(&self) -> u64 {
+        prio_of(&self.key)
+    }
+    fn sum(&self, _: Option<&()>, _: Option<&()>) {}
 }
 
 /// The priorities of the pivots, drawn once per run ([`zed_collections::priority`]).
@@ -40,12 +50,6 @@ fn prio_of(key: &Atom) -> u64 {
     PRIORITIES.hash(key)
 }
 
-/// The order of the nodes from the root down: by priority, then by pivot, so no two nodes of a
-/// map tie and one set of pivots has one shape.
-fn rank(n: &Node) -> (u64, &Atom) {
-    (n.prio, &n.key)
-}
-
 // Complexity tradeoff: standard implementation, the rows in an `imbl` 7.0.2 `OrdMap` (a B-tree
 // of 16 keys a node) compared with its `diff`, whose cursor passes over a shared subtree only
 // after it has gone down to that subtree's first leaf, and looks at each of up to 17 children of
@@ -57,75 +61,42 @@ fn rank(n: &Node) -> (u64, &Atom) {
 // (about 1.39 log2 n), measured 8.9K, 8.9K, 10.7K and 9.9K instructions a join at 256 to 2,048
 // rows (1.11 times). Tradeoffs: the bounds are expected ones, over the hash of the pivots, not
 // worst-case ones; a change copies a path of about 1.39 log2 n nodes of one row each, where the
-// B-tree copied about log16 n nodes of 16; insert, remove and drop recurse on the depth; and two
-// maps that hold equal rows in nodes they do not share are compared row by row, which costs
-// their size, as the B-tree's diff did. The answers are the same. Tests
+// B-tree copied about log16 n nodes of 16; and two maps that hold equal rows in nodes they do
+// not share are compared row by row, which costs their size, as the B-tree's diff did. The
+// answers are the same. Tests
 // `l01_39_reduced_product::hull::a_join_costs_near_the_rows_that_differ` and
 // `a_join_costs_near_the_rows_that_differ_wherever_they_sort`; COMPLEXITY.md S26.
 /// The rows of a hull by their pivots.
 #[derive(Clone, Default)]
 pub(super) struct Rows {
-    root: Tree,
+    root: Tree<Row>,
 }
 
 impl Rows {
     /// The row of `key`. O(depth).
     pub(super) fn get(&self, key: &Atom) -> Option<&Arc<Lin>> {
-        let mut t = self.root.as_deref();
-        while let Some(n) = t {
-            t = match key.cmp(&n.key) {
-                Ordering::Less => n.left.as_deref(),
-                Ordering::Greater => n.right.as_deref(),
-                Ordering::Equal => return Some(&n.val),
-            };
-        }
-        None
+        treap::get(&self.root, key).map(|r| &r.val)
     }
 
     /// The row of `key`, which the map holds, to change. The nodes on the path to it that the
-    /// map shares with another are copied first. O(depth).
+    /// map shares with another are copied first, also when the key is absent. O(depth).
     pub(super) fn get_mut(&mut self, key: &Atom) -> Option<&mut Arc<Lin>> {
-        let mut t = &mut self.root;
-        loop {
-            let n = Arc::make_mut(t.as_mut()?);
-            t = match key.cmp(&n.key) {
-                Ordering::Less => &mut n.left,
-                Ordering::Greater => &mut n.right,
-                Ordering::Equal => return Some(&mut n.val),
-            };
-        }
+        treap::get_mut(&mut self.root, key).map(|r| &mut r.val)
     }
 
     /// Puts `val` at `key`, in place of any row there. O(depth) expected.
     pub(super) fn insert(&mut self, key: Atom, val: Arc<Lin>) {
-        let prio = prio_of(&key);
-        insert(
-            &mut self.root,
-            Node {
-                key,
-                val,
-                prio,
-                left: None,
-                right: None,
-            },
-        );
+        treap::insert_mut(&mut self.root, Row { key, val });
     }
 
     /// Takes out the row of `key`, if there is one. O(depth) expected.
     pub(super) fn remove(&mut self, key: &Atom) {
-        remove(&mut self.root, key);
+        treap::remove_mut(&mut self.root, key);
     }
 
     /// The rows, in pivot order.
     pub(super) fn values(&self) -> impl Iterator<Item = &Arc<Lin>> {
-        self.nodes().map(|n| &n.val)
-    }
-
-    /// The nodes, in pivot order.
-    fn nodes(&self) -> Nodes<'_> {
-        let mut it = Nodes { stack: Vec::new() };
-        it.down(self.root.as_deref());
-        it
+        treap::iter(&self.root).map(|r| &r.val)
     }
 
     /// Calls `f` on each pivot whose row differs between `self` and `other`, in pivot order,
@@ -137,7 +108,7 @@ impl Rows {
         other: &'a Rows,
         mut f: impl FnMut(Option<(&'a Atom, &'a Arc<Lin>)>, Option<&'a Arc<Lin>>),
     ) {
-        let start = |t: &'a Tree| t.as_deref().map(Step::Tree).into_iter().collect();
+        let start = |t: &'a Tree<Row>| t.as_deref().map(Step::Tree).into_iter().collect();
         let (mut a, mut b): (Vec<Step<'a>>, Vec<Step<'a>>) =
             (start(&self.root), start(&other.root));
         loop {
@@ -151,7 +122,7 @@ impl Rows {
                         // The higher of the two roots holds pivots the other's subtree may
                         // also hold below its own root, so it is opened first; two roots of one
                         // pivot are at one place in both shapes and are opened together.
-                        match rank(x).cmp(&rank(y)) {
+                        match x.rank().cmp(&y.rank()) {
                             Ordering::Greater => open(&mut a),
                             Ordering::Less => open(&mut b),
                             Ordering::Equal => {
@@ -196,7 +167,7 @@ impl Rows {
 impl fmt::Debug for Rows {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_map()
-            .entries(self.nodes().map(|n| (&n.key, &n.val)))
+            .entries(treap::iter(&self.root).map(|r| (&r.key, &r.val)))
             .finish()
     }
 }
@@ -205,8 +176,8 @@ impl fmt::Debug for Rows {
 /// node's row alone (its left subtree visited, its right one below it on the stack).
 #[derive(Clone, Copy)]
 enum Step<'a> {
-    Tree(&'a Node),
-    Entry(&'a Node),
+    Tree(&'a Node<Row>),
+    Entry(&'a Row),
 }
 
 /// Replaces the subtree on top of `stack` by its left subtree, its root's row and its right
@@ -215,115 +186,9 @@ fn open(stack: &mut Vec<Step<'_>>) {
     let Some(Step::Tree(n)) = stack.pop() else {
         unreachable!("a subtree on top of the walk");
     };
-    stack.extend(n.right.as_deref().map(Step::Tree));
-    stack.push(Step::Entry(n));
-    stack.extend(n.left.as_deref().map(Step::Tree));
-}
-
-/// The nodes of a map in pivot order, by a stack of the nodes whose left subtrees are being
-/// visited.
-struct Nodes<'a> {
-    stack: Vec<&'a Node>,
-}
-
-impl<'a> Nodes<'a> {
-    /// Pushes `t` and its left children, down to the first node of `t`.
-    fn down(&mut self, mut t: Option<&'a Node>) {
-        while let Some(n) = t {
-            self.stack.push(n);
-            t = n.left.as_deref();
-        }
-    }
-}
-
-impl<'a> Iterator for Nodes<'a> {
-    type Item = &'a Node;
-
-    fn next(&mut self) -> Option<&'a Node> {
-        let n = self.stack.pop()?;
-        self.down(n.right.as_deref());
-        Some(n)
-    }
-}
-
-/// Puts the node `new`, which has no children, into `t`, in place of the node of its pivot if
-/// there is one, copying the shared nodes on the path to it.
-fn insert(t: &mut Tree, new: Node) {
-    let Some(n) = t else {
-        *t = Some(Arc::new(new));
-        return;
-    };
-    let side = new.key.cmp(&n.key);
-    if side == Ordering::Equal {
-        Arc::make_mut(n).val = new.val;
-    } else if rank(&new) > rank(n) {
-        let (left, right) = split(t.take(), &new.key);
-        *t = Some(Arc::new(Node { left, right, ..new }));
-    } else {
-        let n = Arc::make_mut(n);
-        insert(
-            if side == Ordering::Less {
-                &mut n.left
-            } else {
-                &mut n.right
-            },
-            new,
-        );
-    }
-}
-
-/// The nodes of `t` with pivots below `key`, which `t` does not hold, and those above.
-fn split(t: Tree, key: &Atom) -> (Tree, Tree) {
-    let Some(mut n) = t else {
-        return (None, None);
-    };
-    let m = Arc::make_mut(&mut n);
-    if m.key < *key {
-        let (below, above) = split(m.right.take(), key);
-        m.right = below;
-        (Some(n), above)
-    } else {
-        let (below, above) = split(m.left.take(), key);
-        m.left = above;
-        (below, Some(n))
-    }
-}
-
-/// Takes the node of `key` out of `t`, if there is one.
-fn remove(t: &mut Tree, key: &Atom) {
-    let Some(mut n) = t.take() else {
-        return;
-    };
-    match key.cmp(&n.key) {
-        Ordering::Less => remove(&mut Arc::make_mut(&mut n).left, key),
-        Ordering::Greater => remove(&mut Arc::make_mut(&mut n).right, key),
-        Ordering::Equal => {
-            *t = match Arc::try_unwrap(n) {
-                Ok(n) => merge(n.left, n.right),
-                Err(n) => merge(n.left.clone(), n.right.clone()),
-            };
-            return;
-        }
-    }
-    *t = Some(n);
-}
-
-/// The nodes of `a` and of `b`, every pivot of `a` below every pivot of `b`.
-fn merge(a: Tree, b: Tree) -> Tree {
-    match (a, b) {
-        (None, t) | (t, None) => t,
-        (Some(mut x), Some(mut y)) => {
-            if rank(&x) > rank(&y) {
-                let m = Arc::make_mut(&mut x);
-                m.right = merge(m.right.take(), Some(y));
-                Some(x)
-            } else {
-                let m = Arc::make_mut(&mut y);
-                m.left = merge(Some(x), m.left.take());
-                Some(y)
-            }
-        }
-    }
+    stack.extend(n.right().as_deref().map(Step::Tree));
+    stack.push(Step::Entry(n.item()));
+    stack.extend(n.left().as_deref().map(Step::Tree));
 }
 
 #[cfg(test)]
@@ -347,22 +212,23 @@ mod tests {
     /// The map's rows, and checks that each node is above its children and its pivots are in
     /// order.
     fn model(r: &Rows) -> BTreeMap<Atom, Arc<Lin>> {
-        let mut stack: Vec<&Node> = r.root.as_deref().into_iter().collect();
+        let mut stack: Vec<&Node<Row>> = r.root.as_deref().into_iter().collect();
         while let Some(n) = stack.pop() {
-            for c in [&n.left, &n.right].into_iter().flatten() {
-                assert!(rank(c) < rank(n), "a child above its parent");
+            for c in [n.left(), n.right()].into_iter().flatten() {
+                assert!(c.rank() < n.rank(), "a child above its parent");
                 stack.push(c);
             }
-            if let Some(l) = n.left.as_deref() {
-                assert!(l.key < n.key);
+            if let Some(l) = n.left().as_deref() {
+                assert!(l.item().key < n.item().key);
             }
-            if let Some(r) = n.right.as_deref() {
-                assert!(r.key > n.key);
+            if let Some(r) = n.right().as_deref() {
+                assert!(r.item().key > n.item().key);
             }
         }
-        let m: BTreeMap<Atom, Arc<Lin>> =
-            r.nodes().map(|n| (n.key.clone(), n.val.clone())).collect();
-        assert_eq!(m.len(), r.nodes().count(), "a pivot twice");
+        let m: BTreeMap<Atom, Arc<Lin>> = treap::iter(&r.root)
+            .map(|e| (e.key.clone(), e.val.clone()))
+            .collect();
+        assert_eq!(m.len(), treap::iter(&r.root).count(), "a pivot twice");
         assert!(m.keys().all(|k| r.get(k).is_some()));
         m
     }
@@ -408,10 +274,15 @@ mod tests {
             a.insert(key(i), row(i as i64));
             b.insert(key(199 - i), row((199 - i) as i64));
         }
-        fn shape(t: &Tree) -> String {
+        fn shape(t: &Tree<Row>) -> String {
             match t {
                 None => ".".into(),
-                Some(n) => format!("({:?} {} {})", n.key, shape(&n.left), shape(&n.right)),
+                Some(n) => format!(
+                    "({:?} {} {})",
+                    n.item().key,
+                    shape(n.left()),
+                    shape(n.right())
+                ),
             }
         }
         assert_eq!(shape(&a.root), shape(&b.root));
