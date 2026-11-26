@@ -6750,6 +6750,11 @@ impl Users {
 /// then the constraints' own part, keyed `(true, least constraint)`.
 type PartAt = (bool, Arc<Formula>);
 
+/// What a part's last projection that recorded no refusal read and left: the version of the
+/// block's split its formula was made from ([`Split::ver`]), and each name the formula
+/// mentions with its product just after that projection ([`Block::exact_at`]).
+type ExactAt = (u64, Arc<[(Arc<str>, Product)]>);
+
 /// The parts of a block under each chain key, each with its ends ([`Block::chains`]).
 type ChainParts = imbl::OrdMap<Arc<Vec<ChainAtom>>, imbl::OrdSet<(Vec<Int>, PartAt)>>;
 
@@ -6898,10 +6903,16 @@ struct Block {
     /// The keys of the parts added since the block was last kept ([`Seen::owners`]).
     added: Vec<PartKey>,
     /// A name of the block was given a set of more than one piece by a step outside the
-    /// block's projection, or a conjunct came into the block that reads a name holding more
-    /// than one piece ([`Block::update`]), and the block has not been projected whole since
+    /// block's projection, or a name of the block, not the star's leaf, holds more than one
+    /// piece when the block is made or brought up to date ([`Block::holds_hole`],
+    /// [`Block::of`], [`Block::update`]), and the block has not been projected whole since
     /// ([`Block::gained_hole`], [`Scope::project_block`]).
     hole_pending: bool,
+    /// For each part whose last projection recorded no refusal, what that projection read and
+    /// left ([`ExactAt`]); [`Scope::project_block`] skips projecting the part again while all
+    /// of it is unchanged. An entry goes with its part ([`Block::remove_part`]) and is replaced
+    /// at the part's next projection, so the map holds at most one entry for each part.
+    exact_at: imbl::OrdMap<PartAt, ExactAt>,
 }
 
 impl Block {
@@ -6992,6 +7003,7 @@ impl Block {
             outer_names_at: names.clone(),
             added: Vec::new(),
             hole_pending: false,
+            exact_at: imbl::OrdMap::new(),
         };
         for (g, k) in &core {
             out.enter(g, *k);
@@ -7000,17 +7012,16 @@ impl Block {
         // A new block has no products of its own from before, so a name it finds with more
         // than one piece was given them outside its projection ([`Block::hole_pending`]).
         // Cost: O(N) for N names, once per block made, which reads its N names already.
-        out.hole_pending = (out.users.keys()).any(|n| {
-            out.leaf.as_ref() != Some(n) && names.get(n).is_some_and(|p| p.ints().len() > 1)
-        });
+        out.hole_pending = out.holds_hole(names);
         out
     }
 
-    /// Whether `g`, a conjunct new to the block, reads a name other than the star's leaf that
-    /// holds more than one piece in `names`: the test of [`Block::update`] for asking for the
-    /// whole block ([`Block::hole_pending`]). O(m log N) for the `m` names of `g`.
-    fn reads_hole(&self, g: &Formula, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
-        conjuncts::names(g).iter().any(|n| {
+    /// Whether a name of the block other than the star's leaf holds more than one piece in
+    /// `names`: the test by which [`Block::of`] and [`Block::update`] ask for the whole block
+    /// ([`Block::hole_pending`]). O(u log N) for the block's `u` names and `N` in scope; it
+    /// stops at the first such name.
+    fn holds_hole(&self, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
+        (self.users.keys()).any(|n| {
             self.leaf.as_ref() != Some(n) && names.get(n).is_some_and(|p| p.ints().len() > 1)
         })
     }
@@ -7513,6 +7524,7 @@ impl Block {
         let Some(part) = self.parts.remove(at) else {
             return;
         };
+        self.exact_at.remove(at);
         if let Some(set) = self.roles.get_mut(&part.role) {
             set.remove(at);
             if set.is_empty() {
@@ -7773,7 +7785,8 @@ impl Block {
     /// temporary probe (hm2, 2026-11-22), run on the code of f677570d0, before the merge of
     /// origin/main in 5f31032ee, counted 54,137 calls in `l01_39_scope_relations` and 15,042
     /// in `l01_39_reduced_product`, one of them not certifying all, none partial. The merge
-    /// can change which work lists occur (`Block::reads_hole`, `sync_bounds`,
+    /// can change which work lists occur (`Block::reads_hole`, since replaced by
+    /// `Block::holds_hole`, `sync_bounds`,
     /// `guard_preimage_listed`), so these counts are of that build.
     /// Each entry is used up once: the branch of [`Scope::project_block`] that queues its parts
     /// has removed `fired_chains[k]` and does not put it back.
@@ -9274,20 +9287,6 @@ impl Block {
                 if was {
                     removed_cons.push(g.clone());
                 } else {
-                    // A constraint new to the block asks for the whole block on the same rule as
-                    // any other new conjunct below ([`Block::reads_hole`]); until
-                    // FAIL-case-wake-pair-17975651743790410 only the conjuncts of the loop below
-                    // asked. There `x` held {-1} ∪ [2, inf) and the case `3x - 2y >= -1` of a
-                    // test came into the block: each part alone took -1 from `x` and moved
-                    // nothing else, while the whole block, with `x >= 2`, rules out `y = 3`
-                    // (only `x = -1` met both `-3x - y >= 0 || x - 3y >= 5` and
-                    // `-2x + 2y >= 1 || y <= 2` at `y = 3`), as the block made from scratch
-                    // gave (test
-                    // `case_wake::tests_on_two_names_give_the_projection_from_scratch_at_seed_17975651743790410`).
-                    // Cost: as below, O(m log N) for the m names of the constraint.
-                    if !next.hole_pending {
-                        next.hole_pending = next.reads_hole(g, names);
-                    }
                     added_cons.push(g.clone());
                 }
             }
@@ -9318,40 +9317,6 @@ impl Block {
                 next.leave(&g);
             }
             if added > 0 {
-                // A conjunct new to the block that reads a name, not the star's leaf, already
-                // holding more than one piece asks for the whole block ([`Block::hole_pending`]),
-                // as [`Block::of`] asks when it makes the block new with that name so. The hole
-                // came before the conjunct, so no comparison of the names finds it changed
-                // ([`Block::gained_hole`]), and the block's last whole projection, if any, did
-                // not have the conjunct. FAIL-case-wake-pair-8644546066124090035
-                // (`case_wake::a_new_part_on_a_name_with_a_hole_projects_the_whole_block`): x
-                // held [-2, -1] ∪ [1, inf) from earlier tests; the test `x + 2y - 3a >= -5 &&
-                // x != 1`, asked false, was split into cases and joined, which gave the star's
-                // leaf `a` the set (-inf, -3] ∪ [0, inf) (a leaf's change asks for nothing), and
-                // its part `!(x != 1 && x + 2y - 3a >= -5)` came into the kept block. Each part
-                // alone then moved no name, while the whole block, which the block made from
-                // scratch projects because of x's hole, gives a (-inf, -3] ∪ {0} ∪ [2, inf).
-                // Why only the names of the conjunct, not every name of the block as `Block::of`
-                // reads them: with every name, each of k disjunctions added one at a time beside
-                // one wide disjunction asked for a projection of the whole block of about k
-                // parts, O(k) parts a test and O(k^2) in all:
-                // `scaling::bench::a_disjunction_beside_a_wide_one_in_its_block_costs_its_own_part`
-                // went from 5.37G to 6.97G instructions at k = 1024, 8.73 to 11.0 times the work
-                // at 8k, past the limit of 10.5; with the conjunct's names, 5.38G, 8.73 times.
-                // Assumption, not proved (ASSUME-documented): a hole on a name the new conjunct
-                // does not read reaches its part only through other parts, whose projections the
-                // loop's trigger in [`Scope::project_block`] watches, as before this rule. This
-                // is a question of precision only: the whole-block projection only narrows, and
-                // exactly, so the rule never widens a set. If false, a block kept and updated may
-                // keep a set the block made from scratch narrows, as the seed above did. 24 seeds
-                // of the random case_wake tests (`ZED_TEST_SEED`) passed with this rule and with
-                // the rule on every name alike, so no seed found tells the two apart. Cost: the
-                // names of the conjunct looked up, O(m log N) for m names and N in scope, per
-                // conjunct added, and one whole-block projection per such conjunct while no other
-                // asks for one.
-                if !next.hole_pending {
-                    next.hole_pending = next.reads_hole(&g, names);
-                }
                 due.extend(next.enter(&g, added));
             }
         }
@@ -9691,6 +9656,59 @@ impl Block {
                 !(manages && p.role.stair()) || next.stair_due.as_ref() == Some(at)
             })
         });
+        // A block brought up to date asks for the whole block ([`Block::hole_pending`]) on the
+        // rule [`Block::of`] uses for a block made new: some name of the block, not the star's
+        // leaf, holds more than one piece ([`Block::holds_hole`]). `holds_hole` reads only
+        // `users`, `leaf` and `names`, so the kept block asks whenever the block made from
+        // scratch does if the two have the same users and leaf. The leaf is the same: a block
+        // whose leaf changed is made anew (the doc of this function).
+        // The users are the names of the block's parts (`enter` adds a part's names, `leave`
+        // removes a name with its last part), so they are the same when the parts are; that
+        // the kept block's parts equal those of the block made from scratch is tested, not
+        // proved: a probe compared the two after each of 2544 updates on four seeds of
+        // `case_wake.rs`'s three-name attack and found no part or constraint different
+        // (2026-11-25). The kept block can ask where `Block::of` does not only
+        // by a request kept from before (`hole_pending` already set); the whole-block
+        // projection it then makes is exact, so it never gives a wider set than the parts.
+        //
+        // Why every name, not only those of a conjunct new to the block or those changed since
+        // the last projection ([`Block::gained_hole`]): a hole that came before the update
+        // and was never projected with the whole block, or one the parts alone keep with the
+        // other names narrowed since, leaves the block wider than from scratch. Three seeds of
+        // the three-name attack of `case_wake.rs` were (FAIL-scope-join-stale-kept-905,
+        // FAIL-scope-and-false-coarse): 905, `x` (-inf, 2] where from scratch it is (-inf, 0]
+        // (`case_wake::a_disjunction_at_seed_905_of_the_three_name_attack_gives_x_at_most_0`);
+        // 656, case 9, step 4, `a` (-inf, 2] ∪ {4} where from scratch it has five pieces; 729,
+        // case 1, step 4, `y` (-inf, 0] where from scratch it is (-inf, -11] ∪ [-1, 0]; 228,
+        // case 11, step 4, `x` (-inf, inf) where from scratch it is (-inf, -2] ∪ [2, inf). A
+        // probe that made each block anew with `Block::of` and copied one field at a time from
+        // the kept block (2026-11-25) found `hole_pending` alone brought the
+        // failures back. Earlier rules, each too narrow: until 7ae8e5d46 no update asked; then a
+        // conjunct new to the block that reads a holed name asked
+        // (FAIL-case-wake-pair-8644546066124090035,
+        // `case_wake::a_new_part_on_a_name_with_a_hole_projects_the_whole_block`), and a new
+        // constraint as well (FAIL-case-wake-pair-17975651743790410). A rule that asks only
+        // when some part is due was tried (2026-11-25): it fixed 905 but not 656, 729 or 228, so a
+        // block with nothing due and no name changed can still be wider than from scratch.
+        //
+        // Complexity tradeoff: naive version, as here, every update of a block holding a hole
+        // asks for one projection of the whole block, O(k) parts for a block of k parts; the
+        // narrower rule above was cheaper and wrong. Cost: the scan, O(u log N) for u names of
+        // the block, stopping at the first holed name, per update, beside the update's own
+        // O(u log N) comparison of names; and one whole-block projection per update of a
+        // holed block.
+        // `scaling::bench::a_disjunction_beside_a_wide_one_in_its_block_costs_its_own_part`,
+        // k disjunctions added one at a time beside one wide one in a block that holds a hole,
+        // is O(k^2) under this rule: 11.67 times the work at 8k (4.28G to 5.77G instructions
+        // at k = 1024), past the limit of 10.5; it is parked as
+        // PERF-hole-pending-every-name, and a rule that projects again only the parts that
+        // read a holed name, with a proof that it gives the whole block's projection, is
+        // XR-hole-pending-partial-rule.
+        // `deep_condition::bench::arms_of_a_chain_of_paired_choices_take_time_within_n_log_n`
+        // does 39% more work at 960 (12.5G to 17.4G instructions) at the same ratio, 8.40.
+        if !next.hole_pending {
+            next.hole_pending = next.holds_hole(names);
+        }
         Some((next, due))
     }
 
@@ -14806,6 +14824,12 @@ impl Scope {
             // class ([`presburger::listed_within_limit`]): every value at which the test has
             // this outcome lies in each, so each meet is sound, and together they hold what
             // the set says. A set of ranges alone is met as it is, not copied.
+            // Not [`classed_meets`], which keeps the ranges and the class where the name holds
+            // a class already: the terms through the name read its integers alone, so a name
+            // `z = x div 2` tested `z mod 2 == 1` on `x` in `[0, 9]` gave `x` the range
+            // `[2, 7]` from `z`'s ranges and class, where `z` listed as `{1, 3}` gives
+            // `[2, 3] ∪ [6, 7]`
+            // (`let_terms::a_congruence_test_of_a_div_by_a_constant_narrows_its_input`, d45).
             let classed = (pre.domains.iter()).map(|(n, d)| match d.strided() {
                 Some(_) => {
                     let (ints, class) = presburger::listed_within_limit(d);
@@ -17465,7 +17489,53 @@ impl Scope {
             let part_before = (covered.is_none()).then(|| self.snapshot(&part.names));
             let projected_now = b.formula(part);
             let refusals_before = self.refusals.clone();
-            self.project_part(&projected_now);
+            // A part is not projected again while the formula it is projected with and the
+            // products of the names that formula mentions are what its last projection that
+            // recorded no refusal left ([`Block::exact_at`]); the rest of this step runs as
+            // after a projection that moved nothing and refused nothing. Proof that the skip
+            // moves nothing a projection would: the formula is `of ∧ base` ([`Split::formula`]),
+            // `of` fixed for the part and `base` changed only by `Split::update`, which gives
+            // the new split a new `ver` (one shared counter, `next_split_ver`), so an equal
+            // `ver` is the formula `P` of that projection. Its products then, `B'`, are the
+            // products now, compared name by name (the pointer first, `Product::eq`). By
+            // Lemma E at [`Scope::record`] that projection left `B' = B ∩ Π_n proj_n(P ∧ B)`,
+            // and by claim (a) there a projection of `P` at `B'` narrows nothing: its meets
+            // hold `proj_n(P ∧ B') = B'_n`. A projection run here instead may refuse a question
+            // past a work limit, whose exact answer moves nothing; the skip then leaves out
+            // that refusal and changes no product. Projecting reads
+            // nothing of the scope but the products of the formula's names
+            // ([`Scope::project_part`], [`Scope::framed`], [`Scope::project_by_pendants`]).
+            // Complexity tradeoff: naive version, the part projected at every wake. The block
+            // gained a hole outside the loop makes every part due (`entry_hole` above), and a
+            // part at its fixed point was projected again: at k = 16 in the pendants
+            // benchmark `a_part_of_pendants_with_coefficients_two_and_three_is_projected_in_
+            // linear_time` the second projection asked 77 systems against the first's 13, and
+            // at k = 128 took 6.5 s to refuse, moving nothing (b23-band4 probe d40). Used: one
+            // record per part, O(m log N) to make after a projection over m names of N, and
+            // O(m log N) to test: the split's version is a counter, O(1), and each product is
+            // compared by its pointer, O(1), or, where a read builds it afresh (a name on a
+            // path or a pendant leaf, [`NameProducts::view`]), by value, O(size of the
+            // product), which the projection reads anyway. A counter per name would make each
+            // name O(1) but has to be bumped at every write of a product and every rebuild of
+            // the view, and one missed bump is a wrong skip. Test (negative control):
+            // `pendants::a_part_whose_name_moved_since_its_projection_is_projected_again`.
+            let unchanged = b.exact_at.get(&i).is_some_and(|(ver, at)| {
+                *ver == b.split.ver && at.iter().all(|(n, p)| self.get(n) == *p)
+            });
+            if !unchanged {
+                self.project_part(&projected_now);
+                if !self.bottom && self.refusals.ptr_eq(&refusals_before) {
+                    let at: Arc<[(Arc<str>, Product)]> = (syms(&projected_now).into_iter())
+                        .map(|n| {
+                            let p = self.get(&n);
+                            (n, p)
+                        })
+                        .collect();
+                    b.exact_at.insert(i.clone(), (b.split.ver, at));
+                } else {
+                    b.exact_at.remove(&i);
+                }
+            }
             ran.push(i.clone());
             if self.bottom {
                 break;
@@ -18157,8 +18227,9 @@ impl Scope {
             // of the part `P` with exactly `proj_n(P ∧ B)`, `B` the box of the names (their
             // integers and classes, framed). Proof, by its two routes. The whole route asks
             // `presburger::project_each_boxed_classed` and meets `n`'s integers with each set
-            // listed, or past the cover's limit with its ranges and `n`'s congruence with the
-            // set's class (`presburger::listed_within_limit`): either way the meets hold exactly
+            // listed, or, past the cover's limit or where `n` holds a class, with its ranges
+            // and `n`'s congruence with the set's class ([`classed_meets`]): either way the
+            // meets hold exactly
             // the set (zedc-lattice `Classed`, row DOMAINS-classed-sets); with no cause
             // (`BoxedOf::cause` none: the whole
             // question, no symbol and no disjunction refused) each set is the exact projection,
@@ -19673,14 +19744,16 @@ impl Scope {
         }
         // A set kept as ranges met with a class (row DOMAINS-classed-sets) meets the integers
         // with the set listed where the cover would have listed it, else with its ranges and
-        // the congruence with its class ([`presburger::listed_within_limit`]), as the
-        // preimage route above does: either way the meets hold exactly the set (Lemma E).
+        // the congruence with its class ([`classed_meets`]): either way the meets hold exactly
+        // the set (Lemma E). The preimage of a test lists instead, since the terms through a
+        // name there are met from its integers alone; here each name of the part is met with
+        // its own projection, so no name's set is derived from another's integers.
         for (a, (x, _)) in syms.iter().zip(got.each) {
             if let Atom::Sym(n) = a
                 && let Some(p) = self.names.get_mut(n)
             {
                 let prem = p.premises();
-                let (ints, class) = presburger::listed_within_limit(&x);
+                let (ints, class) = classed_meets(p, &x);
                 p.meet_ints(ints, &prem);
                 if let Some(class) = class {
                     p.cell.congruence.meet(&class, &prem);
@@ -22063,6 +22136,35 @@ fn arms_hull(arms: &[Formula], x: &str, y: &str, sy: &IntervalSet) -> Option<(En
     }
     let end = |v: Option<Int>, inf: End| v.map_or(inf, |v| End::Fin(Num::from(&v)));
     Some((end(r.0, End::NegInf), end(r.1, End::PosInf)))
+}
+
+/// The integers `p`'s interval domain is met with for `set`, an exact set of its name, and the
+/// class its congruence domain is met with, if any: [`presburger::listed_within_limit`], but
+/// the ranges and the class of a strided `set` wherever `p`'s congruence already holds a class
+/// of modulus past one. Each pair holds exactly `set` with the other domain, as that function's
+/// doc proves for both of its forms, so for this name the choice changes the form alone
+/// (Lemma E). A reader of the interval domain alone sees more in the listed form, so this is
+/// for the whole route of [`Scope::project_part`] only, where each name gets its own
+/// projection; the preimage of a test, whose terms through a name read its integers, lists.
+// Complexity tradeoff: naive version, `listed_within_limit` alone, which lists a strided set of
+// up to about 134,800 values one range per value, O(v) for v values. A name the pendants route
+// gave a class (`z0` in `0 mod 3` over `[0, 75000]`) is left to the whole route on its next
+// projection, since that route takes no `x` with a class, and the whole route then listed its
+// 25,001 values beside the class it held already
+// (`l01_39_reduced_product::pendants::the_benchmark_families_are_exact_at_a_small_size`, B
+// mixed, once a holed block was projected again at each update, XR-hole-pending-partial-rule).
+// The listed form is kept elsewhere so that no class prints beside a listed set (the doc of
+// `listed_within_limit`); a name with a class already shows its class, so listing here gives
+// exactly the mixed form that rule avoids. Used: O(p) for the p ranges of `set` here, and O(1)
+// to read the class. Given up: nothing; a name with no class lists as before. Test:
+// `l01_39_reduced_product::pendants::a_class_given_by_pendants_is_not_listed_when_the_block_is_projected_again`.
+fn classed_meets(p: &Product, set: &presburger::Classed) -> (IntervalSet, Option<Congruence>) {
+    let has_class = matches!(&p.cell.congruence.element,
+        Congruence::Class { modulus, .. } if *modulus > Num::ONE);
+    match set.strided() {
+        Some(_) if has_class => (set.ranges.clone(), Some(set.class.clone())),
+        _ => presburger::listed_within_limit(set),
+    }
 }
 
 fn classed(p: &Product) -> bool {

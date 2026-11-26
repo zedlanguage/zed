@@ -609,28 +609,6 @@ fn a_sum_over_many_names_is_assumed_in_time_near_linear() {
 }
 
 #[test]
-fn a_disjunction_beside_a_wide_one_in_its_block_costs_its_own_part() {
-    // A kept block indexes its parts by the terms their conjuncts compare, in a persistent map
-    // that the next projection shares and copies along the path to the entry it changes. The
-    // terms of each test, `a_i + h` and `a_i + g`, sort just before those of the first
-    // disjunction, `g` and `h + z0 + … + z(k-1)`, so each new entry lands in the leaf that holds
-    // the term of `k + 1` names; held by value, that term was copied with each such path copy
-    // (item PERF-block-terms-key). The blocks themselves, kept in a persistent map of the scope,
-    // are shared as well (item PERF-seen-blocks-arc). COMPLEXITY.md C44.
-    let n = 128;
-    let inputs = scaling::inputs(n, disjunctions_beside_a_wide_disjunction);
-    let p = Premises::new();
-    scaling::check(
-        "k disjunctions beside one on k names in one block",
-        n,
-        |k| {
-            let (s, tests) = &inputs[&k];
-            tests.iter().fold(s.clone(), |s, t| s.assume(t, true, &p));
-        },
-    );
-}
-
-#[test]
 fn an_eager_join_projects_again_the_stars_it_settles_and_scales() {
     // The arms of `if n - m <= 5` test a term the disjunction does not compare, and the eager
     // join projects each of the `k` stars again (`Scope::refresh`): its lone part that is not

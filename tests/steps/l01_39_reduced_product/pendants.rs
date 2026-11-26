@@ -4806,4 +4806,59 @@ fn the_benchmark_families_are_exact_at_a_small_size() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// A name the pendants route gave a class keeps its ranges and that class when its block is
+/// projected again by the whole route (which the pendants route leaves an `x` with a class
+/// to), never its values listed one range each (row DOMAINS-classed-sets): B mixed, whose `b`
+/// holds holes, so that each update projects the block again (XR-hole-pending-partial-rule),
+/// ends with each `z{i}` one range, at `k = 3` (the sets of
+/// [`the_benchmark_families_are_exact_at_a_small_size`]) and at `k = 6`. Before the fix in
+/// zedc-preimage `classed_meets`, `z0` held its 25,001 members of `0 mod 3` as 25,001 ranges.
+#[test]
+fn a_class_given_by_pendants_is_not_listed_when_the_block_is_projected_again() {
+    let mut wrong = Vec::new();
+    for k in [3, 6] {
+        let (s, t) = bench::b_mixed(k);
+        let s = s.assume(&t, true, &Premises::new());
+        for i in 0..k {
+            let n = format!("z{i}");
+            let p = s.get(&n);
+            if p.ints().len() != 1 {
+                wrong.push(format!("k {k} {n}: {} pieces", p.ints().len()));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// The negative control of the skip of a part at its fixed point (zedc-preimage
+/// `Block::exact_at`): a part whose name moved after its projection is projected again. B mixed
+/// at `k = 3`, with `W` the multiples of 6 that `a + b` takes
+/// ([`the_benchmark_families_are_exact_at_a_small_size`]), then `a <= 2`: `a + b` is at most
+/// 100002, a multiple of 6 (`a = 2`, `b = 100000`), so `z0 = W / 2` ends at 50001,
+/// `z1 = W / 3 - 1` at 33333 and `z2 = W / 2 - 2` at 49999, where without the test they end at
+/// 75000, 49999 and 74998. A skip that read only the split's version, not the products, leaves
+/// the part's names as they were.
+#[test]
+fn a_part_whose_name_moved_since_its_projection_is_projected_again() {
+    let (s, t) = bench::b_mixed(3);
+    let p = Premises::new();
+    let s = s.assume(&t, true, &p);
+    let s = s.assume(&prim(Prim::Le, vec![var("a"), lit(2)]), true, &p);
+    let want = [
+        ("a", "[0,2]", "any"),
+        ("z0", "[0,50001]", "0 mod 3"),
+        ("z1", "[-1,33333]", "1 mod 2"),
+        ("z2", "[-2,49999]", "1 mod 3"),
+    ];
+    let mut wrong = Vec::new();
+    for (n, set, class) in want {
+        let p = s.get(n);
+        let got = (show(p.ints()), format!("{}", p.cell.congruence.element));
+        if got != (set.to_string(), class.to_string()) {
+            wrong.push(format!("{n}: {got:?}, want {set} {class}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 mod bench;

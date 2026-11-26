@@ -394,6 +394,13 @@ fn scope(r: &mut Rng, aim: Aim, p: &Premises) -> (Scope, Vec<Arc<str>>) {
 /// `scopes` random scopes of `seed` aimed at `aim`, each with up to 6 tests asked both ways and
 /// half of them kept.
 fn attack(aim: Aim, seed: u64, scopes: usize) -> Ran {
+    attack_from(aim, seed, scopes, 0)
+}
+
+/// [`attack`], with the tests of the scopes before case `first` not checked. The scopes and
+/// tests drawn are the same: `checked` draws nothing from `r` and its scopes are dropped, so
+/// case `first` meets the same scope and tests as in the whole attack.
+fn attack_from(aim: Aim, seed: u64, scopes: usize, first: usize) -> Ran {
     let mut r = Rng::new(seed);
     let p = Premises::new();
     let mut ran = Ran::default();
@@ -405,26 +412,28 @@ fn attack(aim: Aim, seed: u64, scopes: usize) -> Ran {
             let either = prim(Prim::Or, a.clone(), b.clone());
             let both = prim(Prim::And, a.clone(), b.clone());
             let (one, two) = (&a, &b);
-            checked(
-                &s,
-                &either,
-                true,
-                &[(one, true), (two, true)],
-                &ns,
-                &p,
-                &mut ran,
-                &at,
-            );
-            checked(
-                &s,
-                &both,
-                false,
-                &[(one, false), (two, false)],
-                &ns,
-                &p,
-                &mut ran,
-                &at,
-            );
+            if case >= first {
+                checked(
+                    &s,
+                    &either,
+                    true,
+                    &[(one, true), (two, true)],
+                    &ns,
+                    &p,
+                    &mut ran,
+                    &at,
+                );
+                checked(
+                    &s,
+                    &both,
+                    false,
+                    &[(one, false), (two, false)],
+                    &ns,
+                    &p,
+                    &mut ran,
+                    &at,
+                );
+            }
             if r.below(2) == 0 {
                 let next = ap(&s, &either, true, &p);
                 if next.bottom {
@@ -455,15 +464,14 @@ fn run(aim: Aim, what: &str) {
     assert!(ran.moved > 0 && ran.asked > 0, "{ran:?}");
 }
 
-/// The attack on `aim` at the one seed `seed`: for the seeds that met a fault, and for the
-/// three-name attack, whose fresh seeds still meet one. It failed on 7 of seeds 2 to 1001 (45,
-/// 131, 228, 644, 656, 729, 905; b22-mainfail1, origin/main 0b5ab70d9, 2026-11-24), each held
-/// wider than from scratch. Seeds 45, 131 and 644 pass since FAIL-scope-three-names-seeds (a
-/// join keeps no entry that differs between the cases when a case holds a refusal, and the parts
-/// reading a name that a refused projection of the whole block moved are projected once more);
-/// 228, 656, 729 and 905 still fail (FAIL-scope-join-stale-kept-905,
-/// FAIL-scope-and-false-coarse), so with a fresh seed that test would fail about one run in
-/// 250. It runs at a seed that passes until those rows are fixed, then goes back to `run`.
+/// The attack on `aim` at the one seed `seed`, for the seeds that met a fault. The three-name
+/// attack failed on 7 of seeds 2 to 1001 (45, 131, 228, 644, 656, 729, 905; origin/main
+/// 0b5ab70d9, 2026-11-24), each held wider than from scratch. Seeds 45, 131 and 644 pass since
+/// FAIL-scope-three-names-seeds (a join keeps no entry that differs between the cases when a
+/// case holds a refusal, and the parts reading a name that a refused projection of the whole
+/// block moved are projected once more); 228, 656, 729 and 905 pass since a block brought up
+/// to date asks for the whole block on `Block::of`'s rule (FAIL-scope-join-stale-kept-905,
+/// FAIL-scope-and-false-coarse), and that attack runs on a fresh seed again.
 /// The holes attack, which failed on 23 of seeds 2 to 1001 until the
 /// exact cover was on the checker's projection path (FAIL-scope-equation-odd-points, closed by
 /// PRES-cover-wire), passes on all 1000 and runs on a fresh seed again.
@@ -496,7 +504,7 @@ fn tests_on_two_names_give_the_projection_from_scratch_at_seed_17975651743790410
 
 #[test]
 fn tests_on_three_names_give_the_projection_from_scratch() {
-    run_at(Aim::Three, 2);
+    run(Aim::Three, "case wake: three names");
 }
 
 #[test]
@@ -1373,4 +1381,104 @@ fn a_join_with_a_refused_case_at_seed_131_gives_y_from_minus_2_and_w_at_most_3()
             "w: IntervalSet { pieces: [(Fin(Num(Small(-4))), Fin(Num(Small(3))))] }".to_string(),
         ])
     );
+}
+
+/// The nine assumptions seed 905 of the three-name attack made before case 1, step 4, and the
+/// two arms of the disjunction it then asked held (FAIL-scope-join-stale-kept-905).
+fn seed905_history() -> (Vec<Term>, Term, Term) {
+    let history = vec![
+        prim(Prim::Ge, var("y"), int(-6)),
+        prim(Prim::Le, var("y"), int(3)),
+        prim(Prim::Le, var("w"), int(-1)),
+        prim(Prim::Le, var("a"), lin(&[(1, "x"), (1, "y")])),
+        or(
+            ge(lin(&[(-1, "x"), (3, "y"), (1, "w")]), 0),
+            ge(lin(&[(-1, "x"), (2, "y")]), 0),
+        ),
+        or(
+            ge(lin(&[(-3, "y"), (-1, "w")]), -4),
+            ge(lin(&[(-3, "x")]), 4),
+        ),
+        or(
+            prim(Prim::Ne, var("a"), int(2)),
+            ge(lin(&[(3, "y"), (-2, "w")]), 2),
+        ),
+        or(
+            ge(lin(&[(-2, "x"), (-3, "y"), (1, "a")]), -5),
+            ge(lin(&[(3, "w"), (2, "a")]), 5),
+        ),
+        or(
+            ge(lin(&[(-2, "x"), (3, "y"), (3, "a")]), -4),
+            ge(lin(&[(1, "y")]), -1),
+        ),
+    ];
+    (
+        history,
+        ge(lin(&[(-3, "x"), (2, "y"), (2, "w"), (-2, "a")]), 0),
+        ge(lin(&[(1, "y"), (-3, "a")]), 4),
+    )
+}
+
+/// Seed 905 of the three-name attack, case 1, step 4 (FAIL-scope-join-stale-kept-905): after the
+/// nine assumptions the attack made, `-3x + 2y + 2w - 2a >= 0 || y - 3a >= 4` held leaves x at
+/// most 0 from scratch, and the scope held x at most 2. No case of it holds a refusal.
+#[test]
+fn a_disjunction_at_seed_905_of_the_three_name_attack_gives_x_at_most_0() {
+    let p = Premises::new();
+    let ns: Vec<Arc<str>> = ["a", "x", "y", "w"].iter().map(|&n| n.into()).collect();
+    let (history, left, right) = seed905_history();
+    let mut s = ints(&ns);
+    for t in &history {
+        s = s.assume(t, true, &p);
+        assert!(!s.bottom, "{t:?} leaves points");
+    }
+    let t = or(left, right);
+    let got = s.assume(&t, true, &p);
+    let mut fresh = s.clone();
+    fresh.forget_projections();
+    let mut want = fresh.assume(&t, true, &p);
+    want.forget_projections();
+    want.reduce();
+    assert_eq!(intervals(&got, &ns), intervals(&want, &ns));
+    assert_eq!(
+        format!("{:?}", got.get("x").ints()),
+        "IntervalSet { pieces: [(NegInf, Fin(Num(Small(0))))] }"
+    );
+}
+
+/// The three-name attack at `seed`, checked on case `case` alone (the scopes before it are drawn
+/// but not checked, [`attack_from`]).
+fn run_case(seed: u64, case: usize) {
+    let ran = attack_from(Aim::Three, seed, case + 1, case);
+    eprintln!("Three seed {seed} case {case}: {ran:?}");
+    assert!(ran.asked > 0, "{ran:?}");
+}
+
+/// Seeds 228, 656, 729 and 905 of 2 to 1001, at which the three-name attack held a set wider
+/// than from scratch until a block brought up to date asked for the whole block on
+/// `Block::of`'s rule (FAIL-scope-and-false-coarse, FAIL-scope-join-stale-kept-905), each at
+/// the case that failed: 228 case 11, `x` (-inf, +inf) where from scratch it is (-inf, -2] ∪
+/// [2, +inf); 656 case 9, `a` (-inf, 2] ∪ {4} where from scratch it has five pieces; 729 case 1,
+/// `y` (-inf, 0] where from scratch it is (-inf, -11] ∪ [-1, 0]; 905 case 1, `x` (-inf, 2]
+/// where from scratch it is (-inf, 0]. All 16 cases of one of these seeds take 13 to 25 s
+/// (jobs d30, d32), past the 20 s limit of a test piece on the slower VMs, so each test checks
+/// only the case that failed.
+#[test]
+fn tests_on_three_names_give_the_projection_from_scratch_at_seed_228() {
+    run_case(228, 11);
+}
+
+#[test]
+fn tests_on_three_names_give_the_projection_from_scratch_at_seed_656() {
+    run_case(656, 9);
+}
+
+#[test]
+fn tests_on_three_names_give_the_projection_from_scratch_at_seed_729() {
+    run_case(729, 1);
+}
+
+#[test]
+fn tests_on_three_names_give_the_projection_from_scratch_at_seed_905() {
+    run_case(905, 1);
 }
