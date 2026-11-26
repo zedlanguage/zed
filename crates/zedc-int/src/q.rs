@@ -104,14 +104,17 @@ impl Q {
         (self.n, self.d)
     }
 
+    /// Whether the value is 0.
     pub fn is_zero(&self) -> bool {
         self.n.is_zero()
     }
 
+    /// Whether the value is below 0.
     pub fn is_negative(&self) -> bool {
         self.n.is_negative()
     }
 
+    /// Whether the value is above 0.
     pub fn is_positive(&self) -> bool {
         self.n.is_positive()
     }
