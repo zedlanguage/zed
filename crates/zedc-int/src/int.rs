@@ -2864,6 +2864,19 @@ impl Sub for &Num {
     fn sub(self, other: &Num) -> Num {
         match (&self.0, &other.0) {
             (Word::Small(a), Word::Small(b)) => (*a as i128 - *b as i128).into(),
+            // Complexity tradeoff: `self + &-other` on two values that are not kept builds the
+            // negation as a new `BigInt` and `Arc` before the sum makes its own, four heap
+            // allocations for one difference; one `BigInt` subtraction makes the two of the sum
+            // alone, with the same value and form (`From<BigInt>` picks `Small` or `Big` as the
+            // sum does). 1640 instructions a difference of two values past `i64` before, in a
+            // debug build (callgrind, dry-hash, hm3); the l01_24 bench
+            // `the_least_class_of_points_past_i64_scales_linearly`, whose points are past `i64`,
+            // went from 1,901,924,582 to 1,751,925,918 instructions at n = 200,000 (-7.89%, on
+            // 912bb65e2). A kept value keeps the sum, which collects and folds its terms. Test:
+            // `tests::differences_agree_with_sums_of_negations`.
+            (Word::Small(_) | Word::Big(_), Word::Small(_) | Word::Big(_)) => {
+                (&*self.big() - &*other.big()).into()
+            }
             _ => self + &-other,
         }
     }
@@ -3752,6 +3765,50 @@ mod tests {
                     );
                 }
                 None => assert!(!b.mod_floor(&g).is_zero()),
+            }
+        }
+    }
+
+    /// `a - b` is `a + (-b)` in value and in form (`Small`, `Big` or kept, read from `Debug`),
+    /// and the num-bigint difference for values not kept, on every pair of: 0, ±1, the values
+    /// next to ±2^63, ±2^64 and ±2^127, random values of up to 300 bits, and `3^(2^40)` and
+    /// its negation (kept, the path of the sum).
+    #[test]
+    fn differences_agree_with_sums_of_negations() {
+        let (mut rng, _) = crate::seed::Rng::fresh("differences_agree_with_sums_of_negations");
+        let one = BigInt::from(1);
+        let mut centers = vec![BigInt::from(0)];
+        for e in [63u32, 64, 127] {
+            centers.push(&one << e);
+        }
+        for _ in 0..12 {
+            let bits = 1 + rng.below(300);
+            let words: Vec<u32> = (0..bits.div_ceil(32))
+                .map(|_| rng.next_u64() as u32)
+                .collect();
+            centers.push(BigInt::from(
+                BigUint::new(words) >> (32 * bits.div_ceil(32) - bits),
+            ));
+        }
+        let mut values = Vec::new();
+        for c in centers {
+            for v in [&c - 1, c.clone(), &c + 1] {
+                values.push(Num::from(-&v));
+                values.push(Num::from(v));
+            }
+        }
+        let kept = Num::from(3).pow_by(&Num::from(1i64 << 40)).unwrap();
+        assert!(kept.is_kept());
+        values.push(-&kept);
+        values.push(kept);
+        for a in &values {
+            for b in &values {
+                let d = a - b;
+                let s = a + &-b;
+                assert_eq!(format!("{d:?}"), format!("{s:?}"), "{a:?} - {b:?}");
+                if !a.is_kept() && !b.is_kept() {
+                    assert_eq!(*d.big(), &*a.big() - &*b.big(), "{a:?} - {b:?}");
+                }
             }
         }
     }
