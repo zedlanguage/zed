@@ -105,13 +105,14 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::mem;
 use std::ops;
+use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use imbl::{OrdMap, OrdSet};
 use zed_kernel::digest::{DigestMap, DigestSet, TextMap, TextSet, text_hash, text_hasher};
 
-use zed_graph::UnionFind;
+use zed_graph::{UnionFind, reach, reach_until};
 use zed_kernel::refine::Refine;
 use zed_kernel::value::fresh_id;
 use zedc_int::int::{Int, IntRange, meet_range, range_meet, row_range};
@@ -4819,10 +4820,12 @@ fn chain_witness(
 
 mod cell_sweep {
     use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+    use std::ops::ControlFlow;
     use std::rc::Rc;
 
     // Every map and set of this module is keyed by addresses or places, so `Digest`.
     use zed_collections::intervals::{self, Interval};
+    use zed_graph::{reach, reach_until};
     use zed_kernel::digest::{DigestMap, DigestSet};
     use zedc_int::int::Int;
 
@@ -4850,40 +4853,41 @@ mod cell_sweep {
         let mut cands = BTreeSet::new();
         let mut multi_eqs = 0usize;
         let mut seen = DigestSet::default();
-        let mut stack: Vec<&Parts> = vec![&p.ors[0][0]];
-        while let Some(u) = stack.pop() {
-            let ptr = std::ptr::from_ref(u) as usize;
-            if !seen.insert(ptr) {
-                continue;
-            }
-            for c in &u.cons {
-                match c.lin.terms.len() {
-                    0 => {}
-                    1 => {
-                        if let Some(a) = c.lin.terms.keys().next() {
-                            cands.insert(a.clone());
-                            if cands.len() > 2 {
-                                return Vec::new();
+        let stopped = reach_until(
+            [&*p.ors[0][0]],
+            |u: &&Parts| seen.insert(std::ptr::from_ref(*u) as usize),
+            |u| {
+                let u = *u;
+                for c in &u.cons {
+                    match c.lin.terms.len() {
+                        0 => {}
+                        1 => {
+                            if let Some(a) = c.lin.terms.keys().next() {
+                                cands.insert(a.clone());
+                                if cands.len() > 2 {
+                                    return ControlFlow::Break(());
+                                }
+                            }
+                        }
+                        _ => {
+                            if c.rel != Rel::Eq {
+                                return ControlFlow::Break(());
+                            }
+                            multi_eqs += 1;
+                            if multi_eqs > 1 {
+                                return ControlFlow::Break(());
                             }
                         }
                     }
-                    _ => {
-                        if c.rel != Rel::Eq {
-                            return Vec::new();
-                        }
-                        multi_eqs += 1;
-                        if multi_eqs > 1 {
-                            return Vec::new();
-                        }
-                    }
                 }
-            }
-            for o in &u.ors {
-                let Some(first) = o.first() else {
-                    return Vec::new();
-                };
-                stack.push(first);
-            }
+                if u.ors.iter().any(Vec::is_empty) {
+                    return ControlFlow::Break(());
+                }
+                ControlFlow::Continue(u.ors.iter().map(|o| &*o[0]))
+            },
+        );
+        if stopped.is_some() {
+            return Vec::new();
         }
         cands.into_iter().collect()
     }
@@ -5641,21 +5645,17 @@ mod cell_sweep {
     fn collect_ors_atoms(ors: &[Vec<Rc<Parts>>], x: &Atom) -> HashSet<Atom> {
         let mut out = HashSet::from([x.clone()]);
         let mut seen = DigestSet::default();
-        let mut stack: Vec<&Parts> = ors.iter().flatten().map(Rc::as_ref).collect();
-        while let Some(u) = stack.pop() {
-            let ptr = std::ptr::from_ref(u) as usize;
-            if !seen.insert(ptr) {
-                continue;
-            }
-            for c in &u.cons {
-                out.extend(c.lin.terms.keys().cloned());
-            }
-            for o in &u.ors {
-                for v in o {
-                    stack.push(v);
+        reach(
+            ors.iter().flatten().map(Rc::as_ref),
+            |u: &&Parts| seen.insert(std::ptr::from_ref(*u) as usize),
+            |u| {
+                let u = *u;
+                for c in &u.cons {
+                    out.extend(c.lin.terms.keys().cloned());
                 }
-            }
-        }
+                u.ors.iter().flatten().map(Rc::as_ref)
+            },
+        );
         out
     }
 
@@ -17888,16 +17888,11 @@ impl System {
         // The places the group the permutations of `found` make sends `p` to.
         let orbit = |p: usize, found: &[Vec<usize>]| -> Vec<bool> {
             let mut reached = vec![false; n];
-            reached[p] = true;
-            let mut todo = vec![p];
-            while let Some(q) = todo.pop() {
-                for g in found {
-                    if !reached[g[q]] {
-                        reached[g[q]] = true;
-                        todo.push(g[q]);
-                    }
-                }
-            }
+            reach(
+                [p],
+                |&q| !mem::replace(&mut reached[q], true),
+                |&q| found.iter().map(move |g| g[q]),
+            );
             reached
         };
         let mut found: Vec<Vec<usize>> = Vec::new();
@@ -28799,17 +28794,16 @@ fn unbounded(c: &Formula, sym: &Atom, dir: i64) -> Result<bool, Refusal> {
     // A shared conjunction is entered once.
     let has_or = |g: &Formula| -> bool {
         let mut seen = std::collections::HashSet::new();
-        let mut stack = vec![g];
-        while let Some(g) = stack.pop() {
-            match g {
-                Formula::Or(_) => return true,
-                Formula::And(gs) if Id::of(g).is_none_or(|id| seen.insert(id)) => {
-                    stack.extend(gs.iter())
-                }
-                _ => {}
-            }
-        }
-        false
+        reach_until(
+            [g],
+            |g: &&Formula| Id::of(g).is_none_or(|id| seen.insert(id)),
+            |g| match *g {
+                Formula::Or(_) => ControlFlow::Break(()),
+                Formula::And(gs) => ControlFlow::Continue(gs.as_slice()),
+                _ => ControlFlow::Continue(Default::default()),
+            },
+        )
+        .is_some()
     };
     // A symbol no constraint mentions takes every value.
     let Some(r) = ray.get(sym) else {
@@ -32954,38 +32948,6 @@ mod difference_rows {
         }
     }
 
-    /// Whether the rows `x[i] - x[j] + k >= 0` (`x[j] <= x[i] + k`, an edge `i → j` of weight
-    /// `k`; the bounds are edges from and to a node for zero) have no point: a cycle of
-    /// negative weight, by Bellman-Ford. Over the integers as over the reals, since the
-    /// weights are integers.
-    ///
-    /// Bellman 1958 (doi:10.1090/qam/102435, read 2026-11-21; see the crate's `lib.rs`) gives
-    /// the rounds `f_i ← min_j (t_ij + f_j)` for positive times only, and says nothing of
-    /// negative cycles, so the test's reasoning is here. With `N = n + 1` nodes and every `d`
-    /// starting at 0 (a source joined to each node by a 0 edge): (a) a round with no change
-    /// leaves `d[b] <= d[a] + w` on every edge; summed round a cycle this says its weight is at
-    /// least 0, so no change means no negative cycle. (b) After round `r`, each `d[v]` is at most
-    /// the least weight of a walk of at most `r` edges ending at `v`, and every `d[v]` is the
-    /// weight of some walk; with no negative cycle the least walk weight is reached by a simple
-    /// path, of at most `N - 1` edges, so round `N` changes nothing. The loop runs `N + 1`
-    /// rounds, so it returns `false` exactly when there is no negative cycle.
-    fn negative_cycle(n: usize, edges: &[(usize, usize, i128)]) -> bool {
-        let mut d = vec![0i128; n + 1];
-        for _ in 0..=n + 1 {
-            let mut moved = false;
-            for &(a, b, w) in edges {
-                if d[a] + w < d[b] {
-                    d[b] = d[a] + w;
-                    moved = true;
-                }
-            }
-            if !moved {
-                return false;
-            }
-        }
-        true
-    }
-
     /// The premise of the fast path for groups of difference rows (DISJ-diff-fast, question
     /// A44): `solve` never refuses a system whose rows are all `±x ± y + k >= 0`, `± x + k >=
     /// 0` or such equalities, with or without a model wanted, and its answer is that of
@@ -33115,8 +33077,12 @@ mod difference_rows {
         if let Some(m) = full {
             assert!(cons.iter().all(|c| c.holds(m)), "{cons:?} at {m:?}");
         }
+        // The rows `x[i] - x[j] + k >= 0` are the edges `i → j` of weight `k` (`x[j] <= x[i] + k`),
+        // the bounds edges from and to node `n` for zero; they have no point, over the integers as
+        // over the reals since the weights are integers, exactly on a cycle of negative weight.
         if !sums {
-            assert_eq!(negative_cycle(n, edges), full.is_none(), "{cons:?}");
+            let cycle = crate::bellman_ford_moore::negative_cycle(n + 1, edges);
+            assert_eq!(cycle, full.is_none(), "{cons:?}");
         }
         full.is_some()
     }

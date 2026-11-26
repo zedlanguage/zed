@@ -775,6 +775,15 @@ pub mod upper_hull;
 )]
 mod scaling;
 
+/// The reference searches for a potential, shared with the solvers' and the step tests.
+#[cfg(test)]
+#[path = "../../../tests/src/bellman_ford_moore.rs"]
+#[expect(
+    dead_code,
+    reason = "presburger's tests use only `negative_cycle` of the shared oracles"
+)]
+mod bellman_ford_moore;
+
 // The meter's `malloc` in this crate's test binary, which `scaling` measures each run with
 // (`zed_alloc_count::metered`, TEST-meter-allocator-bias).
 #[cfg(test)]

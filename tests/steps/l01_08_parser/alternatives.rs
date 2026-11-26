@@ -41,16 +41,15 @@ fn label(g: &Grammar, l: &str) -> (usize, usize) {
 /// The rules whose node a match of rule `r` can be: `r` and, through its `~` alternatives, the
 /// rules those mark, and so on. A visited set stops at each rule's first visit.
 fn reach(g: &Grammar, r: usize) -> HashSet<usize> {
-    let mut seen = HashSet::from([r]);
-    let mut work = vec![r];
-    while let Some(r) = work.pop() {
-        for alt in g.rules[r].alts.iter().filter(|a| a.pass) {
-            let m = marked_rule(&alt.expr).expect("a `~` alternative marks a rule");
-            if seen.insert(m) {
-                work.push(m);
-            }
-        }
-    }
+    let mut seen = HashSet::new();
+    zed_graph::reach(
+        [r],
+        |&m| seen.insert(m),
+        |&r| {
+            (g.rules[r].alts.iter().filter(|a| a.pass))
+                .map(|alt| marked_rule(&alt.expr).expect("a `~` alternative marks a rule"))
+        },
+    );
     seen
 }
 

@@ -2987,25 +2987,27 @@ impl Type {
         // The answer is unchanged: false exactly when a reachable type has morphism bounds.
         let mut seen = BTreeSet::new();
         let mut payload_seen = crate::digest::DigestSet::default();
-        let mut pending = vec![self.clone()];
-        while let Some(t) = pending.pop() {
-            if !seen.insert(t.clone()) {
-                continue;
-            }
-            if t.has_morphism_bounds() {
-                return false;
-            }
-            let p = t.p();
-            p.atoms
-                .payload_entries_unseen(&mut payload_seen, &mut |_, _, payload| {
-                    pending.push(payload.clone());
+        zed_graph::reach_until(
+            [self.clone()],
+            |t| seen.insert(t.clone()),
+            |t| {
+                if t.has_morphism_bounds() {
+                    return std::ops::ControlFlow::Break(());
+                }
+                let mut kids = Vec::new();
+                let p = t.p();
+                p.atoms
+                    .payload_entries_unseen(&mut payload_seen, &mut |_, _, payload| {
+                        kids.push(payload.clone());
+                    });
+                p.tuples.atoms(&mut |row| {
+                    kids.extend(row.iter().cloned());
+                    true
                 });
-            p.tuples.atoms(&mut |row| {
-                pending.extend(row.iter().cloned());
-                true
-            });
-        }
-        true
+                std::ops::ControlFlow::Continue(kids)
+            },
+        )
+        .is_none()
     }
 
     /// Whether every function is in `self`; for a decidable type, either every function is or
@@ -7163,14 +7165,11 @@ impl Graph {
     #[cfg(test)]
     fn reach(&self, row: usize) -> usize {
         let mut seen = HashSet::new();
-        let mut stack: Vec<usize> = (self.lists_of_row[row].iter())
-            .map(|&l| self.lists[l].1)
-            .collect();
-        while let Some(n) = stack.pop() {
-            if seen.insert(n) {
-                stack.extend(&self.parents[n]);
-            }
-        }
+        zed_graph::reach(
+            (self.lists_of_row[row].iter()).map(|&l| self.lists[l].1),
+            |&n| seen.insert(n),
+            |&n| self.parents[n].iter().copied(),
+        );
         seen.len()
     }
 

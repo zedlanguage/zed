@@ -18967,23 +18967,26 @@ impl Ck<'_, '_> {
         let mut out = BTreeSet::new();
         self.outer_vars(t, binds, &mut out);
         // The parts in an order that puts each after the parts it holds.
-        let mut seen = HashSet::new();
         let mut order = Vec::new();
-        let mut stack: Vec<(Inner, bool)> = self.parts(t).map(|p| (p, false)).collect();
-        while let Some((p, done)) = stack.pop() {
-            if done {
-                order.push(p);
-                continue;
-            }
-            if !seen.insert(p.node()) {
-                continue;
-            }
-            stack.push((p, true));
-            for c in p.tys() {
-                let new = self.parts(c).filter(|q| !seen.contains(&q.node()));
-                stack.extend(new.map(|q| (q, false)));
-            }
-        }
+        let mut roots: Vec<Inner> = self.parts(t).collect();
+        // `post_order` takes the roots and each part's kids first to last; the reversals keep
+        // the order of the stack this walk kept before, which took the last pushed first.
+        roots.reverse();
+        zed_graph::post_order(
+            &mut HashSet::new(),
+            roots,
+            |seen, &p, kids| {
+                if !seen.insert(p.node()) {
+                    return false;
+                }
+                for c in p.tys() {
+                    kids.extend(self.parts(c).filter(|q| !seen.contains(&q.node())));
+                }
+                kids.reverse();
+                true
+            },
+            |_, p| order.push(p),
+        );
         let mut found: HashMap<NodeId, bool> = HashMap::new();
         for p in order {
             let mut clean = true;
@@ -19067,23 +19070,25 @@ impl Ck<'_, '_> {
         }
         let mut full = BTreeSet::new();
         self.outer_vars(t, binds, &mut full);
-        let mut seen = HashSet::new();
         let mut order = Vec::new();
-        let mut stack: Vec<(Inner, bool)> = Inner::of(t).map(|p| (p, false)).collect();
-        while let Some((p, done)) = stack.pop() {
-            if done {
-                order.push(p);
-                continue;
-            }
-            if !seen.insert(p.node()) {
-                continue;
-            }
-            stack.push((p, true));
-            for c in p.tys() {
-                let new = Inner::of(c).filter(|q| !seen.contains(&q.node()));
-                stack.extend(new.map(|q| (q, false)));
-            }
-        }
+        let mut roots: Vec<Inner> = Inner::of(t).collect();
+        // The same order as [`Self::unbound`]'s walk.
+        roots.reverse();
+        zed_graph::post_order(
+            &mut HashSet::new(),
+            roots,
+            |seen, &p, kids| {
+                if !seen.insert(p.node()) {
+                    return false;
+                }
+                for c in p.tys() {
+                    kids.extend(Inner::of(c).filter(|q| !seen.contains(&q.node())));
+                }
+                kids.reverse();
+                true
+            },
+            |_, p| order.push(p),
+        );
         let mut found: HashMap<NodeId, bool> = HashMap::new();
         let mut held = 0;
         for p in order {

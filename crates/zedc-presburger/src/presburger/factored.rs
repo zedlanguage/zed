@@ -133,6 +133,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 
+use zed_graph::{Order, Worklist};
 use zed_numtheory::BitLen;
 use zedc_int::int::Int;
 
@@ -1576,13 +1577,11 @@ struct Joint<'a> {
     hcount: Vec<usize>,
     min_m: Vec<Option<usize>>,
     uniq: Vec<Option<usize>>,
-    queue: VecDeque<usize>,
-    queued: Vec<bool>,
+    queue: Worklist,
     p3q: VecDeque<usize>,
     over: Vec<usize>,
     cand: Vec<BinaryHeap<(usize, usize)>>,
-    vqueue: VecDeque<usize>,
-    vqueued: Vec<bool>,
+    vqueue: Worklist,
     // The exact peel.
     expanded: bool,
     pair_atoms: Vec<Vec<usize>>,
@@ -1630,13 +1629,11 @@ impl<'a> Joint<'a> {
             hcount: vec![0; nv],
             min_m: vec![None; nr],
             uniq: vec![None; nr],
-            queue: VecDeque::new(),
-            queued: vec![false; nr],
+            queue: Worklist::new(nr, Order::Fifo),
             p3q: VecDeque::new(),
             over: vec![0; nv],
             cand: vec![BinaryHeap::new(); nv],
-            vqueue: VecDeque::new(),
-            vqueued: vec![false; nv],
+            vqueue: Worklist::new(nv, Order::Fifo),
             expanded: false,
             pair_atoms: Vec::new(),
             count: Vec::new(),
@@ -1922,16 +1919,14 @@ impl<'a> Joint<'a> {
     }
 
     fn wake(&mut self, r: usize) {
-        if self.min_m[r].is_some() && !self.queued[r] {
-            self.queued[r] = true;
-            self.queue.push_back(r);
+        if self.min_m[r].is_some() {
+            self.queue.push(r);
         }
     }
 
     fn wake_var(&mut self, v: usize) {
-        if !self.cand[v].is_empty() && !self.vqueued[v] {
-            self.vqueued[v] = true;
-            self.vqueue.push_back(v);
+        if !self.cand[v].is_empty() {
+            self.vqueue.push(v);
         }
     }
 
@@ -1993,7 +1988,6 @@ impl<'a> Joint<'a> {
     /// at most m are mentioned. So when 2|q| > m + `sum[r]`, some `w * z` is free and held by
     /// {r, q} alone, and the pair goes by the single-holder rule (Theorem D, u = ±e).
     fn p2(&mut self, r: usize) {
-        self.queued[r] = false;
         let Some(m) = self.min_m[r] else {
             return;
         };
@@ -2016,7 +2010,6 @@ impl<'a> Joint<'a> {
     /// has w in q, w not in p, so it holds the |p| atoms `w * z`, z in p, with the coefficient
     /// q_w p_z ≠ 0, and the argument of P2 applies with `over[w]` for `sum[r]`.
     fn p4(&mut self, w: usize) {
-        self.vqueued[w] = false;
         let m = self.p.deg(w);
         while let Some(&(len, id)) = self.cand[w].peek() {
             self.work3 += 1;
@@ -2085,9 +2078,10 @@ impl<'a> Joint<'a> {
                 self.recheck(r, kind);
             } else if let Some(r) = self.p3q.pop_front() {
                 self.p3(r);
-            } else if let Some(r) = self.queue.pop_front() {
+            } else if let Some(r) = self.queue.pop() {
+                // `pop` clears the flag of `r`, as `p2` did first before; nothing runs between.
                 self.p2(r);
-            } else if let Some(v) = self.vqueue.pop_front() {
+            } else if let Some(v) = self.vqueue.pop() {
                 self.p4(v);
             } else if !self.expanded && !self.o.no_peel {
                 self.expand();

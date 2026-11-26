@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
+import { outEdges, reachable } from "./generations.ts";
 import { layoutInWorker } from "./layout.ts";
 import type { Graph, Layout } from "./layout.ts";
 
@@ -72,16 +73,10 @@ export function drawnStats(l: Layout) {
 // and every 53rd edge removed, ten nodes added, each with an edge in and out.
 function changed(base: Layout): [string, Graph][] {
   const layer = base.layers!;
-  const out = new Map(plan.nodes.map((n) => [n.id, [] as string[]]));
-  for (const [a, b] of plan.edges) out.get(a)!.push(b);
+  const out = outEdges(plan);
   const ids = plan.nodes.map((n) => n.id);
   const deep = [...ids].sort((p, q) => layer[q] - layer[p] || (p < q ? -1 : 1))[0];
-  const reaches = (v: string) => {
-    const seen = new Set([v]), stack = [v];
-    while (stack.length) for (const w of out.get(stack.pop()!)!) if (!seen.has(w)) { seen.add(w); stack.push(w); }
-    return seen.has(deep);
-  };
-  const up = ids.find((v) => layer[v] < layer[deep] - 2 && !reaches(v))!;
+  const up = ids.find((v) => layer[v] < layer[deep] - 2 && !reachable(out, v).has(deep))!;
   const edge: [string, string] = [deep, up];
   const kept = new Set(ids.filter((_, i) => i % 97 !== 5));
   return [

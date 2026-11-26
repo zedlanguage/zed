@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { graph, layerSeparation, layeringSimplex } from "d3-dag";
 import { balanceCounts, balanceLayers, compactLayers, countsFor, d3dagLayout, fromPrevious, layers, lowerSources, makeRoom, operators, splitRows, spreadSources } from "./d3dag.ts";
 import type { Work } from "./d3dag.ts";
+import { outEdges, reachable } from "./generations.ts";
 import type { Graph } from "./layout.ts";
 import { planLike } from "./synthetic.ts";
 
@@ -255,15 +256,12 @@ function layersOf(g: Graph, prev?: Record<string, number>, prevK?: number) {
 // An edge from a node to one in a higher layer that cannot reach it, so the
 // edge adds no cycle and points up in the old layering.
 function upwardEdge(g: Graph, byId: Record<string, number>): [string, string] {
-  const out = new Map(g.nodes.map((n) => [n.id, [] as string[]]));
-  for (const [a, b] of g.edges) out.get(a)?.push(b);
+  const out = outEdges(g);
   const ids = g.nodes.map((n) => n.id).sort((p, q) => byId[q] - byId[p] || (p < q ? -1 : 1));
   const deep = ids[0];
   for (const v of [...ids].reverse()) {
     if (byId[v] >= byId[deep] - 2) break;
-    const seen = new Set([v]), stack = [v];
-    while (stack.length) for (const w of out.get(stack.pop()!) ?? []) if (!seen.has(w)) { seen.add(w); stack.push(w); }
-    if (!seen.has(deep)) return [deep, v];
+    if (!reachable(out, v).has(deep)) return [deep, v];
   }
   throw new Error("no upward edge without a cycle");
 }

@@ -87,7 +87,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 
 use num_bigint::BigInt;
-use zed_graph::{Dijkstra, MinHeap, reduced};
+use zed_graph::{Dijkstra, KeyedWorklist, MinHeap, reduced};
 use zed_kernel::frames::{Deep, Stack};
 use zed_kernel::poly::roots::{Roots, term_roots};
 use zed_kernel::print;
@@ -5978,22 +5978,22 @@ impl Split {
         let mut visited: BTreeSet<Factor> = BTreeSet::new();
         let mut comps: Vec<BTreeSet<Factor>> = Vec::new();
         for start in &rem_vars {
-            if !visited.insert(start.clone()) {
+            if visited.contains(start) {
                 continue;
             }
             let mut comp = BTreeSet::new();
-            comp.insert(start.clone());
-            let mut stack = vec![start.clone()];
-            while let Some(u) = stack.pop() {
-                if let Some(nbrs) = self.adj.get(&u) {
-                    for v in nbrs.keys() {
-                        if rem_vars.contains(v) && visited.insert(v.clone()) {
-                            comp.insert(v.clone());
-                            stack.push(v.clone());
-                        }
-                    }
-                }
-            }
+            let (adj, rem) = (&self.adj, &rem_vars);
+            zed_graph::reach(
+                [start.clone()],
+                |v: &Factor| visited.insert(v.clone()),
+                |u| {
+                    comp.insert(u.clone());
+                    (adj.get(u).into_iter())
+                        .flat_map(|nbrs| nbrs.keys())
+                        .filter(move |v| rem.contains(*v))
+                        .cloned()
+                },
+            );
             comps.push(comp);
         }
         if comps.len() <= 1 {
@@ -15900,9 +15900,7 @@ impl Scope {
             .filter_map(|b| Some((blocks.members(b).next()?, b)))
             .collect();
         order.sort_unstable();
-        let mut work: std::collections::VecDeque<BlockId> =
-            order.into_iter().map(|(_, b)| b).collect();
-        let mut queued: BTreeSet<BlockId> = work.iter().copied().collect();
+        let mut work: KeyedWorklist<BlockId> = order.into_iter().map(|(_, b)| b).collect();
         // The names whose move put each block on the worklist.
         let mut cause: BTreeMap<BlockId, BTreeSet<Arc<str>>> = BTreeMap::new();
         // The trees projected as a whole after an echo, whose blocks are not projected again.
@@ -15911,8 +15909,7 @@ impl Scope {
         // block by block, in this projection.
         let mut solved: BTreeSet<BlockId> = BTreeSet::new();
         let mut blockwise: BTreeSet<BlockId> = BTreeSet::new();
-        while let Some(b) = work.pop_front() {
-            queued.remove(&b);
+        while let Some(b) = work.pop() {
             let from = cause.remove(&b).unwrap_or_default();
             let t = blocks.tree(b);
             if whole_trees.contains(&t) {
@@ -15983,9 +15980,7 @@ impl Scope {
                             for c in self.moved_blocks(&relation, n) {
                                 if blocks.tree(c) != t {
                                     cause.entry(c).or_default().insert(n.clone());
-                                    if queued.insert(c) {
-                                        work.push_back(c);
-                                    }
+                                    work.push(c);
                                 }
                             }
                         }
@@ -16033,9 +16028,7 @@ impl Scope {
                             for c in self.moved_blocks(&relation, n) {
                                 if blocks.tree(c) != t {
                                     cause.entry(c).or_default().insert(n.clone());
-                                    if queued.insert(c) {
-                                        work.push_back(c);
-                                    }
+                                    work.push(c);
                                 }
                             }
                         }
@@ -16119,9 +16112,7 @@ impl Scope {
                 for c in self.moved_blocks(&relation, n) {
                     if c != b {
                         cause.entry(c).or_default().insert(n.clone());
-                        if queued.insert(c) {
-                            work.push_back(c);
-                        }
+                        work.push(c);
                     }
                 }
             }
@@ -16199,27 +16190,20 @@ impl Scope {
             "by_holes on a tree with other conjuncts"
         );
         let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
-        let mut work: Vec<Arc<str>> = Vec::new();
-        for g in blocks.members(b) {
-            for n in conjuncts::names(g) {
-                if seen.insert(n.clone()) {
-                    work.push(n);
-                }
-            }
-        }
         let mut tree: BTreeSet<Arc<Formula>> = BTreeSet::new();
-        while let Some(n) = work.pop() {
-            for g in blocks.in_forest(&n) {
-                if !blocks.of(g).is_some_and(|c| blocks.tree(c) == t) || !tree.insert(g.clone()) {
-                    continue;
-                }
-                for m in conjuncts::names(g) {
-                    if seen.insert(m.clone()) {
-                        work.push(m);
+        zed_graph::reach(
+            blocks.members(b).flat_map(|g| conjuncts::names(g)),
+            |n: &Arc<str>| seen.insert(n.clone()),
+            |n| {
+                let mut kids = Vec::new();
+                for g in blocks.in_forest(n) {
+                    if blocks.of(g).is_some_and(|c| blocks.tree(c) == t) && tree.insert(g.clone()) {
+                        kids.extend(conjuncts::names(g));
                     }
                 }
-            }
-        }
+                kids
+            },
+        );
         // The names in order, each name's bounds from the conjuncts that bound it alone, and
         // the edges between names, each with its conjunct.
         let names: Vec<Arc<str>> = seen.into_iter().collect();
@@ -17384,7 +17368,7 @@ impl Scope {
         // disjunctions_as_the_eager_one` and on the random seeds of
         // `l01_39_scope_relations::lazy`; they cannot catch a precision loss both scopes share.
         let leaf = b.leaf.clone();
-        let mut work: std::collections::VecDeque<PartAt> = due.iter().cloned().collect();
+        let mut first: Vec<PartAt> = due.iter().cloned().collect();
         // Complexity tradeoff: naive version, `PartAt` orders `(false, conjunct)` before
         // `(true, least)`, so in a case of a star (`persist` Arm 2 `x - j * y >= 1`) a woke
         // disjunction projects first under coarse hub bounds, `(true, least)` then narrows the
@@ -17402,15 +17386,16 @@ impl Scope {
         let mut initial_star_base: Option<PartAt> = None;
         let mut moved_by_base: BTreeSet<Arc<str>> = BTreeSet::new();
         if leaf.is_some()
-            && let Some(pos) = work.iter().rposition(|at| at.0)
-            && let Some(base_at) = work.remove(pos)
+            && let Some(pos) = first.iter().rposition(|at| at.0)
         {
-            if !work.is_empty() {
+            let base_at = first.remove(pos);
+            if !first.is_empty() {
                 initial_star_base = Some(base_at.clone());
             }
-            work.push_front(base_at);
+            first.insert(0, base_at);
         }
-        let mut queued: BTreeSet<PartAt> = due.iter().cloned().collect();
+        // A part listed twice in `due` runs once: the worklist keeps each part once.
+        let mut work: KeyedWorklist<PartAt> = first.into_iter().collect();
         // The idle verdicts and certified chain ends found since the names last moved
         // ([`Scope::idle_by_chain`]).
         let mut certified: BTreeMap<PartAt, bool> = BTreeMap::new();
@@ -17419,8 +17404,7 @@ impl Scope {
         let mut halfline_ctx: BTreeMap<NamePair, Option<HalfLineContext>> = BTreeMap::new();
         let mut ran: Vec<PartAt> = Vec::new();
         let mut released_loop: Vec<PartAt> = Vec::new();
-        while let Some(i) = work.pop_front() {
-            queued.remove(&i);
+        while let Some(i) = work.pop() {
             let part = &b.parts[&i].clone();
             if b.managed(part) || self.part_puncture_idle(&b, part, &mut puncture_ctx) {
                 continue;
@@ -17602,15 +17586,15 @@ impl Scope {
                         match subset {
                             Some(rest) => {
                                 for j in rest.into_parts() {
-                                    if j != i && queued.insert(j.clone()) {
-                                        work.push_back(j);
+                                    if j != i {
+                                        work.push(j);
                                     }
                                 }
                             }
                             None => {
                                 for (_, j) in b.chains.get(k).into_iter().flatten() {
-                                    if j != &i && queued.insert(j.clone()) {
-                                        work.push_back(j.clone());
+                                    if j != &i {
+                                        work.push(j.clone());
                                     }
                                 }
                             }
@@ -17620,9 +17604,7 @@ impl Scope {
             }
             for j in b.released(was.0, was.1) {
                 released_loop.push(j.clone());
-                if queued.insert(j.clone()) {
-                    work.push_back(j.clone());
-                }
+                work.push(j.clone());
             }
             // An aggregate move is a projection of other parts. It must wake this part
             // again too, just as projecting a threshold row separately would. The diff
@@ -17681,8 +17663,8 @@ impl Scope {
                     let allow_self = aggregated.contains(n);
                     if let Some(us) = b.unchained_users.get(n) {
                         for j in us.due(b.stair_managed, b.ray_managed) {
-                            if (j != &i || allow_self) && queued.insert(j.clone()) {
-                                work.push_back(j.clone());
+                            if j != &i || allow_self {
+                                work.push(j.clone());
                             }
                         }
                     }
@@ -17700,7 +17682,6 @@ impl Scope {
                             &mut certified,
                             &mut certified_chains,
                             &mut halfline_ctx,
-                            &mut queued,
                             &mut work,
                         );
                     }
@@ -17738,7 +17719,6 @@ impl Scope {
                             allow_self,
                             &mut certified,
                             &mut certified_chains,
-                            &mut queued,
                             &mut work,
                         );
                     }
@@ -17763,7 +17743,6 @@ impl Scope {
                                 allow_self,
                                 &mut certified,
                                 &mut certified_chains,
-                                &mut queued,
                                 &mut work,
                             );
                         } else if let Some(idx) = b.recession.get(&rkey).cloned() {
@@ -17785,8 +17764,8 @@ impl Scope {
                             }
                             for bucket in buckets {
                                 for j in &bucket.unchained {
-                                    if (j != &i || allow_self) && queued.insert(j.clone()) {
-                                        work.push_back(j.clone());
+                                    if j != &i || allow_self {
+                                        work.push(j.clone());
                                     }
                                 }
                                 let b_cks: Vec<Arc<Vec<ChainAtom>>> =
@@ -17800,7 +17779,6 @@ impl Scope {
                                         &mut certified,
                                         &mut certified_chains,
                                         &mut halfline_ctx,
-                                        &mut queued,
                                         &mut work,
                                     );
                                 }
@@ -17809,8 +17787,8 @@ impl Scope {
                     }
                 } else {
                     for j in b.due_users(n) {
-                        if (j != &i || aggregated.contains(n)) && queued.insert(j.clone()) {
-                            work.push_back(j.clone());
+                        if j != &i || aggregated.contains(n) {
+                            work.push(j.clone());
                         }
                     }
                 }
@@ -17980,8 +17958,7 @@ impl Scope {
         certified: &mut BTreeMap<PartAt, bool>,
         certified_chains: &mut BTreeMap<Arc<Vec<ChainAtom>>, Vec<Int>>,
         halfline_ctx: &mut BTreeMap<NamePair, Option<HalfLineContext>>,
-        queued: &mut BTreeSet<PartAt>,
-        work: &mut std::collections::VecDeque<PartAt>,
+        work: &mut KeyedWorklist<PartAt>,
     ) {
         if let Some(least_at) = b.chain_least(&ck)
             && let Some(lp) = b.parts.get(&least_at).cloned()
@@ -18014,27 +17991,19 @@ impl Scope {
                 };
                 if !now_idle {
                     for (_, j) in b.chains.get(&ck).into_iter().flatten() {
-                        if j != cur
-                            && !b.parts.get(j).is_some_and(|p| b.managed(p))
-                            && queued.insert(j.clone())
-                        {
-                            work.push_back(j.clone());
+                        if j != cur && !b.parts.get(j).is_some_and(|p| b.managed(p)) {
+                            work.push(j.clone());
                         }
                     }
                 }
             } else {
                 b.fired_chains.insert(ck, None);
-                if queued.insert(least_at.clone()) {
-                    work.push_back(least_at);
-                }
+                work.push(least_at);
             }
         } else {
             for (_, j) in b.chains.get(&ck).into_iter().flatten() {
-                if (j != cur || allow_self)
-                    && !b.parts.get(j).is_some_and(|p| b.managed(p))
-                    && queued.insert(j.clone())
-                {
-                    work.push_back(j.clone());
+                if (j != cur || allow_self) && !b.parts.get(j).is_some_and(|p| b.managed(p)) {
+                    work.push(j.clone());
                 }
             }
         }
@@ -18049,8 +18018,7 @@ impl Scope {
         allow_self: bool,
         certified: &mut BTreeMap<PartAt, bool>,
         certified_chains: &mut BTreeMap<Arc<Vec<ChainAtom>>, Vec<Int>>,
-        queued: &mut BTreeSet<PartAt>,
-        work: &mut std::collections::VecDeque<PartAt>,
+        work: &mut KeyedWorklist<PartAt>,
     ) {
         uncert.sort();
         uncert.dedup_by(|x, y| x.0 == y.0 && x.1.cmp(&y.1).is_eq());
@@ -18067,15 +18035,15 @@ impl Scope {
                     .entry(ck.clone())
                     .or_default()
                     .push((ends.clone(), at));
-            } else if (&at != cur || allow_self) && queued.insert(at.clone()) {
-                work.push_back(at);
+            } else if &at != cur || allow_self {
+                work.push(at);
             }
         }
         for (ck, mut members) in by_chain {
             if members.len() == 1 {
                 let at = members.pop().unwrap().1;
-                if (&at != cur || allow_self) && queued.insert(at.clone()) {
-                    work.push_back(at);
+                if &at != cur || allow_self {
+                    work.push(at);
                 }
                 continue;
             }
@@ -18102,8 +18070,8 @@ impl Scope {
                     };
                     if !now_idle {
                         for (_, j) in members.into_iter().skip(1) {
-                            if &j != cur && queued.insert(j.clone()) {
-                                work.push_back(j);
+                            if &j != cur {
+                                work.push(j);
                             }
                         }
                     }
@@ -18114,14 +18082,12 @@ impl Scope {
                     {
                         held.hold(members.into_iter().skip(1));
                     }
-                    if queued.insert(least_at.clone()) {
-                        work.push_back(least_at);
-                    }
+                    work.push(least_at);
                 }
             } else {
                 for (_, j) in members {
-                    if (&j != cur || allow_self) && queued.insert(j.clone()) {
-                        work.push_back(j);
+                    if &j != cur || allow_self {
+                        work.push(j);
                     }
                 }
             }

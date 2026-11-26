@@ -467,17 +467,28 @@ function layoutOnce(g: Graph, ops: Operators, prev: Record<string, number> | und
 // it leaves room for the earlier layers to hold while nodes come and go.
 const ROOM = 1.25;
 
+// A topological order by Kahn's algorithm: the nodes with no parent first, then
+// each node once all its parents are placed. The first `len` entries of `order`
+// are placed; on a graph with a cycle the nodes on it and after it are not, and
+// `order` holds 0 past `len`. `edges` counts the edges out of the placed nodes.
+// Complexity: O(n + m).
+export function topoOrder(parents: number[][], children: number[][]): { order: Int32Array; len: number; edges: number } {
+  const n = parents.length, order = new Int32Array(n), waiting = Int32Array.from(parents, (p) => p.length);
+  let len = 0, edges = 0;
+  for (let i = 0; i < n; i++) if (!waiting[i]) order[len++] = i;
+  for (let k = 0; k < len; k++) for (const c of children[order[k]]) { edges++; if (--waiting[c] === 0) order[len++] = c; }
+  return { order, len, edges };
+}
+
 // The number of nodes on the longest path, by a topological order.
 // Complexity: O(n + m).
-function pathNodes(parents: number[][], children: number[][]): number {
-  const n = parents.length;
-  const waiting = Int32Array.from(parents, (p) => p.length), depth = new Int32Array(n).fill(1), order: number[] = [];
-  for (let i = 0; i < n; i++) if (!waiting[i]) order.push(i);
+export function pathNodes(parents: number[][], children: number[][]): number {
+  const { order, len } = topoOrder(parents, children), depth = new Int32Array(parents.length).fill(1);
   let most = 0;
-  for (let k = 0; k < order.length; k++) {
+  for (let k = 0; k < len; k++) {
     const v = order[k];
     most = Math.max(most, depth[v]);
-    for (const c of children[v]) { depth[c] = Math.max(depth[c], depth[v] + 1); if (--waiting[c] === 0) order.push(c); }
+    for (const c of children[v]) depth[c] = Math.max(depth[c], depth[v] + 1);
   }
   return most;
 }
@@ -811,12 +822,7 @@ export function fromPrevious(old: (number | undefined)[], parents: number[][], c
   let top = Infinity, bottom = -Infinity;
   for (const v of old) if (v !== undefined) { top = Math.min(top, v); bottom = Math.max(bottom, v); }
   if (top === Infinity) return null;
-  const order = new Int32Array(n);
-  const waiting = Int32Array.from(parents, (p) => p.length);
-  let len = 0;
-  for (let i = 0; i < n; i++) if (!waiting[i]) order[len++] = i;
-  let m = 0;
-  for (let k = 0; k < len; k++) for (const c of children[order[k]]) { m++; if (--waiting[c] === 0) order[len++] = c; }
+  const { order, edges: m } = topoOrder(parents, children);
   const early = new Int32Array(n), late = new Int32Array(n);
   let H = bottom - top + 1;
   for (const v of order) for (const c of children[v]) early[c] = Math.max(early[c], early[v] + 1);

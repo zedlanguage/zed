@@ -394,19 +394,23 @@ impl<'t, 'a> Ck<'t, 'a> {
             // `remap_level` follows them by root. Counted by name, not by root: a check puts a
             // type in the place of one name, the need's own `$r`, and the source loses that
             // name whatever classes its other names have been merged into since.
-            let mut todo: Vec<Arc<str>> = cur.vars.iter().cloned().collect();
             let mut seen: HashSet<Arc<str>> = HashSet::new();
             let mut open = 0;
-            while let Some(v) = todo.pop() {
-                if !seen.insert(v.clone()) {
-                    continue;
-                }
-                match self.class_root(&v).map(|r| &self.classes[r].resolved) {
-                    Some(Some(t)) => todo.extend(t.vars.iter().cloned()),
-                    Some(None) => open += 1,
-                    None => {}
-                }
-            }
+            zed_graph::reach(
+                cur.vars.iter().cloned(),
+                |v| seen.insert(v.clone()),
+                |v| {
+                    let t = match self.class_root(v).map(|r| &self.classes[r].resolved) {
+                        Some(Some(t)) => Some(t),
+                        Some(None) => {
+                            open += 1;
+                            None
+                        }
+                        None => None,
+                    };
+                    t.into_iter().flat_map(|t| t.vars.iter().cloned())
+                },
+            );
             if open > 0 {
                 return (level, open);
             }

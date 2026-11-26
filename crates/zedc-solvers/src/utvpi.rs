@@ -443,7 +443,7 @@ fn negated(q: &[Int]) -> Vec<Int> {
 fn bf_dijkstra(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     let mut rounds = negsssp::Rounds::new(out);
     loop {
-        if let Some(found) = rounds.step() {
+        if let negsssp::Did::End(found) = rounds.step() {
             return found;
         }
     }
@@ -494,7 +494,10 @@ impl<'a> Shared<'a> {
             }
             self.gor.lowered.clear();
         }
-        self.rounds.step()
+        match self.rounds.step() {
+            negsssp::Did::End(found) => Some(found),
+            negsssp::Did::Work | negsssp::Did::Move => None,
+        }
     }
 }
 
@@ -688,7 +691,7 @@ mod tests {
         integer_empty_by, integer_point, integer_point_by, negated, negsssp, odd_zero_cycle,
         potential, race, reversed, rounded,
     };
-    use crate::bellman_ford_moore::bellman_ford_moore;
+    use crate::bellman_ford_moore::{bellman_ford, bellman_ford_moore, holds};
     use crate::seed::Rng;
 
     /// The rows `x0 - x1 >= 0`, `x1 - x0 >= 0`, `1 - x0 - x1 >= 0`, and with `odd` also
@@ -855,39 +858,6 @@ mod tests {
                 eprintln!("{answer} given only by the graph built for it");
             }
         }
-    }
-
-    /// Plain Bellman–Ford from a source joined to each node by an edge of weight 0: `n` passes
-    /// over every edge, and an edge still to relax after them shows a negative cycle.
-    fn bellman_ford(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
-        let mut d = vec![Int::ZERO; out.len()];
-        for _ in 0..out.len() {
-            let mut fell = false;
-            for (u, edges) in out.iter().enumerate() {
-                for (v, w) in edges {
-                    let to = &d[u] + w;
-                    if to < d[*v] {
-                        d[*v] = to;
-                        fell = true;
-                    }
-                }
-            }
-            if !fell {
-                return Some(d);
-            }
-        }
-        let holds = out
-            .iter()
-            .enumerate()
-            .all(|(u, edges)| edges.iter().all(|(v, w)| d[*v] <= &d[u] + w));
-        holds.then_some(d)
-    }
-
-    /// Whether `p` holds on every edge of `out`: `p(v) <= p(u) + w`.
-    fn holds(out: &[Vec<(usize, Int)>], p: &[Int]) -> bool {
-        out.iter()
-            .enumerate()
-            .all(|(u, edges)| edges.iter().all(|(v, w)| p[*v] <= &p[u] + w))
     }
 
     #[test]

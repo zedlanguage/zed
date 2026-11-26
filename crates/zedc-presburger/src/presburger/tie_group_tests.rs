@@ -23,6 +23,7 @@
 
 use super::*;
 use std::collections::HashSet;
+use zed_graph::reach;
 
 mod bench;
 
@@ -204,16 +205,16 @@ fn keeps_rows(sys: &System, p: &[usize]) -> bool {
 /// The group the permutations `gens` of `0..n` make, by closing under composition.
 fn closure(n: usize, gens: &[Perm]) -> HashSet<Perm> {
     let id: Perm = (0..n).collect();
-    let mut seen: HashSet<Perm> = HashSet::from([id.clone()]);
-    let mut todo = vec![id];
-    while let Some(h) = todo.pop() {
-        for g in gens {
-            let gh: Perm = h.iter().map(|&i| g[i]).collect();
-            if seen.insert(gh.clone()) {
-                todo.push(gh);
-            }
-        }
-    }
+    let mut seen: HashSet<Perm> = HashSet::new();
+    reach(
+        [id],
+        |h: &Perm| seen.insert(h.clone()),
+        |h| {
+            (gens.iter())
+                .map(|g| h.iter().map(|&i| g[i]).collect::<Perm>())
+                .collect::<Vec<_>>()
+        },
+    );
     seen
 }
 

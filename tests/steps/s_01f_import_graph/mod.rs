@@ -414,7 +414,8 @@ fn one_ring_of(files: &[(String, String)], m: usize) {
     let g = Graph::of(files).expect("the ring's graph");
     let found = g.cycles();
     assert_eq!(found.len(), 1);
-    assert_eq!(g.shortest_cycle(&found[0]).len(), m);
+    let mut bfs = zed_graph::BfsPaths::new(g.files.len());
+    assert_eq!(g.shortest_cycle(&found[0], &mut bfs).len(), m);
 }
 
 /// A ring of files is one cycle of them all at small sizes; its time is held in

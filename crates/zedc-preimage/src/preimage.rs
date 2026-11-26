@@ -66,6 +66,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
+use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
@@ -2661,18 +2662,19 @@ impl<'t> Scoped<'t> {
         // arguments and its callee's term are made of.
         let mut reached: Vec<u32> = Vec::new();
         let mut seen: HashSet<u32> = HashSet::new();
-        let mut todo = auxes(body);
-        while let Some(n) = todo.pop() {
-            if !seen.insert(n) {
-                continue;
-            }
-            reached.push(n);
-            let (_, what, def) = &self.tr.defs[n as usize];
-            todo.extend(auxes(def));
-            if what.remainder() {
-                todo.push(n - 1);
-            }
-        }
+        zed_graph::reach(
+            auxes(body),
+            |&n| seen.insert(n),
+            |&n| {
+                reached.push(n);
+                let (_, what, def) = &self.tr.defs[n as usize];
+                let mut kids = auxes(def);
+                if what.remainder() {
+                    kids.push(n - 1);
+                }
+                kids
+            },
+        );
         // What each canonical atom is bound to, and each value a claimed call binds.
         let mut bound: HashMap<&Arc<str>, &Lin> = HashMap::new();
         let mut values: HashMap<u32, &Lin> = HashMap::new();
@@ -11692,12 +11694,9 @@ impl<'m, 't> Walk<'m, 't> {
             let terms = &tx.terms;
             let kid = |args: Span, i: usize| args.get(&terms.kids, i);
             let mut seen = HashSet::new();
-            let mut todo = vec![body];
             let mut reads = Reads::Not;
-            while let Some(u) = todo.pop() {
-                if !seen.insert(u) {
-                    continue;
-                }
+            let stop = zed_graph::reach_until([body], |&u| seen.insert(u), |&u| {
+                let mut todo = Vec::new();
                 let at = match terms.nodes[u as usize] {
                     Node::Int(_) | Node::Bool(_) | Node::Lit(_) | Node::PrimFn(_) => Reads::Not,
                     Node::Var(x) if x == p => Reads::Other,
@@ -11740,10 +11739,12 @@ impl<'m, 't> Walk<'m, 't> {
                     Node::Other => Reads::Other,
                 };
                 reads = reads.max(at);
-                if reads == Reads::Other {
-                    break;
+                match reads {
+                    Reads::Other => ControlFlow::Break(Reads::Other),
+                    _ => ControlFlow::Continue(todo),
                 }
-            }
+            });
+            let reads = stop.unwrap_or(reads);
             tx.reads.insert((body, p), reads);
             reads
         })

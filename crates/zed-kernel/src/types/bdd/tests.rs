@@ -348,14 +348,14 @@ mod old {
         /// The number of distinct nodes.
         pub(super) fn nodes(&self) -> usize {
             let mut seen = std::collections::HashSet::new();
-            let mut stack = vec![self];
-            while let Some(d) = stack.pop() {
-                if let Old::Node(n) = d
-                    && seen.insert(d.clone())
-                {
-                    stack.extend([&n.1, &n.2]);
-                }
-            }
+            zed_graph::reach(
+                [self],
+                |&d| matches!(d, Old::Node(_)) && seen.insert(d.clone()),
+                |&d| match d {
+                    Old::Node(n) => Some([&n.1, &n.2]).into_iter().flatten(),
+                    Old::Leaf(_) => None.into_iter().flatten(),
+                },
+            );
             seen.len()
         }
     }

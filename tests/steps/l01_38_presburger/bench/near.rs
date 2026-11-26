@@ -1,6 +1,7 @@
 //! The benchmarks of `near.rs` (TEST-bench-move-l0138), run by `tools/run_tests.sh --bench`.
 
 use crate::near::*;
+use zed_tests::bellman_ford_moore::holds;
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::negsssp::potential_alone;

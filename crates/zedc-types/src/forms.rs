@@ -534,15 +534,12 @@ impl Forms {
     /// The sub-forms of `f`, itself among them, in increasing id, so each child before its
     /// parent.
     fn below(&self, f: FormId) -> Vec<FormId> {
-        let mut seen = HashSet::from([f]);
-        let mut todo = vec![f];
-        while let Some(n) = todo.pop() {
-            for &k in &self.nodes[n as usize].kids {
-                if seen.insert(k) {
-                    todo.push(k);
-                }
-            }
-        }
+        let mut seen = HashSet::new();
+        zed_graph::reach(
+            [f],
+            |&n| seen.insert(n),
+            |&n| self.nodes[n as usize].kids.iter().copied(),
+        );
         let mut all: Vec<FormId> = seen.into_iter().collect();
         all.sort_unstable();
         all

@@ -36,10 +36,10 @@
 //! 8.8x and 8.0x, against 8 for linear and 12.25 for N log N. Test:
 //! `l01_39_reduced_product::loops::classifying_a_chain_of_choices_scales`.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use zed_graph::{Compression, Diff, Keep, Linking, UnionFind};
+use zed_graph::{BfsPaths, Compression, Diff, Keep, Linking, UnionFind};
 use zed_kernel::text::prose::and_list;
 use zedc_affine::shadow::{i128_meet, i128_row_bound};
 use zedc_int::int::{Int, i128_div_ceil};
@@ -858,34 +858,29 @@ impl Say<'_> {
         )
     }
 
-    /// A shortest path from `s` to `t` inside the strongly connected component of `s`, by the
-    /// edges `ok` allows: the nodes after `s`, ending with `t`. O(m log m) for the m edges of
-    /// the component.
-    fn path(&self, s: usize, t: usize, ok: &dyn Fn(usize) -> bool) -> Option<Vec<usize>> {
+    /// A shortest path from `s` to the first node `goal` accepts inside the strongly connected
+    /// component of `s`, by the edges `ok` allows, each node's edges in their order, as its
+    /// edges: each the node it leaves, the edge and its head ([`zed_graph::BfsPaths`], whose
+    /// doc proves the path shortest). `O(k + m)` for the `k` nodes and `m` edges of the
+    /// component, with the scratch made once per message, `O(n)`.
+    fn path(
+        &self,
+        bfs: &mut BfsPaths<usize>,
+        s: usize,
+        goal: impl FnMut(usize) -> bool,
+        ok: &dyn Fn(usize) -> bool,
+    ) -> Option<Vec<(usize, usize, usize)>> {
         let c = self.comp[s];
-        let mut prev: BTreeMap<usize, usize> = BTreeMap::new();
-        let mut q = VecDeque::from([s]);
-        while let Some(u) = q.pop_front() {
-            for &e in &self.out[u] {
-                let w = self.g.edges[e].1;
-                if self.comp[w] != c || !ok(e) || w == s || prev.contains_key(&w) {
-                    continue;
-                }
-                prev.insert(w, u);
-                if w == t {
-                    let mut p = vec![t];
-                    let mut x = t;
-                    while prev[&x] != s {
-                        x = prev[&x];
-                        p.push(x);
-                    }
-                    p.reverse();
-                    return Some(p);
-                }
-                q.push_back(w);
-            }
-        }
-        None
+        bfs.path(
+            s,
+            |u| {
+                (self.out[u].iter()).filter_map(move |&e| {
+                    let w = self.g.edges[e].1;
+                    (self.comp[w] == c && ok(e)).then_some((w, e))
+                })
+            },
+            goal,
+        )
     }
 
     /// The links of the closed walk `walk` (nodes, the last joined to the first), read from a
@@ -939,15 +934,17 @@ impl Say<'_> {
     fn cycle_through(&self, e1: usize, e2: usize) -> Vec<Link> {
         let (u1, v1, _) = self.g.edges[e1];
         let (u2, v2, _) = self.g.edges[e2];
-        let walk = |ok: &dyn Fn(usize) -> bool| -> Option<Vec<usize>> {
+        let mut bfs = BfsPaths::new(self.g.nodes.len());
+        let mut walk = |ok: &dyn Fn(usize) -> bool| -> Option<Vec<usize>> {
             let mut walk = vec![u1, v1];
             if v1 != u2 {
-                walk.extend(self.path(v1, u2, ok)?);
+                let to = self.path(&mut bfs, v1, |w| w == u2, ok)?;
+                walk.extend(to.into_iter().map(|(_, _, w)| w));
             }
             if v2 != u1 {
                 walk.push(v2);
-                let back = self.path(v2, u1, ok)?;
-                walk.extend(&back[..back.len() - 1]);
+                let back = self.path(&mut bfs, v2, |w| w == u1, ok)?;
+                walk.extend(back[..back.len() - 1].iter().map(|&(_, _, w)| w));
             }
             Some(walk)
         };
@@ -956,36 +953,12 @@ impl Say<'_> {
     }
 
     /// The links of a shortest loop through bound `b`, by moving edges when it can be: one
-    /// search from `b`, which stops at the first edge back to it. O(m log m).
+    /// search from `b` ([`Self::path`]), which stops at the first edge back to it. `O(n + m)`.
     fn cycle_at(&self, b: usize) -> Vec<Link> {
-        let c = self.comp[b];
-        let walk = |ok: &dyn Fn(usize) -> bool| -> Option<Vec<usize>> {
-            let mut prev: BTreeMap<usize, usize> = BTreeMap::new();
-            let mut q = VecDeque::from([b]);
-            while let Some(u) = q.pop_front() {
-                for &e in &self.out[u] {
-                    let w = self.g.edges[e].1;
-                    if self.comp[w] != c || !ok(e) {
-                        continue;
-                    }
-                    if w == b {
-                        let mut p = vec![u];
-                        let mut x = u;
-                        while x != b {
-                            x = prev[&x];
-                            p.push(x);
-                        }
-                        p.reverse();
-                        return Some(p);
-                    }
-                    if prev.contains_key(&w) {
-                        continue;
-                    }
-                    prev.insert(w, u);
-                    q.push_back(w);
-                }
-            }
-            None
+        let mut bfs = BfsPaths::new(self.g.nodes.len());
+        let mut walk = |ok: &dyn Fn(usize) -> bool| -> Option<Vec<usize>> {
+            let steps = self.path(&mut bfs, b, |w| w == b, ok)?;
+            Some(steps.into_iter().map(|(u, _, _)| u).collect())
         };
         let w = walk(&|e| self.moving[e]).or_else(|| walk(&|_| true));
         self.links(&w.expect("a cyclic component holds a loop through each of its nodes"))

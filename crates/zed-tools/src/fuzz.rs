@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ops::RangeBounds;
 
-use zed_graph::MinHeap;
+use zed_graph::{Child, Knuth};
 use zedc::parse::{Expr, Grammar, Kind, Parser, TOP};
 
 use crate::random::Random;
@@ -86,7 +86,7 @@ struct Depths(Vec<u32>);
 impl Depths {
     /// Knuth's generalization of Dijkstra's algorithm: a rule's depth is final when it is the
     /// least left, since an alternative's depth is never below that of a rule it needs. Each
-    /// final rule reopens only the alternatives that refer to it.
+    /// alternative is evaluated once, when the last rule it needs is final.
     ///
     /// D. E. Knuth, "A generalization of Dijkstra's algorithm", Information Processing Letters
     /// 6(1), 1-5, 1977, doi:10.1016/0020-0190(77)90002-3, read 2026-11-21 (scanned PDF from
@@ -100,51 +100,35 @@ impl Depths {
     /// length t. Sec. 4, p. 3, proves μ\[Y\] = m(Y) at each choice from monotonicity and
     /// superiority alone. It
     /// reduces to Dijkstra's search on paths (sec. 2 (A); E. W. Dijkstra, Numer. Math. 1,
-    /// 269-271, 1959, doi:10.1007/BF01386390, read 2026-11-21, PDF from LibGen). Departures: a
-    /// choice inside an alternative takes the least of its branches, which the paper writes as
-    /// separate productions, one per branch (the least of superior functions is not itself
-    /// superior, so the proof applies to the expanded grammar, whose least values are the
-    /// same); and step 3) is not recomputed in full: a rule's tentative depth is lowered when a
-    /// rule it uses becomes final, and the heap holds the tentative depths, as the paper's
-    /// priority-queue remark describes. `of` also reads the tentative depths of rules not yet
-    /// final, where step 3) reads only D; each is the depth of a real derivation, so no value
-    /// falls below m(Y) and the least one popped is still final by the sec. 4 argument.
-    /// `depths_match_the_naive_fixed_point_at_every_layer` checks the depths on the
-    /// syntactic grammar against repeated passes to a fixed point (red with the reopening loop
-    /// removed); it shares `Depths::of`, so it does not check that.
+    /// 269-271, 1959, doi:10.1007/BF01386390, read 2026-11-21, PDF from LibGen). The search
+    /// is [`zed_graph::Knuth`], which computes each rule's value once its last child is
+    /// settled. Departure: a choice inside an alternative takes the least of its branches,
+    /// which the paper writes as separate productions, one per branch (the least of superior
+    /// functions is not itself superior); here each choice met is a node of its own, with one
+    /// rule per branch, so every rule is `add + max(children)`, a superior function. Node `r <
+    /// rules` is rule `r`, its value one more than its depth, so that a rule's rules all add 1
+    /// and a choice's add 0: `of(Rule r) = depth(r) + 1` is the node's value, and `of` of a
+    /// sequence is the highest of its parts' values, which is `max(children)` over the rules
+    /// and choices it reads ([`parts`]), 0 for none; so the least values are `of`'s least
+    /// fixed point, one more for a rule. A rule no derivation reaches keeps [`NEVER`].
+    /// `depths_match_the_naive_fixed_point_at_every_layer` checks the depths on the syntactic
+    /// grammar against repeated passes of `of` to a fixed point.
     fn new(g: &Grammar, ring: u32) -> Depths {
-        let mut d = Depths(vec![NEVER; g.rules.len()]);
-        let mut users = vec![Vec::new(); g.rules.len()];
+        let mut rules = Knuth::new();
+        let mut nodes = g.rules.len();
+        let mut kids = Vec::new();
         for (r, rule) in g.rules.iter().enumerate() {
             for alt in rule.alts.iter().filter(|a| a.layer <= ring) {
-                refs(&alt.expr, &mut |used| users[used].push((r, &alt.expr)));
+                parts(&alt.expr, &mut rules, &mut nodes, &mut kids);
+                rules.add_rule(r, 1, kids.drain(..).map(Child::Waits));
             }
         }
-        let mut done = vec![false; g.rules.len()];
-        let mut heap = MinHeap::new();
-        for (r, rule) in g.rules.iter().enumerate() {
-            for alt in rule.alts.iter().filter(|a| a.layer <= ring) {
-                let depth = d.of(&alt.expr);
-                if depth < d.0[r] {
-                    d.0[r] = depth;
-                    heap.push((depth, r));
-                }
-            }
-        }
-        while let Some((depth, r)) = heap.pop() {
-            if done[r] || depth != d.0[r] {
-                continue;
-            }
-            done[r] = true;
-            for &(user, e) in &users[r] {
-                let depth = d.of(e);
-                if depth < d.0[user] {
-                    d.0[user] = depth;
-                    heap.push((depth, user));
-                }
-            }
-        }
-        d
+        let values = rules.run(nodes);
+        let depth = |&v: &u64| match v {
+            u64::MAX => NEVER,
+            v => u32::try_from(v - 1).expect("a depth is at most the number of rules"),
+        };
+        Depths(values[..g.rules.len()].iter().map(depth).collect())
     }
 
     /// The least nesting depth of a derivation of `e`.
@@ -172,13 +156,25 @@ impl Depths {
     }
 }
 
-/// Calls `f` on every rule that `Depths::of` reads in `e`.
-fn refs(e: &Expr, f: &mut impl FnMut(usize)) {
+/// Pushes to `out` the nodes of [`Depths::new`] whose highest value is `Depths::of(e)`: each
+/// rule `e` reads outside a choice, and for each choice a new node numbered `nodes`, given one
+/// rule (adding 0) per branch, of that branch's nodes.
+fn parts(e: &Expr, rules: &mut Knuth, nodes: &mut usize, out: &mut Vec<usize>) {
     match e {
-        Expr::Rule(r) => f(*r),
-        Expr::Seq(xs) | Expr::Choice(xs) => xs.iter().for_each(|x| refs(x, f)),
-        Expr::Plus(x) | Expr::SetHead(x) | Expr::ClearHead(x) => refs(x, f),
-        Expr::Sep(items) => refs(&items[1], f),
+        Expr::Rule(r) => out.push(*r),
+        Expr::Seq(xs) => xs.iter().for_each(|x| parts(x, rules, nodes, out)),
+        Expr::Choice(xs) => {
+            let choice = *nodes;
+            *nodes += 1;
+            for x in xs {
+                let mut branch = Vec::new();
+                parts(x, rules, nodes, &mut branch);
+                rules.add_rule(choice, 0, branch.into_iter().map(Child::Waits));
+            }
+            out.push(choice);
+        }
+        Expr::Plus(x) | Expr::SetHead(x) | Expr::ClearHead(x) => parts(x, rules, nodes, out),
+        Expr::Sep(items) => parts(&items[1], rules, nodes, out),
         Expr::Lit(_)
         | Expr::Kind(_)
         | Expr::Head
@@ -611,8 +607,8 @@ mod tests {
     }
 
     /// Knuth's search gives the least depth of each rule of the syntactic grammar at every
-    /// layer, as the naive fixed point does. It does not check `Depths::of` itself, which both
-    /// share. Knuth's search: D. E. Knuth, "A generalization of Dijkstra's algorithm", IPL 6(1),
+    /// layer, as the naive fixed point of `Depths::of` does; `Depths::new` reads the grammar
+    /// through `parts`, not `of`, so the two are written apart. Knuth's search: D. E. Knuth, "A generalization of Dijkstra's algorithm", IPL 6(1),
     /// 1977, doi:10.1016/0020-0190(77)90002-3; the full comment is at `impl Depths`.
     #[test]
     fn depths_match_the_naive_fixed_point_at_every_layer() {

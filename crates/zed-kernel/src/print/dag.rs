@@ -82,20 +82,18 @@ fn graph<'a>(root: &'a Term) -> Vec<Node<'a>> {
 fn topological(nodes: &[Node<'_>]) -> Vec<usize> {
     let mut done = vec![false; nodes.len()];
     let mut finished = Vec::with_capacity(nodes.len());
-    let mut todo = vec![(0, 0)];
-    done[0] = true;
-    while let Some((v, i)) = todo.pop() {
-        match nodes[v].kids.get(i) {
-            Some(&(c, _)) => {
-                todo.push((v, i + 1));
-                if !done[c] {
-                    done[c] = true;
-                    todo.push((c, 0));
-                }
+    zed_graph::post_order(
+        &mut done,
+        [0],
+        |done, &v, kids| {
+            let first = !std::mem::replace(&mut done[v], true);
+            if first {
+                kids.extend(nodes[v].kids.iter().map(|&(c, _)| c));
             }
-            None => finished.push(v),
-        }
-    }
+            first
+        },
+        |_, v| finished.push(v),
+    );
     finished.reverse();
     finished
 }

@@ -341,12 +341,11 @@ fn cells_by_name_and_keypath(eq: &System) -> Vec<(String, Vector<Value>, String)
 /// from it. A visited set keeps each cell once.
 fn reached(eq: &System, from: &[usize]) -> System {
     let mut seen = vec![false; eq.names.len()];
-    let mut todo: Vec<usize> = from.to_vec();
-    while let Some(v) = todo.pop() {
-        if !std::mem::replace(&mut seen[v], true) {
-            todo.extend(&eq.reads[v]);
-        }
-    }
+    zed_graph::reach(
+        from.iter().copied(),
+        |&v| !std::mem::replace(&mut seen[v], true),
+        |&v| eq.reads[v].iter().copied(),
+    );
     let old: Vec<usize> = (0..seen.len()).filter(|&v| seen[v]).collect();
     let mut new = vec![usize::MAX; seen.len()];
     for (v, &o) in old.iter().enumerate() {

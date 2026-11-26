@@ -157,6 +157,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
+use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -7273,32 +7274,36 @@ impl Tx<'_> {
         let Coordinate::Difference(a, b) = &coord else {
             unreachable!()
         };
+        // Every step reached from the root must be one this rule reads; a step it does not
+        // (or one `step_1d` cannot give) stops the search and the rule gives nothing.
         let mut seen = HashSet::new();
-        let mut todo = vec![(root, ROOT)];
-        while let Some(u) = todo.pop() {
-            if !seen.insert(u) {
-                continue;
-            }
-            match self.step_1d(u.0, u.1)?.kind {
-                StepKind::Leaf | StepKind::Mod(..) => return None,
-                StepKind::Pow(ref k, ..) if k.is_zero() => return None,
-                StepKind::Input | StepKind::Const(_) => {}
-                StepKind::If(y, n) => {
-                    for (c, _) in [y, n].into_iter().flatten() {
-                        todo.push(c)
-                    }
-                }
-                StepKind::Forward(c)
-                | StepKind::Shift(_, c)
-                | StepKind::Reflect(_, c)
-                | StepKind::Neg(c)
-                | StepKind::Abs(c)
-                | StepKind::MinMax(_, _, c)
-                | StepKind::Mul(_, c)
-                | StepKind::Div(_, c)
-                | StepKind::Pow(_, _, c)
-                | StepKind::Round(_, c) => todo.push(c),
-            }
+        let refused = zed_graph::reach_until(
+            [(root, ROOT)],
+            |&u| seen.insert(u),
+            |&u| {
+                let Some(step) = self.step_1d(u.0, u.1) else {
+                    return ControlFlow::Break(());
+                };
+                ControlFlow::Continue(match step.kind {
+                    StepKind::Leaf | StepKind::Mod(..) => return ControlFlow::Break(()),
+                    StepKind::Pow(ref k, ..) if k.is_zero() => return ControlFlow::Break(()),
+                    StepKind::Input | StepKind::Const(_) => Vec::new(),
+                    StepKind::If(y, n) => [y, n].into_iter().flatten().map(|(c, _)| c).collect(),
+                    StepKind::Forward(c)
+                    | StepKind::Shift(_, c)
+                    | StepKind::Reflect(_, c)
+                    | StepKind::Neg(c)
+                    | StepKind::Abs(c)
+                    | StepKind::MinMax(_, _, c)
+                    | StepKind::Mul(_, c)
+                    | StepKind::Div(_, c)
+                    | StepKind::Pow(_, _, c)
+                    | StepKind::Round(_, c) => vec![c],
+                })
+            },
+        );
+        if refused.is_some() {
+            return None;
         }
         let domain = self.coordinate_domain(&coord);
         let (leaves, inexact) = self.inverse_states((root, ROOT), &domain, &z);

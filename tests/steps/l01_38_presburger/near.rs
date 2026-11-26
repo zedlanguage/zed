@@ -2,19 +2,12 @@
 //! Bellman–Ford–Moore on small random graphs, and its scaling alone. The citations are in
 //! `tests/src/bellman_ford_moore.rs`, at its head.
 
-use zed_tests::bellman_ford_moore::bellman_ford_moore;
+use zed_tests::bellman_ford_moore::{bellman_ford_moore, holds};
 use zed_tests::instances::Rng;
 use zedc::store::int::Int;
 use zedc::store::negsssp::potential_alone;
 
 type Graph = Vec<Vec<(usize, Int)>>;
-
-/// Whether `p` holds on every edge of `out`.
-pub(super) fn holds(out: &Graph, p: &[Int]) -> bool {
-    out.iter()
-        .enumerate()
-        .all(|(u, edges)| edges.iter().all(|(v, w)| p[*v] <= &p[u] + w))
-}
 
 /// A graph of 1 to 12 nodes and up to three edges per node, self loops among them, weights
 /// -8 to 12.

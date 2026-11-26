@@ -335,16 +335,12 @@ fn generate(seed: u64) -> Generated {
 /// The units the units `from` reach by `graph`, those with no file and those that do not parse
 /// among them, in order of their paths.
 fn reach(graph: &HashMap<&str, Vec<(&str, usize)>>, from: &[&str]) -> Vec<String> {
-    let mut seen: Vec<&str> = Vec::new();
-    let mut todo: Vec<&str> = from.to_vec();
-    while let Some(u) = todo.pop() {
-        if seen.contains(&u) {
-            continue;
-        }
-        seen.push(u);
-        todo.extend(graph.get(u).into_iter().flatten().map(|&(v, _)| v));
-    }
-    seen.sort_unstable();
+    let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    zed_graph::reach(
+        from.iter().copied(),
+        |&u| seen.insert(u),
+        |&u| graph.get(u).into_iter().flatten().map(|&(v, _)| v),
+    );
     seen.into_iter().map(String::from).collect()
 }
 

@@ -46,10 +46,11 @@
 //! [`greatest`] finds this point exactly, Empty included, is proved at [`greatest`],
 //! [`Run::component`], [`Run::cycle`] and [`Run::hull`]; the negation, at [`solve`].
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 
 use zed_graph::{
-    Compression, Diff, Dijkstra, Keep, Linking, NegativeReducedWeight, UnionFind, reduced,
+    Compression, Diff, Dijkstra, Keep, KeyedWorklist, Linking, NegativeReducedWeight, UnionFind,
+    reduced,
 };
 use zedc_int::int::Int;
 
@@ -810,11 +811,11 @@ impl Run<'_> {
                 }
             }
         } else {
-            let mut queue: VecDeque<usize> = names.iter().copied().collect();
+            // Keyed by name, not a dense `Worklist` over every name: `hull` runs once per
+            // component, so its queue costs the component's size, not the whole system's.
+            let mut queue: KeyedWorklist<usize> = names.iter().copied().collect();
             let mut queued: BTreeMap<usize, usize> = names.iter().map(|&v| (v, 1)).collect();
-            let mut inq: std::collections::BTreeSet<usize> = names.iter().copied().collect();
-            while let Some(v) = queue.pop_front() {
-                inq.remove(&v);
+            while let Some(v) = queue.pop() {
                 for i in 0..self.out[v].len() {
                     let (z, w) = &self.out[v][i];
                     let z = *z;
@@ -827,7 +828,7 @@ impl Run<'_> {
                             return Err(Stop::Empty);
                         }
                         self.u[z] = t;
-                        if inq.insert(z) {
+                        if queue.push(z) {
                             let k = queued.entry(z).or_insert(0);
                             *k += 1;
                             // A name queued more times than the component has names lies on
@@ -838,14 +839,13 @@ impl Run<'_> {
                             // cycle of negative weight the least over all paths is reached by
                             // a simple one, of `n - 1` edges at most, so no label falls in pass
                             // `n - 1` or after, and a name is queued at most once per pass
-                            // (`inq`): at most `1 + (n - 1) = n` times. With such a cycle the
+                            // (`queue`): at most `1 + (n - 1) = n` times. With such a cycle the
                             // labels on it fall without end, so this or the `lo` test above
                             // ends the loop; the `lo` test is exact as labels only fall and
                             // each bounds every point.
                             if *k > names.len() {
                                 return Err(Stop::Empty);
                             }
-                            queue.push_back(z);
                         }
                     }
                 }

@@ -36,7 +36,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use zed_collections::index::to_u32;
-use zed_graph::{BitSet, Order, Worklist};
+use zed_graph::{BitSet, Order, Worklist, kahn, reach, sources};
 use zedc::parse::{Expr, Grammar, Kind};
 
 use crate::spec::Spec;
@@ -465,39 +465,40 @@ impl Cfg {
             }
             missing.push(k);
         }
+        // A production is placed once all its nonterminals are productive; its left side is
+        // then productive, and the productions that use it lose one missing nonterminal, only
+        // the first time that side becomes productive.
         let mut productive = vec![false; n];
-        let mut work: Vec<usize> = (0..self.prods.len()).filter(|&p| missing[p] == 0).collect();
-        while let Some(p) = work.pop() {
-            let lhs = self.prods[p].lhs as usize;
-            if !productive[lhs] {
-                productive[lhs] = true;
-                for &q in &uses[lhs] {
-                    missing[q] -= 1;
-                    if missing[q] == 0 {
-                        work.push(q);
-                    }
-                }
-            }
-        }
+        let mut work: Vec<usize> = sources(&missing).collect();
+        let prods = &self.prods;
+        kahn(
+            &mut missing,
+            &mut work,
+            |p| {
+                let lhs = prods[p].lhs as usize;
+                let first = !std::mem::replace(&mut productive[lhs], true);
+                uses[lhs].iter().copied().filter(move |_| first)
+            },
+            |_| {},
+        );
         let ok = |s: &Sym| !matches!(s, Sym::N(m) if !productive[*m as usize]);
         self.prods.retain(|p| p.rhs.iter().all(ok));
-        // Reachable nonterminals, with a visited set.
+        // Reachable nonterminals.
         let by_lhs = self.by_lhs();
+        let prods = &self.prods;
         let mut seen = vec![false; n];
-        seen[self.start as usize] = true;
-        let mut stack = vec![self.start as usize];
-        while let Some(a) = stack.pop() {
-            for &p in &by_lhs[a] {
-                for s in &self.prods[p].rhs {
-                    if let Sym::N(m) = s
-                        && !seen[*m as usize]
-                    {
-                        seen[*m as usize] = true;
-                        stack.push(*m as usize);
-                    }
-                }
-            }
-        }
+        reach(
+            [self.start as usize],
+            |&a| !std::mem::replace(&mut seen[a], true),
+            |&a| {
+                (by_lhs[a].iter()).flat_map(move |&p| {
+                    prods[p].rhs.iter().filter_map(|s| match s {
+                        Sym::N(m) => Some(*m as usize),
+                        _ => None,
+                    })
+                })
+            },
+        );
         self.prods.retain(|p| seen[p.lhs as usize]);
     }
 
@@ -900,36 +901,26 @@ fn left_groups(cfg: &Cfg, sets: &Sets) -> Vec<Vec<String>> {
 
 /// The cycle from core `i` through its push step to `j` and back to `i`, as the nonterminals of
 /// the productions it passes. The search stays in the component of `i`, so the searches of all
-/// components cost one pass over the steps.
+/// components cost one pass over the steps; `bfs` is its scratch, kept across them.
 fn cycle(
     cfg: &Cfg,
     cores: &[Core],
     grow: &[Vec<usize>],
     comp: &[usize],
-    i: usize,
-    j: usize,
+    (i, j): (usize, usize),
+    bfs: &mut zed_graph::BfsPaths<()>,
 ) -> String {
-    let mut parent: HashMap<usize, usize> = HashMap::from([(j, j)]);
-    let mut queue = std::collections::VecDeque::from([j]);
-    while let Some(v) = queue.pop_front() {
-        if v == i {
-            break;
-        }
-        for &w in &grow[v] {
-            if comp[w] == comp[i] && !parent.contains_key(&w) {
-                parent.insert(w, v);
-                queue.push_back(w);
-            }
-        }
+    let mut path = vec![i, j];
+    if i != j {
+        let steps = bfs
+            .path(
+                j,
+                |v| (grow[v].iter()).filter_map(move |&w| (comp[w] == comp[i]).then_some((w, ()))),
+                |w| w == i,
+            )
+            .expect("i and j lie in one strongly connected component");
+        path.extend(steps.into_iter().map(|(_, (), w)| w));
     }
-    let mut path = vec![i];
-    let mut v = i;
-    while v != j {
-        v = parent[&v];
-        path.push(v);
-    }
-    path.push(i);
-    path.reverse();
     let mut names: Vec<&str> = Vec::new();
     for v in path {
         let name = cfg.nts[cfg.prods[cores[v].prod as usize].lhs as usize].as_str();
@@ -1040,6 +1031,7 @@ pub fn check(g: &Grammar, unit: &str, rules: &[Retag]) -> Result<Report, String>
     let mut unbounded = vec![false; cores.len()];
     let mut work = Vec::new();
     let mut shown: HashSet<usize> = HashSet::new();
+    let mut bfs = zed_graph::BfsPaths::new(grow.len());
     for (i, row) in steps.iter().enumerate() {
         for &(j, m) in row {
             if let Move::Push(s) = m
@@ -1051,7 +1043,8 @@ pub fn check(g: &Grammar, unit: &str, rules: &[Retag]) -> Result<Report, String>
                     .or_default()
                     .insert(cfg.name(s).to_string());
                 if shown.insert(comp[i]) {
-                    r.cycles.insert(cycle(&cfg, &cores, &grow, &comp, i, j));
+                    r.cycles
+                        .insert(cycle(&cfg, &cores, &grow, &comp, (i, j), &mut bfs));
                 }
                 if !unbounded[i] {
                     unbounded[i] = true;

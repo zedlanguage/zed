@@ -105,6 +105,10 @@ pub mod utvpi;
 /// tests.
 #[cfg(test)]
 #[path = "../../../tests/src/bellman_ford_moore.rs"]
+#[expect(
+    dead_code,
+    reason = "the solvers' tests use every shared oracle but `negative_cycle`"
+)]
 mod bellman_ford_moore;
 
 /// The seed and generator of a random test, new on each run and printed, shared with the step

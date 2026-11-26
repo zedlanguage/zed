@@ -685,16 +685,18 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         // negative cycle of `c`, which is one of the weights: `c >= r`, and a cycle's `r` is
         // `n + 1` times its weight.
         let found = bf_dijkstra(
-            Rows {
-                start: &g.start,
-                to: &g.to,
-                w: &self.c,
-            },
-            Rows {
-                start: &self.neg_start,
-                to: &self.neg_to,
-                w: &self.neg_w,
-            },
+            &(
+                Rows {
+                    start: &g.start,
+                    to: &g.to,
+                    w: &self.c,
+                },
+                Rows {
+                    start: &self.neg_start,
+                    to: &self.neg_to,
+                    w: &self.neg_w,
+                },
+            ),
             vec![Int::ZERO; n],
             &seeds,
             n as u64,
@@ -1182,8 +1184,7 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         // The source has an edge of weight -ζ to every node: the starting labels.
         let start: Vec<Int> = zeta.iter().map(|z| -z).collect();
         let dist = bf_dijkstra(
-            aux.rows(),
-            aux.negative_rows(),
+            &(aux.rows(), aux.negative_rows()),
             start,
             &seeds,
             self.eta,
@@ -1264,103 +1265,50 @@ impl Aux {
     }
 }
 
-/// Distances in the graph of the edges of `graph` and `negative` from a source with an edge of
-/// weight `label[x]` to each node `x`, the first round started from `seeds`, by Dijkstra's
-/// search on the edges of `graph` of weight at least 0 with a round of the edges of `negative`
-/// after each (\[D\] Lemma l.129). `negative` holds every negative edge of `graph`, and only
-/// negative edges, so a round of them passes no others. After round `k` each label is at most
-/// the weight of every walk with `k` negative edges besides the source's, so a label that falls
-/// in round `eta` shows a walk shorter than all with `eta` negative edges, and the
-/// caller's negative cycle (\[D\] Theorem 3.1). A cycle of parent pointers is a negative cycle
-/// (B. V. Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms", Math.
-/// Programming 85(2), 1999, doi:10.1007/s101070050058, read 2026-11-21, PDF from LibGen;
-/// Lemma 3, p. 282: "Any cycle in G_p is negative"); it is looked for after each round, from
-/// the nodes whose label changed, each node visited once. That is their amortized search
-/// (sec. 6.4, p. 289), one O(n) search per round, not their walk to the root (sec. 6.3), which
-/// follows the parent pointers before every relaxation; an earlier note here named the walk
-/// to the root. Their sec. 6.4 warns that a cycle "can disappear", so a search may miss one;
-/// Theorem 1, p. 282 ("after a finite number of labeling operations G_p always has a cycle")
-/// is why a later search finds it, and the round bound `eta` ends the search in any case.
-fn bf_dijkstra<H>(
-    graph: Rows,
-    negative: Rows,
-    mut label: Vec<Int>,
+/// The edges a [`Rounds`] search reads out of `x`: the `e`th of those its Dijkstra pass may
+/// relax (`negative` false) or of those its pass of negative edges may relax (`negative`
+/// true), `None` past the last. Each pass skips the edges of the wrong sign, so one set of rows
+/// may serve both.
+pub trait Edges {
+    /// The `e`th edge out of `x` of the pass `negative` names, as its head and weight;
+    /// `None` past the last.
+    fn edge(&self, negative: bool, x: usize, e: usize) -> Option<(usize, &Int)>;
+}
+
+/// A graph's own edges `u → (v, w)`, all in one set of rows.
+impl Edges for [Vec<(usize, Int)>] {
+    fn edge(&self, _: bool, x: usize, e: usize) -> Option<(usize, &Int)> {
+        self[x].get(e).map(|(y, w)| (*y, w))
+    }
+}
+
+/// Compressed rows: the edges of weight at least 0 (or all the edges) in the first, the
+/// negative edges, and only those, in the second, so a pass of them passes no others.
+impl Edges for (Rows<'_>, Rows<'_>) {
+    fn edge(&self, negative: bool, x: usize, e: usize) -> Option<(usize, &Int)> {
+        let Rows { start, to, w } = if negative { self.1 } else { self.0 };
+        let i = start[x] + e;
+        (i < start[x + 1]).then(|| (to[i], &w[i]))
+    }
+}
+
+/// Distances in `graph` from a source with an edge of weight `label[x]` to each node `x`, the
+/// first round started from `seeds`, by [`Rounds`] with its parent walk, run to its end;
+/// `tick` is called once per unit of work. [`Stop::Negative`] for a label that falls in round
+/// `eta`, or for a cycle of parent pointers.
+fn bf_dijkstra<H, G: Edges + ?Sized>(
+    graph: &G,
+    label: Vec<Int>,
     seeds: &[usize],
     eta: u64,
     tick: &mut impl FnMut() -> Result<(), H>,
 ) -> Step<Vec<Int>, H> {
-    let n = label.len();
-    let mut parent = vec![NONE; n];
-    // The first round starts from the nodes `seeds`, which hold every node with an edge that
-    // lowers a starting label. Every other node, taken at its starting label, would lower
-    // nothing, and a path that lowers a label and starts at it is no shorter than the same path
-    // from its next node, so leaving these nodes out changes no label; it saves taking every
-    // node of the graph from a heap.
-    let mut heap: MinHeap<(Int, usize)> = seeds.iter().map(|&x| (label[x].clone(), x)).collect();
-    // The round in which a node was last settled, and the walk that last passed it.
-    let mut settled_in = vec![0u64; n];
-    let mut walked = vec![0u64; n];
-    let mut walks = 0u64;
-    let (mut settled, mut fell): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
-    let mut round = 0u64;
+    let mut rounds = Rounds::with_parents(graph, label, seeds, eta);
     loop {
-        round += 1;
-        settled.clear();
-        fell.clear();
-        while let Some((dx, x)) = heap.pop() {
-            unit(tick)?;
-            if dx != label[x] || settled_in[x] == round {
-                continue;
-            }
-            settled_in[x] = round;
-            settled.push(x);
-            let Rows { start, to, w } = graph;
-            for e in start[x]..start[x + 1] {
-                unit(tick)?;
-                if w[e].is_negative() {
-                    continue;
-                }
-                let y = to[e];
-                let candidate = &dx + &w[e];
-                if candidate < label[y] {
-                    label[y] = candidate.clone();
-                    parent[y] = x;
-                    heap.push((candidate, y));
-                }
-            }
-        }
-        let Rows { start, to, w } = negative;
-        for &x in &settled {
-            for e in start[x]..start[x + 1] {
-                unit(tick)?;
-                let y = to[e];
-                let candidate = &label[x] + &w[e];
-                if candidate < label[y] {
-                    label[y] = candidate.clone();
-                    parent[y] = x;
-                    heap.push((candidate, y));
-                    fell.push(y);
-                }
-            }
-        }
-        if fell.is_empty() {
-            return Ok(label);
-        }
-        if round >= eta {
-            return Err(Stop::Negative);
-        }
-        let before = walks;
-        for &s in settled.iter().chain(&fell) {
-            walks += 1;
-            let mut v = s;
-            while v != NONE && walked[v] <= before {
-                unit(tick)?;
-                walked[v] = walks;
-                v = parent[v];
-            }
-            if v != NONE && walked[v] == walks {
-                return Err(Stop::Negative);
-            }
+        match rounds.step() {
+            Did::Work => unit(tick)?,
+            Did::Move => {}
+            Did::End(found) => return found.ok_or(Stop::Negative),
         }
     }
 }
@@ -1374,47 +1322,115 @@ enum Phase {
     Relax { x: usize, e: usize },
     /// Relaxing the `e`th edge of `settled[i]`, if its weight is negative.
     Negative { i: usize, e: usize },
+    /// Following the parent pointers from the `i`th of the nodes settled, then fallen, in this
+    /// round; now at `v`.
+    Walk { i: usize, v: usize },
 }
 
-/// BF-Dijkstra (\[D\] l.129) on a graph's own weights, from a source joined to each node by an
-/// edge of weight 0, one unit of work, a heap entry or an edge, per call of [`Rounds::step`].
-/// Round `k` gives each node a label at most the weight of every walk to it with `k` negative
-/// edges, so a graph whose shortest paths have few negative edges takes few rounds, each
-/// O(E log V), whatever the order of its nodes; a label that falls in round `V` shows a negative
-/// cycle, since a simple path has at most `V - 1` edges.
-pub struct Rounds<'a> {
-    out: &'a [Vec<(usize, Int)>],
+/// What one call of [`Rounds::step`] did.
+pub enum Did {
+    /// One unit of work: a heap entry, an edge, or a step of a parent walk.
+    Work,
+    /// Moved to the next phase, with no work.
+    Move,
+    /// The search ended: the labels, or `None` for a negative cycle.
+    End(Option<Vec<Int>>),
+}
+
+/// BF-Dijkstra (\[D\] Lemma l.129): distances from a source with an edge of weight `label[x]`
+/// to each node `x` (0 for [`Rounds::new`]), by Dijkstra's search on the edges of weight at
+/// least 0 with a round of the negative edges out of the nodes it settled after each, one step
+/// of a phase per call of [`Rounds::step`], so that utvpi can interleave it with Goldberg and
+/// Radzik's search. After round `k` each label is at most the weight of every walk with `k`
+/// negative edges besides the source's, so a graph whose shortest paths have few negative
+/// edges takes few rounds, each O(E log V), whatever the order of its nodes; a label that falls
+/// in round `eta` shows a walk shorter than all with `eta` negative edges, and so a negative
+/// cycle (\[D\] Theorem 3.1; with `eta = V`, since a simple path has at most `V - 1` edges).
+///
+/// With [`Rounds::with_parents`], a cycle of parent pointers is a negative cycle too (B. V.
+/// Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms", Math. Programming
+/// 85(2), 1999, doi:10.1007/s101070050058, read 2026-11-21, PDF from LibGen; Lemma 3, p. 282:
+/// "Any cycle in G_p is negative"); it is looked for after each round, from the nodes settled
+/// or fallen in it, each node visited once. That is their amortized search (sec. 6.4, p. 289),
+/// one O(n) search per round, not their walk to the root (sec. 6.3), which follows the parent
+/// pointers before every relaxation; an earlier note here named the walk to the root. Their
+/// sec. 6.4 warns that a cycle "can disappear", so a search may miss one; Theorem 1, p. 282
+/// ("after a finite number of labeling operations G_p always has a cycle") is why a later
+/// search finds it, and the round bound `eta` ends the search in any case.
+///
+/// One routine for negsssp's searches (`bf_dijkstra`, on compressed rows with the parent walk)
+/// and utvpi's (on `out`, the labels it lowered kept for Goldberg and Radzik's search): each
+/// call of `step` that does no work returns [`Did::Move`], so negsssp's work count, and its
+/// budget in `Solver::quick`, is that of the loop it replaced.
+pub struct Rounds<'a, G: Edges + ?Sized = [Vec<(usize, Int)>]> {
+    out: &'a G,
     label: Vec<Int>,
     heap: MinHeap<(Int, usize)>,
     /// The round in which each node was last settled, and the nodes settled in this one.
-    settled_in: Vec<usize>,
+    settled_in: Vec<u64>,
     settled: Vec<usize>,
-    /// Whether a label fell along a negative edge in this round.
-    fell: bool,
-    round: usize,
+    /// The nodes whose label fell along a negative edge, or from another search, in this round.
+    fell: Vec<usize>,
+    round: u64,
+    /// The round in which a fall shows a negative cycle.
+    eta: u64,
     phase: Phase,
     /// The nodes whose label this search lowered since [`Rounds::take_lowered`], and their
-    /// marks.
+    /// marks; `in_lowered` is empty when the search keeps no such list.
     lowered: Vec<usize>,
     in_lowered: Vec<bool>,
+    /// The node whose edge last lowered each label; empty when the search walks no parents.
+    parent: Vec<usize>,
+    /// The walk that last passed each node, the walks so far, and their count before this
+    /// round's.
+    walked: Vec<u64>,
+    walks: u64,
+    before: u64,
 }
 
 impl<'a> Rounds<'a> {
-    /// The search of the graph `out`, its edges `u → (v, w)`.
+    /// The search of the graph `out`, its edges `u → (v, w)`, from labels 0, every node a seed,
+    /// with the round bound `V`, keeping the labels it lowers.
     pub fn new(out: &'a [Vec<(usize, Int)>]) -> Self {
         let n = out.len();
+        let mut rounds = Rounds::start(out, vec![Int::ZERO; n], 0..n, n as u64);
+        rounds.in_lowered = vec![false; n];
+        rounds
+    }
+}
+
+impl<'a, G: Edges + ?Sized> Rounds<'a, G> {
+    fn start(out: &'a G, label: Vec<Int>, seeds: impl Iterator<Item = usize>, eta: u64) -> Self {
         Rounds {
             out,
-            label: vec![Int::ZERO; n],
-            heap: (0..n).map(|v| (Int::ZERO, v)).collect(),
-            settled_in: vec![0; n],
+            heap: seeds.map(|x| (label[x].clone(), x)).collect(),
+            settled_in: vec![0; label.len()],
+            label,
             settled: Vec::new(),
-            fell: false,
+            fell: Vec::new(),
             round: 1,
+            eta,
             phase: Phase::Pop,
             lowered: Vec::new(),
-            in_lowered: vec![false; n],
+            in_lowered: Vec::new(),
+            parent: Vec::new(),
+            walked: Vec::new(),
+            walks: 0,
+            before: 0,
         }
+    }
+
+    /// The search with the parent walk, the first round started from `seeds`, which must hold
+    /// every node with an edge that lowers a starting label. Every other node, taken at its
+    /// starting label, would lower nothing, and a path that lowers a label and starts at it is
+    /// no shorter than the same path from its next node, so leaving these nodes out changes no
+    /// label; it saves taking every node of the graph from a heap.
+    fn with_parents(out: &'a G, label: Vec<Int>, seeds: &[usize], eta: u64) -> Self {
+        let n = label.len();
+        let mut rounds = Rounds::start(out, label, seeds.iter().copied(), eta);
+        rounds.parent = vec![NONE; n];
+        rounds.walked = vec![0; n];
+        rounds
     }
 
     /// The labels, each the weight of a walk from the source.
@@ -1436,25 +1452,25 @@ impl<'a> Rounds<'a> {
     }
 
     /// Lowers the label of `v` to `to`, the weight of a walk from the source found by another
-    /// search, at the end of a round ([`Rounds::ends_round`]); the next round starts from it.
-    /// Round `k` still gives each label at most the weight of every walk with `k` negative
-    /// edges, so the bound of `V` rounds still shows a negative cycle.
+    /// search, at the end of a round ([`Rounds::ends_round`]) of a search with no parent walk;
+    /// the next round starts from it. Round `k` still gives each label at most the weight of
+    /// every walk with `k` negative edges, so the round bound still shows a negative cycle.
     pub fn lower_to(&mut self, v: usize, to: &Int) {
         if *to < self.label[v] {
             self.label[v] = to.clone();
             self.heap.push((to.clone(), v));
-            self.fell = true;
+            self.fell.push(v);
         }
     }
 
-    /// One unit of work; once the search ends, the potential, or `None` for a negative cycle.
-    pub fn step(&mut self) -> Option<Option<Vec<Int>>> {
+    /// One step: a unit of work, a move to the next phase, or the end.
+    pub fn step(&mut self) -> Did {
         let out = self.out;
         match self.phase {
             Phase::Pop => {
                 let Some((dx, x)) = self.heap.pop() else {
                     self.phase = Phase::Negative { i: 0, e: 0 };
-                    return None;
+                    return Did::Move;
                 };
                 if dx == self.label[x] && self.settled_in[x] != self.round {
                     self.settled_in[x] = self.round;
@@ -1463,40 +1479,79 @@ impl<'a> Rounds<'a> {
                 }
             }
             Phase::Relax { x, e } => {
-                let Some((y, w)) = out[x].get(e) else {
+                let Some((y, w)) = out.edge(false, x, e) else {
                     self.phase = Phase::Pop;
-                    return None;
+                    return Did::Move;
                 };
                 self.phase = Phase::Relax { x, e: e + 1 };
                 if !w.is_negative() {
-                    self.lower(x, *y, w);
+                    self.lower(x, y, w);
                 }
             }
             Phase::Negative { i, e } => {
                 let Some(&x) = self.settled.get(i) else {
-                    if !self.fell {
-                        return Some(Some(std::mem::take(&mut self.label)));
-                    }
-                    if self.round >= out.len() {
-                        return Some(None);
-                    }
-                    self.round += 1;
-                    self.settled.clear();
-                    self.fell = false;
-                    self.phase = Phase::Pop;
-                    return None;
+                    return self.end_round();
                 };
-                let Some((y, w)) = out[x].get(e) else {
+                let Some((y, w)) = out.edge(true, x, e) else {
                     self.phase = Phase::Negative { i: i + 1, e: 0 };
-                    return None;
+                    return Did::Move;
                 };
                 self.phase = Phase::Negative { i, e: e + 1 };
-                if w.is_negative() && self.lower(x, *y, w) {
-                    self.fell = true;
+                if w.is_negative() && self.lower(x, y, w) {
+                    self.fell.push(y);
+                }
+            }
+            Phase::Walk { i, v } => {
+                if v != NONE && self.walked[v] <= self.before {
+                    self.walked[v] = self.walks;
+                    self.phase = Phase::Walk {
+                        i,
+                        v: self.parent[v],
+                    };
+                } else if v != NONE && self.walked[v] == self.walks {
+                    return Did::End(None);
+                } else {
+                    return self.walk_from(i + 1);
                 }
             }
         }
-        None
+        Did::Work
+    }
+
+    /// The end of a round's negative edges: the labels if none fell, a negative cycle at the
+    /// round bound, else the parent walk or the next round.
+    fn end_round(&mut self) -> Did {
+        if self.fell.is_empty() {
+            return Did::End(Some(std::mem::take(&mut self.label)));
+        }
+        if self.round >= self.eta {
+            return Did::End(None);
+        }
+        if self.parent.is_empty() {
+            return self.walk_from(usize::MAX);
+        }
+        self.before = self.walks;
+        self.walk_from(0)
+    }
+
+    /// Starts the walk from the `i`th of the nodes settled, then fallen, in this round, or,
+    /// past the last, the next round.
+    fn walk_from(&mut self, i: usize) -> Did {
+        let s = self.settled.len();
+        let next = match i.checked_sub(s) {
+            None => self.settled.get(i),
+            Some(j) => self.fell.get(j),
+        };
+        if let Some(&v) = next {
+            self.walks += 1;
+            self.phase = Phase::Walk { i, v };
+        } else {
+            self.round += 1;
+            self.settled.clear();
+            self.fell.clear();
+            self.phase = Phase::Pop;
+        }
+        Did::Move
     }
 
     /// Relaxes the edge `x → y` of weight `w`; whether the label of `y` fell.
@@ -1505,8 +1560,13 @@ impl<'a> Rounds<'a> {
         if candidate < self.label[y] {
             self.label[y] = candidate.clone();
             self.heap.push((candidate, y));
-            if !self.in_lowered[y] {
-                self.in_lowered[y] = true;
+            if let Some(p) = self.parent.get_mut(y) {
+                *p = x;
+            }
+            if let Some(mark) = self.in_lowered.get_mut(y)
+                && !*mark
+            {
+                *mark = true;
                 self.lowered.push(y);
             }
             return true;
@@ -1522,7 +1582,7 @@ mod completeness;
 mod tests {
     use std::convert::Infallible;
 
-    use super::{Aux, Int, Rows, Stop, bf_dijkstra};
+    use super::{Aux, Edges, Int, Rows, Stop, bf_dijkstra};
 
     /// A graph `u → (v, w)` built in [`Aux`], the negative edges apart.
     fn split(out: &[Vec<(usize, i64)>]) -> Aux {
@@ -1552,59 +1612,58 @@ mod tests {
 
     /// [`bf_dijkstra`] from labels 0, the first round started from the tails of the negative
     /// edges as [`super::Solver::merge`] starts it, with the round bound `eta`; `None` for a
-    /// negative cycle. It runs on the edges of weight at least 0 as the merge passes them, and
-    /// on all the edges as [`super::Solver::quick`] passes them, and the two must agree.
+    /// negative cycle. It runs on the edges of weight at least 0 as the merge passes them, on
+    /// all the edges as [`super::Solver::quick`] passes them, and on the rows `u → (v, w)` that
+    /// utvpi passes [`super::Rounds`], and the three must agree.
     fn search(out: &[Vec<(usize, i64)>], eta: u64) -> Option<Vec<Int>> {
         let seeds: Vec<usize> = (0..out.len())
             .filter(|&u| out[u].iter().any(|&(_, x)| x < 0))
             .collect();
         let aux = split(out);
         let (start, to, w) = whole(out);
-        let run = |graph: Rows| {
-            let label = vec![Int::ZERO; out.len()];
-            match bf_dijkstra(graph, aux.negative_rows(), label, &seeds, eta, &mut || {
-                Ok::<(), Infallible>(())
-            }) {
+        fn run<G: Edges + ?Sized>(
+            graph: &G,
+            n: usize,
+            seeds: &[usize],
+            eta: u64,
+        ) -> Option<Vec<Int>> {
+            let label = vec![Int::ZERO; n];
+            match bf_dijkstra(graph, label, seeds, eta, &mut || Ok::<(), Infallible>(())) {
                 Ok(d) => Some(d),
                 Err(Stop::Negative) => None,
                 Err(Stop::Tick(never)) => match never {},
             }
-        };
-        let found = run(aux.rows());
+        }
+        let n = out.len();
+        let found = run(&(aux.rows(), aux.negative_rows()), n, &seeds, eta);
         let all = Rows {
             start: &start,
             to: &to,
             w: &w,
         };
-        assert_eq!(run(all), found, "graph {out:?}");
+        assert_eq!(
+            run(&(all, aux.negative_rows()), n, &seeds, eta),
+            found,
+            "graph {out:?}"
+        );
+        assert_eq!(
+            run(ints(out).as_slice(), n, &seeds, eta),
+            found,
+            "graph {out:?}"
+        );
         found
     }
 
-    /// The reference: Bellman–Ford from labels 0, `n` passes over every edge; a label that
-    /// falls in the last pass shows a negative cycle, since a shortest path from the source
-    /// joined to each node has at most `n - 1` edges of the graph.
+    /// The reference, `bellman_ford` of tests/src/bellman_ford_moore.rs on the same graph.
     fn bellman_ford(out: &[Vec<(usize, i64)>]) -> Option<Vec<Int>> {
-        let n = out.len();
-        let mut d = vec![Int::ZERO; n];
-        for pass in 1..=n {
-            let mut fell = false;
-            for (u, edges) in out.iter().enumerate() {
-                for &(v, x) in edges {
-                    let to = &d[u] + &Int::from(x);
-                    if to < d[v] {
-                        d[v] = to;
-                        fell = true;
-                    }
-                }
-            }
-            if !fell {
-                return Some(d);
-            }
-            if pass == n {
-                return None;
-            }
-        }
-        Some(d)
+        crate::bellman_ford_moore::bellman_ford(&ints(out))
+    }
+
+    /// The graph with its weights as [`Int`].
+    fn ints(out: &[Vec<(usize, i64)>]) -> Vec<Vec<(usize, Int)>> {
+        out.iter()
+            .map(|r| r.iter().map(|&(v, x)| (v, Int::from(x))).collect())
+            .collect()
     }
 
     /// The exit at round `eta` is what reports this cycle. Round 1 starts from node 1 alone,

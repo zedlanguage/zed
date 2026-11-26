@@ -606,18 +606,21 @@ fn draft_kids(d: &Draft) -> &[At] {
 /// Whether the new node `root` is a finite value: no hole under it and no cycle of tuples.
 fn finite(drafts: &[Draft], root: usize) -> bool {
     let mut seen = vec![false; drafts.len()];
-    let mut stack = vec![root];
-    while let Some(x) = stack.pop() {
-        if std::mem::replace(&mut seen[x], true) {
-            continue;
-        }
-        if matches!(drafts[x], Draft::Hole) {
-            return false;
-        }
-        stack.extend(draft_kids(&drafts[x]).iter().filter_map(|k| match k {
-            At::New(k) => Some(*k),
-            At::Pool(_) => None,
-        }));
+    let hole = zed_graph::reach_until(
+        [root],
+        |&x| !std::mem::replace(&mut seen[x], true),
+        |&x| {
+            if matches!(drafts[x], Draft::Hole) {
+                return std::ops::ControlFlow::Break(());
+            }
+            std::ops::ControlFlow::Continue(draft_kids(&drafts[x]).iter().filter_map(|k| match k {
+                At::New(k) => Some(*k),
+                At::Pool(_) => None,
+            }))
+        },
+    );
+    if hole.is_some() {
+        return false;
     }
     // A cycle of tuple edges, by a depth-first search with colors from an explicit stack.
     let mut color = vec![0u8; drafts.len()];

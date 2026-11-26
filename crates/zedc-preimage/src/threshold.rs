@@ -41,6 +41,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use zed_graph::{kahn, sources};
 use zedc_int::int::{Int, Num};
 use zedc_lattice::interval::{End, IntervalSet};
 use zedc_presburger::presburger::{Atom, Formula, Lin, Rel};
@@ -521,18 +522,8 @@ fn acyclic(sys: &System) -> bool {
         out[up.x].push(low.y);
         into[low.y] += 1;
     }
-    let mut ready: Vec<usize> = (0..n).filter(|&v| into[v] == 0).collect();
-    let mut removed = 0;
-    while let Some(v) = ready.pop() {
-        removed += 1;
-        for &w in &out[v] {
-            into[w] -= 1;
-            if into[w] == 0 {
-                ready.push(w);
-            }
-        }
-    }
-    removed == n
+    let mut ready: Vec<usize> = sources(&into).collect();
+    kahn(&mut into, &mut ready, |v| out[v].iter().copied(), |_| {}) == n
 }
 
 /// Whether some value of `d` lies strictly between the two ranges `a` and `b` and in

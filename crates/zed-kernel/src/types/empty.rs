@@ -4099,20 +4099,22 @@ impl Search {
             .iter()
             .filter_map(|&(x, r, _)| (r == Refusal::Fork).then_some(x))
             .collect();
-        let mut stack: Vec<usize> = ts.into_iter().filter(|&t| self.answer[t]).collect();
-        let mut seen: HashSet<usize> = stack.iter().copied().collect();
-        while let Some(x) = stack.pop() {
-            if forked.contains(&x) {
-                return true;
-            }
-            for &(packed, _) in &self.reads[x] {
-                let (y, empty_dep) = unpack_read(packed);
-                if empty_dep && self.answer[y] && seen.insert(y) {
-                    stack.push(y);
+        let (reads, answer) = (&self.reads, &self.answer);
+        let mut seen: HashSet<usize> = HashSet::new();
+        zed_graph::reach_until(
+            ts.into_iter().filter(|&t| answer[t]),
+            |&x| seen.insert(x),
+            |&x| {
+                if forked.contains(&x) {
+                    return ControlFlow::Break(());
                 }
-            }
-        }
-        false
+                ControlFlow::Continue(reads[x].iter().filter_map(move |&(packed, _)| {
+                    let (y, empty_dep) = unpack_read(packed);
+                    (empty_dep && answer[y]).then_some(y)
+                }))
+            },
+        )
+        .is_some()
     }
 
     /// For each type, whether its search or decision rests on a fork ([`Self::rests_on_fork`]):
@@ -4822,22 +4824,12 @@ impl Heights {
         if let Some(h) = self.get_least(root) {
             return h;
         }
-        // A rule of `node`: `base` is `add` more than the highest child settled so far, `waiting`
-        // the children not yet settled.
-        struct Rule {
-            node: usize,
-            add: u64,
-            base: u64,
-            waiting: usize,
-        }
+        // The rules, the heap and the settling loop are `zed_graph::Knuth`'s.
         let mut index: HashMap<HeightNode, usize, Digests> = HashMap::default();
         let mut nodes: Vec<HeightNode> = Vec::new();
-        let mut users: Vec<Vec<usize>> = Vec::new();
-        let mut rules: Vec<Rule> = Vec::new();
-        let mut ready: zed_graph::MinHeap<(u64, usize)> = zed_graph::MinHeap::new();
+        let mut rules = zed_graph::Knuth::new();
         index.insert(root.clone(), 0);
         nodes.push(root.clone());
-        users.push(Vec::new());
         let mut next = 0;
         while next < nodes.len() {
             let n = next;
@@ -4854,13 +4846,13 @@ impl Heights {
                         || p.morphisms.is_leaf() != Some(false)
                         || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
                     {
-                        ready.push((0, n));
+                        rules.ready(n, 0);
                     }
                     if p.tuples.rest {
-                        ready.push((1, n));
+                        rules.ready(n, 1);
                     }
                     if p.atoms.bare_names() > 0 {
-                        ready.push((0, n));
+                        rules.ready(n, 0);
                     }
                     if let Some(pr) = p.atoms.payload_dag() {
                         children.push((0, vec![HeightNode::Payloads(pr.clone())]));
@@ -4870,7 +4862,7 @@ impl Heights {
                             continue;
                         }
                         if f.eval3(&|_| Some(false)) != Some(false) {
-                            ready.push((1, n));
+                            rules.ready(n, 1);
                             continue;
                         }
                         // A row whose components are all settled is a rule ready at once, of
@@ -4889,7 +4881,7 @@ impl Heights {
                             true
                         });
                         if least != u64::MAX {
-                            ready.push((least, n));
+                            rules.ready(n, least);
                         }
                     }
                 }
@@ -4904,48 +4896,17 @@ impl Heights {
                 }
             }
             for (add, row) in children {
-                let r = rules.len();
-                let mut rule = Rule {
-                    node: n,
-                    add,
-                    base: add,
-                    waiting: 0,
-                };
-                for c in row {
-                    match self.get_least(&c) {
-                        Some(h) => rule.base = rule.base.max(h.saturating_add(add)),
-                        None => {
-                            let i = *index.entry(c.clone()).or_insert_with(|| {
-                                nodes.push(c);
-                                users.push(Vec::new());
-                                nodes.len() - 1
-                            });
-                            users[i].push(r);
-                            rule.waiting += 1;
-                        }
-                    }
-                }
-                if rule.waiting == 0 && rule.base != u64::MAX {
-                    ready.push((rule.base, n));
-                }
-                rules.push(rule);
+                let row = row.into_iter().map(|c| match self.get_least(&c) {
+                    Some(h) => zed_graph::Child::Settled(h),
+                    None => zed_graph::Child::Waits(*index.entry(c.clone()).or_insert_with(|| {
+                        nodes.push(c);
+                        nodes.len() - 1
+                    })),
+                });
+                rules.add_rule(n, add, row);
             }
         }
-        let mut height = vec![u64::MAX; nodes.len()];
-        while let Some((h, n)) = ready.pop() {
-            if height[n] != u64::MAX {
-                continue;
-            }
-            height[n] = h;
-            for &r in &users[n] {
-                let rule = &mut rules[r];
-                rule.base = rule.base.max(h.saturating_add(rule.add));
-                rule.waiting -= 1;
-                if rule.waiting == 0 && rule.base != u64::MAX && height[rule.node] == u64::MAX {
-                    ready.push((rule.base, rule.node));
-                }
-            }
-        }
+        let height = rules.run(nodes.len());
         for (node, h) in nodes.into_iter().zip(height) {
             match node {
                 HeightNode::Type(ty) => {
@@ -18850,23 +18811,24 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
 /// a class met before, whose children were pushed then. A `Ref` names a member, whose body is
 /// walked from the start; a `Type` is a closed type, not part of a body's shape.
 fn group_has_diff_or_and(env: &Arc<Env>) -> bool {
-    let mut stack: Vec<&rec::Node> = env.group().0.bodies.iter().map(|b| &**b).collect();
     let mut seen: HashSet<u32> = HashSet::new();
-    while let Some(n) = stack.pop() {
-        if !seen.insert(n.class) {
-            continue;
-        }
-        match &n.e {
-            rec::Shape::And(_) | rec::Shape::Diff(..) => return true,
-            rec::Shape::Union(xs) | rec::Shape::Tuple(xs) | rec::Shape::Atom(_, xs) => {
-                stack.extend(xs.iter().map(|c| &**c));
-            }
-            rec::Shape::Morphism(l, u, v) => stack.extend([&**l, &**u, &**v]),
-            rec::Shape::Not(a) => stack.push(a),
-            rec::Shape::Param(_) | rec::Shape::Type(_) | rec::Shape::Ref(..) => {}
-        }
-    }
-    false
+    zed_graph::reach_until(
+        env.group().0.bodies.iter().map(|b| &**b),
+        |n: &&rec::Node| seen.insert(n.class),
+        |n| {
+            let kids: Vec<&rec::Node> = match &n.e {
+                rec::Shape::And(_) | rec::Shape::Diff(..) => return ControlFlow::Break(()),
+                rec::Shape::Union(xs) | rec::Shape::Tuple(xs) | rec::Shape::Atom(_, xs) => {
+                    xs.iter().map(|c| &**c).collect()
+                }
+                rec::Shape::Morphism(l, u, v) => vec![&**l, &**u, &**v],
+                rec::Shape::Not(a) => vec![&**a],
+                rec::Shape::Param(_) | rec::Shape::Type(_) | rec::Shape::Ref(..) => Vec::new(),
+            };
+            ControlFlow::Continue(kids)
+        },
+    )
+    .is_some()
 }
 
 /// A node's emptiness from its answers with the leaves `Bot` (`low`) and `Top` (`high`), when

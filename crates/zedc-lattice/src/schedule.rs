@@ -279,6 +279,10 @@ impl<F: Facts> Demand<'_, F> {
     /// reaches every member, `p` included; reading `p`'s edges it finds `start` first in the
     /// test `y == start` and sets `back`. Test: `m0_05_widening_and_iteration::schedule`,
     /// against the declarative rounds over renumberings and root orders.
+    ///
+    /// Not [`zed_graph::BfsPaths`], which the other reports of a shortest cycle use: its two
+    /// arrays per node would add to the 16 bytes per node of the module doc, while `mark` here
+    /// is one 32-bit word that also marks the members, so the search needs no component array.
     fn cycle(&mut self, members: &[usize]) -> Vec<usize> {
         let facts = &*self.facts;
         let start = members

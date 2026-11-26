@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 use zed_collections::intervals;
-use zed_graph::{Compression, Keep, Linking, MinHeap, Offset, Signed, UnionFind};
+use zed_graph::{Compression, Keep, Linking, MinHeap, Offset, PriorityWorklist, Signed, UnionFind};
 use zed_kernel::num::{coprime, trees};
 use zedc_int::int::Int;
 
@@ -1057,32 +1057,24 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         w
     };
     let mut row_weight: Vec<u64> = top_cons.iter().map(|c| con_bit_weight(c)).collect();
-    let mut queued = vec![true; top_cons.len()];
-    let mut queue: MinHeap<(u64, usize)> = row_weight
-        .iter()
-        .enumerate()
-        .map(|(i, &w)| (w, i))
-        .collect();
-    // Puts the rows of a modified class back in the priority worklist with at least `trigger_w`.
+    let mut queue = PriorityWorklist::all(row_weight.iter().copied());
+    // Puts the rows of a modified class back in the priority worklist with at least
+    // `trigger_w`. A row waiting already keeps the weight it was queued with
+    // ([`PriorityWorklist`]); its raised weight counts when it is queued next.
     fn requeue(
         rows: Option<&Vec<usize>>,
         trigger_w: u64,
         row_weight: &mut [u64],
-        queued: &mut [bool],
-        queue: &mut MinHeap<(u64, usize)>,
+        queue: &mut PriorityWorklist<u64>,
     ) {
         for &i in rows.into_iter().flatten() {
             if trigger_w > row_weight[i] {
                 row_weight[i] = trigger_w;
             }
-            if !queued[i] {
-                queued[i] = true;
-                queue.push((row_weight[i], i));
-            }
+            queue.push(i, row_weight[i]);
         }
     }
     while let Some((_, i)) = queue.pop() {
-        queued[i] = false;
         let c = &top_cons[i];
         let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &empty_rems);
         if lin.terms.is_empty() {
@@ -1113,13 +1105,7 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             } else {
                 let w_val = val.bits();
                 fixed.insert(a.clone(), val);
-                requeue(
-                    class_rows.get(a),
-                    w_val,
-                    &mut row_weight,
-                    &mut queued,
-                    &mut queue,
-                );
+                requeue(class_rows.get(a), w_val, &mut row_weight, &mut queue);
             }
         } else if c.rel == Rel::Eq && lin.terms.len() == 2 {
             let mut it = lin.terms.iter();
@@ -1148,7 +1134,7 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                         (rb, ra)
                     }
                 };
-                requeue(Some(&small), w_d, &mut row_weight, &mut queued, &mut queue);
+                requeue(Some(&small), w_d, &mut row_weight, &mut queue);
                 let mut large = large;
                 large.extend(small);
                 match joined {
@@ -1161,13 +1147,7 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                         } else {
                             let w_val = val.bits();
                             fixed.insert(fixed_root, val);
-                            requeue(
-                                Some(&large),
-                                w_val,
-                                &mut row_weight,
-                                &mut queued,
-                                &mut queue,
-                            );
+                            requeue(Some(&large), w_val, &mut row_weight, &mut queue);
                         }
                     }
                     Ok(None) => {}

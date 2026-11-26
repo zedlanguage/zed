@@ -15,48 +15,33 @@ fn graph(out: &[Vec<(usize, i64)>]) -> Vec<Vec<(usize, Int)>> {
         .collect()
 }
 
-/// Bellman–Ford on the subgraph of `out` induced by `set`, from labels 0: the least weight of a
-/// walk ending at each vertex of `set`, in its order, or `None` when that subgraph has a
-/// negative cycle (a label still falling after `|set|` passes).
-fn bellman_ford(out: &[Vec<(usize, i64)>], set: &[usize]) -> Option<Vec<Int>> {
+/// The subgraph of `out` induced by `set`, its vertices numbered in the order of `set`.
+fn induced(out: &[Vec<(usize, i64)>], set: &[usize]) -> Vec<Vec<(usize, Int)>> {
     let mut place = vec![usize::MAX; out.len()];
     for (k, &v) in set.iter().enumerate() {
         place[v] = k;
     }
-    let mut d = vec![Int::ZERO; set.len()];
-    for _ in 0..=set.len() {
-        let mut fell = false;
-        for &u in set {
-            for &(v, w) in &out[u] {
-                if place[v] == usize::MAX {
-                    continue;
-                }
-                let to = &d[place[u]] + &Int::from(w);
-                if to < d[place[v]] {
-                    d[place[v]] = to;
-                    fell = true;
-                }
-            }
-        }
-        if !fell {
-            return Some(d);
-        }
-    }
-    None
+    set.iter()
+        .map(|&u| {
+            (out[u].iter())
+                .filter(|&&(v, _)| place[v] != usize::MAX)
+                .map(|&(v, w)| (place[v], Int::from(w)))
+                .collect()
+        })
+        .collect()
+}
+
+/// Bellman–Ford on the subgraph of `out` induced by `set`, from labels 0: the least weight of a
+/// walk ending at each vertex of `set`, in its order, or `None` when that subgraph has a
+/// negative cycle (`bellman_ford` of tests/src/bellman_ford_moore.rs).
+fn bellman_ford(out: &[Vec<(usize, i64)>], set: &[usize]) -> Option<Vec<Int>> {
+    crate::bellman_ford_moore::bellman_ford(&induced(out, set))
 }
 
 /// Whether `p`, given in the order of `set`, is a potential of the subgraph of `out` induced by
 /// `set`: `p(v) <= p(u) + w` on each of its edges.
 fn holds(out: &[Vec<(usize, i64)>], set: &[usize], p: &[Int]) -> bool {
-    let mut place = vec![usize::MAX; out.len()];
-    for (k, &v) in set.iter().enumerate() {
-        place[v] = k;
-    }
-    set.iter().all(|&u| {
-        out[u]
-            .iter()
-            .all(|&(v, w)| place[v] == usize::MAX || p[place[v]] <= &p[place[u]] + &Int::from(w))
-    })
+    crate::bellman_ford_moore::holds(&induced(out, set), p)
 }
 
 /// The radii with `δ₀ = d / scale`.

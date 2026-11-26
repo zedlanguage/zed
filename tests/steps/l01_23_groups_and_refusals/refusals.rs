@@ -2552,28 +2552,26 @@ fn r3_oracle(ns: &[R3Node], roots: &[usize], all: u64) -> bool {
     let mut root = roots.to_vec();
     zed_collections::sorted::sort_dedup(&mut root);
     let mut seen = BTreeSet::new();
-    let mut todo = vec![root];
-    while let Some(state) = todo.pop() {
-        if !seen.insert(state.clone()) {
-            continue;
-        }
-        if state.iter().all(|&i| !ns[i].stop) {
-            return true;
-        }
-        for bit in 0..64 {
-            if all & (1u64 << bit) == 0 {
-                continue;
+    let stops = zed_graph::reach_until(
+        [root],
+        |state: &Vec<usize>| seen.insert(state.clone()),
+        |state| {
+            if state.iter().all(|&i| !ns[i].stop) {
+                return std::ops::ControlFlow::Break(());
             }
-            let mut next: Vec<_> = state
-                .iter()
-                .filter(|&&i| ns[i].mask & (1u64 << bit) != 0)
-                .map(|&i| ns[i].next)
-                .collect();
-            zed_collections::sorted::sort_dedup(&mut next);
-            todo.push(next);
-        }
-    }
-    false
+            let nexts = (0..64).filter(|bit| all & (1u64 << bit) != 0).map(|bit| {
+                let mut next: Vec<_> = state
+                    .iter()
+                    .filter(|&&i| ns[i].mask & (1u64 << bit) != 0)
+                    .map(|&i| ns[i].next)
+                    .collect();
+                zed_collections::sorted::sort_dedup(&mut next);
+                next
+            });
+            std::ops::ControlFlow::Continue(nexts.collect::<Vec<_>>())
+        },
+    );
+    stops.is_some()
 }
 
 fn r3_build(

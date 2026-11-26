@@ -43,8 +43,15 @@
 //! queued at most `n - 1` times, O(n · m) in all.
 //! `fifo_takes_items_in_the_order_queued_each_once` checks the order the bound needs; it does
 //! not run a distance computation.
+//!
+//! Two other forms of the same pair, each written once here (DRY-graph-searches-2026-11-26):
+//! [`PriorityWorklist`], which gives the queued item of least priority first (the
+//! bit-weight order of zedc-presburger's modular `top_cons` loop), and [`KeyedWorklist`],
+//! first in first out over keys that are not dense numbers (blocks and parts in
+//! zedc-preimage's product.rs), its flags kept in an ordered set.
 
-use std::collections::VecDeque;
+use crate::heap::MinHeap;
+use std::collections::{BTreeSet, VecDeque};
 
 /// Which queued item a [`Worklist`] gives next.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,9 +123,149 @@ impl Worklist {
     }
 }
 
+/// Items `0..n` waiting to be worked on, each queued at most once at a time with a priority
+/// given when it is queued; the item of least priority comes first, ties going to the lesser
+/// item.
+///
+/// An item queued already keeps the priority it was queued with, whatever a later push asks:
+/// a caller that raises an item's priority while it waits sees the change only when the item
+/// is queued again. So the heap holds at most one entry per item, no entry is ever stale, and
+/// the heap never holds more than `n` entries.
+// Complexity tradeoff: each push of an item not queued and each pop costs O(log n) on the
+// heap, a push of a queued item O(1). The alternative, a heap with a decrease-key (a pairing
+// or indexed heap), would let a waiting item move, which no caller needs; lazy deletion (a
+// new entry at each push, stale ones skipped at pop, as [`crate::Dijkstra`] does) lets the
+// heap grow to the number of pushes.
+#[derive(Clone, Debug)]
+pub struct PriorityWorklist<P> {
+    heap: MinHeap<(P, usize)>,
+    queued: Vec<bool>,
+}
+
+impl<P: Ord> PriorityWorklist<P> {
+    /// Items `0..n`, none queued.
+    pub fn new(n: usize) -> PriorityWorklist<P> {
+        PriorityWorklist {
+            heap: MinHeap::new(),
+            queued: vec![false; n],
+        }
+    }
+
+    /// Items `0..n` for the `n` priorities given, each queued with its own; the heap is built
+    /// at once in O(n), not by `n` pushes in O(n log n).
+    pub fn all(priorities: impl IntoIterator<Item = P>) -> PriorityWorklist<P> {
+        let heap: MinHeap<(P, usize)> = priorities
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| (p, i))
+            .collect();
+        PriorityWorklist {
+            queued: vec![true; heap.len()],
+            heap,
+        }
+    }
+
+    /// Queues `i` with priority `p` unless it is queued already; whether it was queued now.
+    pub fn push(&mut self, i: usize, p: P) -> bool {
+        if self.queued[i] {
+            return false;
+        }
+        self.queued[i] = true;
+        self.heap.push((p, i));
+        true
+    }
+
+    /// Takes the queued item of least priority, with its priority; it may be queued again
+    /// from then on.
+    pub fn pop(&mut self) -> Option<(P, usize)> {
+        let (p, i) = self.heap.pop()?;
+        self.queued[i] = false;
+        Some((p, i))
+    }
+
+    /// Whether `i` is queued.
+    pub fn is_queued(&self, i: usize) -> bool {
+        self.queued[i]
+    }
+}
+
+/// Keys waiting to be worked on, first in first out, each queued at most once at a time: a
+/// [`Worklist`] for keys that are not numbers `0..n`, its flags an ordered set of the keys
+/// queued.
+// Complexity tradeoff: a push or pop is O(log q) comparisons of keys for the q keys queued,
+// against O(1) for [`Worklist`] on dense numbers; numbering the keys first would cost a map
+// from key to number of the same O(log) per lookup, and keys found as the work goes would
+// need that map to grow. A hash set would save the log factor but needs `Hash` and gives
+// nothing in the order, which no caller reads; the callers' keys are ordered already.
+#[derive(Clone, Debug)]
+pub struct KeyedWorklist<K> {
+    items: VecDeque<K>,
+    queued: BTreeSet<K>,
+}
+
+impl<K: Ord + Clone> KeyedWorklist<K> {
+    /// No key queued.
+    pub fn new() -> KeyedWorklist<K> {
+        KeyedWorklist {
+            items: VecDeque::new(),
+            queued: BTreeSet::new(),
+        }
+    }
+
+    /// Queues `k` at the back unless it is queued already; whether it was queued now.
+    pub fn push(&mut self, k: K) -> bool {
+        if !self.queued.insert(k.clone()) {
+            return false;
+        }
+        self.items.push_back(k);
+        true
+    }
+
+    /// Takes the key queued first; it may be queued again from then on.
+    pub fn pop(&mut self) -> Option<K> {
+        let k = self.items.pop_front()?;
+        self.queued.remove(&k);
+        Some(k)
+    }
+
+    /// Whether `k` is queued.
+    pub fn is_queued(&self, k: &K) -> bool {
+        self.queued.contains(k)
+    }
+
+    /// Whether no key is queued.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// The number of keys queued.
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+}
+
+impl<K: Ord + Clone> Default for KeyedWorklist<K> {
+    fn default() -> KeyedWorklist<K> {
+        KeyedWorklist::new()
+    }
+}
+
+/// The keys of `iter` queued in its order, a key met again left where it was first queued.
+impl<K: Ord + Clone> FromIterator<K> for KeyedWorklist<K> {
+    fn from_iter<I: IntoIterator<Item = K>>(iter: I) -> KeyedWorklist<K> {
+        let mut w = KeyedWorklist::new();
+        for k in iter {
+            w.push(k);
+        }
+        w
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Order, Worklist};
+    use super::{KeyedWorklist, Order, PriorityWorklist, Worklist};
+    use crate::seed::Rng;
+    use std::collections::{BTreeSet, VecDeque};
 
     /// First in first out from `all`: ascending, an item queued while waiting is not queued
     /// twice, and one taken may be queued again.
@@ -142,5 +289,112 @@ mod tests {
         assert!(!w.push(1));
         let all: Vec<usize> = std::iter::from_fn(|| w.pop()).collect();
         assert_eq!(all, [4, 2, 1, 0]);
+    }
+
+    /// The least priority first, ties to the lesser item; a push of a queued item keeps its
+    /// first priority, even a lower one asked later; a popped item may be queued again; an
+    /// empty list and a list of no items give nothing.
+    #[test]
+    fn priority_takes_the_least_and_keeps_a_waiting_items_priority() {
+        let mut w = PriorityWorklist::all([5u64, 3, 3, 9]);
+        assert!(!w.push(3, 0));
+        assert_eq!(w.pop(), Some((3, 1)));
+        assert!(!w.is_queued(1));
+        assert!(w.push(1, 4));
+        let rest: Vec<(u64, usize)> = std::iter::from_fn(|| w.pop()).collect();
+        assert_eq!(rest, [(3, 2), (4, 1), (5, 0), (9, 3)]);
+        assert_eq!(w.pop(), None);
+        let mut none = PriorityWorklist::<u64>::new(0);
+        assert_eq!(none.pop(), None);
+        assert_eq!(PriorityWorklist::<u64>::all([]).pop(), None);
+    }
+
+    /// First in first out over keys: a key queued while waiting is not queued twice, one taken
+    /// may be queued again, and `collect` keeps the first place of a repeated key.
+    #[test]
+    fn keyed_takes_keys_in_the_order_queued_each_once() {
+        let mut w: KeyedWorklist<&str> = ["b", "a", "b", "c"].into_iter().collect();
+        assert_eq!(w.len(), 3);
+        assert!(!w.push("a"));
+        assert_eq!(w.pop(), Some("b"));
+        assert!(!w.is_queued(&"b"));
+        assert!(w.push("b"));
+        let rest: Vec<&str> = std::iter::from_fn(|| w.pop()).collect();
+        assert_eq!(rest, ["a", "c", "b"]);
+        assert!(w.is_empty());
+        assert_eq!(w.pop(), None);
+    }
+
+    /// Random pushes and pops on each list against the queue and flags its callers wrote
+    /// inline before (DRY-graph-searches-2026-11-26), kept here as the oracle: a `VecDeque`
+    /// and a `Vec<bool>`, a `MinHeap` and a `Vec<bool>` (zedc-presburger modular.rs), and a
+    /// `VecDeque` and a `BTreeSet` (zedc-preimage product.rs). Each step's answer and the
+    /// order taken must agree. Catches a flag not set or not cleared, a wrong end taken, a
+    /// priority replaced while waiting; cannot catch a cost above the claimed one.
+    #[test]
+    fn each_list_agrees_with_the_inline_queue_and_flags_it_replaced() {
+        let (mut rng, seed) = Rng::fresh("each_list_agrees_with_the_inline_queue_and_flags");
+        for _ in 0..300 {
+            let n = 1 + rng.below(12);
+            let order = if rng.coin() { Order::Fifo } else { Order::Lifo };
+            let mut w = Worklist::new(n, order);
+            let (mut q, mut flag) = (VecDeque::new(), vec![false; n]);
+            let mut p = PriorityWorklist::new(n);
+            let (mut heap, mut pflag) = (crate::MinHeap::new(), vec![false; n]);
+            let mut k = KeyedWorklist::new();
+            let (mut kq, mut kset) = (VecDeque::new(), BTreeSet::new());
+            for _ in 0..40 {
+                if rng.below(3) < 2 {
+                    let i = rng.below(n);
+                    let pr = rng.below(4);
+                    let fresh = !flag[i];
+                    if fresh {
+                        flag[i] = true;
+                        q.push_back(i);
+                    }
+                    assert_eq!(w.push(i), fresh, "seed {seed}");
+                    let pfresh = !pflag[i];
+                    if pfresh {
+                        pflag[i] = true;
+                        heap.push((pr, i));
+                    }
+                    assert_eq!(p.push(i, pr), pfresh, "seed {seed}");
+                    let key = format!("k{i}");
+                    let kfresh = kset.insert(key.clone());
+                    if kfresh {
+                        kq.push_back(key.clone());
+                    }
+                    assert_eq!(k.push(key), kfresh, "seed {seed}");
+                } else {
+                    let want = match order {
+                        Order::Fifo => q.pop_front(),
+                        Order::Lifo => q.pop_back(),
+                    };
+                    if let Some(i) = want {
+                        flag[i] = false;
+                    }
+                    assert_eq!(w.pop(), want, "seed {seed}");
+                    let pwant = heap.pop();
+                    if let Some((_, i)) = pwant {
+                        pflag[i] = false;
+                    }
+                    assert_eq!(p.pop(), pwant, "seed {seed}");
+                    let kwant = kq.pop_front();
+                    if let Some(key) = &kwant {
+                        kset.remove(key);
+                    }
+                    assert_eq!(k.pop(), kwant, "seed {seed}");
+                }
+                for i in 0..n {
+                    assert_eq!(w.is_queued(i), flag[i], "seed {seed}");
+                    assert_eq!(p.is_queued(i), pflag[i], "seed {seed}");
+                    assert_eq!(
+                        k.is_queued(&format!("k{i}")),
+                        kset.contains(&format!("k{i}"))
+                    );
+                }
+                assert_eq!(k.len(), kq.len(), "seed {seed}");
+            }
+        }
     }
 }

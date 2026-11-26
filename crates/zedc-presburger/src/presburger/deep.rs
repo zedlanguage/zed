@@ -23,7 +23,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::mem;
+use std::ops::ControlFlow;
 use std::slice;
+
+use zed_graph::{reach, reach_until};
 
 use super::formula::{
     Atom, BoundHoles, Con, Formula, Id, Lin, Model, Names, Rel, Shared, Sig, as_is,
@@ -325,19 +328,19 @@ impl Formula {
     /// A shared part is read at its first place alone.
     pub fn chooses(&self) -> bool {
         let mut seen: HashSet<Id> = HashSet::new();
-        let mut stack = vec![self];
-        while let Some(g) = stack.pop() {
-            match g {
-                // A call node is a conjunction of disjunctions, one a hole, and has a hole.
-                Formula::Or(_) | Formula::Not(_) | Formula::Holes(_) => return true,
-                Formula::Con(_) | Formula::And(_) => {
-                    if Id::of(g).is_none_or(|id| seen.insert(id)) {
-                        stack.extend(g.kids())
-                    }
+        reach_until(
+            [self],
+            |g: &&Formula| Id::of(g).is_none_or(|id| seen.insert(id)),
+            |g| {
+                let g = *g;
+                match g {
+                    // A call node is a conjunction of disjunctions, one a hole, and has a hole.
+                    Formula::Or(_) | Formula::Not(_) | Formula::Holes(_) => ControlFlow::Break(()),
+                    Formula::Con(_) | Formula::And(_) => ControlFlow::Continue(g.kids()),
                 }
-            }
-        }
-        false
+            },
+        )
+        .is_some()
     }
 
     /// The parts of a conjunction or a disjunction, moved out when no other holder shares
@@ -1010,24 +1013,26 @@ impl Formula {
     pub fn written_names(&self, name: fn(&str) -> &str) -> HashSet<String> {
         let mut out = HashSet::new();
         let mut seen: HashSet<Id> = HashSet::new();
-        let mut stack = vec![self];
-        while let Some(g) = stack.pop() {
-            if let Some(k) = Id::of(g)
-                && !seen.insert(k)
-            {
-                continue;
-            }
-            match g {
-                Formula::Con(c) => {
-                    let text = ConWritten(c, name).to_string();
-                    out.extend(super::names_in(&text).into_iter().map(String::from));
+        reach(
+            [self],
+            |g: &&Formula| Id::of(g).is_none_or(|k| seen.insert(k)),
+            |g| {
+                let g = *g;
+                match g {
+                    Formula::Con(c) => {
+                        let text = ConWritten(c, name).to_string();
+                        out.extend(super::names_in(&text).into_iter().map(String::from));
+                        g.kids()
+                    }
+                    // The names of its clauses are the term's; read once, at its first clause.
+                    Formula::Holes(b) => {
+                        let kids = b.lowered().kids();
+                        &kids[..kids.len().min(1)]
+                    }
+                    Formula::Not(_) | Formula::And(_) | Formula::Or(_) => g.kids(),
                 }
-                // The names of its clauses are the term's; read once, at its first clause.
-                Formula::Holes(b) => stack.extend(b.lowered().kids().first()),
-                Formula::Not(h) => stack.push(h),
-                Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
-            }
-        }
+            },
+        );
         out
     }
 }

@@ -1788,27 +1788,26 @@ impl<'u> Specializer<'u> {
         let mut calls: HashMap<(Arc<str>, usize), BTreeSet<Key>> = HashMap::new();
         let key = |v: &Value| Key::new(&mixer.names, v);
         // Each part held in a node is read once, however many places reach it.
+        // `calls` holds sets, so the order the parts are read in does not show.
         let mut seen = HashSet::new();
-        let mut todo: Vec<Part<'_>> = mixed.defs.iter().map(|d| Part::held(&d.term)).collect();
-        while let Some(p) = todo.pop() {
-            if let Some(s) = p.node
-                && !seen.insert(s.id())
-            {
-                continue;
-            }
-            if let Term::App(g, args) = p.term
-                && let Term::Var(f) = &**g
-            {
-                for (i, x) in args.iter().enumerate() {
-                    if let Term::Lit(v) = x {
-                        calls.entry((f.clone(), i)).or_default().insert(key(v));
+        zed_graph::reach(
+            mixed.defs.iter().map(|d| Part::held(&d.term)),
+            |p: &Part<'_>| p.node.is_none_or(|s| seen.insert(s.id())),
+            |&p: &Part<'_>| {
+                if let Term::App(g, args) = p.term
+                    && let Term::Var(f) = &**g
+                {
+                    for (i, x) in args.iter().enumerate() {
+                        if let Term::Lit(v) = x {
+                            calls.entry((f.clone(), i)).or_default().insert(key(v));
+                        }
                     }
                 }
-            }
-            // The join of a lattice recursion is not read, as before.
-            let subs = subs(p.term).into_iter();
-            todo.extend(subs.filter(|(_, _, join)| !join).map(|(q, ..)| q));
-        }
+                // The join of a lattice recursion is not read, as before.
+                let subs = subs(p.term).into_iter();
+                subs.filter(|(_, _, join)| !join).map(|(q, ..)| q)
+            },
+        );
         let mut cases: HashMap<(&'u str, usize), BTreeSet<Key>> = HashMap::new();
         for t in unit.tests.iter() {
             // A clause's values give `main` its inputs, not an argument of a parameter.

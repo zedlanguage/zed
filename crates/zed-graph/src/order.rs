@@ -21,6 +21,8 @@
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
+use std::convert::Infallible;
+use std::ops::ControlFlow;
 
 /// The nodes ready to be placed in [`kahn`], and which is placed next: the choice that makes
 /// one topological order out of the many. [`Vec`] places the last made ready first,
@@ -106,17 +108,44 @@ pub fn kahn<I: IntoIterator<Item = usize>>(
 // hash set or an ordered set, as the node's keys suit, and may note the nodes met twice.
 pub fn reach<K, I: IntoIterator<Item = K>>(
     roots: impl IntoIterator<Item = K>,
-    mut first: impl FnMut(&K) -> bool,
+    first: impl FnMut(&K) -> bool,
     mut kids: impl FnMut(&K) -> I,
 ) {
+    if let Some(never) = reach_until(roots, first, |k| {
+        ControlFlow::<Infallible, I>::Continue(kids(k))
+    }) {
+        match never {}
+    }
+}
+
+/// [`reach`] that may stop early: each node searched, in the same order, is passed to `visit`,
+/// which either gives its kids (`Continue`) or ends the whole search with a value
+/// (`Break`), returned as `Some`. `None` when the search ran to the end; then the visited set
+/// holds exactly what the roots reach. After a `Break` it holds the nodes searched and the
+/// kids of those searched that `first` was given, some of them not yet searched.
+// Complexity tradeoff: as [`reach`], O(r + e) calls of `first` and one of `visit` per node
+// searched, for the r nodes and e edges up to the stop, so a search that stops at once costs
+// O(roots). [`reach`] is this with a `visit` that never stops; `Infallible` makes that a type
+// with no `Break`, so the compiler drops the test and the two cost the same.
+pub fn reach_until<K, I: IntoIterator<Item = K>, B>(
+    roots: impl IntoIterator<Item = K>,
+    mut first: impl FnMut(&K) -> bool,
+    mut visit: impl FnMut(&K) -> ControlFlow<B, I>,
+) -> Option<B> {
     let mut todo: Vec<K> = roots.into_iter().filter(|k| first(k)).collect();
     while let Some(k) = todo.pop() {
-        for c in kids(&k) {
-            if first(&c) {
-                todo.push(c);
+        match visit(&k) {
+            ControlFlow::Continue(kids) => {
+                for c in kids {
+                    if first(&c) {
+                        todo.push(c);
+                    }
+                }
             }
+            ControlFlow::Break(b) => return Some(b),
         }
     }
+    None
 }
 
 /// Visits in post-order what `roots` reach along the edges `enter` gives, on an explicit stack
@@ -182,11 +211,37 @@ pub fn make_after_needs<K>(
     }
 }
 
+/// The cycle that the walk from `start` along `next` runs into, on nodes `0..n` each with one
+/// successor `next(v) < n`: the nodes from the first one met twice, in order along the walk,
+/// that node first. The walk among `n` nodes meets one twice within `n + 1` steps, so it ends.
+/// Each node walked keeps its place on the walk in a dense array, `O(n)` for the array and
+/// `O(k)` for the `k` nodes walked; a map keyed by node would cost `O(k log k)` and no array,
+/// the better choice only for a walk much shorter than `n`, which the callers do not have
+/// (the one caller, zedc-resolve topo.rs, has done `O(n log n)` work before).
+pub fn functional_cycle(
+    n: usize,
+    start: usize,
+    mut next: impl FnMut(usize) -> usize,
+) -> Vec<usize> {
+    let mut at = vec![usize::MAX; n];
+    let mut path = Vec::new();
+    let mut v = start;
+    while at[v] == usize::MAX {
+        at[v] = path.len();
+        path.push(v);
+        v = next(v);
+    }
+    path.split_off(at[v])
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Ready, kahn, make_after_needs, post_order, reach, sources};
+    use super::{
+        Ready, functional_cycle, kahn, make_after_needs, post_order, reach, reach_until, sources,
+    };
     use std::cmp::Reverse;
     use std::collections::{BinaryHeap, VecDeque};
+    use std::ops::ControlFlow;
 
     /// Kahn's order of the graph `kids` over `0..n` with `ready`, and whether every node is
     /// placed.
@@ -244,6 +299,97 @@ mod tests {
         assert_eq!(seen, [true, true, true, true, true, false]);
         // Met once per root or edge into it from a node reached; searched once.
         assert_eq!(met, [2, 1, 1, 3, 1, 0]);
+    }
+
+    /// `reach_until` stops at the first node `visit` breaks on, in the order `reach` searches;
+    /// with no break it finds what `reach` finds.
+    #[test]
+    fn reach_until_stops_at_the_first_node_that_breaks() {
+        let kids = [vec![1, 2], vec![3], vec![3], vec![4], vec![3], vec![0]];
+        let mut order = Vec::new();
+        let mut seen = vec![false; kids.len()];
+        let hit = reach_until(
+            [0],
+            |&v| !std::mem::replace(&mut seen[v], true),
+            |&v| {
+                order.push(v);
+                if v == 3 {
+                    ControlFlow::Break(v * 10)
+                } else {
+                    ControlFlow::Continue(kids[v].clone())
+                }
+            },
+        );
+        assert_eq!(hit, Some(30));
+        // Last found first: 0, then 2 (pushed after 1), then 3.
+        assert_eq!(order, [0, 2, 3]);
+        // No root is new: nothing is searched.
+        let none: Option<()> = reach_until(
+            [0],
+            |_| false,
+            |_| ControlFlow::Continue(Vec::<usize>::new()),
+        );
+        assert_eq!(none, None);
+    }
+
+    /// On random graphs, `reach_until` with no break visits what the inline stack-and-set
+    /// search the callers wrote before visits (kept as the oracle), in the same order, and
+    /// breaking at a node gives the prefix of that order up to the node.
+    #[test]
+    fn reach_until_agrees_with_the_inline_search_it_replaced() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("reach_until_agrees_with_the_inline_search");
+        for _ in 0..500 {
+            let n = 1 + rng.below(10);
+            let kids: Vec<Vec<usize>> = (0..n)
+                .map(|_| (0..rng.below(4)).map(|_| rng.below(n)).collect())
+                .collect();
+            let roots: Vec<usize> = (0..1 + rng.below(3)).map(|_| rng.below(n)).collect();
+            // The oracle: the loop as written inline at each site before.
+            let mut want = Vec::new();
+            let mut seen = vec![false; n];
+            let mut stack: Vec<usize> = Vec::new();
+            for &r in &roots {
+                if !seen[r] {
+                    seen[r] = true;
+                    stack.push(r);
+                }
+            }
+            while let Some(v) = stack.pop() {
+                want.push(v);
+                for &c in &kids[v] {
+                    if !seen[c] {
+                        seen[c] = true;
+                        stack.push(c);
+                    }
+                }
+            }
+            let mut got = Vec::new();
+            let mut seen2 = vec![false; n];
+            let stop = rng.below(n + 1);
+            let hit = reach_until(
+                roots.iter().copied(),
+                |&v| !std::mem::replace(&mut seen2[v], true),
+                |&v| {
+                    got.push(v);
+                    if v == stop {
+                        ControlFlow::Break(v)
+                    } else {
+                        ControlFlow::Continue(kids[v].iter().copied())
+                    }
+                },
+            );
+            match want.iter().position(|&v| v == stop) {
+                Some(at) => {
+                    assert_eq!(hit, Some(stop), "seed {seed}");
+                    assert_eq!(got, want[..=at], "seed {seed}");
+                }
+                None => {
+                    assert_eq!(hit, None, "seed {seed}");
+                    assert_eq!(got, want, "seed {seed}");
+                    assert_eq!(seen2, seen, "seed {seed}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -326,5 +472,40 @@ mod tests {
             .expect("the thread starts")
             .join()
             .expect("the walks end");
+    }
+
+    #[test]
+    fn functional_cycle_gives_the_cycle_from_its_first_node_met_twice() {
+        // 0 -> 1 -> 2 -> 3 -> 1: the tail 0 is left out, the cycle starts at 1.
+        assert_eq!(functional_cycle(4, 0, |v| [1, 2, 3, 1][v]), vec![1, 2, 3]);
+        // A start on its cycle, and a node that is its own successor.
+        assert_eq!(functional_cycle(4, 2, |v| [1, 2, 3, 1][v]), vec![2, 3, 1]);
+        assert_eq!(functional_cycle(3, 1, |v| [1, 1, 0][v]), vec![1]);
+    }
+
+    /// On random functional graphs, `functional_cycle` gives what the `BTreeMap` walk of
+    /// zedc-resolve topo.rs it replaced gives (kept here as the oracle).
+    #[test]
+    fn functional_cycle_agrees_with_the_map_walk_it_replaced() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("functional_cycle_agrees_with_the_map_walk");
+        for _ in 0..2000 {
+            let n = 1 + rng.below(12);
+            let next: Vec<usize> = (0..n).map(|_| rng.below(n)).collect();
+            let start = rng.below(n);
+            let mut seen = std::collections::BTreeMap::new();
+            let mut path = Vec::new();
+            let mut i = start;
+            while !seen.contains_key(&i) {
+                seen.insert(i, path.len());
+                path.push(i);
+                i = next[i];
+            }
+            let want = path.split_off(seen[&i]);
+            assert_eq!(
+                functional_cycle(n, start, |v| next[v]),
+                want,
+                "seed {seed}: next {next:?}, start {start}"
+            );
+        }
     }
 }

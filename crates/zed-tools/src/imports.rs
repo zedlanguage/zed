@@ -51,7 +51,7 @@ mod lex;
 
 use lex::{Tok, lex, mates};
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use crate::{Outcome, arg, say};
 
@@ -182,34 +182,30 @@ impl Graph {
     }
 
     /// A shortest cycle through the first file of `component`, within it: the files in order,
-    /// the first not repeated at the end.
-    pub fn shortest_cycle(&self, component: &[usize]) -> Vec<usize> {
+    /// the first not repeated at the end. `bfs` is scratch over the files, kept across the
+    /// components so that each search costs only its own component.
+    pub fn shortest_cycle(
+        &self,
+        component: &[usize],
+        bfs: &mut zed_graph::BfsPaths<()>,
+    ) -> Vec<usize> {
         let inside: HashSet<usize> = component.iter().copied().collect();
         let start = component[0];
-        let mut before: HashMap<usize, usize> = HashMap::new();
-        let mut queue = VecDeque::from([start]);
-        while let Some(f) = queue.pop_front() {
-            for &(g, _) in &self.imports[f] {
-                if g == start {
-                    // The way back from `f` through the files that found each other ends at
-                    // `start`, which nothing found.
-                    let mut cycle = vec![f];
-                    let mut at = f;
-                    while let Some(&p) = before.get(&at) {
-                        cycle.push(p);
-                        at = p;
-                    }
-                    cycle.reverse();
-                    return cycle;
-                }
-                if inside.contains(&g) && g != start && !before.contains_key(&g) {
-                    before.insert(g, f);
-                    queue.push_back(g);
-                }
-            }
+        let inside = &inside;
+        let path = bfs.path(
+            start,
+            |f| {
+                (self.imports[f].iter())
+                    .filter_map(move |&(g, _)| inside.contains(&g).then_some((g, ())))
+            },
+            |g| g == start,
+        );
+        match path {
+            Some(steps) => steps.into_iter().map(|(f, (), _)| f).collect(),
+            // Every file of a strongly connected component of two or more reaches its first
+            // file.
+            None => vec![start],
         }
-        // Every file of a strongly connected component of two or more reaches its first file.
-        vec![start]
     }
 }
 
@@ -269,6 +265,7 @@ fn report(dir: &str, graph: &Graph, cycles: &[Vec<usize>], out: &mut String) {
         return;
     }
     let name = |f: usize| graph.files[f].as_str();
+    let mut bfs = zed_graph::BfsPaths::new(graph.files.len());
     for (i, component) in cycles.iter().enumerate() {
         let files: Vec<&str> = component.iter().map(|&f| name(f)).collect();
         say!(
@@ -279,7 +276,7 @@ fn report(dir: &str, graph: &Graph, cycles: &[Vec<usize>], out: &mut String) {
             files.len(),
             files.join(", ")
         );
-        let cycle = graph.shortest_cycle(component);
+        let cycle = graph.shortest_cycle(component, &mut bfs);
         say!(out, "  a shortest cycle through {}:", name(cycle[0]));
         for (k, &f) in cycle.iter().enumerate() {
             let g = cycle[(k + 1) % cycle.len()];

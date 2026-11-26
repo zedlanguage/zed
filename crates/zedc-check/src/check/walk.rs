@@ -3668,14 +3668,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
             }
-            let mut todo: Vec<usize> = marked.iter().copied().collect();
-            while let Some(g) = todo.pop() {
-                for &f in callers.get(&g).into_iter().flatten() {
-                    if marked.insert(f) {
-                        todo.push(f);
-                    }
-                }
-            }
+            let ends = std::mem::take(&mut marked);
+            zed_graph::reach(
+                ends,
+                |&f| marked.insert(f),
+                |g| callers.get(g).into_iter().flatten().copied(),
+            );
             self.tail_reach = Some(marked);
         }
         self.tail_reach.as_ref().is_some_and(|m| m.contains(&id))
@@ -13945,23 +13943,27 @@ impl<'a> Ck<'_, 'a> {
         let mut out: Vec<(Arc<str>, usize)> =
             t.vars.iter().map(|(x, _)| (x.clone(), here)).collect();
         let mut seen = HashSet::new();
-        let mut stack = t.binders.clone();
-        while let Some(b) = stack.pop() {
-            if !seen.insert(b) {
-                continue;
-            }
-            let Some((v, _)) = self.value_of(b) else {
-                continue;
-            };
-            // A binder with a summary is also read through it over its inputs here
-            // ([`Ck::with_bound`]), so a test on an input since the binding bears on it.
-            if let Some(Some(sum)) = self.arms.summaries.get(&b) {
-                out.extend(sum.summary.vars().iter().map(|x| (x.clone(), here)));
-            }
-            let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
-            out.extend(v.vars.iter().map(|(x, _)| (x.clone(), at)));
-            stack.extend_from_slice(&v.binders);
-        }
+        // `out` is sorted at the end, so the order the binders are met in does not show.
+        zed_graph::reach(
+            t.binders.iter().copied(),
+            |&b| seen.insert(b),
+            |&b| {
+                let v = self.value_of(b).map(|(v, _)| v);
+                if let Some(v) = &v {
+                    // A binder with a summary is also read through it over its inputs here
+                    // ([`Ck::with_bound`]), so a test on an input since the binding bears on it.
+                    if let Some(Some(sum)) = self.arms.summaries.get(&b) {
+                        out.extend(sum.summary.vars().iter().map(|x| (x.clone(), here)));
+                    }
+                    let at = self.arms.bound_at.get(&b).copied().unwrap_or(0);
+                    out.extend(v.vars.iter().map(|(x, _)| (x.clone(), at)));
+                }
+                v.into_iter().flat_map(|v| {
+                    let n = v.binders.len();
+                    (0..n).map(move |i| v.binders[i])
+                })
+            },
+        );
         zed_collections::sorted::sort_dedup(&mut out);
         out
     }

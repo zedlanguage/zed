@@ -64,6 +64,7 @@
 
 use std::cell::Cell;
 
+use zed_graph::{Order, Worklist};
 use zed_numtheory::gcd_u128 as gcd;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
@@ -245,7 +246,7 @@ fn force(rows: &Rows) -> Option<Option<Forcing>> {
     }
     let mut fixed: Vec<Option<i128>> = vec![None; n];
     let mut at = vec![0usize; m];
-    let mut queue = zed_graph::Worklist::new(m, zed_graph::Order::Lifo);
+    let mut queue = Worklist::new(m, Order::Lifo);
     for r in (0..m).filter(|&r| rows.rows[r].eq) {
         queue.push(r);
     }

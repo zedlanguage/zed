@@ -12,6 +12,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
+use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -21972,52 +21973,63 @@ impl Domains {
     // `inhabited_fn_reads_each_kind_of_value_type` and
     // `inhabited_fn_enters_a_signature_met_twice_once`; fixed examples of each kind.
     fn inhabited_fn(g: &Sig) -> bool {
+        // Whether some signature reached is inhabited; the answer does not depend on the order
+        // the signatures are entered in.
         let mut seen: HashSet<*const Sig> = HashSet::new();
-        let mut work = vec![g];
-        while let Some(g) = work.pop() {
-            if !seen.insert(std::ptr::from_ref(g)) || g.arrows.is_empty() {
-                continue;
-            }
-            if g.arrows.iter().all(|a| a.partial) {
-                return true;
-            }
-            let values: Vec<_> = (g.arrows.iter().map(Arrow::value))
-                .filter(|v| !v.dynamic)
-                .collect();
-            let kernels: Option<Vec<KType>> = values.iter().map(|v| v.exact_kernel()).collect();
-            if let Some(ks) = kernels {
-                if ks.is_empty() || KType::meet_all(ks).verdict() == Verdict::Inhabited {
-                    return true;
+        let found = zed_graph::reach_until(
+            [g],
+            |&g| seen.insert(std::ptr::from_ref(g)),
+            |&g| {
+                let none = || ControlFlow::Continue(Vec::new());
+                if g.arrows.is_empty() {
+                    return none();
                 }
-                continue;
-            }
-            // Value types equal as types (`==` compares their structure) are one set of values,
-            // as in `L .. U -> V`, whose two arrows share `V`.
-            let Some(v) = values.first().filter(|v| values.iter().all(|w| w == *v)) else {
-                continue;
-            };
-            if Domains::no_fn_type(v) {
-                let below = Approx::default().of(v, false);
-                if below.verdict() == Verdict::Inhabited {
-                    return true;
+                if g.arrows.iter().all(|a| a.partial) {
+                    return ControlFlow::Break(());
                 }
-                continue;
-            }
-            // The function types of that value type, read from the arrow's result, which
-            // differs from it only by the `#notFound` of a partial arrow's miss, in its set.
-            let fns_alone = v.vars.is_empty() && v.tuples.is_empty() && v.set.is_empty();
-            // A guard no input reaches (row TEST-types-unreached-paths-6): `v` is the first of
-            // `values`, the value types that are not the unknown, so some arrow's value type is
-            // not the unknown, and `find` gives `Some`.
-            let Some(b) = g.arrows.iter().find(|b| !b.value().dynamic) else {
-                continue;
-            };
-            if fns_alone {
+                let values: Vec<_> = (g.arrows.iter().map(Arrow::value))
+                    .filter(|v| !v.dynamic)
+                    .collect();
+                let kernels: Option<Vec<KType>> = values.iter().map(|v| v.exact_kernel()).collect();
+                if let Some(ks) = kernels {
+                    if ks.is_empty() || KType::meet_all(ks).verdict() == Verdict::Inhabited {
+                        return ControlFlow::Break(());
+                    }
+                    return none();
+                }
+                // Value types equal as types (`==` compares their structure) are one set of values,
+                // as in `L .. U -> V`, whose two arrows share `V`.
+                let Some(v) = values.first().filter(|v| values.iter().all(|w| w == *v)) else {
+                    return none();
+                };
+                if Domains::no_fn_type(v) {
+                    let below = Approx::default().of(v, false);
+                    if below.verdict() == Verdict::Inhabited {
+                        return ControlFlow::Break(());
+                    }
+                    return none();
+                }
+                // The function types of that value type, read from the arrow's result, which
+                // differs from it only by the `#notFound` of a partial arrow's miss, in its set.
+                let fns_alone = v.vars.is_empty() && v.tuples.is_empty() && v.set.is_empty();
+                // A guard no input reaches (row TEST-types-unreached-paths-6): `v` is the first of
+                // `values`, the value types that are not the unknown, so some arrow's value type is
+                // not the unknown, and `find` gives `Some`.
+                let Some(b) = g.arrows.iter().find(|b| !b.value().dynamic) else {
+                    return none();
+                };
+                if !fns_alone {
+                    return none();
+                }
                 let fns = b.result.fns.iter();
-                work.extend(fns.filter(|h| !h.data && h.holds_no_var()).map(|h| &**h));
-            }
-        }
-        false
+                ControlFlow::Continue(
+                    fns.filter(|h| !h.data && h.holds_no_var())
+                        .map(|h| &**h)
+                        .collect(),
+                )
+            },
+        );
+        found.is_some()
     }
 
     /// The meet of `s` and `q`, two signatures of the same parameters with what their arrows

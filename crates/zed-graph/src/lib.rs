@@ -281,9 +281,11 @@ pub fn on_cycle(edges: &[Vec<usize>]) -> Vec<bool> {
     cyclic
 }
 
+pub mod bfs;
 pub mod bitset;
 pub mod heap;
 pub mod ids;
+pub mod knuth;
 pub mod worklist;
 
 pub mod union_find;
@@ -291,10 +293,12 @@ pub use union_find::{
     Compression, Diff, IsZero, Keep, Linking, Offset, Parents, Parity, Signed, UnionFind, root_of,
 };
 
+pub use bfs::BfsPaths;
 pub use bitset::BitSet;
 pub use heap::{Dijkstra, Labels, MinHeap, NegativeReducedWeight, reduced};
 pub use ids::IdSource;
-pub use worklist::{Order, Worklist};
+pub use knuth::{Child, Knuth};
+pub use worklist::{KeyedWorklist, Order, PriorityWorklist, Worklist};
 
 /// The scaling test of the rule of low complexity, shared with the step tests.
 #[cfg(test)]
@@ -336,4 +340,6 @@ mod lift;
 pub use lift::{Intervals, Lift, dag_idom};
 
 mod order;
-pub use order::{Ready, kahn, make_after_needs, post_order, reach, sources};
+pub use order::{
+    Ready, functional_cycle, kahn, make_after_needs, post_order, reach, reach_until, sources,
+};

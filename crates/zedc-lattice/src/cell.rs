@@ -200,18 +200,21 @@ impl Premises {
     pub fn set(&self) -> BTreeSet<Premise> {
         let mut out = BTreeSet::new();
         let mut seen = HashSet::new();
-        let mut todo: Vec<&Arc<Node>> = self.0.iter().collect();
-        while let Some(n) = todo.pop() {
-            if !seen.insert(n.id) {
-                continue;
-            }
-            match &n.kind {
-                Kind::One(p) => {
-                    out.insert(p.clone());
+        zed_graph::reach(
+            self.0.iter(),
+            |n: &&Arc<Node>| seen.insert(n.id),
+            |&n: &&Arc<Node>| {
+                match &n.kind {
+                    Kind::One(p) => {
+                        out.insert(p.clone());
+                        None
+                    }
+                    Kind::Both(a, b) => Some(a.0.iter().chain(b.0.iter())),
                 }
-                Kind::Both(a, b) => todo.extend(a.0.iter().chain(b.0.iter())),
-            }
-        }
+                .into_iter()
+                .flatten()
+            },
+        );
         out
     }
 

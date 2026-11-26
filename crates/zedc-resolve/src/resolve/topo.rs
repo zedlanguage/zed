@@ -1,6 +1,5 @@
 //! Orders of a dependency graph: each item after what it depends on, or the cycles.
 
-use std::collections::BTreeMap;
 use zed_graph::MinHeap;
 
 /// An order of `0..deps.len()` with each item after its dependencies, ties by index; else the
@@ -25,18 +24,19 @@ pub fn topo(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
     let (order, done) = place(deps, deps.len(), &vec![false; deps.len()]);
     if order.len() < deps.len() {
         // Every item left waits on another left: walk to the first in each list.
-        // Why the `expect`s here and in `cycle` cannot fire. `place` sets `waits[i]` to the
+        // Why the `expect`s here cannot fire. `place` sets `waits[i]` to the
         // number of entries of `deps[i]` (here nothing is `out`), and `zed_graph::kahn`
         // (zed-graph order.rs) marks a node done when it pops it, decrements `waits[c]` once
         // for each entry of `c`'s list naming that node, and pushes `c` when `waits[c]`
         // reaches 0. So a node not done has `waits > 0`: an entry of its list names a node
         // not done (the `find`). `order` has fewer than `deps.len()` items, and here every
-        // node is an item, so some node is not done (`cycle`'s first `find`). `cycle` walks
+        // node is an item, so some node is not done (the first `find`). `functional_cycle` walks
         // `next` among the finitely many nodes not done, so it meets one twice and stops.
         // Test: `l01_16_elaboration::order::joins_order_as_their_items_written_out` runs
         // `topo` on 4000 random graphs, more than 400 of them with a cycle; it checks only
         // that a cycle is reported (`Err(_)`), not which.
-        return Err(cycle(&done, |i| {
+        let first = (0..done.len()).find(|&i| !done[i]).expect("an item left");
+        return Err(zed_graph::functional_cycle(done.len(), first, |i| {
             *(deps[i].iter())
                 .find(|&&d| !done[d])
                 .expect("a dependency left")
@@ -175,18 +175,4 @@ impl zed_graph::Ready for JoinsFirst {
     fn pop(&mut self) -> Option<usize> {
         self.passed.pop().or_else(|| self.ready.pop())
     }
-}
-
-/// The cycle reached from the first item left by `next`, which gives the item left that an
-/// item left waits on.
-fn cycle(done: &[bool], mut next: impl FnMut(usize) -> usize) -> Vec<usize> {
-    let mut seen: BTreeMap<usize, usize> = BTreeMap::new();
-    let mut path = Vec::new();
-    let mut i = (0..done.len()).find(|&i| !done[i]).expect("an item left");
-    while !seen.contains_key(&i) {
-        seen.insert(i, path.len());
-        path.push(i);
-        i = next(i);
-    }
-    path.split_off(seen[&i])
 }

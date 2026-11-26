@@ -1190,9 +1190,7 @@ pub fn order(
     starts.splice(0..0, prelude);
     let mut comp = vec![UNSEEN; n];
     let mut search = Search {
-        queue: Vec::new(),
-        met: vec![UNSEEN; n],
-        by: vec![(0, NOWHERE); n],
+        bfs: zed_graph::BfsPaths::new(n),
         lines: (0..n).map(|_| None).collect(),
     };
     let mut comps = 0;
@@ -1222,13 +1220,10 @@ pub fn order(
 }
 
 /// The breadth-first search that finds the cycle a component is reported with, kept across
-/// components so that each search costs only its own component: the units waiting, the
-/// component whose search met each unit, and the unit and import each was met by; and the
-/// lines of each unit whose imports a report names.
+/// components so that each search costs only its own component ([`zed_graph::BfsPaths`]);
+/// and the lines of each unit whose imports a report names.
 struct Search {
-    queue: Vec<usize>,
-    met: Vec<usize>,
-    by: Vec<(usize, Span)>,
+    bfs: zed_graph::BfsPaths<Span>,
     lines: Vec<Option<source::Lines>>,
 }
 
@@ -1257,47 +1252,23 @@ fn report(
     let [c0, _, ..] = *members else {
         return;
     };
-    search.queue.clear();
-    search.queue.push(c0);
-    search.met[c0] = c;
-    let mut head = 0;
-    // The queue never runs out before the `break`. The component is strongly connected and has
-    // a second unit `c1`, so there is a path `c0 → … → c1 → … → c0`. A shortest closed walk
-    // from `c0` back to it repeats no unit, so it takes no self-import (skipped below), and
-    // each unit on it lies in the component (each reaches `c0` and `c0` reaches it). The search
-    // meets each unit of the component it can reach by such imports, and `met` starts at
-    // `UNSEEN` and is set to `c` only in this search, so it meets the last unit before `c0` on
-    // that walk, and taking that unit's imports finds `c0`. Tests: `l02_03_name_resolution::
-    // cycles`, on cycles of two and three units, a self-import on a cycle, and random
-    // packages; they cannot show the queue never empties for every graph, which this covers.
-    let (last, close) = 'search: loop {
-        let u = *search
-            .queue
-            .get(head)
-            .expect("a component of two units has a cycle through each of them");
-        head += 1;
-        for &(v, span) in &edges[u] {
-            if comp[v] != c || v == u {
-                continue;
-            }
-            if v == c0 {
-                break 'search (u, span);
-            }
-            if search.met[v] != c {
-                search.met[v] = c;
-                search.by[v] = (u, span);
-                search.queue.push(v);
-            }
-        }
-    };
-    let mut steps = vec![(last, close, c0)];
-    let mut x = last;
-    while x != c0 {
-        let (from, span) = search.by[x];
-        steps.push((from, span, x));
-        x = from;
-    }
-    steps.reverse();
+    // The search finds a cycle. The component is strongly connected and has a second unit
+    // `c1`, so there is a path `c0 → … → c1 → … → c0`. A shortest closed walk from `c0` back to
+    // it repeats no unit, so it takes no self-import (skipped below), and each unit on it lies
+    // in the component (each reaches `c0` and `c0` reaches it). The search meets each unit of
+    // the component it can reach by such imports, starting with none met (`BfsPaths` clears
+    // what each search met), so it meets the last unit before `c0` on that walk, and taking
+    // that unit's imports finds `c0`. Tests: `l02_03_name_resolution::cycles`, on cycles of
+    // two and three units, a self-import on a cycle, and random packages; they cannot show a
+    // cycle is found for every graph, which this covers.
+    let steps = search
+        .bfs
+        .path(
+            c0,
+            |u| (edges[u].iter().copied()).filter(move |&(v, _)| comp[v] == c && v != u),
+            |v| v == c0,
+        )
+        .expect("a component of two units has a cycle through each of them");
     problems.push(cycle_error(units, &mut search.lines, &steps));
 }
 

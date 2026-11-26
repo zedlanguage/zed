@@ -7,7 +7,7 @@
 // the earlier layers. The same arguments give the same generations.
 
 import assert from "node:assert/strict";
-import { BAND, d3dagLayout, operators } from "./d3dag.ts";
+import { BAND, d3dagLayout, operators, pathNodes as longestPath } from "./d3dag.ts";
 import type { Graph, Layout } from "./layout.ts";
 
 type Drawn = Omit<Layout, "key">;
@@ -15,18 +15,8 @@ type Drawn = Omit<Layout, "key">;
 // The number of nodes on the longest path of g, its edges taken as given (the
 // test graphs have no cycle).
 export function pathNodes(g: Graph): number {
-  const at = new Map(g.nodes.map((n, i) => [n.id, i]));
-  const kids: number[][] = g.nodes.map(() => []), waiting = new Int32Array(g.nodes.length);
-  for (const [a, b] of g.edges) { const s = at.get(a), t = at.get(b); if (s === undefined || t === undefined || s === t) continue; kids[s].push(t); waiting[t]++; }
-  const depth = new Int32Array(g.nodes.length).fill(1), order: number[] = [];
-  g.nodes.forEach((_, i) => { if (!waiting[i]) order.push(i); });
-  let most = 0;
-  for (let k = 0; k < order.length; k++) {
-    const v = order[k];
-    most = Math.max(most, depth[v]);
-    for (const c of kids[v]) { depth[c] = Math.max(depth[c], depth[v] + 1); if (--waiting[c] === 0) order.push(c); }
-  }
-  return most;
+  const { parents, children } = adjacency(g);
+  return longestPath(parents, children);
 }
 
 // The parents and children of each node by index, edges taken as given.
@@ -35,6 +25,22 @@ export function adjacency(g: Graph) {
   const parents: number[][] = g.nodes.map(() => []), children: number[][] = g.nodes.map(() => []);
   for (const [a, b] of g.edges) { const s = at.get(a), t = at.get(b); if (s === undefined || t === undefined || s === t) continue; children[s].push(t); parents[t].push(s); }
   return { parents, children };
+}
+
+// The edges out of each node by id, edges taken as given; an edge from a node
+// not in the graph is left out.
+export function outEdges(g: Graph): Map<string, string[]> {
+  const out = new Map(g.nodes.map((n) => [n.id, [] as string[]]));
+  for (const [a, b] of g.edges) out.get(a)?.push(b);
+  return out;
+}
+
+// The nodes reachable from v by the edges `out` gives, v among them, by a depth-first search.
+// Complexity: O(n + m) for the part of the graph reached.
+export function reachable(out: Map<string, string[]>, v: string): Set<string> {
+  const seen = new Set([v]), stack = [v];
+  while (stack.length) for (const w of out.get(stack.pop()!) ?? []) if (!seen.has(w)) { seen.add(w); stack.push(w); }
+  return seen;
 }
 
 // The number of layers of a layout.

@@ -748,16 +748,15 @@ fn queries_checked(
     }
     for (j, &(a, b)) in queries.iter().enumerate() {
         let mut seen = vec![false; n];
-        let mut stack = vec![a];
-        seen[a] = true;
-        while let Some(u) = stack.pop() {
-            for &(s, t) in edges {
-                if s == u && !seen[t] {
-                    seen[t] = true;
-                    stack.push(t);
-                }
-            }
-        }
+        zed_graph::reach(
+            [a],
+            |&t| !std::mem::replace(&mut seen[t], true),
+            |&u| {
+                (edges.iter())
+                    .filter(move |&&(s, _)| s == u)
+                    .map(|&(_, t)| t)
+            },
+        );
         out.push(seen[b]);
         assert_eq!(
             best[j] == 0,
