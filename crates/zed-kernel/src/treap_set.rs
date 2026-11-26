@@ -94,6 +94,9 @@ pub trait Elem: Ord + Clone {
     /// An order on the keys as held, for [`HashConsTable`]'s buckets: total, `Equal` only for
     /// equal keys, and building nothing. The default is the key's `Ord`; a kind whose `Ord`
     /// can build or copy (`Value`'s big integers and `rat`s, compared by value) gives its own.
+    /// Tradeoff: a kept and a built form of one value are two keys, so their sets stay two trees
+    /// and a later `==` of the two walks them, as before the table; ordering by value would copy
+    /// the built number, unasked, at each of the `O(log b)` comparisons of every set put in.
     fn held_cmp(&self, other: &Self) -> Ordering {
         self.cmp(other)
     }
