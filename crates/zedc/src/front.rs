@@ -1452,6 +1452,12 @@ pub fn linear_questions(
             }
             let inputs: Vec<Arc<str>> = f.params.iter().map(|p| p.name.as_str().into()).collect();
             if let Some(r) = scoped.relation(body, ps, &inputs, true) {
+                if let Some(answered) = kept_question(&scoped, &r) {
+                    if let Err(cause) = answered {
+                        out.push(power_refusal(text, f, s.span, cause));
+                    }
+                    return;
+                }
                 let mut answers =
                     extending.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
                 // A relation is read over canonical atoms (LOAD-chain-affine), so a refusal names
@@ -1577,32 +1583,147 @@ pub fn linear_questions(
                     }
                 }
             } else if scoped.unbuilt() {
-                // A constant written as a power (`2 ^ 200`) is built to be read, and the system
-                // refused the memory for it (`preimage::Scoped::unbuilt`): the question is
-                // refused with a message rather than dropped (I4.5, I5.6).
-                let condition = one_line(&text[f.body.span.start..f.body.span.end]);
-                let params = (f.params.iter())
-                    .map(|p| format!("`{}`", p.name))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                out.push(ast::Error {
-                    row: Some(crate::rejection::Row::NonLinearQuestion),
-                    menu: String::new(),
-                    span: s.span,
-                    message: format!(
-                        "zedc could not decide whether the condition of `{}`, written \
-                         `{condition}`, can be true or false for whole-number values of \
-                         {params}, which it works out for every test function: the condition \
-                         holds a number written as a power whose digits are too many to hold \
-                         in memory.",
-                        f.name
-                    ),
-                    notes: Vec::new(),
-                });
+                // A constant written as a power (`2 ^ 200`) is built to be read as a
+                // coefficient, a divisor or a modulus, and the system refused the memory for it
+                // (`preimage::Scoped::unbuilt`): the question is refused with a message rather
+                // than dropped (I4.5, I5.6).
+                out.push(power_refusal(text, f, s.span, None));
             }
         });
     }
     out
+}
+
+/// The answer to the question of a test function's relation `r` when it holds a constant too
+/// wide to build, read as a symbol of its own (`preimage::Scoped::kept_value`, row
+/// PRES-kept-constants): `Some(Ok(()))` when both whether it can be true and whether it can be
+/// false are decided; `Some(Err(Some((can, cause))))` when the question whether it can be `can`
+/// is refused for `cause`, as the four rows of `l01_38_presburger::checker`'s growth example
+/// with `x < 3 ^ (2 ^ 40)` are for `Refusal::Growth`, as they are with `x < 2 ^ 63`;
+/// `Some(Err(None))` when it is refused for the constant itself (below); and `None` when `r`
+/// holds no such constant, for the solver's usual path. With one such constant the question and
+/// its negation are each decided at the constant's exact value, kept, never built
+/// (`presburger::decide_at`, which gives the proof). With two or more, held by every
+/// constraint in one combination, as `x + 3^(2^40) > 2^(2^41)`, the combination is one kept
+/// number and one symbol (`presburger::KeptSum`, which gives the proof), decided the same way.
+/// Refused: two or more in more than one combination, as `x < K1 && y < K2`, whose question is
+/// over two symbols, not one projection; and one in a product of two symbols. A constant that
+/// builds was built (`preimage::Walk::kept_lin`), so each of these is one the system refused
+/// the memory for. The extending path is not asked: it would answer with the constant free,
+/// any value, which is not the question.
+// Complexity tradeoff: naive version, the atoms of the whole relation written out read for
+// every question of a unit once that unit holds such a constant, O(the relation) each, so a
+// chain of n tests sharing their callees costs O(n²) there, where the extending path costs
+// O(n) (LOAD-chain). Trigger: a unit with a power too large to build in a test function's
+// condition. A complete solution would keep, for each shared part, whether it reaches a kept
+// symbol, as the scope keeps its interfaces. Before this, such a question was refused.
+fn kept_question(
+    scoped: &crate::store::preimage::Scoped<'_>,
+    r: &crate::store::presburger::Formula,
+) -> Option<KeptAnswer> {
+    use crate::store::interval::Num;
+    use crate::store::presburger;
+    if !scoped.has_kept() {
+        return None;
+    }
+    let w = scoped.written(r);
+    let with = |g| presburger::Formula::and(vec![w.defined(), g]);
+    let whole = with(w.body.clone());
+    let mut kept = Vec::new();
+    let mut in_product = false;
+    for a in whole.atoms() {
+        match &a {
+            presburger::Atom::Sym(n) if scoped.kept_value(n).is_some() => kept.push(a.clone()),
+            presburger::Atom::Product(g, h) => {
+                in_product |= [g, h].into_iter().any(
+                    |x| matches!(x, presburger::Factor::Sym(n) if scoped.kept_value(n).is_some()),
+                )
+            }
+            _ => {}
+        }
+    }
+    if kept.is_empty() && !in_product {
+        return None;
+    }
+    if in_product {
+        return Some(Err(None));
+    }
+    let negated = with(presburger::Formula::negate(w.body.clone()));
+    let decided = |k: &presburger::Atom, v: &Num, fs: [&presburger::Formula; 2]| {
+        let mut asked = ["true", "false"].into_iter().zip(fs);
+        match asked.find_map(|(can, f)| presburger::decide_at(f, k, v).err().map(|e| (can, e))) {
+            Some(refused) => Err(Some(refused)),
+            None => Ok(()),
+        }
+    };
+    if let [k @ presburger::Atom::Sym(name)] = kept.as_slice() {
+        let value = scoped.kept_value(name).expect("a kept constant");
+        return Some(decided(k, value, [&whole, &negated]));
+    }
+    let values: Vec<_> = (kept.iter())
+        .map(|k| {
+            let presburger::Atom::Sym(name) = k else {
+                unreachable!("a kept constant is a symbol")
+            };
+            (
+                k.clone(),
+                scoped.kept_value(name).expect("a kept constant").clone(),
+            )
+        })
+        .collect();
+    // The negation holds the constraints of `whole`, so one combination serves both.
+    let Some(sum) = presburger::KeptSum::of(&whole, &values) else {
+        return Some(Err(None));
+    };
+    let (whole, negated) = (sum.rewrite(&whole), sum.rewrite(&negated));
+    Some(decided(&sum.sym, &sum.value, [&whole, &negated]))
+}
+
+/// The answer of [`kept_question`]: decided, or refused for a cause and the question it was
+/// asked of (`"true"` or `"false"`), or refused for the kept constant itself (`None`).
+type KeptAnswer = Result<(), Option<(&'static str, crate::store::presburger::Refusal)>>;
+
+/// The refusal of the question of the test function `f`, stated at `span`, for a constant
+/// written as a power whose digits are too many to hold in memory: built as a coefficient, a
+/// divisor or a modulus, which the system refused the memory for, or kept and not decided
+/// ([`kept_question`]). Refused with a message rather than dropped (I4.5, I5.6). With `cause`,
+/// the question whether the condition can be `can` was asked at the kept value and refused for
+/// that cause, which the message gives in the refusal's own words (`presburger::Refusal`), as
+/// the usual path does; without its note of the constraints, which name the kept constant by a
+/// symbol the user did not write.
+fn power_refusal(
+    text: &str,
+    f: &ast::Function,
+    span: Span,
+    cause: Option<(&str, crate::store::presburger::Refusal)>,
+) -> ast::Error {
+    let condition = one_line(&text[f.body.span.start..f.body.span.end]);
+    let params = (f.params.iter())
+        .map(|p| format!("`{}`", p.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let (can, why) = match cause {
+        Some((can, why)) => (can, why.to_string()),
+        None => (
+            "true or false",
+            "the condition holds a number written as a power whose digits are too many to \
+             hold in memory."
+                .to_string(),
+        ),
+    };
+    let stop = if why.ends_with('.') { "" } else { "." };
+    ast::Error {
+        row: Some(crate::rejection::Row::NonLinearQuestion),
+        menu: String::new(),
+        span,
+        message: format!(
+            "zedc could not decide whether the condition of `{}`, written `{condition}`, can be \
+             {can} for whole-number values of {params}, which it works out for every test \
+             function: {why}{stop}",
+            f.name
+        ),
+        notes: Vec::new(),
+    }
 }
 
 /// The errors `errors` of `text`, of `severity`, as diagnostics, each placed with its steps and

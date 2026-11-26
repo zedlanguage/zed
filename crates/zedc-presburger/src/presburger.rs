@@ -20720,6 +20720,144 @@ pub fn project(f: &Formula, sym: &Atom) -> Result<One, Refusal> {
     Ok((hulls.remove(0)?, causes))
 }
 
+/// Whether `f` has a point at which the symbol `sym` takes the value `value`, an integer that
+/// may be a kept number too wide to build, as `3^(2^40)` (row PRES-kept-constants): whether
+/// the exact projection of `f` onto `sym`, ranges met with one congruence class
+/// ([`project_each_classed`]), holds `value`. Nothing of `value` is built: it is compared with
+/// each finite end of the ranges, and its residue is taken modulo the class's modulus, both on
+/// the kept form (zedc-int `Num`: a kept number against one in a word is ordered by its sign,
+/// against a wider one by the sign of their difference at 64 bits and then at twice as many,
+/// and its residue modulo a word is found by modular powering, `Kept::residue`). A refusal
+/// when the projection is refused, and when it is wider than exact (a disjunction left out
+/// of it, one of `causes`) and holds `value`, which then may have no point. Such a refusal
+/// comes for every projection whose values have gaps that repeat without end, as `x == sym
+/// && x mod 2 == 0`, refused for [`Refusal::Repeats`]: [`Classed`] keeps a class only with
+/// bounded ranges, so the residue of a kept value too wide for a word is read only once row
+/// CLASSED-periodic-tail keeps an unbounded class exactly.
+///
+/// Why this and not `sym` as a variable whose only facts are its order against the other
+/// constants of `f` (the first text of DESIGN step L1.38a): `3 * x == 3^(2^40) + 1` with `x`
+/// in `0..<2^40`, and `x == 3^(2^40) && x mod 2 == 0`, have no point, since
+/// `3 * x <= 3 * 2^40 - 3` and `3^(2^40)` is odd, but each has one at some number above every
+/// other constant of its formula in the constant's place: `2^40 + 1`, with
+/// `x = (2^40 + 2) / 3`, a whole number since `2^40 ≡ 1 (mod 3)`; and `4`. The projection holds
+/// every value of `sym` with a point and no other (module `exact`, Monniaux's model-guided
+/// cover with Pugh's exact projection of each implicant), so the membership is the answer.
+// Proof. `f` has a point with `sym = v` iff `v` lies in `P = {s : ∃ the other atoms, f}`, the
+// projection, by definition of `P`. `project_each_classed` gives a set `S ⊇ P`, with `S = P`
+// when `causes` is empty (its contract, at `project`). Case `causes` empty: `v ∈ S` iff
+// `v ∈ P`, so the answer is exact. Case `causes` not empty: `v ∉ S` implies `v ∉ P`, so `false`
+// is exact; `v ∈ S` decides nothing, and the question is refused with the first cause.
+// `Classed::contains_end` tests `v` in the ranges and in the class, the set's meaning
+// ([`Classed`]). Complexity: the projection's cost, plus O(p) comparisons for the p ranges and
+// one residue, each O(log e · M(log m)) for an exponent `e` and a modulus `m` of a word, or
+// O(M(b)) for a difference compared at b bits. Tests:
+// `l01_38_presburger::kept_constants` (the first counterexample, red under the order alone;
+// the second refused for `Repeats` until CLASSED-periodic-tail).
+pub fn decide_at(f: &Formula, sym: &Atom, value: &Num) -> Result<bool, Refusal> {
+    let mut each = project_each_classed(f, std::slice::from_ref(sym))?;
+    let set = each.sets.remove(0)?;
+    let member = set.contains_end(&End::Fin(value.clone()));
+    match (member, each.causes.into_iter().next()) {
+        (true, Some(cause)) => Err(cause),
+        (member, _) => Ok(member),
+    }
+}
+
+/// Two or more kept constants of one question read as one symbol, for [`decide_at`] (row
+/// PRES-kept-constants): where every constraint holds them in one fixed combination,
+/// `Σ v_i K_i` up to a whole multiple `t` of its own, that combination is one number, kept
+/// (zedc-int `Num`: a sum of kept values is kept, its terms collected, and its order and
+/// residue are found as for one power), and each constraint reads `t` times one symbol in
+/// place of its `t · Σ v_i K_i`. So `x + 3^(2^40) > 2^(2^41)` is `x + S > 0` at
+/// `S = 3^(2^40) - 2^(2^41)`, a negative number found by the order of its two powers, and is
+/// decided with nothing built. `None` when two constraints hold the constants in combinations
+/// that are not multiples of one, as `x < K1 && y < K2`, whose question is over two symbols.
+// Proof. Write `v` for the combination of the first constraint that holds a kept constant,
+// divided by the greatest common divisor of its coefficients and signed so that its first
+// coefficient is positive: the primitive vector of that line. A constraint whose kept part is
+// `p` either has `p = t · v` for a whole `t` (the primitive vector of `p` is `v`, and `t` is
+// `p`'s first coefficient over `v`'s, exact since `v` is `p` divided by its gcd and sign), or
+// is not a multiple of `v`, and then `None`. In the first case its term is `rest + t · Σ v_i K_i`
+// with `rest` free of the constants, which is `rest + t · S` at `S = Σ v_i K_i`; at the exact
+// values of the constants this is the same number, so each constraint, and the formula, has
+// the same points with `S` at its value. Complexity: O(the formula · k) for its k kept
+// constants, one pass to read the combinations and one to rewrite, plus the sum of the k
+// kept values, whose cost is that of their terms.
+pub struct KeptSum {
+    /// The one symbol: the first kept constant's, now read as the combination.
+    pub sym: Atom,
+    /// The value of the combination, kept.
+    pub value: Num,
+    /// The combination `v`, primitive, by atom.
+    parts: BTreeMap<Atom, Int>,
+}
+
+impl KeptSum {
+    /// The one combination of the constants `kept` (each with its value) in `f`, or `None`
+    /// when the constraints of `f` hold them in more than one, or hold none of them.
+    pub fn of(f: &Formula, kept: &[(Atom, Num)]) -> Option<KeptSum> {
+        let found: RefCell<Option<BTreeMap<Atom, Int>>> = RefCell::new(None);
+        let apart = Cell::new(false);
+        f.map_cons(&|c| {
+            if let Some((v, _)) = kept_part(&c.lin, kept) {
+                let mut found = found.borrow_mut();
+                match &*found {
+                    Some(w) => apart.set(apart.get() || *w != v),
+                    None => *found = Some(v),
+                }
+            }
+            Formula::Con(c.clone())
+        });
+        let parts = found.into_inner().filter(|_| !apart.get())?;
+        let value = (parts.iter()).fold(Num::ZERO, |s, (a, c)| {
+            let (_, k) = (kept.iter().find(|(b, _)| b == a)).expect("a kept part is of `kept`");
+            &s + &(&Num::from(c) * k)
+        });
+        let sym = parts
+            .keys()
+            .next()
+            .expect("a kept part is not empty")
+            .clone();
+        Some(KeptSum { sym, value, parts })
+    }
+
+    /// `f` with each constraint's `t · Σ v_i K_i` read as `t` times [`KeptSum::sym`]; `f` must
+    /// hold the constants in this combination only ([`KeptSum::of`]).
+    pub fn rewrite(&self, f: &Formula) -> Formula {
+        let kept: Vec<(Atom, Num)> = (self.parts.keys())
+            .map(|a| (a.clone(), Num::ZERO))
+            .collect();
+        f.map_cons(&|c| match kept_part(&c.lin, &kept) {
+            Some((v, t)) => {
+                debug_assert!(v == self.parts, "one combination");
+                let mut lin = c.lin.clone();
+                for a in self.parts.keys() {
+                    lin.terms.remove(a);
+                }
+                lin.terms.insert(self.sym.clone(), t);
+                Formula::Con(Con { lin, rel: c.rel })
+            }
+            None => Formula::Con(c.clone()),
+        })
+    }
+}
+
+/// The kept part of `lin`, its terms in the constants `kept`, as its primitive vector and
+/// the whole multiple `t` of it that `lin` holds; `None` when `lin` holds none of them.
+fn kept_part(lin: &Lin, kept: &[(Atom, Num)]) -> Option<(BTreeMap<Atom, Int>, Int)> {
+    let part: BTreeMap<Atom, Int> = (kept.iter())
+        .filter_map(|(a, _)| lin.terms.get(a).map(|c| (a.clone(), c.clone())))
+        .collect();
+    let first = part.values().next()?;
+    let g = part.values().fold(Int::ZERO, |g, c| g.gcd(c));
+    let t = if first.is_negative() { -&g } else { g };
+    let v = (part.into_iter())
+        .map(|(a, c)| (a, c.div_floor(&t)))
+        .collect();
+    Some((v, t))
+}
+
 /// [`project`] onto each of `syms`, removing disjuncts once: one result for each symbol, so
 /// that a symbol whose hull is refused leaves the others projected. With them, the causes for
 /// which a disjunction was left out, which leaves each hull wider but sound.

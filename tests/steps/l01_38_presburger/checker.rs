@@ -1277,28 +1277,96 @@ fn pncx_kept_number_cli() {
 }
 
 /// A constant written as a power too large to build (3^(2^40), about 1.7·10^12 bits, whose
-/// 8·b memory ask is refused) refuses the question with the message of `Walk::built`'s
-/// `unbuilt` flag (zedc front.rs), not silently: the refused path `pncx_kept_number_cli`
-/// does not reach, as its powers are kept or built.
+/// 8·b memory ask is refused) is a symbol of its own, and the question is decided at its kept
+/// value (row PRES-kept-constants, `presburger::decide_at`): `x >= 0 && x < 3 ^ (2 ^ 40)` can
+/// be true (`x = 0`) and false (`x = -1`); so can `x >= 0 || x + 3 ^ (2 ^ 40) > 2 ^ (2 ^ 41)`,
+/// whose two powers are one kept number in one symbol (`presburger::KeptSum`). So each program
+/// checks and runs: at `x = 3` both hold. The four rows of the growth example
+/// (`a_satisfiable_question_with_no_elimination_that_keeps_the_rows_is_refused`) with
+/// `x < 3 ^ (2 ^ 40)` are refused for the cause they are refused for alone and with
+/// `x < 2 ^ 63` (`a_bound_past_the_64_bit_range_keeps_the_question`), every elimination
+/// growing the system, stated in its own words, not as a power too large to hold: the
+/// projection onto the kept constant's symbol is refused for `Refusal::Growth` (probe of job
+/// 34, b22-kept5, 2026-11-26).
 ///
-/// The number is refused before any of it is built, on a machine in either mode of the
-/// kernel's accounting (FAIL-power-too-large-built-before-refusal: in mode 1 the allocator
-/// granted the 2.2 TB asked for, and the build ran until the run was killed at about 52 GB):
-/// the peak heap of the run, on this thread (`zed_alloc_count::live`; zedc starts no thread),
-/// stays under 1 GiB, a two-hundredth of the number's 204 GiB, where an allocator granting the
-/// ask would count its 2.2 TB.
+/// Nothing of the number is built, on a machine in either mode of the kernel's accounting
+/// (FAIL-power-too-large-built-before-refusal: in mode 1 the allocator granted the 2.2 TB
+/// asked for, and the build ran until the run was killed at about 52 GB): the peak heap of
+/// each run, on this thread (`zed_alloc_count::live`; zedc starts no thread), stays under
+/// 64 MiB, where a build would count the number's 204 GiB.
 #[test]
-fn a_power_too_large_to_build_refuses_the_question() {
+fn a_power_too_large_to_build_is_decided_at_its_kept_value() {
     let rows = "ok(x, y, z, w) = 4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y - 11 * z - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y - z + 31 >= 0";
+    let cases = [
+        (
+            program("ok(x) = x >= 0 && x < 3 ^ (2 ^ 40);", "x: a"),
+            "in\n",
+        ),
+        (
+            program("ok(x) = x >= 0 || x + 3 ^ (2 ^ 40) > 2 ^ (2 ^ 41);", "x: a"),
+            "in\n",
+        ),
+    ];
+    for (src, want) in cases {
+        let (o, live) = zed_alloc_count::live(|| run("power-too-large-kept", &src, "3\n", &[]));
+        assert_eq!(
+            (o.status, o.stdout.as_str()),
+            (0, want),
+            "{}\n{src}",
+            o.stderr
+        );
+        println!("peak heap of the decided run: {} bytes", live.peak);
+        assert!(live.peak < 1 << 26, "peak heap {} bytes", live.peak);
+    }
     let src = program(
         &format!("{rows} && x < 3 ^ (2 ^ 40);"),
         "x: a, y: a, z: a, w: a",
     );
-    let (got, live) = zed_alloc_count::live(|| rejection("power-too-large-to-build", &src));
+    let (o, live) = zed_alloc_count::live(|| run("power-too-large-kept-growth", &src, "3\n", &[]));
+    assert_eq!(
+        (o.status, o.stdout.as_str()),
+        (1, ""),
+        "{}\n{src}",
+        o.stderr
+    );
+    for said in [
+        "can be true for whole-number values of `x`, `y`, `z`, `w`",
+        "Here four variables or more are left, and removing any one of them would leave more \
+         conditions than there are now",
+    ] {
+        assert!(o.stderr.contains(said), "{said}: {}", o.stderr);
+    }
     assert!(
-        got.contains("whose digits are too many to hold in memory"),
-        "{got}"
+        !o.stderr.contains("too many to hold in memory"),
+        "refused for its cause, not the power: {}",
+        o.stderr
     );
     println!("peak heap of the refused run: {} bytes", live.peak);
-    assert!(live.peak < 1 << 30, "peak heap {} bytes", live.peak);
+    assert!(live.peak < 1 << 26, "peak heap {} bytes", live.peak);
+}
+
+/// Two constants too large to build in one question are not one projection, and one used as a
+/// coefficient is built to be read, which the system refuses the memory for
+/// (`preimage::Walk::built`, FAIL-power-too-large-built-before-refusal: in mode 1 of the
+/// kernel's accounting the allocator granted the 2.2 TB asked for, and the build ran until
+/// the run was killed at about 52 GB). Each question is refused with the message of a power
+/// too large to hold, not silently (I4.5), and with nothing built: the peak heap of each run,
+/// on this thread (`zed_alloc_count::live`; zedc starts no thread), stays under 1 GiB, a
+/// two-hundredth of the 204 GiB of `3^(2^40)`, where an allocator granting the ask would
+/// count its 2.2 TB.
+#[test]
+fn two_powers_too_large_to_build_refuse_the_question() {
+    for def in [
+        "ok(x) = x < 3 ^ (2 ^ 40) && x < 5 ^ (2 ^ 40);",
+        "ok(x) = x * 3 ^ (2 ^ 40) > 0;",
+    ] {
+        let src = program(def, "x: a");
+        let (got, live) = zed_alloc_count::live(|| rejection("two-powers-too-large", &src));
+        assert!(
+            got.contains("whose digits are too many to hold in memory"),
+            "{def}: {got}"
+        );
+        println!("peak heap of the refused run: {} bytes", live.peak);
+        assert!(live.peak < 1 << 30, "{def}: peak heap {} bytes", live.peak);
+    }
 }

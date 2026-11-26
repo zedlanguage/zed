@@ -2587,6 +2587,19 @@ impl<'t> Scoped<'t> {
         self.tx.unbuilt
     }
 
+    /// The value of the symbol `name` when it stands for a constant too wide to build
+    /// (`Walk::kept_lin`, row PRES-kept-constants), kept, not built; `None` for any other
+    /// symbol. O(1) expected.
+    pub fn kept_value(&self, name: &str) -> Option<&Num> {
+        self.tx.kept_values.get(name)
+    }
+
+    /// Whether any question of the scope read so far held a constant too wide to build
+    /// ([`Scoped::kept_value`]). O(1).
+    pub fn has_kept(&self) -> bool {
+        !self.tx.kept_values.is_empty()
+    }
+
     /// The atoms a caller reads of `f`, a part of a relation [`Scoped::relation`] gave, when a
     /// call gave it: the canonical atoms its claimed call binds, or the atoms of the arguments
     /// its callee's body was read again at; `None` for another part, as a let-bound name's. The
@@ -6101,6 +6114,13 @@ struct Tx<'t> {
     split_meets: RefCell<Option<DomainMeets>>,
     /// Whether a constant the body being read holds could not be built ([`Walk::built`]).
     unbuilt: bool,
+    /// The constants of a scope's questions too wide to build, each read as a symbol of its
+    /// own, `#k0`, `#k1`, … in the order first met, never built ([`Walk::kept_lin`], row
+    /// PRES-kept-constants): by value, so that every term of the scope that holds the same
+    /// constant reads the same symbol, and by symbol, for [`Scoped::kept_value`]. A name of a
+    /// program holds no `#`, so no input is named like one.
+    kept_names: HashMap<Value, Arc<str>>,
+    kept_values: HashMap<Arc<str>, Num>,
     /// Whether this transfer reads the questions of a scope ([`Scoped`]), where a constant
     /// written as a power is built ([`Walk::built`]); a preimage keeps it unbuilt.
     asking: bool,
@@ -6208,9 +6228,22 @@ impl<'t> Tx<'t> {
             reads: HashMap::new(),
             split_meets: RefCell::new(None),
             unbuilt: false,
+            kept_names: HashMap::new(),
+            kept_values: HashMap::new(),
             asking: false,
             fails_kept: false,
         }
+    }
+
+    /// The symbol of the kept constant `k` ([`Tx::kept_names`]), made the first time `k` is
+    /// met. O(1) expected beside the hash of `k`, which the kernel takes on its kept form.
+    fn kept_name(&mut self, k: &Arc<zed_kernel::num::Rat>) -> Arc<str> {
+        let next = self.kept_names.len();
+        let name = (self.kept_names.entry(Value::Big(k.clone())))
+            .or_insert_with(|| format!("#k{next}").into())
+            .clone();
+        (self.kept_values.entry(name.clone())).or_insert_with(|| Num::from(&**k));
+        name
     }
 
     /// Begins a run over the box `inputs`.
@@ -7956,10 +7989,12 @@ impl<'m, 't> Walk<'m, 't> {
     // term is read as no linear form, as before this function existed. Tests: the build
     // path, `l01_38_presburger::checker::pncx_kept_number_cli` (`x < 2^200`,
     // `x < 2^100000`, `x mod 2^200 == 1`, each ending with status 1 and no output, so none
-    // is dropped; it does not read the message). The refused path (memory refused):
-    // `a_power_too_large_to_build_refuses_the_question` in that file (`x < 3 ^ (2 ^ 40)`, whose
-    // 1.7·10^12 bits exceed any memory the tests may ask), which reads the message; it cannot
-    // catch a power refused at a size the memory ask would allow.
+    // is dropped; it does not read the message). The refused path (memory refused), for a
+    // coefficient (a constant term is kept instead, `Walk::kept_lin`):
+    // `two_powers_too_large_to_build_refuse_the_question` in that file
+    // (`x * 3 ^ (2 ^ 40) > 0`, whose 1.7·10^12 bits exceed any memory the tests may ask),
+    // which reads the message; it cannot catch a power refused at a size the memory ask would
+    // allow.
     fn built(&self, k: &zed_kernel::num::Rat) -> Option<Int> {
         if !self.with(|tx| tx.asking) {
             return Num::from(k).to_int();
@@ -7969,6 +8004,28 @@ impl<'m, 't> Walk<'m, 't> {
             Err(_) => {
                 self.with(|tx| tx.unbuilt = true);
                 None
+            }
+        }
+    }
+
+    /// The constant term `k`, an integer past the 64-bit range, as [`Walk::built`] reads it,
+    /// except that in a scope's question a constant the system refuses the memory for is a
+    /// symbol of its own ([`Tx::kept_name`]), never built, which zedc `front.rs` fixes at the
+    /// constant's exact value by [`presburger::decide_at`] (row PRES-kept-constants), where it
+    /// refused the question before. A constant that builds is built, as before, so that a
+    /// question with two or more of them is decided as before. Only a term's constant becomes a
+    /// symbol: a coefficient, a divisor or a modulus stays [`Walk::built`]'s, as a symbol
+    /// there would make the term not linear. Cost: [`Walk::built`]'s, whose memory ask refuses
+    /// before anything is built, then O(1) expected for the symbol.
+    fn kept_lin(&self, k: &Arc<zed_kernel::num::Rat>) -> Option<Lin> {
+        if !self.with(|tx| tx.asking) {
+            return Num::from(&**k).to_int().map(Lin::constant);
+        }
+        match k.to_integer() {
+            Ok(n) => Some(Lin::constant(Int::from(n))),
+            Err(_) => {
+                let name = self.with(|tx| tx.kept_name(k));
+                Some(Lin::atom(presburger::Atom::Sym(name)))
             }
         }
     }
@@ -10809,16 +10866,16 @@ impl<'m, 't> Walk<'m, 't> {
             // A constant past the 64-bit range is read at its size, as `constant_coef` reads
             // it (I4.1): read as no linear form, it dropped the question with no message.
             // Why no question is now dropped silently here: `Lin::constant` takes an `Int` of
-            // any size, so a `Value::Big` is `None` only when [`Walk::built`] gives `None`; in
-            // a question (`tx.asking`) that is when the system refuses the memory for a power,
-            // and `built` then sets `tx.unbuilt`, which `zedc` front.rs reads
-            // (`scoped.unbuilt()`) to refuse the question with a message. Outside a question
-            // (a preimage) `None` leaves the term unread, as any term not linear is. Tests:
+            // any size, and in a question (`tx.asking`) a constant the system refuses the
+            // memory for is a symbol of its own ([`Walk::kept_lin`]), which `zedc` front.rs
+            // fixes at its value or refuses the question for with a message, so a
+            // `Value::Big` is never `None` there. Outside a question (a preimage) `None` leaves
+            // the term unread, as any term not linear is. Tests:
             // `l01_38_presburger::checker::a_bound_past_the_64_bit_range_keeps_the_question`
             // (bounds of 2^63 - 1, 2^63 and 2^64); a refused allocation is not tested.
             return match v {
                 Value::Int(n) => Some(Lin::constant(n)),
-                Value::Big(k) => self.built(&k).map(Lin::constant),
+                Value::Big(k) => self.kept_lin(&k),
                 _ => None,
             };
         }

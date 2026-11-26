@@ -158,7 +158,7 @@ pub fn fixed_room<R>(most: u64, f: impl FnOnce() -> R) -> R {
 /// stands, as before: a smaller build that the machine cannot hold for the other processes'
 /// memory is still the machine's failure (DESIGN.md sec:domains). Cost: one comparison; the
 /// file is read once. Tests: `a_request_past_memory_and_swap_is_refused_unasked` (this file)
-/// and `l01_38_presburger::checker::a_power_too_large_to_build_refuses_the_question`, which
+/// and `l01_38_presburger::checker::two_powers_too_large_to_build_refuse_the_question`, which
 /// also bounds the peak heap of the refused run.
 fn given(bits: &BigUint) -> bool {
     let fits = memory_and_swap().is_none_or(|most| bytes_of(bits) <= BigUint::from(most));
