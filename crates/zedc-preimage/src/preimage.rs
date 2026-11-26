@@ -15317,34 +15317,72 @@ fn push_down(node: &PaNode) -> (Tree, Tree) {
 
 /// The pieces of `left`, then those of `right`, which all lie above them.
 fn join_treap(left: Tree, right: Tree) -> Tree {
+    let id = Tag::ID;
+    join_under(
+        left.as_ref().map(|l| (l, &id)),
+        right.as_ref().map(|r| (r, &id)),
+    )
+}
+
+/// A subtree with a map still to apply to it: the subtree `apply_tag(node, f)` names, not yet
+/// made.
+type Under<'a> = (&'a Arc<PaNode>, &'a Tag);
+
+/// The map left for the children of `node` when the map `f` lies above it: the tag of
+/// `apply_tag(node, f)`.
+fn tag_under(node: &PaNode, f: &Tag) -> Tag {
+    if *f == Tag::ID {
+        node.tag.clone()
+    } else {
+        node.tag.then(f)
+    }
+}
+
+/// The line of `node`'s piece with the map `f` above it applied: the line of
+/// `apply_tag(node, f)`.
+fn line_under(node: &PaNode, f: &Tag) -> (Int, Int) {
+    if *f == Tag::ID {
+        (node.a.clone(), node.b.clone())
+    } else {
+        f.line(&node.a, &node.b)
+    }
+}
+
+/// [`join_treap`] of two subtrees, each with a map above it still to apply.
+///
+/// Why (FAIL-s22-five-range-live-bytes): the join walks one spine of each side and rebuilds
+/// every node it passes. Reading the children through [`push_down`] made a tagged copy of the
+/// child the walk goes on into, which the next step rebuilds at once; a third of the nodes
+/// made on a tagged path were made only to be dropped. Here that child is passed with its map
+/// instead, and only the child kept whole is made ([`apply_tag`]).
+///
+/// Proof that the result is `join_treap(apply_tag(l, fl), apply_tag(r, fr))`, node for node:
+/// `apply_tag(n, f)` has `n`'s ends and priority, the line [`line_under`] and the tag
+/// [`tag_under`], so its children read through [`push_down`] are `apply_tag(c, tag_under(n,
+/// f))`, the pairs this function passes on or makes. A node with the map [`Tag::ID`] is the
+/// node itself ([`apply_tag`] returns it), and the tags agree with those of the copies:
+/// `tag_under` of a child under `g` is `c.tag.then(g)`, the tag `apply_tag(c, g)` holds. The
+/// nodes rebuilt are those of the old join, with the same ends, lines, priorities and
+/// children, so the treap, its sums and its shape are the same, and so is the cost bound,
+/// `O(depth)` nodes, with fewer of them made.
+fn join_under(left: Option<Under>, right: Option<Under>) -> Tree {
     match (left, right) {
-        (None, r) => r,
-        (l, None) => l,
-        (Some(l), Some(r)) => {
+        (None, None) => None,
+        (None, Some((r, f))) => Some(apply_tag(r, f)),
+        (Some((l, f)), None) => Some(apply_tag(l, f)),
+        (Some((l, fl)), Some((r, fr))) => {
             if l.prio >= r.prio {
-                let (ll, lr) = push_down(&l);
-                let nr = join_treap(lr, Some(r));
-                Some(node_of(
-                    l.lo.clone(),
-                    l.hi.clone(),
-                    l.a.clone(),
-                    l.b.clone(),
-                    l.prio,
-                    ll,
-                    nr,
-                ))
+                let g = tag_under(l, fl);
+                let (a, b) = line_under(l, fl);
+                let ll = l.left.as_ref().map(|c| apply_tag(c, &g));
+                let nr = join_under(l.right.as_ref().map(|c| (c, &g)), Some((r, fr)));
+                Some(node_of(l.lo.clone(), l.hi.clone(), a, b, l.prio, ll, nr))
             } else {
-                let (rl, rr) = push_down(&r);
-                let nl = join_treap(Some(l), rl);
-                Some(node_of(
-                    r.lo.clone(),
-                    r.hi.clone(),
-                    r.a.clone(),
-                    r.b.clone(),
-                    r.prio,
-                    nl,
-                    rr,
-                ))
+                let g = tag_under(r, fr);
+                let (a, b) = line_under(r, fr);
+                let rr = r.right.as_ref().map(|c| apply_tag(c, &g));
+                let nl = join_under(Some((l, fl)), r.left.as_ref().map(|c| (c, &g)));
+                Some(node_of(r.lo.clone(), r.hi.clone(), a, b, r.prio, nl, rr))
             }
         }
     }
@@ -15606,30 +15644,45 @@ type CutPiece = (End, End, Int, Int);
 /// `l01_25_preimage_catalog::bench::s22::chain_probe_all_scales` and `chain_probe_half_scales`
 /// measure the cost.
 fn split_around(root: Tree, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
-    let Some(node) = root else {
-        return (None, None, None);
-    };
+    match &root {
+        None => (None, None, None),
+        Some(node) => split_under((node, &Tag::ID), cut),
+    }
+}
+
+/// [`split_around`] of a subtree with a map above it still to apply: the parts of
+/// `split_around(Some(apply_tag(node, f)), cut)`, without the tagged copy of each node on the
+/// path, which the split rebuilds at once; the proof that the parts are the same, node for
+/// node, is [`join_under`]'s (FAIL-s22-five-range-live-bytes).
+fn split_under((node, f): Under, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
     if cut <= key(&node.span.0) {
-        return (None, None, Some(node));
+        return (None, None, Some(apply_tag(node, f)));
     }
     if cut > key(&node.span.1) {
-        return (Some(node), None, None);
+        return (Some(apply_tag(node, f)), None, None);
     }
-    let (left, right) = push_down(&node);
-    let (lo, hi, a, b) = (
-        node.lo.clone(),
-        node.hi.clone(),
-        node.a.clone(),
-        node.b.clone(),
-    );
+    let g = tag_under(node, f);
+    let tagged = |c: &Tree| c.as_ref().map(|c| apply_tag(c, &g));
+    let split = |c: &Tree| match c {
+        None => (None, None, None),
+        Some(c) => split_under((c, &g), cut),
+    };
+    let (lo, hi) = (node.lo.clone(), node.hi.clone());
+    let (a, b) = line_under(node, f);
     if cut <= key(&lo) {
-        let (ll, piece, lr) = split_around(left, cut);
+        let (ll, piece, lr) = split(&node.left);
+        let right = tagged(&node.right);
         (ll, piece, Some(node_of(lo, hi, a, b, node.prio, lr, right)))
     } else if cut > key(&hi) {
-        let (rl, piece, rr) = split_around(right, cut);
+        let (rl, piece, rr) = split(&node.right);
+        let left = tagged(&node.left);
         (Some(node_of(lo, hi, a, b, node.prio, left, rl)), piece, rr)
     } else {
-        (left, Some((lo, hi, a, b)), right)
+        (
+            tagged(&node.left),
+            Some((lo, hi, a, b)),
+            tagged(&node.right),
+        )
     }
 }
 
@@ -20693,6 +20746,116 @@ mod tests {
             heap(&below);
             heap(&above);
         }
+    }
+
+    /// [`join_under`] and [`split_under`] give, node for node, what the join and the split of
+    /// the tagged copies give, the definitions they replace (kept here as `join_copied` and
+    /// `split_copied`, which read every child through [`push_down`]): same ends, lines,
+    /// priorities, tags, sums and shape, on random summaries with tags inside, under a random
+    /// map at the root, at random cuts, some inside a piece and some past both ends
+    /// (FAIL-s22-five-range-live-bytes).
+    #[test]
+    fn a_join_and_a_split_under_a_map_are_those_of_the_mapped_copies() {
+        fn join_copied(left: Tree, right: Tree) -> Tree {
+            match (left, right) {
+                (None, r) => r,
+                (l, None) => l,
+                (Some(l), Some(r)) if l.prio >= r.prio => {
+                    let (ll, lr) = push_down(&l);
+                    let nr = join_copied(lr, Some(r));
+                    let (lo, hi, a, b) = (l.lo.clone(), l.hi.clone(), l.a.clone(), l.b.clone());
+                    Some(node_of(lo, hi, a, b, l.prio, ll, nr))
+                }
+                (Some(l), Some(r)) => {
+                    let (rl, rr) = push_down(&r);
+                    let nl = join_copied(Some(l), rl);
+                    let (lo, hi, a, b) = (r.lo.clone(), r.hi.clone(), r.a.clone(), r.b.clone());
+                    Some(node_of(lo, hi, a, b, r.prio, nl, rr))
+                }
+            }
+        }
+        fn split_copied(root: Tree, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
+            let Some(node) = root else {
+                return (None, None, None);
+            };
+            if cut <= key(&node.span.0) {
+                return (None, None, Some(node));
+            }
+            if cut > key(&node.span.1) {
+                return (Some(node), None, None);
+            }
+            let (left, right) = push_down(&node);
+            let (lo, hi, a, b) = (
+                node.lo.clone(),
+                node.hi.clone(),
+                node.a.clone(),
+                node.b.clone(),
+            );
+            if cut <= key(&lo) {
+                let (ll, piece, lr) = split_copied(left, cut);
+                (ll, piece, Some(node_of(lo, hi, a, b, node.prio, lr, right)))
+            } else if cut > key(&hi) {
+                let (rl, piece, rr) = split_copied(right, cut);
+                (Some(node_of(lo, hi, a, b, node.prio, left, rl)), piece, rr)
+            } else {
+                (left, Some((lo, hi, a, b)), right)
+            }
+        }
+        fn same(t: &Tree, u: &Tree) {
+            match (t, u) {
+                (None, None) => {}
+                (Some(t), Some(u)) => {
+                    assert_eq!((&t.lo, &t.hi, &t.a, &t.b), (&u.lo, &u.hi, &u.a, &u.b));
+                    assert_eq!(
+                        (&t.span, &t.vals, t.dense, t.len),
+                        (&u.span, &u.vals, u.dense, u.len)
+                    );
+                    assert_eq!((t.prio, &t.tag), (u.prio, &u.tag));
+                    same(&t.left, &u.left);
+                    same(&t.right, &u.right);
+                }
+                _ => panic!("one tree is empty and the other is not"),
+            }
+        }
+        let (mut rng, _) =
+            Rng::fresh("a_join_and_a_split_under_a_map_are_those_of_the_mapped_copies");
+        let tag = |rng: &mut Rng| match rng.below(3) {
+            0 => Tag::ID,
+            _ => Tag {
+                mul: (rng.below(5) as i128 - 2).into(),
+                slope: (rng.below(7) as i128 - 3).into(),
+                add: (rng.below(11) as i128 - 5).into(),
+            },
+        };
+        let mut checked = (0, 0);
+        // 2000 rounds: about 330 joins of two sides, well over the 100 asked below for any
+        // seed (600 rounds gave 99 at one seed).
+        for _ in 0..2000 {
+            let root = random_treap(&mut rng);
+            let f = tag(&mut rng);
+            let mapped = root.as_ref().map(|n| apply_tag(n, &f));
+            let cut = rng.below(110) as i128 - 60;
+            let (l, p, r) = match &root {
+                None => (None, None, None),
+                Some(n) => split_under((n, &f), cut),
+            };
+            let (wl, wp, wr) = split_copied(mapped.clone(), cut);
+            same(&l, &wl);
+            same(&r, &wr);
+            assert_eq!(p, wp);
+            checked.0 += usize::from(p.is_some());
+            // A join of the two parts, each under a map of its own.
+            let (fl, fr) = (tag(&mut rng), tag(&mut rng));
+            let joined = join_under(l.as_ref().map(|n| (n, &fl)), r.as_ref().map(|n| (n, &fr)));
+            let want = join_copied(
+                l.as_ref().map(|n| apply_tag(n, &fl)),
+                r.as_ref().map(|n| apply_tag(n, &fr)),
+            );
+            same(&joined, &want);
+            checked.1 += usize::from(l.is_some() && r.is_some());
+        }
+        // The draws reach the cases that matter: cuts inside a piece and joins of two sides.
+        assert!(checked.0 >= 50 && checked.1 >= 100, "{checked:?}");
     }
 
     /// Chains of cuts one past an end, which merge pieces of one input into their neighbors

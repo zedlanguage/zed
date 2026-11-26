@@ -5,7 +5,7 @@
 
 use zed_kernel::{Prim, Shared, Term, Value};
 use zed_tests::scaling;
-use zedc::store::preimage::{Demand, Domains, forward_pieces, preimage};
+use zedc::store::preimage::{Demand, Domains, class_domain_reads, forward_pieces, preimage};
 use zedc::store::preimage_ref as before;
 
 use crate::s22::*;
@@ -484,6 +484,44 @@ fn forward_sets_of_a_chain_share_the_holes_scale() {
         scaling::hold(
             &format!(
                 "pieces of the forward sets: sizes {n} and {}",
+                scaling::FACTOR * n
+            ),
+            "pieces",
+            small,
+            large,
+            1,
+        );
+    });
+}
+
+/// COMPLEXITY.md S22-hole-summaries: reading the test `x mod 1024 != r(j)` of each level of
+/// [`spread_remainder_chain`] by its classes, with `16k` holes in the domain of `x`, reads
+/// pieces of that domain of order `k log k` from `k` to `8k`: each range of classes is read
+/// within the hull of the domain, a box is tested against the holes by binary search, and the
+/// union is met with the domain once. Meeting each range with the whole domain read `O(k)`
+/// pieces for each of `O(k)` ranges, `O(k^2)`: 2193 and 132225 pieces at `k = 8` and `64`,
+/// 60 times (negative control, not committed), where this reads 245 and 2693, 11 times.
+/// The size is 32, not 8: the count, of order `k log(16k)` with `16k` holes, is 10.99 times
+/// at 8 to 64, past the 10.5 allowed to power 1, as `k log(16k)` itself is there
+/// (`8 log2(1024) / log2(128)` is 11.43), while from 32 to 256 it reads 1290 and 8724 pieces, 6.76 times (and 6.04, 5.96 and 4.34
+/// times from 64, 128 and 256; b22-scale1, batch b26, 2026-11-25, Colab hm3, 11.7 s at 32).
+#[test]
+fn class_ranges_read_the_holes_once() {
+    on_big_stack(|| {
+        let d = Demand::Bool(true);
+        let n = 32;
+        let reads = |k: usize| {
+            let t = counted_shapes(spread_remainder_chain(k))[4].clone();
+            let ds = x_with_holes(16 * k);
+            class_domain_reads();
+            preimage(&t, &ds, &d);
+            class_domain_reads()
+        };
+        let (small, large) = (reads(n), reads(scaling::FACTOR * n));
+        assert!(small > 0, "the tests are read by their classes");
+        scaling::hold(
+            &format!(
+                "pieces of the domain read: sizes {n} and {}",
                 scaling::FACTOR * n
             ),
             "pieces",

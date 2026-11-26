@@ -1285,6 +1285,11 @@ split="
 # the two random tests of the boolean equation solver above and 44.5 s in the six below (14.0,
 # 7.8, 7.4, 6.0, 4.9 and 4.4 s); the other 723 take 57.3 s together. Each of the six is a piece,
 # and no other test's name holds one of their names.
+# zed_kernel's piece still came near its limit (FAIL-zed-kernel-piece-near-limit). The piece
+# with --report-time on l41 (8 threads, load 5.2 to 5.5, b22-scale1 batch b26, 2026-11-25) took
+# 13.2 and 13.3 s of wall time, of which the test of valuations from the top took 10.3 and
+# 10.5 s; the next slowest took 2.9 s. That one test bounds the piece's wall time, so it is a
+# piece, as it is for short-zed_kernel (short_alone below). No other test's name holds its name.
 # zedc_check's piece stopped at its limit alone (rc=124, 20059 ms, on hm1, 8 cores, load 4.0,
 # b22-checkrest8, 2026-11-22). Each of its 183 tests alone on hm1 (tools/time_tests.sh, load 1.2
 # to 1.6): the 30 below took 133 s together, 1.0 to 7.8 s each (the slowest
@@ -1329,6 +1334,7 @@ alone="
   zed_kernel::eval::binder_tests::reads_lies_between_the_tree_walk_and_the_shared_bound_on_deeply_shared_terms
   zed_kernel::types::bdd::tests::a_chain_joined_at_once_is_the_chain_joined_literal_by_literal
   zed_kernel::types::empty::tests::random_types_agree_with_membership_on_a_finite_set_of_values
+  zed_kernel::num::tests::valuations_from_the_top_agree_with_the_tests_on_the_way_up
   zedc_presburger::presburger::row_sums::tests::the_polygons_of_the_route_are_never_more_than_the_join_spends
   zedc_presburger::presburger::sweep_against_pick_tests::the_unbounded_row_sweep_marks_the_arms_pick_by_finds
   zedc_presburger::presburger::exact::tests::random_formulas_at_seed_10413658062665981385
