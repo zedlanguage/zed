@@ -25,6 +25,7 @@ pub use zed_kernel::types::names::{
 use zed_kernel::types::order;
 use zed_kernel::types::{Refusal, Spell, TextPlace, Type as KType, Verdict, defs};
 use zed_kernel::{Items, Universe, Value};
+use zedc_base::address::Framed;
 
 use zedc_syntax::ast::Pattern as AstPattern;
 use zedc_syntax::lex::Span;
@@ -23995,10 +23996,9 @@ impl<'a> NameDigests<'a> {
     /// The digest of the names a call may write inside the type `t`.
     pub fn ty(&mut self, t: &'a Ty) -> [u8; 32] {
         self.enter(name_nodes(t));
-        let mut h = blake3::Hasher::new();
-        h.update(b"zed-names-ty\0");
+        let mut h = Framed::new(b"zed-names-ty\0");
         self.hash_ty(&mut h, t);
-        *h.finalize().as_bytes()
+        h.digest()
     }
 
     /// Hashes each of `roots` not yet hashed, and each node it holds, those it holds first.
@@ -24031,71 +24031,63 @@ impl<'a> NameDigests<'a> {
 
     /// The digest of `n`, whose nodes are all hashed.
     fn hash_node(&self, n: NameNode<'_>) -> [u8; 32] {
-        let mut h = blake3::Hasher::new();
-        let count = |h: &mut blake3::Hasher, k: usize| {
-            h.update(&(k as u64).to_le_bytes());
-        };
+        let mut h;
         match n {
             NameNode::Sig(s) => {
-                h.update(b"zed-names-fn\0");
+                h = Framed::new(b"zed-names-fn\0");
                 let names = s.callable_names();
-                count(&mut h, names.len());
+                h.count(names.len());
                 for (i, name) in &names {
-                    h.update(&i.to_le_bytes());
-                    count(&mut h, name.len());
-                    h.update(name.as_bytes());
+                    h.raw(&i.to_le_bytes()).field(name.as_bytes());
                 }
-                count(&mut h, s.arrows.len());
+                h.count(s.arrows.len());
                 for a in &s.arrows {
-                    count(&mut h, a.params.len());
+                    h.count(a.params.len());
                     a.params.iter().for_each(|t| self.hash_ty(&mut h, t));
                     self.hash_ty(&mut h, &a.result);
                 }
             }
             NameNode::Row(r) => {
-                h.update(b"zed-names-row\0");
+                h = Framed::new(b"zed-names-row\0");
                 let cs: Vec<&Ty> = r.iter().collect();
-                count(&mut h, cs.len());
+                h.count(cs.len());
                 cs.into_iter().for_each(|t| self.hash_ty(&mut h, t));
             }
             NameNode::Shape(s) => {
-                h.update(b"zed-names-shape\0");
-                count(&mut h, s.items.len());
+                h = Framed::new(b"zed-names-shape\0");
+                h.count(s.items.len());
                 s.items.iter().for_each(|t| self.hash_ty(&mut h, t));
-                count(&mut h, s.fields.len());
+                h.count(s.fields.len());
                 for (name, t) in &s.fields {
-                    count(&mut h, name.len());
-                    h.update(name.as_bytes());
+                    h.field(name.as_bytes());
                     self.hash_ty(&mut h, t);
                 }
             }
         }
-        *h.finalize().as_bytes()
+        h.digest()
     }
 
     /// Adds `t` to `h`: its functions, rows and payloads, each node by its digest.
-    fn hash_ty(&self, h: &mut blake3::Hasher, t: &Ty) {
+    fn hash_ty(&self, h: &mut Framed, t: &Ty) {
         let digest = |n: NameNode<'_>| self.done[&n.key()];
-        h.update(&(t.fns.len() as u64).to_le_bytes());
+        h.count(t.fns.len());
         for s in &t.fns {
-            h.update(&digest(NameNode::Sig(s)));
+            h.raw(&digest(NameNode::Sig(s)));
         }
-        h.update(&(t.tuples.len() as u64).to_le_bytes());
+        h.count(t.tuples.len());
         for r in &t.tuples {
-            h.update(&digest(NameNode::Row(r)));
+            h.raw(&digest(NameNode::Row(r)));
         }
-        h.update(&(t.payloads.len() as u64).to_le_bytes());
+        h.count(t.payloads.len());
         for (atom, shapes) in &t.payloads {
-            h.update(&(atom.len() as u64).to_le_bytes());
-            h.update(atom.as_bytes());
+            h.field(atom.as_bytes());
             let Some(shapes) = shapes else {
-                h.update(&[0]);
+                h.raw(&[0]);
                 continue;
             };
-            h.update(&[1]);
-            h.update(&(shapes.len() as u64).to_le_bytes());
+            h.raw(&[1]).count(shapes.len());
             for s in shapes {
-                h.update(&digest(NameNode::Shape(s)));
+                h.raw(&digest(NameNode::Shape(s)));
             }
         }
     }
@@ -31956,34 +31948,19 @@ pub mod r10_hash {
     // (tests/unreached6.rs) holds the hashes of signatures to the numbers the old copy gave.
     use zed_numtheory::m61::{add as add_p, mul as mul_p, reduce as mod_p, sub as sub_p};
 
-    struct DetHasher(u64);
-    impl Default for DetHasher {
-        fn default() -> Self {
-            DetHasher(0xCBF2_9CE4_8422_2325)
-        }
-    }
-    impl Hasher for DetHasher {
-        #[inline]
-        fn finish(&self) -> u64 {
-            let mut z = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-            z ^ (z >> 31)
-        }
-        #[inline]
-        fn write(&mut self, bytes: &[u8]) {
-            for &b in bytes {
-                self.0 ^= b as u64;
-                self.0 = self.0.wrapping_mul(0x0000_0100_0000_01B3);
-            }
-        }
-    }
+    // The hasher of a leaf: FNV-1a over the bytes a value's `Hash` writes, then splitmix64's
+    // `mix` before the reduction mod `P`, since FNV-1a's low bits are weak (both in zed-hash,
+    // with their sources; the module kept a copy, `DetHasher`, until DRY-hash-crate-2026-11-26).
+    // The pinned signature hashes
+    // (`signature_hashes_are_the_numbers_they_were_before_the_shared_arithmetic`) hold it to
+    // the copy's values.
+    use zed_hash::{Fnv1a, mix};
 
     #[inline]
     fn leaf_digest<T: Hash + ?Sized>(v: &T) -> u64 {
-        let mut h = DetHasher::default();
+        let mut h = Fnv1a::default();
         v.hash(&mut h);
-        mod_p(h.finish() as u128)
+        mod_p(mix(h.finish()) as u128)
     }
 
     pub fn parse_class_u64(v: &str) -> Option<u64> {
@@ -32133,7 +32110,7 @@ pub mod r10_hash {
             cur = v.next.as_deref();
         }
         for v in frames.into_iter().rev() {
-            let mut h = DetHasher::default();
+            let mut h = Fnv1a::default();
             1u8.hash(&mut h);
             v.at.start.hash(&mut h);
             v.at.end.hash(&mut h);
@@ -32162,7 +32139,7 @@ pub mod r10_hash {
                 }
                 None => 0u8.hash(&mut h),
             }
-            let val = mod_p(h.finish() as u128);
+            let val = mod_p(mix(h.finish()) as u128);
             let _ = v.chain_hash.set(val);
         }
         *via.chain_hash.get().expect("filled above")

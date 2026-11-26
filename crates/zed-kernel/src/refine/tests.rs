@@ -4,22 +4,8 @@
 
 use super::{Refine, refine_places};
 
-/// splitmix64, a fixed stream so that each run tests the same graphs.
-struct Rng(u64);
-
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
-
-    fn below(&mut self, n: usize) -> usize {
-        (self.next() % n as u64) as usize
-    }
-}
+// splitmix64 (zed-hash's), a fixed stream so that each run tests the same graphs.
+use zed_hash::SplitMix64 as Rng;
 
 /// A random digraph of `n` vertices, each arc present with probability `num / 8`, and a
 /// surjective starting coloring with `k` colors.
@@ -31,7 +17,7 @@ fn graph(rng: &mut Rng) -> (Vec<usize>, usize, Vec<Vec<usize>>) {
         .map(|v| if v < k { v } else { rng.below(k) })
         .collect();
     let adj = (0..n)
-        .map(|_| (0..n).filter(|_| rng.next() % 8 < num).collect())
+        .map(|_| (0..n).filter(|_| rng.next_u64() % 8 < num).collect())
         .collect();
     (color, k, adj)
 }
@@ -97,7 +83,7 @@ fn same_partition(a: &[usize], b: &[usize]) -> bool {
 /// [`Refine::split`].
 #[test]
 fn refinement_is_the_coarsest_stable_partition() {
-    let mut rng = Rng(1);
+    let mut rng = Rng::new(1);
     for trial in 0..3000 {
         let (color, k, adj) = graph(&mut rng);
         let got = refined(&color, k, &adj);
@@ -116,7 +102,7 @@ fn refinement_is_the_coarsest_stable_partition() {
 /// [`Refine::run`].
 #[test]
 fn refinement_colors_are_canonical() {
-    let mut rng = Rng(2);
+    let mut rng = Rng::new(2);
     for trial in 0..3000 {
         let (color, k, adj) = graph(&mut rng);
         let n = color.len();
@@ -150,7 +136,7 @@ fn refinement_colors_are_canonical() {
 /// then indexes past its tally on a node whose places all share a color).
 #[test]
 fn refinement_of_nodes_and_places_is_the_coarsest_stable_partition() {
-    let mut rng = Rng(3);
+    let mut rng = Rng::new(3);
     for trial in 0..3000 {
         let v = 1 + rng.below(7);
         let places: Vec<(usize, usize)> = (0..rng.below(12))

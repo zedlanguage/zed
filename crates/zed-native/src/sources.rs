@@ -127,6 +127,9 @@ pub fn of(krate: &Path) -> Result<Sources, String> {
         }
     }
 
+    // The writing of `zedc_base::address::Framed`, kept by hand: build.rs compiles this file
+    // by `#[path]`, and a build-dependency on zedc-base would build zed-kernel a second time
+    // for the build script (DRY-hash-crate-2026-11-26).
     let mut hasher = blake3::Hasher::new();
     for path in &files {
         load(path, &mut bytes)?;

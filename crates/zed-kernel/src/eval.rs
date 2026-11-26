@@ -24,6 +24,7 @@ use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
+use zed_hash::SplitMix64;
 
 use crate::exact::{CanonicalTree, TreeStep};
 use crate::num::{Test, TooLarge, refused};
@@ -1226,7 +1227,9 @@ struct Gen<'t> {
 /// Entries are named by their keys' positions in the domain.
 struct Rounds<'t> {
     fix: Rc<Definedness<'t>>,
-    rng: Option<SplitMix>,
+    /// The SplitMix64 generator (zed-hash's, where its source is), which draws the visiting
+    /// order of [`Schedule::Chaotic`] by its Fisher–Yates shuffle.
+    rng: Option<SplitMix64>,
     /// By position: the entries waiting on that entry.
     waiting: Vec<Vec<usize>>,
     queue: std::vec::IntoIter<usize>,
@@ -3204,7 +3207,7 @@ impl<'t> Machine<'_, 't> {
         });
         let rng = match self.ev.schedule {
             Schedule::Rounds => None,
-            Schedule::Chaotic(seed) => Some(SplitMix(seed)),
+            Schedule::Chaotic(seed) => Some(SplitMix64::new(seed)),
             Schedule::Pull => return self.pull(Box::new(Pull { fix, next: 0 })),
         };
         // The first round tries every entry; the work list is the rounds' own, since later
@@ -3798,26 +3801,6 @@ struct Definedness<'t> {
 impl Drop for Definedness<'_> {
     fn drop(&mut self) {
         self.drops.free(Freed::Env(self.env.take()));
-    }
-}
-
-/// The SplitMix64 generator, which draws the visiting order of [`Schedule::Chaotic`].
-struct SplitMix(u64);
-
-impl SplitMix {
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
-
-    /// A Fisher–Yates shuffle.
-    fn shuffle<T>(&mut self, xs: &mut [T]) {
-        for i in (1..xs.len()).rev() {
-            xs.swap(i, (self.next() % (i as u64 + 1)) as usize);
-        }
     }
 }
 

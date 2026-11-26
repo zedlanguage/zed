@@ -17,8 +17,6 @@ mod exe;
 // point `zed_main` takes C's raw `argv`, which a public path would offer to safe code.
 #[cfg(target_os = "linux")]
 pub use exe::{PROGRAM_SECTION, check_command};
-#[cfg(test)]
-mod fnv;
 mod hooks;
 mod legal;
 #[cfg(target_os = "linux")]

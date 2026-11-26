@@ -13,14 +13,12 @@
 #[path = "src/sources.rs"]
 mod sources;
 
-#[path = "src/fnv.rs"]
-mod fnv;
-
 fn main() {
     let flags = std::env::var_os("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
-    // FNV-1a, 64 bits (`src/fnv.rs`, cited there): fixed by its definition, so the same flags
-    // give the same bytes with any compiler.
-    let hash = fnv::fnv1a_64(flags.as_encoded_bytes());
+    // FNV-1a, 64 bits (zed-hash's `fnv1a_64`, cited and tested against the draft's vectors
+    // there; this crate kept a copy in `src/fnv.rs` until DRY-hash-crate-2026-11-26): fixed by
+    // its definition, so the same flags give the same bytes with any compiler.
+    let hash = zed_hash::fnv1a_64(flags.as_encoded_bytes());
     let out_dir = std::path::PathBuf::from(
         std::env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR for a build script"),
     );

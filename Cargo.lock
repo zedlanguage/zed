@@ -1305,6 +1305,7 @@ dependencies = [
  "rustix",
  "stacker",
  "zed-alloc-count",
+ "zed-hash",
  "zed-meter-settings",
  "zed-numtheory",
 ]
@@ -1326,8 +1327,13 @@ dependencies = [
  "rustix",
  "stacker",
  "zed-alloc-count",
+ "zed-hash",
  "zed-meter-settings",
 ]
+
+[[package]]
+name = "zed-hash"
+version = "0.0.0"
 
 [[package]]
 name = "zed-kernel"
@@ -1346,6 +1352,7 @@ dependencies = [
  "zed-alloc-count",
  "zed-collections",
  "zed-graph",
+ "zed-hash",
  "zed-meter-settings",
  "zed-numtheory",
 ]
@@ -1380,6 +1387,7 @@ dependencies = [
  "zed-alloc-count",
  "zed-collections",
  "zed-graph",
+ "zed-hash",
  "zed-kernel",
  "zed-native",
  "zed-rt",
@@ -1399,6 +1407,7 @@ dependencies = [
  "rustix",
  "stacker",
  "zed-alloc-count",
+ "zed-hash",
  "zed-meter-settings",
 ]
 
@@ -1442,6 +1451,7 @@ dependencies = [
  "zed-collections",
  "zed-corpus-ref",
  "zed-graph",
+ "zed-hash",
  "zed-kernel",
  "zed-meter-settings",
  "zed-native",
@@ -1557,6 +1567,7 @@ dependencies = [
  "num-traits",
  "zed-collections",
  "zed-graph",
+ "zed-hash",
  "zed-kernel",
  "zed-numtheory",
 ]
@@ -1569,6 +1580,7 @@ dependencies = [
  "num-traits",
  "zed-collections",
  "zed-graph",
+ "zed-hash",
  "zed-kernel",
  "zed-numtheory",
  "zedc-base",
@@ -1588,6 +1600,7 @@ dependencies = [
  "zed-alloc-count",
  "zed-collections",
  "zed-graph",
+ "zed-hash",
  "zed-kernel",
  "zed-meter-settings",
  "zed-numtheory",
@@ -1612,6 +1625,7 @@ dependencies = [
  "zed-alloc-count",
  "zed-collections",
  "zed-graph",
+ "zed-hash",
  "zed-kernel",
  "zed-meter-settings",
  "zed-numtheory",
@@ -1639,6 +1653,7 @@ version = "0.0.0"
 dependencies = [
  "zed-collections",
  "zed-graph",
+ "zed-hash",
  "zed-kernel",
  "zedc-int",
  "zedc-solvers",
@@ -1665,6 +1680,7 @@ dependencies = [
  "unicode-security",
  "unicode-width",
  "zed-collections",
+ "zed-hash",
  "zed-kernel",
  "zedc-base",
 ]
@@ -1673,7 +1689,6 @@ dependencies = [
 name = "zedc-types"
 version = "0.0.0"
 dependencies = [
- "blake3",
  "imbl",
  "perf-event2",
  "rustix",
@@ -1681,9 +1696,11 @@ dependencies = [
  "zed-alloc-count",
  "zed-collections",
  "zed-graph",
+ "zed-hash",
  "zed-kernel",
  "zed-meter-settings",
  "zed-numtheory",
+ "zedc-base",
  "zedc-syntax",
  "zedc-types",
 ]
@@ -1692,7 +1709,6 @@ dependencies = [
 name = "zedc-zir"
 version = "0.0.0"
 dependencies = [
- "blake3",
  "imbl",
  "num-bigint",
  "zed-collections",

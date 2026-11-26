@@ -590,13 +590,9 @@ mod tests {
     /// those its allowance holds, printed as `route`.
     #[test]
     fn projections_are_those_of_the_points() {
-        let mut seed = 0x2545_F491_4F6C_DD1D_u64;
-        let mut next = move |n: u64| {
-            seed = seed
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (seed >> 33) % n
-        };
+        // The MMIX linear congruential sequence (zed-hash's `Lcg64`, where its source is).
+        let mut lcg = zed_hash::Lcg64::new(0x2545_F491_4F6C_DD1D);
+        let mut next = move |n: u64| lcg.below(n);
         // Ranges from about `-w` up, of up to `w` values each.
         let ranges = |w: u64, next: &mut dyn FnMut(u64) -> u64| {
             let mut at = -(w as i128) + next(6) as i128;

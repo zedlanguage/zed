@@ -358,6 +358,68 @@ fn the_eight_byte_hash_is_horners_rule() {
     }
 }
 
+/// The hashes `p` joined as a balanced tree, halves first.
+fn joined_as_a_tree(p: &[m61::PolyHash]) -> m61::PolyHash {
+    match p {
+        [] => m61::PolyHash::EMPTY,
+        [x] => *x,
+        _ => joined_as_a_tree(&p[..p.len() / 2]).then(joined_as_a_tree(&p[p.len() / 2..])),
+    }
+}
+
+/// `PolyHash` joins as the strings join: random strings cut at random places, their pieces'
+/// hashes joined left to right and as a balanced tree, against Horner's rule over the whole;
+/// one-digit units against Horner's rule of the digit; and `Prefix::span` of every span of a
+/// short string against Horner's rule over it.
+#[test]
+fn poly_hashes_join_as_their_strings_do() {
+    use m61::{P, PolyHash, Prefix};
+    let mut next = words("poly_hashes_join_as_their_strings_do");
+    let digit = |x: &u8| u64::from(*x) + 1;
+    for b in [0, 1, 2, P - 1, 0x0f3d_5b79_a2c4_e681, next() % P] {
+        let poly = m61::PolyBytes::new(b);
+        let hash = |s: &[u8]| {
+            let (h, pow) = poly.hash(s);
+            PolyHash { h, pow }
+        };
+        for _ in 0..40 {
+            let n = (next() % 200) as usize;
+            let s: Vec<u8> = (0..n).map(|_| next() as u8).collect();
+            let mut cuts: Vec<usize> = (0..(next() % 9))
+                .map(|_| (next() as usize) % (n + 1))
+                .collect();
+            cuts.extend([0, n]);
+            cuts.sort_unstable();
+            let pieces: Vec<PolyHash> = cuts.windows(2).map(|w| hash(&s[w[0]..w[1]])).collect();
+            let want = horner(b, &s);
+            let left = pieces.iter().fold(PolyHash::EMPTY, |a, &p| a.then(p));
+            assert_eq!((left.h, left.pow), want, "base {b}, cuts {cuts:?}");
+            let t = joined_as_a_tree(&pieces);
+            assert_eq!((t.h, t.pow), want, "base {b}, cuts {cuts:?}, as a tree");
+            let units = s
+                .iter()
+                .fold(PolyHash::EMPTY, |a, x| a.then(PolyHash::unit(digit(x), b)));
+            assert_eq!((units.h, units.pow), want, "base {b}, one digit at a time");
+        }
+        let s: Vec<u8> = (0..40).map(|_| next() as u8).collect();
+        let pre = Prefix::new(b, s.iter().map(digit));
+        let pow = m61::powers(b, s.len());
+        assert_eq!(pre.len(), s.len());
+        assert_eq!(pre.whole(), horner(b, &s).0);
+        for i in 0..=s.len() {
+            assert_eq!(pow[i], horner(b, &s[..i]).1, "base {b}, B^{i}");
+            assert_eq!(pre.get(i), horner(b, &s[..i]).0);
+            for j in i..=s.len() {
+                assert_eq!(
+                    pre.span(i, j, &pow),
+                    horner(b, &s[i..j]).0,
+                    "base {b}, {i}..{j}"
+                );
+            }
+        }
+    }
+}
+
 /// `cbrt_floor` at every cube `k^3` up to `2^64 - 1` and at its two neighbors, where a float
 /// estimate is most often one off, at `2^64 - 1`, and on random words by its definition
 /// `r^3 <= n < (r + 1)^3`.

@@ -46,6 +46,9 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use zed_collections::intern::Interner;
+// FNV-1a 64 over a name's or a literal's text (the module kept a copy until
+// DRY-hash-crate-2026-11-26; zed-hash has its source and the draft's test vectors).
+use zed_hash::fnv1a_64;
 
 use crate::deep;
 use crate::frames::{Deep, Stack};
@@ -131,17 +134,6 @@ impl std::hash::Hash for Type {
     }
 }
 
-/// FNV-1a over `b`.
-fn bytes(b: &[u8]) -> u64 {
-    more_bytes(0xcbf2_9ce4_8422_2325, b)
-}
-
-/// FNV-1a over `b`, after the bytes whose hash is `h`, so a text hashes alike in any blocks.
-fn more_bytes(h: u64, b: &[u8]) -> u64 {
-    b.iter()
-        .fold(h, |h, &x| (h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3))
-}
-
 /// What the top level of a value says of its membership in a type.
 enum Member<'v> {
     Known(bool),
@@ -166,7 +158,7 @@ fn scalar(v: &Value) -> u64 {
         Value::Str(s) => mix(2, s.poly_hash()),
         Value::Big(r) => exact(4, r),
         Value::Rat(r) => exact(5, r),
-        other => mix(3, bytes(other.to_string().as_bytes())),
+        other => mix(3, fnv1a_64(other.to_string().as_bytes())),
     }
 }
 
@@ -2036,7 +2028,7 @@ mod atoms {
         }
 
         fn entries(name: &str, p: &AtomPart) -> (u64, u64) {
-            let head = mix(bytes(name.as_bytes()), u64::from(p.bare));
+            let head = mix(fnv1a_64(name.as_bytes()), u64::from(p.bare));
             (
                 mix(head, p.payload.digest()),
                 mix(head, p.payload.name_digest()),
@@ -8013,8 +8005,9 @@ pub mod rec {
     use std::sync::{Arc, Mutex, OnceLock};
 
     use super::bes::{Answer, Bes, Decision};
-    use super::{Type, bytes, mix};
+    use super::{Type, mix};
     use crate::deep;
+    use zed_hash::fnv1a_64;
 
     pub(super) mod group;
     pub(super) mod unfold;
@@ -8563,7 +8556,7 @@ pub mod rec {
                 Shape::Not(_) => 6,
                 Shape::Diff(..) => 7,
                 Shape::Tuple(_) => 8,
-                Shape::Atom(name, _) => mix(9, bytes(name.as_bytes())),
+                Shape::Atom(name, _) => mix(9, fnv1a_64(name.as_bytes())),
                 Shape::Morphism(..) => 10,
             }
         }

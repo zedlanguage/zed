@@ -335,6 +335,7 @@ zed-alloc-count.workspace = true
 zed-meter-settings.workspace = true
 zed-collections.workspace = true
 zed-graph.workspace = true
+zed-hash.workspace = true
 zed-kernel.workspace = true
 zed-numtheory.workspace = true
 zed-native ={ workspace = true, features = ["counts"] }

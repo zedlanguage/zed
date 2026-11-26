@@ -1,5 +1,6 @@
 use super::*;
-use crate::seed::{Rng, Xorshift64};
+use crate::seed::Rng;
+use zed_hash::Xorshift64;
 
 /// The region of the part `f` on the box `r`, made by a search of its own.
 fn region(r: Vec<Type>, f: &Part<Row>) -> Region {
@@ -1139,7 +1140,7 @@ fn check_classes(case: usize, ts: &[Type], met: &mut usize, apart: &mut usize) {
     // first; the proof that no order changes the classes is at `overlaps`
     // (PROOF-kernel-overlaps-order), and these orders test it. The orders are drawn from the
     // case and the length, so a failure names its order and repeats.
-    let mut rng = Rng::new(crate::seed::mix(case as u64 ^ ((n as u64) << 32)));
+    let mut rng = Rng::new(zed_hash::mix(case as u64 ^ ((n as u64) << 32)));
     let mut order: Vec<usize> = (0..n).collect();
     for _ in 0..3 {
         rng.shuffle(&mut order);

@@ -21,5 +21,9 @@ zed-graph.workspace = true
 zed-kernel.workspace = true
 zed-numtheory.workspace = true
 
+[dev-dependencies]
+# The generators of tests/src/seed.rs, which the tests compile in by `#[path]`.
+zed-hash.workspace = true
+
 [lints]
 workspace = true

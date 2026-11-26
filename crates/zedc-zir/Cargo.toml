@@ -13,7 +13,6 @@ publish.workspace = true
 crate-type = ["rlib", "dylib"]
 
 [dependencies]
-blake3.workspace = true
 imbl.workspace = true
 num-bigint.workspace = true
 zed-collections.workspace = true

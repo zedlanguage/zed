@@ -12,15 +12,12 @@ use zedc::store::presburger::{Atom, Con, Formula, Lin, Shared, decide, satisfiab
 
 use super::repair::answers;
 
-struct Rng(u64);
+/// The MMIX linear congruential sequence (zed-hash's `Lcg64`, where its source is).
+struct Rng(zed_hash::Lcg64);
 
 impl Rng {
     fn next(&mut self, n: u64) -> i64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((self.0 >> 33) % n) as i64
+        self.0.below(n) as i64
     }
 }
 
@@ -40,7 +37,7 @@ fn ge(t: &[(&str, i64)], k: i64) -> Formula {
 
 /// The formulas of cases `0..n` of the generator, with whether each has a point by brute force.
 fn formulas(n: u64) -> Vec<(Formula, bool)> {
-    let mut rng = Rng(777);
+    let mut rng = Rng(zed_hash::Lcg64::new(777));
     let mut out = Vec::new();
     for _ in 0..n {
         let k = 3 + rng.next(5) as usize;

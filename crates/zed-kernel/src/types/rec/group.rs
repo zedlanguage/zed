@@ -9,8 +9,9 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, Weak};
 use super::unfold::{ENVS, Show, eval, thread};
 use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, free, holds, same};
 use crate::digest::{Digest, KeyHash, TiedMap};
-use crate::types::{Type, Verdict, bytes, defs, mix};
+use crate::types::{Type, Verdict, defs, mix};
 use zed_graph::{IdSource, on_cycle};
+use zed_hash::fnv1a_64;
 
 /// The accepted groups, one per distinct definition list, by the digest of the definitions
 /// ([`digest`]). The definition lists of one digest are kept in their order (`Def`'s `Ord`), so
@@ -232,7 +233,7 @@ impl Group {
             .map(|d| Node::of(&d.body, &plain, &mut numbering))
             .collect();
         drop(numbering);
-        let name_hashes: Vec<u64> = defs.iter().map(|d| bytes(d.name.as_bytes())).collect();
+        let name_hashes: Vec<u64> = defs.iter().map(|d| fnv1a_64(d.name.as_bytes())).collect();
         let digest = digest(&defs, &bodies, &name_hashes);
         let g = Group(Arc::new(Checked {
             number: NEXT.next(),
@@ -703,7 +704,7 @@ fn digest(defs: &[Def], bodies: &[Arc<Node>], names: &[u64]) -> u64 {
             let h = d
                 .params
                 .iter()
-                .fold(mix(h, name), |h, p| mix(h, bytes(p.as_bytes())));
+                .fold(mix(h, name), |h, p| mix(h, fnv1a_64(p.as_bytes())));
             mix(mix(h, d.params.len() as u64), body.name_digest)
         })
 }

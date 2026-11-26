@@ -12,6 +12,9 @@ publish.workspace = true
 crate-type = ["rlib", "dylib"]
 
 [dev-dependencies]
+# The generators of tests/src/seed.rs, which the tests compile in by `#[path]`. zed-hash depends
+# on no crate, so this adds no cycle.
+zed-hash.workspace = true
 rustix.workspace = true
 zed-alloc-count.workspace = true
 zed-meter-settings.workspace = true

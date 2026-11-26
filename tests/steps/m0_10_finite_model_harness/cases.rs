@@ -110,8 +110,8 @@ fn the_random_generator_repeats_from_its_seed_and_stays_in_range() {
     assert_ne!(Rng::new(43).next_u64(), xs[0]);
     // SplitMix64 from the state 0 (G. L. Steele, D. Lea and C. H. Flood, "Fast splittable
     // pseudorandom number generators", OOPSLA 2014, doi:10.1145/2660193.2660195; read
-    // 2026-11-21; the constants and the departure from the paper are at `tests/src/seed.rs`
-    // `mix`). The value is the one `seed_tests` checks for `mix(0)`, taken from the JDK's
+    // 2026-11-21; the constants and the departure from the paper are at zed-hash's
+    // `finalize`). The value is the one zed-hash's tests check for `mix(0)`, taken from the JDK's
     // SplittableRandom, whose output function is the paper's `mix64variant13`, not the
     // `mix64` of the paper's Figure 16.
     assert_eq!(Rng::new(0).next_u64(), 0xe220_a839_7b1d_cdaf);

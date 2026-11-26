@@ -1496,7 +1496,7 @@ mod tests {
     fn draws_agree_with_the_game(checked: std::ops::Range<u64>) {
         // xorshift64 from a fixed seed, kept: the draws numbered in `checked`, and the draw
         // that takes the second least fixed point, are those of this stream.
-        let mut rng = crate::seed::Xorshift64::new(0x9e37_79b9_7f4a_7c15);
+        let mut rng = zed_hash::Xorshift64::new(0x9e37_79b9_7f4a_7c15);
         let mut next = |k: u64| rng.below(k);
         let (mut decided, mut refused) = (0, 0);
         let second_before = super::SECOND_PASSES.with(std::cell::Cell::get);

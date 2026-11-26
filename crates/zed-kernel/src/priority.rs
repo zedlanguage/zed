@@ -511,16 +511,11 @@ fn source(tag: u64) -> Box<dyn FnMut() -> u64> {
     })
 }
 
-/// splitmix64 from the seed and the tag: the same words on every run of one seed.
+/// splitmix64 (zed-hash's `SplitMix64`, where its source is) from the seed and the tag: the
+/// same words on every run of one seed.
 fn seeded_words(seed: u64, tag: u64) -> impl FnMut() -> u64 {
-    let mut z = seed ^ tag.wrapping_mul(0xd1b5_4a32_d192_ed03);
-    move || {
-        z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut x = z;
-        x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        x ^ (x >> 31)
-    }
+    let mut g = zed_hash::SplitMix64::new(seed ^ tag.wrapping_mul(0xd1b5_4a32_d192_ed03));
+    move || g.next_u64()
 }
 
 /// `ZED_TREAP_SEED`, read once. In this crate's unit tests it is 0 when unset, so that a test of

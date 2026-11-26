@@ -23,9 +23,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use zed_hash::Xorshift64;
 use zed_tests::instances::Rng;
 use zed_tests::scaling::{self, Meter};
-use zed_tests::seed::Xorshift64;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, decide, satisfiable};
 
 use super::stages::{Row, rationally_empty};

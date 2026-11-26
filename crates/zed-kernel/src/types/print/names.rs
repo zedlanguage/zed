@@ -915,15 +915,12 @@ mod tests {
             .collect()
     }
 
-    /// A fixed-seed generator (xorshift64).
-    struct Rng(u64);
+    /// A fixed-seed generator: zed-hash's xorshift64, where its source is.
+    struct Rng(zed_hash::Xorshift64);
 
     impl Rng {
         fn below(&mut self, k: u64) -> usize {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            (self.0 % k) as usize
+            self.0.below(k) as usize
         }
     }
 
@@ -939,7 +936,7 @@ mod tests {
     /// both ways: each name the same.
     #[test]
     fn runs_are_named_apart_as_one_name_at_a_time() {
-        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let mut rng = Rng(zed_hash::Xorshift64::new(0x9e37_79b9_7f4a_7c15));
         for round in 0..3000 {
             let held: Vec<String> = (0..rng.below(4)).map(|_| some_name(&mut rng)).collect();
             let _program = ProgramNames::hold(held.iter().map(String::as_str));
@@ -1102,7 +1099,7 @@ mod tests {
     /// [`NameRunIndex::holds`] is whether some run holds the name.
     #[test]
     fn the_run_index_holds_what_some_run_holds() {
-        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let mut rng = Rng(zed_hash::Xorshift64::new(0x2545_f491_4f6c_dd1d));
         let all: Vec<String> = (0..60).map(|n| Names::Variables.nth(n)).collect();
         let odd = ["x", "T0", "T1", "T4", "T05", "Part1", "$3"];
         for round in 0..400 {

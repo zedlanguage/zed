@@ -17,6 +17,7 @@ members = [
     "crates/zedc-elab",
     "crates/zed-collections",
     "crates/zed-graph",
+    "crates/zed-hash",
     "crates/zed-kernel",
     "crates/zed-numtheory",
     "crates/zed-rt",
@@ -44,6 +45,7 @@ publish = false
 [workspace.dependencies]
 zed-collections = { path = "crates/zed-collections" }
 zed-graph = { path = "crates/zed-graph" }
+zed-hash = { path = "crates/zed-hash" }
 zed-kernel = { path = "crates/zed-kernel" }
 zed-numtheory = { path = "crates/zed-numtheory" }
 zed-rt = { path = "crates/zed-rt" }

@@ -5,16 +5,12 @@ use zed_kernel::types::Type;
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::value::Value;
 
-fn next(s: &mut u64) -> u64 {
-    *s = s
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    *s >> 33
-}
+use zed_hash::Lcg64;
 
-/// A random type `d` deep.
-fn random(s: &mut u64, d: u32) -> Type {
-    let k = next(s);
+/// A random type `d` deep, from the MMIX linear congruential sequence (zed-hash's `Lcg64`,
+/// where its source is).
+fn random(s: &mut Lcg64, d: u32) -> Type {
+    let k = s.next_high();
     if d == 0 || k.is_multiple_of(7) {
         return match k % 6 {
             0 => Type::int(),
@@ -77,10 +73,10 @@ pub fn samples() -> Vec<Type> {
         &(&w | &x) - &(&xor(&w, &y) & &xor(&x, &z)),
         Type::tuple(vec![tree, Type::int()]),
     ];
-    let mut seed = 5;
+    let mut seed = Lcg64::new(5);
     out.extend((0..12).map(|_| random(&mut seed, 3)));
     // A tuple part whose diagram has a node reached by two edges.
-    let mut seed = 3;
+    let mut seed = Lcg64::new(3);
     out.extend((0..=1172).map(|_| random(&mut seed, 5)).last());
     // An xor chain of four one-tuples, whose expressions share their operands.
     out.push((1..4).fold(one(lit(0)), |t, i| {

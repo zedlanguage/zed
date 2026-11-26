@@ -258,12 +258,12 @@ impl Text {
     // `l01_31_zir::bench::shared_strings` and `l01_36a_executables/doubling.rs`.
     pub fn poly_hash(&self) -> u64 {
         if let Some(s) = self.as_flat() {
-            return poly_bytes(s.as_bytes()).0;
+            return poly_bytes(s.as_bytes()).h;
         }
         // Postorder over the distinct nodes, each hashed after its parts, as in the binary
         // form's writer: nodes and their parts form no cycle, since a node is built from parts
         // that exist before it and never changed.
-        let mut done: HashMap<usize, (u64, u64)> = HashMap::new();
+        let mut done: HashMap<usize, PolyHash> = HashMap::new();
         let mut todo: Vec<(&Text, bool)> = vec![(self, false)];
         while let Some((t, ready)) = todo.pop() {
             let id = t.node_id();
@@ -278,14 +278,12 @@ impl Text {
             }
             let hp = match t.piece() {
                 Piece::Block(b) => poly_bytes(b.as_bytes()),
-                Piece::Parts(parts) => parts.iter().fold((0, 1), |(h, p), part| {
-                    let (h2, p2) = done[&part.node_id()];
-                    (poly_add(poly_mul(h, p2), h2), poly_mul(p, p2))
-                }),
+                Piece::Parts(parts) => (parts.iter())
+                    .fold(PolyHash::EMPTY, |acc, part| acc.then(done[&part.node_id()])),
             };
             done.insert(id, hp);
         }
-        done[&self.node_id()].0
+        done[&self.node_id()].h
     }
 
     /// A number for the node at the root of the text's tree, while the text lives: texts with
@@ -678,8 +676,7 @@ fn nodes(mut parts: &[Text]) -> Vec<Text> {
 /// ([`zed_numtheory::m61::P`]).
 const POLY_B: u64 = 0x0f3d_5b79_a2c4_e681;
 
-// `a · b` and `a + b` modulo `2^61 − 1`, for operands below it.
-use zed_numtheory::m61::{add as poly_add, mul as poly_mul};
+use zed_numtheory::m61::PolyHash;
 
 /// The tables of the eight-bytes-at-a-time hash for the base `B`, made at compile time.
 static POLY: zed_numtheory::m61::PolyBytes = zed_numtheory::m61::PolyBytes::new(POLY_B);
@@ -691,8 +688,9 @@ static POLY: zed_numtheory::m61::PolyBytes = zed_numtheory::m61::PolyBytes::new(
 // had them killed at the time limit (FAIL-bench-string-scaling-near-limit). The shared
 // `zed_numtheory::m61::PolyBytes` takes eight bytes per step from tables, the same hash, about
 // 5 instructions per byte; its comment has the method and the proof.
-fn poly_bytes(bytes: &[u8]) -> (u64, u64) {
-    POLY.hash(bytes)
+fn poly_bytes(bytes: &[u8]) -> PolyHash {
+    let (h, pow) = POLY.hash(bytes);
+    PolyHash { h, pow }
 }
 
 /// What one node of a text's tree holds ([`Text::piece`]).

@@ -14,11 +14,11 @@
 
 use std::collections::{BTreeSet, HashSet, VecDeque};
 
+use zed_hash::Xorshift64;
 use zed_kernel::Value;
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
 use zed_tests::instances::Rng;
-use zed_tests::seed::Xorshift64;
 
 // The element classes: 0 is an integer other than 1 to 5, 1 and 2 the integers, 3 false,
 // 4 true, 5 a pair with a 1 first, 6 a pair of integers without, 7 the atom `a`, 8 to 10 the

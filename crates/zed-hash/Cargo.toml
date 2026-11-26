@@ -1,0 +1,18 @@
+[package]
+name = "zed-hash"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# The hash steps and seeded generators every crate shares (DRY-hash-crate-2026-11-26, docs/layout.md
+# "Library DAG"): splitmix64, FNV-1a, xorshift64 and the MMIX linear congruential generator. It
+# depends on no crate at all, so the lowest libraries can use it, and zed-native's build script.
+# An rlib only, as zed-alloc-count is: a dylib's file name does not change with its build, so
+# the build-dependency (built for the host) and the library overwrote each other's
+# libzed_hash.so and the next crate to link it failed with E0460 (DRY-hash-crate-2026-11-26).
+# The crate holds no statics, so a copy in each dylib that uses it behaves the same.
+
+[lints]
+workspace = true

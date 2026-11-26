@@ -22,7 +22,7 @@ use std::sync::{Arc, OnceLock};
 use zed_kernel::sites::{Recorder, Sites};
 use zed_kernel::{Evaluator, Family, KernelError, Lookup, Provenance, Shared, Term, Value, World};
 
-use crate::address::ContentAddress;
+use crate::address::{ContentAddress, Framed};
 use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::build::Build;
 use crate::elab::Unit;
@@ -180,12 +180,10 @@ impl Ports {
             )
         })?;
         let ports = self.to_text();
-        let mut h = blake3::Hasher::new();
-        h.update(b"zed-program\0");
-        h.update(&term.0);
-        h.update(&(ports.len() as u64).to_le_bytes());
-        h.update(ports.as_bytes());
-        Ok(ContentAddress::hashed(&h))
+        Ok(Framed::new(b"zed-program\0")
+            .raw(&term.0)
+            .field(ports.as_bytes())
+            .address())
     }
 
     fn wave(

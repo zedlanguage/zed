@@ -1026,13 +1026,9 @@ fn the_crt_tree_solves_its_congruences() {
 /// DRY-coprime-bases-one.)
 #[test]
 fn the_kernel_trees_agree_on_wide_values() {
-    let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
-    let mut next = move || {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        seed
-    };
+    // xorshift64 (zed-hash's, where its source is).
+    let mut rng = zed_hash::Xorshift64::new(0x9e37_79b9_7f4a_7c15);
+    let mut next = move || rng.next_u64();
     let word = Int::from(i128::from(u64::MAX) + 1);
     let mut wide = || {
         let mut v = Int::from(i128::from(next() >> 20) | 1);

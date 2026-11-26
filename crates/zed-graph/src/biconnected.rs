@@ -136,6 +136,7 @@ pub fn block_of_edges(
 #[cfg(test)]
 mod tests {
     use super::{biconnected, block_of_edges};
+    use zed_hash::Xorshift64;
 
     /// The adjacency of the undirected graph with edges `ends` over `n` nodes, each edge listed
     /// at both ends (a self-loop twice at its node) under its place in `ends`.
@@ -285,34 +286,25 @@ mod tests {
         assert_ne!(block_of[1], block_of[3]);
     }
 
-    /// A step of xorshift64, which stays at 0 once there; [`random_multigraph`] starts it at a
-    /// value that is not 0. The shifts 13, 7, 17 are Marsaglia's (G. Marsaglia, "Xorshift
-    /// RNGs", J. Stat. Softw. 8(14), 2003, doi:10.18637/jss.v008.i14); the full comment is in
-    /// tests/src `seed.rs`, struct `Xorshift64`.
-    fn next(state: &mut u64) -> u64 {
-        *state ^= *state << 13;
-        *state ^= *state >> 7;
-        *state ^= *state << 17;
-        *state
-    }
-
     /// A multigraph of 1 to 9 nodes and up to 2n edges, parallel edges and self-loops among
     /// them, and maybe a node to exclude.
-    fn random_multigraph(state: &mut u64) -> (usize, Vec<(usize, usize)>, Option<usize>) {
-        let n = 1 + (next(state) % 9) as usize;
-        let e = (next(state) % (2 * n as u64 + 1)) as usize;
+    fn random_multigraph(state: &mut Xorshift64) -> (usize, Vec<(usize, usize)>, Option<usize>) {
+        let n = 1 + (state.next_u64() % 9) as usize;
+        let e = (state.next_u64() % (2 * n as u64 + 1)) as usize;
         let ends = (0..e)
-            .map(|_| (next(state) as usize % n, next(state) as usize % n))
+            .map(|_| (state.next_u64() as usize % n, state.next_u64() as usize % n))
             .collect();
-        let gone = (next(state) % 3 == 0).then(|| next(state) as usize % n);
+        let gone = (state.next_u64() % 3 == 0).then(|| state.next_u64() as usize % n);
         (n, ends, gone)
     }
 
     #[test]
     fn blocks_are_the_classes_no_cut_node_separates_on_random_multigraphs() {
-        let mut state =
+        // xorshift64 (zed-hash's, where its source is) from a seed that is not 0.
+        let mut state = Xorshift64::new(
             crate::seed::seed("blocks_are_the_classes_no_cut_node_separates_on_random_multigraphs")
-                | 1;
+                | 1,
+        );
         for _ in 0..3000 {
             let (n, ends, gone) = random_multigraph(&mut state);
             blocks_agree(n, &ends, gone);

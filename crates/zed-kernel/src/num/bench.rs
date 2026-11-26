@@ -253,12 +253,13 @@ fn the_coprime_base_of_a_chain_of_shared_primes_scales() {
 }
 
 /// A number of `words` words from a fixed linear congruential sequence (Knuth's MMIX
-/// constants), its top word not zero: the benches need the same inputs on every run.
+/// constants, zed-hash's `Lcg64`), its top word not zero: the benches need the same inputs on
+/// every run.
 fn bench_number(words: usize, seed: u64) -> BigUint {
-    let mut x = seed;
+    let mut lcg = zed_hash::Lcg64::new(seed);
     let mut ds: Vec<u32> = Vec::with_capacity(2 * words);
     for _ in 0..words {
-        x = (x.wrapping_mul(6364136223846793005)).wrapping_add(1442695040888963407);
+        let x = lcg.next_u64();
         ds.extend([x as u32, (x >> 32) as u32]);
     }
     if let Some(top) = ds.last_mut() {

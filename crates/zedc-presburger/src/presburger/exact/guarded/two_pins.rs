@@ -2220,13 +2220,9 @@ mod edges_tests {
     /// error of the queue or of the corners, not a missing check.
     #[test]
     fn a_polygon_found_holds_every_half_plane_at_every_corner() {
-        let mut s: u64 = 0x9e37_79b9_7f4a_7c15;
-        let mut next = |m: i128| -> i128 {
-            s = s
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            ((s >> 33) % (2 * m as u64 + 1)) as i128 - m
-        };
+        // The MMIX linear congruential sequence (zed-hash's `Lcg64`, where its source is).
+        let mut lcg = zed_hash::Lcg64::new(0x9e37_79b9_7f4a_7c15);
+        let mut next = |m: i128| -> i128 { lcg.below(2 * m as u64 + 1) as i128 - m };
         let mut found = 0;
         for _ in 0..20_000 {
             let h = 3 + (next(2) + 2) as usize + (next(1) + 1) as usize;

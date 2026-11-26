@@ -349,34 +349,17 @@ fn sharing_tied_sets_scales() {
     );
 }
 
-/// The `x` whose [`crate::digest::step`]`(h, x)` is `z`: each step of the finalizer undone in
-/// turn, a xor with a right shift by `s` by `64 / s` more xors (each fixes `s` more high bits),
-/// a multiplication by an odd constant by its inverse modulo `2^64` (Newton's iteration, the
-/// correct low bits doubling from 3 at each of 5 steps).
-fn unstep(h: u64, z: u64) -> u64 {
-    let unshift = |y: u64, s: u32| (0..64 / s).fold(y, |x, _| y ^ (x >> s));
-    let inverse = |c: u64| {
-        (0..5).fold(c, |x: u64, _| {
-            x.wrapping_mul(2u64.wrapping_sub(c.wrapping_mul(x)))
-        })
-    };
-    let mut x = unshift(z, 31);
-    x = unshift(x.wrapping_mul(inverse(0x94d0_49bb_1331_11eb)), 27);
-    x = unshift(x.wrapping_mul(inverse(0xbf58_476d_1ce4_e5b9)), 30);
-    x.wrapping_sub(0x9e37_79b9_7f4a_7c15) ^ h.rotate_left(29)
-}
-
 /// `n` sets of two integer literals `{a, b}`, `a` in `1..=n`, all of one sum of weights: the
 /// weight of `Int(a)` is a public bijection of `a` (`types::scalar`, `mix(1, a)`), so `b` is
-/// the integer whose weight is the sum less `a`'s, found by [`unstep`]. Each `b` is checked
-/// against its weight, and the sets are checked distinct.
+/// the integer whose weight is the sum less `a`'s, found by [`zed_hash::unstep`]. Each `b` is
+/// checked against its weight, and the sets are checked distinct.
 fn literal_pairs_of_one_sum(n: usize) -> Vec<TreapSet<crate::value::Value>> {
     use crate::value::Value;
     const SUM: u64 = 0x5eed_f00d_cafe_0001;
     let sets: Vec<TreapSet<Value>> = (1..=n as i64)
         .map(|a| {
             let want = SUM.wrapping_sub(Value::Int(a).weight());
-            let b = unstep(1, want) as i64;
+            let b = zed_hash::unstep(1, want) as i64;
             assert_eq!(Value::Int(b).weight(), want, "the weight of {b} inverted");
             [Value::Int(a), Value::Int(b)].into_iter().collect()
         })

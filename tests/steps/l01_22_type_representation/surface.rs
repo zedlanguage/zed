@@ -336,16 +336,17 @@ fn records_of_a_shape_and_its_differences_read_back_as_the_same_type() {
     }
 }
 
-/// A seeded generator of formulas over tuple types.
-struct Seed(u64);
+/// A seeded generator of formulas over tuple types, on the MMIX linear congruential sequence
+/// (zed-hash's `Lcg64`, where its source is).
+struct Seed(zed_hash::Lcg64);
 
 impl Seed {
+    fn new(seed: u64) -> Seed {
+        Seed(zed_hash::Lcg64::new(seed))
+    }
+
     fn next(&mut self, m: u64) -> u64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (self.0 >> 33) % m
+        self.0.below(m)
     }
 
     fn cell(&mut self) -> Type {
@@ -412,7 +413,7 @@ fn one_of_each_class() -> [Value; 8] {
 /// type that reads back exactly (FAIL-surface-rows-read-back-seed). Neither difference may be
 /// shown inhabited, since a value the kernel builds for it would be a value told apart.
 fn formula_reads_back(seed: u64) {
-    let mut f = Seed(seed);
+    let mut f = Seed::new(seed);
     let w = 1 + f.next(3) as usize;
     let t = f.formula(w, 3);
     let (s, back) = printed(&t);
@@ -596,7 +597,7 @@ fn the_text_does_not_depend_on_what_was_built_before() {
     let text = |junk: bool| -> String {
         let mut out = String::new();
         for &s in &seeds {
-            let mut seed = Seed(s);
+            let mut seed = Seed::new(s);
             let w = 1 + seed.next(3) as usize;
             let kept: Vec<Type> = match junk {
                 true => (0..50).map(|i| tuple(&[lit(9000 + i), lit(i)])).collect(),
@@ -855,7 +856,7 @@ fn a_type_of_points_prints_without_the_top_type_and_reads_back() {
     let (mut rng, seed) = zed_tests::instances::Rng::fresh("types of points");
     for _ in 0..100 {
         let case = rng.next_u64();
-        let t = points(&mut Seed(case), 5);
+        let t = points(&mut Seed::new(case), 5);
         let s = round_trip(&t);
         assert!(
             !s.to_string().contains('_'),

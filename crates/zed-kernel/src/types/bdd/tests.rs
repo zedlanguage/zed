@@ -1005,7 +1005,9 @@ fn every_exclusive_or_built_is_the_one_reached(firsts: &HashMap<u64, Part<Row>>)
 /// they live. The first part of each function is held, so that a later one is compared with
 /// a live node: a node freed and made again takes a new id. Returns the first part made of
 /// each exclusive-or function the `rounds` rounds from `seed` reached, by its mask of values.
-fn exclusive_or_rounds(mut seed: u64, rounds: usize) -> HashMap<u64, Part<Row>> {
+fn exclusive_or_rounds(seed: u64, rounds: usize) -> HashMap<u64, Part<Row>> {
+    // The MMIX linear congruential sequence (zed-hash's `Lcg64`, where its source is).
+    let mut rng = zed_hash::Lcg64::new(seed);
     const POOL: usize = 50;
     let lits: Vec<(Part<Row>, u64)> = (0..6)
         .map(|i| {
@@ -1033,10 +1035,7 @@ fn exclusive_or_rounds(mut seed: u64, rounds: usize) -> HashMap<u64, Part<Row>> 
     let (mut pool, mut xors) = (lits.clone(), lits.clone());
     let mut firsts: HashMap<u64, Part<Row>> = HashMap::new();
     for _ in 0..rounds {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        let pick = (seed >> 33) as usize;
+        let pick = rng.next_high() as usize;
         let from = if pick % 5 < 2 { &xors } else { &pool };
         let (p, pm) = from[pick % from.len()].clone();
         let (q, qm) = from[(pick / 7) % from.len()].clone();

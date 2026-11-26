@@ -28445,13 +28445,9 @@ mod tests {
     /// to four arms, coefficients in -3..=3, products of one or two ranges, some unbounded.
     #[test]
     fn kept_disjunctions_answer_as_the_check() {
-        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
-        let mut next = |m: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % m
-        };
+        // xorshift64 (zed-hash's, where its source is).
+        let mut rng = zed_hash::Xorshift64::new(0x2545_f491_4f6c_dd1d);
+        let mut next = |m: u64| rng.below(m);
         let (x, y): (Arc<str>, Arc<str>) = ("x".into(), "y".into());
         let fin = |v: i64| End::Fin(Num::from(v));
         let mut skips = 0;
@@ -28551,13 +28547,9 @@ mod tests {
 
     #[test]
     fn staircase_queries_and_plane_cones_match_a_scan() {
-        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
-        let mut next = |m: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % m
-        };
+        // xorshift64 (zed-hash's, where its source is).
+        let mut rng = zed_hash::Xorshift64::new(0x9e37_79b9_7f4a_7c15);
+        let mut next = |m: u64| rng.below(m);
         for _ in 0..300 {
             let n = next(41) as usize;
             let rows: Vec<(i64, i64)> = (0..n)
@@ -28618,13 +28610,9 @@ mod tests {
     /// rays at one `j`, on one line and under the hull, and rows with `p = 0`.
     #[test]
     fn the_ray_hull_gives_the_least_bound_of_every_ray() {
-        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
-        let mut next = |m: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % m
-        };
+        // xorshift64 (zed-hash's, where its source is).
+        let mut rng = zed_hash::Xorshift64::new(0x2545_f491_4f6c_dd1d);
+        let mut next = |m: u64| rng.below(m);
         for round in 0..300 {
             let n = 1 + next(if round < 100 { 6 } else { 40 }) as usize;
             let mut rays: Vec<(Int, Int)> = (0..n)
@@ -29427,13 +29415,9 @@ mod tests {
                 }
             }
         };
-        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
-        let mut next = |m: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed % m) as i64
-        };
+        // xorshift64 (zed-hash's, where its source is).
+        let mut rng = zed_hash::Xorshift64::new(0x2545_f491_4f6c_dd1d);
+        let mut next = |m: u64| rng.below(m) as i64;
         let name = |n: &str| Lin::atom(Atom::Sym(Arc::from(n)));
         let ge = |lin: Lin| Formula::Con(Con { lin, rel: Rel::Ge });
         for _ in 0..200 {

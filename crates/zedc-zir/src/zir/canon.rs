@@ -38,7 +38,7 @@ use super::binary::Held;
 use super::{Edge, Node, Op, Region, RegionKind, Src, binary};
 use crate::canon::binders::{level_name, level_of};
 use crate::canon::{Def, Facet, RULES};
-use zedc_base::address::ContentAddress;
+use zedc_base::address::{ContentAddress, Framed};
 
 /// The ranks of the four rules on `g`, in rule order.
 pub fn ranks(g: &Region) -> [u64; 4] {
@@ -192,14 +192,12 @@ pub fn node_key(n: &Node, regions: &[ContentAddress]) -> Result<ContentAddress, 
 /// The key of a node whose [`shell_bytes`] are `shell` and whose regions have the keys
 /// `regions`.
 fn key_of(shell: &[u8], regions: &[ContentAddress]) -> ContentAddress {
-    let mut h = blake3::Hasher::new();
-    h.update(b"zed-zir-node\0");
-    h.update(shell);
-    h.update(&(regions.len() as u64).to_le_bytes());
+    let mut h = Framed::new(b"zed-zir-node\0");
+    h.raw(shell).count(regions.len());
     for r in regions {
-        h.update(&r.0);
+        h.raw(&r.0);
     }
-    ContentAddress::hashed(&h)
+    h.address()
 }
 
 /// The key of region `r` whose nodes' regions have the keys `inner`, one list per node, or
@@ -207,18 +205,16 @@ fn key_of(shell: &[u8], regions: &[ContentAddress]) -> ContentAddress {
 pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> Result<ContentAddress, TooLarge> {
     let mut h = region_hasher(&region_bytes(r)?.0, r.nodes.len());
     for (n, keys) in r.nodes.iter().zip(inner) {
-        h.update(&node_key(n, keys)?.0);
+        h.raw(&node_key(n, keys)?.0);
     }
-    Ok(ContentAddress::hashed(&h))
+    Ok(h.address())
 }
 
 /// The hasher of a region's key, given its [`region_bytes`] and its number of nodes, before
 /// its nodes' keys.
-fn region_hasher(bytes: &[u8], nodes: usize) -> blake3::Hasher {
-    let mut h = blake3::Hasher::new();
-    h.update(b"zed-zir-region\0");
-    h.update(bytes);
-    h.update(&(nodes as u64).to_le_bytes());
+fn region_hasher(bytes: &[u8], nodes: usize) -> Framed {
+    let mut h = Framed::new(b"zed-zir-region\0");
+    h.raw(bytes).count(nodes);
     h
 }
 
@@ -382,7 +378,7 @@ impl Regions {
         for ((n, keys), numbers) in r.nodes.iter().zip(keys).zip(numbers) {
             let (shell, held) = shell_bytes(n)?;
             strings.extend(held.iter().map(|s| self.strings.number(s)));
-            h.update(&key_of(&shell, keys).0);
+            h.raw(&key_of(&shell, keys).0);
             nodes.push((shell, numbers));
         }
         let next = self.contents.len();
@@ -392,7 +388,7 @@ impl Regions {
             strings,
         };
         let number = *self.contents.entry(contents).or_insert(next);
-        Ok((ContentAddress::hashed(&h), number))
+        Ok((h.address(), number))
     }
 }
 
@@ -465,10 +461,9 @@ pub fn key(g: &Region) -> Result<ContentAddress, TooLarge> {
 pub fn address(g: &Region) -> Result<ContentAddress, TooLarge> {
     let mut normal = canonicalize(g);
     flat_strings(&mut normal)?;
-    let mut h = blake3::Hasher::new();
-    h.update(b"zed-zir\0");
-    h.update(&binary::encode(&normal)?);
-    Ok(ContentAddress::hashed(&h))
+    Ok(Framed::new(b"zed-zir\0")
+        .raw(&binary::encode(&normal)?)
+        .address())
 }
 
 /// Holds each string of `g`'s constants and matched literals as one block, its text unchanged,

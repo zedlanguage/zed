@@ -15,7 +15,7 @@ use std::ops::Neg;
 use std::sync::{Arc, OnceLock};
 
 use zed_kernel::{Prim, Value};
-use zed_numtheory::m61::{P, add as add_mod, mul as mul_mod};
+use zed_numtheory::m61::{P, PolyHash};
 
 use super::landmarks::Landmarks;
 pub use zedc_int::int::Num;
@@ -190,10 +190,9 @@ struct Node {
     /// A modulus `m > 1` and residue `r` such that every finite end of the subtree's pieces is
     /// `r` modulo `m`: set by the first [`in_class`] that finds it so.
     in_class: OnceLock<(Num, Num)>,
-    /// The hash of the subtree's pieces in order: `Σ h_i · R^(count - 1 - i)` modulo `P`.
-    hash: u64,
-    /// `R^count` modulo `P`.
-    pow: u64,
+    /// The hash of the subtree's pieces in order, `hash.h = Σ h_i · R^(count - 1 - i)` modulo
+    /// `P`, with `hash.pow = R^count` modulo `P`.
+    hash: PolyHash,
 }
 
 /// The base of the content hash, below the modulus `P = 2^61 - 1` ([`zed_numtheory::m61`]).
@@ -231,20 +230,18 @@ fn height(t: &Link) -> u8 {
 /// The node with the given children and piece, which lies between them with at least one
 /// integer missing on each side.
 fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
-    let (mut hash, mut pow, mut count, mut h) = (0, 1, 1, 0);
+    let (mut hash, mut count, mut h) = (PolyHash::EMPTY, 1, 0);
     let first = match &left {
         Some(l) => {
-            (hash, pow, count, h) = (l.hash, l.pow, count + l.count, l.height);
+            (hash, count, h) = (l.hash, count + l.count, l.height);
             l.first.clone()
         }
         None => piece.0.clone(),
     };
-    hash = add_mod(mul_mod(hash, R), piece_hash);
-    pow = mul_mod(pow, R);
+    hash = hash.then(PolyHash::unit(piece_hash, R));
     let last = match &right {
         Some(r) => {
-            hash = add_mod(mul_mod(hash, r.pow), r.hash);
-            pow = mul_mod(pow, r.pow);
+            hash = hash.then(r.hash);
             count += r.count;
             h = h.max(r.height);
             r.last.clone()
@@ -264,7 +261,6 @@ fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
         members: OnceLock::new(),
         in_class: OnceLock::new(),
         hash,
-        pow,
     })
 }
 
@@ -1561,7 +1557,7 @@ impl PartialEq for IntervalSet {
         // in order, the field comment's formula. Equal hashes prove nothing (a collision
         // modulo `P`), so the walk below decides them exactly; `R` and `piece_hash` affect
         // only how often the walk runs, never the answer. Test: `tests::check_tree`, called by
-        // `tests::agrees` on every set the tests build, asserts `(n.hash, n.pow)` against the
+        // `tests::agrees` on every set the tests build, asserts `n.hash` (both parts) against the
         // formula at each node; it cannot catch a tree shape that no test builds.
         if x.count != y.count || x.hash != y.hash {
             return false;
@@ -1604,7 +1600,7 @@ impl Eq for IntervalSet {}
 impl std::hash::Hash for IntervalSet {
     /// The count and the content hash of the pieces: `O(1)`.
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let (count, hash) = self.root.as_ref().map_or((0, 0), |n| (n.count, n.hash));
+        let (count, hash) = self.root.as_ref().map_or((0, 0), |n| (n.count, n.hash.h));
         state.write_usize(count);
         state.write_u64(hash);
     }
@@ -2027,6 +2023,7 @@ mod bench;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zed_numtheory::m61::{add as add_mod, mul as mul_mod};
 
     fn set(pieces: &[(i64, i64)]) -> IntervalSet {
         IntervalSet::from_pieces(
@@ -2201,7 +2198,7 @@ mod tests {
             pow = mul_mod(pow, R);
         }
         assert_eq!(*super::gap(n), gap);
-        assert_eq!((n.hash, n.pow), (hash, pow));
+        assert_eq!((n.hash.h, n.hash.pow), (hash, pow));
         hl.max(hr) + 1
     }
 

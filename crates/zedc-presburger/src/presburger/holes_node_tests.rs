@@ -46,23 +46,19 @@ fn leaves(f: &Formula) -> usize {
     }
 }
 
-/// A small generator, so the runs are the same on every run of the tests.
-fn next(seed: &mut u64) -> u64 {
-    *seed = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    *seed >> 33
-}
+// A small generator, so the runs are the same on every run of the tests: the MMIX linear
+// congruential sequence (zed-hash's `Lcg64`, where its source is).
+use zed_hash::Lcg64;
 
 #[test]
 fn a_set_of_holes_merges_its_runs_and_finds_each_member() {
-    let mut seed = 7u64;
+    let mut seed = Lcg64::new(7);
     for _ in 0..300 {
-        let n = (next(&mut seed) % 6) as usize;
+        let n = (seed.next_high() % 6) as usize;
         let runs: Vec<(i128, i128)> = (0..n)
             .map(|_| {
-                let lo = (next(&mut seed) % 40) as i128 - 20;
-                (lo, lo + (next(&mut seed) % 6) as i128 - 1)
+                let lo = (seed.next_high() % 40) as i128 - 20;
+                (lo, lo + (seed.next_high() % 6) as i128 - 1)
             })
             .collect();
         let s = set(&runs);
@@ -156,18 +152,18 @@ fn nodes_of_equal_content_are_equal_and_hash_alike() {
 fn the_solver_reads_a_node_as_its_clauses() {
     // The generic route (META3 H7): each answer on random boxes and holes is the answer on the
     // clauses written out, and the node is written once and counted.
-    let mut seed = 11u64;
+    let mut seed = Lcg64::new(11);
     for i in 0..120 {
-        let n = 1 + (next(&mut seed) % 4) as usize;
+        let n = 1 + (seed.next_high() % 4) as usize;
         let runs: Vec<(i128, i128)> = (0..n)
             .map(|_| {
-                let lo = (next(&mut seed) % 16) as i128 - 4;
-                (lo, lo + (next(&mut seed) % 4) as i128)
+                let lo = (seed.next_high() % 16) as i128 - 4;
+                (lo, lo + (seed.next_high() % 4) as i128)
             })
             .collect();
         let (lo, hi) = (
-            (next(&mut seed) % 8) as i128 - 2,
-            (next(&mut seed) % 14) as i128,
+            (seed.next_high() % 8) as i128 - 2,
+            (seed.next_high() % 14) as i128,
         );
         let t = y("x").plus(&y("z"));
         let bx = vec![

@@ -9,11 +9,11 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::seed::Xorshift64;
 use crate::term::build::{app, lam, let_, lit, prim, var};
 use crate::term::walk::{Built, Kid, kids, rebuild};
 use crate::term::{Evidence, FixKind, GuardPos, Pattern, Prim, Shared, Term, Witness};
 use crate::value::Value;
+use zed_hash::Xorshift64;
 
 /// The names `p` binds, each match of a `Bind`, by recursion: `matches` binds every `Bind` of a
 /// pattern that matches (eval.rs `matches_any`, `matches`), and no other pattern binds.

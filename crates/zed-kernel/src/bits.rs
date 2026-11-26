@@ -769,15 +769,10 @@ mod tests {
     fn shifting_a_built_value_agrees_with_dividing_by_the_power() {
         let pow2 = |k: u64| two_pow(&Rat::int(BigInt::from(k))).unwrap();
         let rat = |n: &BigInt| -> Cow<'static, Rat> { Cow::Owned(Rat::int(n.clone())) };
-        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-        let mut next = || {
-            // xorshift64 (Marsaglia 2003, doi:10.18637/jss.v008.i14), enough to spread the
-            // digits; any sequence would test the same identities.
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed
-        };
+        // xorshift64 (zed-hash's, where its source is), enough to spread the digits; any
+        // sequence would test the same identities.
+        let mut rng = zed_hash::Xorshift64::new(0x9e37_79b9_7f4a_7c15);
+        let mut next = || rng.next_u64();
         let shr = |x: &Rat, k: u64| Value::integer(x.div_euclid(&pow2(k)).unwrap());
         // The quotient and remainder by kept powers, the path before BIT-shift-bytes; a
         // result that only a built number of more digits than memory holds can be is refused

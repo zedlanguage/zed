@@ -70,7 +70,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap};
 use std::ops::Range;
 
-use zed_numtheory::m61::{P, add, mul, sub};
+use zed_numtheory::m61::{P, Prefix, add, mul, powers, sub};
 
 use crate::intern::Interner;
 
@@ -135,10 +135,10 @@ enum Kind {
     Fold,
 }
 
-/// The prefix hashes of one string and the powers of `BASE` up to its length.
+/// The prefix hashes of one string ([`Prefix`]) and its characters.
 struct Hashes {
-    /// `pre[k]`, the hash of the first `k` characters.
-    pre: Vec<u64>,
+    /// `pre.get(k)`, the hash of the first `k` characters.
+    pre: Prefix,
     /// The characters, each as `c + 1`, below `P`.
     chars: Vec<u64>,
 }
@@ -146,12 +146,7 @@ struct Hashes {
 impl Hashes {
     fn new(s: &str) -> Self {
         let chars: Vec<u64> = s.chars().map(|c| u64::from(c) + 1).collect();
-        let mut pre = Vec::with_capacity(chars.len() + 1);
-        pre.push(0);
-        for &c in &chars {
-            let h = *pre.last().expect("pre starts with 0");
-            pre.push(add(mul(h, BASE), c));
-        }
+        let pre = Prefix::new(BASE, chars.iter().copied());
         Hashes { pre, chars }
     }
 
@@ -161,7 +156,7 @@ impl Hashes {
 
     /// The hash of the whole string.
     fn whole(&self) -> u64 {
-        self.pre[self.len()]
+        self.pre.whole()
     }
 
     /// The hash of the string with the character at `i` deleted:
@@ -169,9 +164,8 @@ impl Hashes {
     /// suffix after it, plus that suffix (Horner's rule split at `i`).
     fn deleted(&self, i: usize, pow: &[u64]) -> u64 {
         let n = self.len();
-        let shift = pow[n - 1 - i];
-        let suffix = sub(self.whole(), mul(self.pre[i + 1], shift));
-        add(mul(self.pre[i], shift), suffix)
+        let suffix = self.pre.span(i + 1, n, pow);
+        add(mul(self.pre.get(i), pow[n - 1 - i]), suffix)
     }
 
     /// The hash of the string with the characters at `i` and `i + 1` swapped: the character at
@@ -228,12 +222,7 @@ pub fn nearest<'a>(
         .chain(written.iter().map(|(w, _)| w.chars().count()))
         .max()
         .unwrap_or(0);
-    let mut pow = Vec::with_capacity(longest + 1);
-    pow.push(1);
-    for _ in 0..longest {
-        let p = *pow.last().expect("pow starts with 1");
-        pow.push(mul(p, BASE));
-    }
+    let pow = powers(BASE, longest);
 
     // The keys each spelling is filed under, by id.
     let mut keys: Interner<Key> = Interner::default();

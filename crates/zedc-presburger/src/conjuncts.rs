@@ -4684,12 +4684,11 @@ mod tests {
         let mut with = Uses::<u32>::default();
         let mut plain = Uses::<u32>::default();
         let mut last = Last::default();
-        // A fixed linear congruential sequence, so the run is the same each time.
-        let mut s: u64 = 12345;
+        // A fixed linear congruential sequence (zed-hash's `Lcg64`, where its source is), so
+        // the run is the same each time.
+        let mut lcg = zed_hash::Lcg64::new(12345);
         for step in 0..4000 {
-            s = s
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+            let s = lcg.next_u64();
             let t = ((s >> 33) % 7) as u32;
             let add = (s >> 40) % 3 != 0;
             // Mostly the same value at x then y, as an index of a conjunct's names gives it.

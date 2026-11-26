@@ -3,11 +3,11 @@
 //! and m bytes is O(n + m) (proof at `Out::string`, crates/zedc-zir/src/canon/serial.rs). The
 //! benchmarks of `string_nodes.rs`, whose tests check the bytes written at small sizes.
 
+use zed_hash::Xorshift64;
 use zed_kernel::term::build::lit;
 use zed_kernel::text::Text;
 use zed_kernel::value::Value;
 use zed_tests::scaling::{check, check_order, compare_costs, inputs};
-use zed_tests::seed::Xorshift64;
 use zedc::canon::{self, Def};
 
 fn holding(t: Text) -> Def {

@@ -43,6 +43,7 @@
 //! the heuristics (smoothness, the multiplier, the parameters) bear on the time only.
 
 use std::collections::HashMap;
+use zed_hash::Xorshift64;
 
 use crate::factor::{Montgomery, Word};
 use crate::{gcd_u128, mul_mod, odd_primes_below, pow_mod};
@@ -335,7 +336,9 @@ struct Sieve<'b> {
     target: f64,
     /// `log2(m sqrt(kN / 2))` less the slack: values at or above it are divided out.
     threshold: u8,
-    rng: u64,
+    /// xorshift64 (zed-hash's, where its source is), fixed seed: the choice of `a` is
+    /// reproducible.
+    rng: Xorshift64,
     /// The indices in `base.primes` of the primes of the current `a`, and `a` itself.
     a_idx: Vec<usize>,
     a: u128,
@@ -370,7 +373,7 @@ impl<'b> Sieve<'b> {
             par,
             target: (2.0 * kn_f).sqrt() / m,
             threshold,
-            rng: 0x9E37_79B9_7F4A_7C15,
+            rng: Xorshift64::new(0x9E37_79B9_7F4A_7C15),
             a_idx: Vec::new(),
             a: 1,
             big_b: Vec::new(),
@@ -386,16 +389,6 @@ impl<'b> Sieve<'b> {
             partials: HashMap::new(),
             wanted: EXTRA,
         }
-    }
-
-    /// xorshift64 (Marsaglia 2003), fixed seed: the choice of `a` is reproducible.
-    fn next_rand(&mut self) -> u64 {
-        let mut x = self.rng;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.rng = x;
-        x
     }
 
     fn polys(&self) -> usize {
@@ -427,7 +420,7 @@ impl<'b> Sieve<'b> {
             let mut tries = 0;
             while idx.len() + 1 < s && tries < 1000 {
                 tries += 1;
-                let i = lo + (self.next_rand() % (hi - lo) as u64) as usize;
+                let i = lo + self.rng.below((hi - lo) as u64) as usize;
                 if !idx.contains(&i) {
                     idx.push(i);
                     prod *= f64::from(base.primes[i]);

@@ -44,7 +44,7 @@ use zed_kernel::value::Value;
 
 pub use def::{Def, Facet};
 pub use domain::Domain;
-use zedc_base::address::ContentAddress;
+use zedc_base::address::{ContentAddress, Framed};
 
 /// A rewrite rule of the canonicalizer.
 pub struct Rule {
@@ -267,10 +267,9 @@ fn hashed(
     normal: &Def,
     refs: &dyn Fn(&str) -> Option<ContentAddress>,
 ) -> Result<ContentAddress, TooLarge> {
-    let mut h = blake3::Hasher::new();
-    h.update(b"zed-canon\0");
-    h.update(&serialize(normal, refs)?);
-    Ok(ContentAddress::hashed(&h))
+    Ok(Framed::new(b"zed-canon\0")
+        .raw(&serialize(normal, refs)?)
+        .address())
 }
 
 /// The content address of the definition `name` whose body is `body`, with no domain and no
@@ -321,20 +320,16 @@ pub fn export_address(
     params: &[(u32, Arc<str>)],
     inside: Option<&[u8; 32]>,
 ) -> ContentAddress {
-    let mut h = blake3::Hasher::new();
-    h.update(b"zed-export\0");
-    h.update(&body.0);
-    h.update(&(params.len() as u64).to_le_bytes());
+    let mut h = Framed::new(b"zed-export\0");
+    h.raw(&body.0).count(params.len());
     for (index, name) in params {
-        h.update(&index.to_le_bytes());
-        h.update(&(name.len() as u64).to_le_bytes());
-        h.update(name.as_bytes());
+        h.raw(&index.to_le_bytes()).field(name.as_bytes());
     }
     match inside {
-        Some(digest) => h.update(&[1]).update(digest),
-        None => h.update(&[0]),
+        Some(digest) => h.raw(&[1]).raw(digest),
+        None => h.raw(&[0]),
     };
-    ContentAddress::hashed(&h)
+    h.address()
 }
 
 /// The content address of a unit (step M0.11): the BLAKE3-256 hash of `zed-unit\0`,
@@ -346,15 +341,12 @@ pub fn export_address(
 pub fn unit_address(exports: &[(&str, ContentAddress)]) -> ContentAddress {
     let mut exports = exports.to_vec();
     exports.sort();
-    let mut h = blake3::Hasher::new();
-    h.update(b"zed-unit\0");
-    h.update(&(exports.len() as u64).to_le_bytes());
+    let mut h = Framed::new(b"zed-unit\0");
+    h.count(exports.len());
     for (name, address) in exports {
-        h.update(&(name.len() as u64).to_le_bytes());
-        h.update(name.as_bytes());
-        h.update(&address.0);
+        h.field(name.as_bytes()).raw(&address.0);
     }
-    ContentAddress::hashed(&h)
+    h.address()
 }
 
 #[cfg(test)]

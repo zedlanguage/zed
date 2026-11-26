@@ -47,6 +47,8 @@ zedc-solvers = { workspace = true, features = ["counts"] }
 # As for zedc-solvers: this crate with the features `counts` and `preimage-ref` the step tests give
 # it.
 zedc-preimage = { path = ".", features = ["counts", "preimage-ref"] }
+# The generators of tests/src/seed.rs, which the tests compile in by `#[path]`.
+zed-hash.workspace = true
 # The scaling test of the rule of low complexity (tests/src/scaling.rs), which preimage's tests use.
 rustix.workspace = true
 zed-alloc-count.workspace = true

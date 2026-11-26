@@ -726,32 +726,9 @@ pub fn fixed_hasher() -> std::hash::DefaultHasher {
     std::hash::DefaultHasher::new()
 }
 
-/// The digest `h` with the word `x` added: splitmix64's finalizer of the two, the step of
-/// [`Digest`], and the combination of two digests that `value` and `types` build theirs with;
-/// also the step of `zedc_preimage::address`'s digest of terms (DRY-sorted-structures, row 2).
-///
-/// The constants are splitmix64's: S. Vigna, `splitmix64.c` (2015, public domain,
-/// <https://prng.di.unimi.it/splitmix64.c>), "a fixed-increment version of Java 8's
-/// SplittableRandom generator", which is G. L. Steele Jr., D. Lea and C. H. Flood, "Fast
-/// splittable pseudorandom number generators", OOPSLA 2014, ACM, pp. 453-472,
-/// doi:10.1145/2660193.2660195 (Crossref and Vigna's source checked 2026-11-20; the constants
-/// here equal his). The golden-ratio increment `0x9e37_79b9_7f4a_7c15` and the multipliers
-/// and shifts 30, 27, 31 of its finalizer, a bijection of `u64` ("xorshifts and
-/// multiplications by odd constants are invertible", Vigna) that mixes the input bits into
-/// the output bits (an avalanche claim not tested here). The
-/// rotation by 29 of `h` before the xor makes the step depend on the order of the words, so
-/// `step(step(0, a), b)` and `step(step(0, b), a)` differ; `bdd::set::tests` inverts the step
-/// in each argument and relies on these exact constants.
-///
-/// `tests/src/seed.rs` `mix` is a copy of `step(0, x)`, kept because zed-graph and zedc-solvers
-/// compile that file into their tests and do not depend on this crate.
-#[inline]
-pub fn step(h: u64, x: u64) -> u64 {
-    let mut z = (h.rotate_left(29) ^ x).wrapping_add(0x9e37_79b9_7f4a_7c15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
-}
+/// The digest `h` with the word `x` added, the step of [`Digest`]: zed-hash's splitmix64 step,
+/// where its constants, citations, proof and tests are (DRY-hash-crate-2026-11-26).
+pub use zed_hash::step;
 
 #[cfg(test)]
 mod tests {
@@ -874,56 +851,6 @@ mod tests {
             (n.as_str(), i).hash(&mut d);
             assert_eq!(digest_hash(&(n.as_str(), i)), d.finish());
         }
-    }
-
-    /// TEST-dry-shared-units: `step(0, x)` is SplitMix64's output for the state `x + γ` (Vigna's
-    /// `splitmix64.c`: the state is advanced by γ = 0x9e3779b97f4a7c15, then mixed), so the step
-    /// from 0 over 0, γ, 2γ gives the reference generator's first three outputs seeded with 0.
-    /// The values were computed by a transcription of `splitmix64.c` apart from this crate
-    /// (2026-11-20); they pin the constants `bdd::set::tests` relies on.
-    #[test]
-    fn the_step_from_zero_is_splitmix64() {
-        const GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
-        let outs: Vec<u64> = (0..3u64).map(|k| step(0, k.wrapping_mul(GAMMA))).collect();
-        assert_eq!(
-            outs,
-            [
-                0xe220_a839_7b1d_cdaf,
-                0x6e78_9e6a_a1b9_65f4,
-                0x06c4_5d18_8009_454f
-            ]
-        );
-    }
-
-    /// The step is a bijection in each argument (a rotation, an xor, an addition and the
-    /// invertible finalizer), so no two of many words give one value from one `h`, and no two
-    /// of many `h` from one word; and it depends on the order of the words. Negative control:
-    /// a step that ignores `h` (only the finalizer of `x`) gives one value for every `h`, which
-    /// the second check catches.
-    #[test]
-    fn the_step_is_one_to_one_in_each_argument_and_depends_on_order() {
-        use std::collections::HashSet;
-        let (mut rng, _) = crate::seed::Rng::fresh("the_step_is_one_to_one_in_each_argument");
-        let words: Vec<u64> = (0..20_000)
-            .map(|_| rng.next_u64())
-            .chain([0, 1, u64::MAX])
-            .collect();
-        let h = rng.next_u64();
-        let distinct = |f: &dyn Fn(u64) -> u64| words.iter().map(|&w| f(w)).collect::<HashSet<_>>();
-        assert_eq!(distinct(&|x| step(h, x)).len(), words.len());
-        assert_eq!(distinct(&|g| step(g, h)).len(), words.len());
-        let ordered = |f: &dyn Fn(u64, u64) -> u64| {
-            (words.windows(2))
-                .filter(|w| w[0] != w[1])
-                .all(|w| f(f(0, w[0]), w[1]) != f(f(0, w[1]), w[0]))
-        };
-        assert!(ordered(&step));
-        let ignores_h = |_: u64, x: u64| step(0, x);
-        assert_eq!(distinct(&|g| ignores_h(g, h)).len(), 1);
-        assert!(
-            !ordered(&|g, x| step(0, x) ^ g),
-            "an xor of the words is caught as unordered"
-        );
     }
 
     /// `ZED_TEXT_SEED` (TEST-kernel-num-rat-units), read once per process, so each case runs in

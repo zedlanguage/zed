@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::scaling;
+use zed_hash::Lcg64;
 mod bench;
 
 /// `x mod 3 == 2`, `0 <= x <= 10000`, and `n` atoms fixed one after another: `a_n == 1` and
@@ -503,13 +504,8 @@ fn a_short_interval_over_many_moduli_is_decided_by_the_sweep() {
         ],
     );
     // A small linear congruential generator (Knuth's MMIX constants), so the draws are fixed.
-    let mut state = 0x5eed_u64;
-    let mut below = |n: i64| {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((state >> 33) % n as u64) as i64
-    };
+    let mut state = Lcg64::new(0x5eed);
+    let mut below = |n: i64| lcg_below(&mut state, n);
     let lit = |below: &mut dyn FnMut(i64) -> i64| {
         let m = 2 + below(8);
         let a = below(m);
@@ -562,7 +558,7 @@ fn a_bounded_regime_the_base_cannot_write_is_decided() {
             vec![(6, vec![(0, 2), (4, 5)]), (11, vec![(4, 4)])],
         ],
     );
-    let mut state = 0x7837_u64;
+    let mut state = Lcg64::new(0x7837);
     let mut below = |n: i64| lcg_below(&mut state, n);
     let mut with_point = 0;
     for _ in 0..500 {
@@ -589,7 +585,7 @@ fn a_bounded_regime_the_base_cannot_write_is_decided() {
 /// upper one; without the sweep of one period, some are left undecided.
 #[test]
 fn a_regime_with_one_bound_the_base_cannot_write_is_decided() {
-    let mut state = 0x0b0d_u64;
+    let mut state = Lcg64::new(0x0b0d);
     let mut below = |n: i64| lcg_below(&mut state, n);
     let mut with_point = 0;
     for i in 0..300 {
@@ -620,7 +616,7 @@ fn a_regime_with_one_bound_the_base_cannot_write_is_decided() {
 /// `one_scope::one_variable_answers_do_not_depend_on_names` and the tests named with it.
 #[test]
 fn a_regime_with_no_bound_the_base_cannot_write_is_decided() {
-    let mut state = 0x0b0e_u64;
+    let mut state = Lcg64::new(0x0b0e);
     let mut below = |n: i64| lcg_below(&mut state, n);
     let mut with_point = 0;
     for _ in 0..300 {
@@ -786,13 +782,10 @@ fn gcd_i64(a: i64, b: i64) -> i64 {
     if b == 0 { a } else { gcd_i64(b, a % b) }
 }
 
-/// The next draw below `n` of a small linear congruential generator (Knuth's MMIX constants),
-/// so the draws are fixed by the seed.
-fn lcg_below(state: &mut u64, n: i64) -> i64 {
-    *state = state
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    ((*state >> 33) % n as u64) as i64
+/// The next draw below `n` of a small linear congruential generator (Knuth's MMIX constants,
+/// zed-hash's `Lcg64`, where its source is), so the draws are fixed by the seed.
+fn lcg_below(state: &mut Lcg64, n: i64) -> i64 {
+    state.below(n as u64) as i64
 }
 
 /// The literals of `k` draws, one per modulus (a later draw over the same modulus replaces an
@@ -1030,13 +1023,8 @@ fn every_split_of_the_moduli_decides_a_regime_as_testing_each_point_does() {
     };
     type Lits = Vec<(i64, Vec<(i64, i64)>)>;
     // Knuth's MMIX constants, so the draws are fixed.
-    let mut state = 0x5eed_5917_u64;
-    let mut below = |n: i64| {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((state >> 33) % n as u64) as i64
-    };
+    let mut state = Lcg64::new(0x5eed_5917);
+    let mut below = |n: i64| lcg_below(&mut state, n);
     let lit = |below: &mut dyn FnMut(i64) -> i64| {
         let m = if below(2) == 0 {
             2 + below(8)
@@ -1128,13 +1116,8 @@ fn every_split_of_the_moduli_decides_a_regime_as_testing_each_point_does() {
 /// where no state does), on windows of 1 to 500 points.
 #[test]
 fn the_merge_of_large_pieces_gives_the_ends_of_the_joined_pieces() {
-    let mut state = 0x1a2e_9e3c_u64;
-    let mut below = |n: i64| {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((state >> 33) % n as u64) as i64
-    };
+    let mut state = Lcg64::new(0x1a2e_9e3c);
+    let mut below = |n: i64| lcg_below(&mut state, n);
     let (mut passed_over, mut touching) = (0usize, 0usize);
     for _ in 0..500 {
         let mut owned: Vec<Vec<(Int, ResidueSet)>> = Vec::new();
@@ -1249,7 +1232,7 @@ fn literals_with_one_interval_share_one_run() {
 fn shared_intervals_answer_as_each_point_does() {
     /// One literal per modulus, its intervals the `k` pool entries drawn over that modulus,
     /// joined into a normal list.
-    fn draw(state: &mut u64, pool: &[(i64, (i64, i64))], k: i64) -> Lits {
+    fn draw(state: &mut Lcg64, pool: &[(i64, (i64, i64))], k: i64) -> Lits {
         let mut by_modulus: BTreeMap<i64, Vec<(i64, i64)>> = BTreeMap::new();
         for _ in 0..k {
             let (m, iv) = pool[lcg_below(state, 6) as usize];
@@ -1273,7 +1256,7 @@ fn shared_intervals_answer_as_each_point_does() {
             })
             .collect()
     }
-    let mut state = 0x5a7e_d0c5_u64;
+    let mut state = Lcg64::new(0x5a7e_d0c5);
     let mut shared = 0usize;
     let mut with_point = 0usize;
     for _ in 0..300 {
@@ -1334,13 +1317,8 @@ fn shared_intervals_answer_as_each_point_does() {
 /// to 4, spans 0 to 100,000, and up to 12 lists.
 #[test]
 fn the_split_is_the_one_of_least_bound() {
-    let mut state = 0x5917_u64;
-    let mut below = |n: u64| {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (state >> 33) % n
-    };
+    let mut state = Lcg64::new(0x5917);
+    let mut below = |n: u64| state.below(n);
     let mut chose_some = 0;
     for _ in 0..300 {
         let weights: BTreeMap<Int, u128> = (0..1 + below(8))
@@ -1625,7 +1603,7 @@ fn a_regime_over_nine_primes_the_base_cannot_write_is_decided() {
 /// and meet every literal; `Empty` must be right by testing each point of the window.
 #[test]
 fn groups_of_moduli_are_decided_as_testing_each_point_does() {
-    let mut state = 0x6c0b_7e57_u64;
+    let mut state = Lcg64::new(0x6c0b_7e57);
     let mut below = |n: i64| lcg_below(&mut state, n);
     let lit = |group: &[i64], below: &mut dyn FnMut(i64) -> i64| {
         let m = group[below(group.len() as i64) as usize];

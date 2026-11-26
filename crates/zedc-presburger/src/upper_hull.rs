@@ -123,13 +123,9 @@ mod tests {
     /// in `-5..=5` squared (repeats, points on one `x` and points on a line included).
     #[test]
     fn the_hull_built_at_once_and_point_by_point_is_the_hull() {
-        let mut seed = 0x2545_f491_4f6c_dd1du64;
-        let mut rng = |n: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % n
-        };
+        // xorshift64 (zed-hash's, where its source is).
+        let mut xs = zed_hash::Xorshift64::new(0x2545_f491_4f6c_dd1d);
+        let mut rng = |n: u64| xs.below(n);
         for _ in 0..600 {
             let points: Vec<(i64, i64)> = (0..1 + rng(14))
                 .map(|_| (rng(11) as i64 - 5, rng(11) as i64 - 5))

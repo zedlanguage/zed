@@ -172,11 +172,9 @@ fn checking_certificates_takes_their_count() {
 fn factoring_72_bit_products_takes_their_count() {
     const N: usize = 96;
     let make = |m: usize| -> Vec<u128> {
-        let mut x = 0x7a_2026_1122u64;
+        let mut rng = zed_hash::Xorshift64::new(0x7a_2026_1122);
         let mut prime = move || loop {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
+            let x = rng.next_u64();
             if let Some(p) = next_prime(x >> 28 | 1 << 35).filter(|p| p >> 36 == 0) {
                 return u128::from(p);
             }
@@ -202,13 +200,8 @@ fn factoring_72_bit_products_takes_their_count() {
 /// FACTOR-u128 and PRIME-u128. Only the answers are checked; the times are a record.
 #[test]
 fn the_wide_routines_by_bit_size_print_their_times() {
-    let mut x = 0x2026_1122u64;
-    let mut next = move || {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        x
-    };
+    let mut rng = zed_hash::Xorshift64::new(0x2026_1122);
+    let mut next = move || rng.next_u64();
     for bits in [65u32, 80, 82, 96, 112, 128] {
         let top = if bits == 128 {
             u128::MAX

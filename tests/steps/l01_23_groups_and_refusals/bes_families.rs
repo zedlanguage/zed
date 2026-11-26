@@ -2,11 +2,11 @@
 //! generator copied without change from the cross-measure (wt/xs-cmp/src: claude.rs, codex.rs,
 //! gemini.rs, claude/codex_r1.rs), with one graph type for all, and the widening of a node
 //! (wt/xs-cmp/src/main.rs `widen_kind`). `claude::random` draws from
-//! `zed_tests::seed::Xorshift64` in place of its own copy of the same xorshift, so each seed
+//! `zed_hash::Xorshift64` in place of its own copy of the same xorshift, so each seed
 //! gives the graph it gave there.
 
+use zed_hash::Xorshift64;
 use zed_kernel::types::bes::{Bes, Kind};
-use zed_tests::seed::Xorshift64;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum K {

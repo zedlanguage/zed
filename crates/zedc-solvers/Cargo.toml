@@ -33,3 +33,7 @@ counts = []
 [dev-dependencies.zedc-solvers]
 path = "."
 features = ["counts"]
+
+# The generators of tests/src/seed.rs, which the tests compile in by `#[path]`.
+[dev-dependencies.zed-hash]
+workspace = true

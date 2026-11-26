@@ -265,29 +265,21 @@ pub fn dag_idom<I: IntoIterator<Item = usize>>(
 #[cfg(test)]
 mod tests {
     use super::{Lift, dag_idom};
-
-    /// A step of xorshift64; started at a value that is not 0. The shifts 13, 7, 17 are
-    /// Marsaglia's (G. Marsaglia, "Xorshift RNGs", J. Stat. Softw. 8(14), 2003,
-    /// doi:10.18637/jss.v008.i14); the full comment is in tests/src `seed.rs`, struct
-    /// `Xorshift64`.
-    fn next(state: &mut u64) -> u64 {
-        *state ^= *state << 13;
-        *state ^= *state >> 7;
-        *state ^= *state << 17;
-        *state
-    }
+    // xorshift64 (zed-hash's, where its source is), started at a seed that is not 0.
+    use zed_hash::Xorshift64;
 
     #[test]
     fn the_lowest_common_ancestor_agrees_with_the_walk_up_the_parents() {
-        let mut state =
-            crate::seed::seed("the_lowest_common_ancestor_agrees_with_the_walk_up_the_parents") | 1;
+        let mut state = Xorshift64::new(
+            crate::seed::seed("the_lowest_common_ancestor_agrees_with_the_walk_up_the_parents") | 1,
+        );
         for _ in 0..300 {
-            let n = 1 + (next(&mut state) % 40) as usize;
+            let n = 1 + (state.next_u64() % 40) as usize;
             let mut tree = Lift::new(n);
             let mut parent = Vec::with_capacity(n);
             for v in 0..n {
                 // Each node hangs from the root or a node before it.
-                let p = (next(&mut state) as usize) % (v + 1);
+                let p = (state.next_u64() as usize) % (v + 1);
                 let p = if p == v { n } else { p };
                 parent.push(p);
                 tree.attach(v, p);
@@ -390,20 +382,22 @@ mod tests {
 
     #[test]
     fn immediate_dominators_do_not_depend_on_the_topological_order_on_random_dags() {
-        let mut state = crate::seed::seed(
-            "immediate_dominators_do_not_depend_on_the_topological_order_on_random_dags",
-        ) | 1;
+        let mut state = Xorshift64::new(
+            crate::seed::seed(
+                "immediate_dominators_do_not_depend_on_the_topological_order_on_random_dags",
+            ) | 1,
+        );
         for _ in 0..500 {
-            let n = 1 + (next(&mut state) % 12) as usize;
+            let n = 1 + (state.next_u64() % 12) as usize;
             // Edges only from a lower number to a higher one under a random relabeling.
             let mut label: Vec<usize> = (0..n).collect();
             for i in (1..n).rev() {
-                label.swap(i, next(&mut state) as usize % (i + 1));
+                label.swap(i, state.next_u64() as usize % (i + 1));
             }
             let mut kids = vec![Vec::new(); n];
             for a in 0..n {
                 for b in a + 1..n {
-                    if next(&mut state) % 3 == 0 {
+                    if state.next_u64() % 3 == 0 {
                         kids[label[a]].push(label[b]);
                     }
                 }
@@ -422,7 +416,7 @@ mod tests {
                 let mut ready: Vec<usize> = (0..n).filter(|&v| need[v] == 0).collect();
                 let mut order = Vec::new();
                 while !ready.is_empty() {
-                    let v = ready.swap_remove(next(&mut state) as usize % ready.len());
+                    let v = ready.swap_remove(state.next_u64() as usize % ready.len());
                     order.push(v);
                     for &c in &kids[v] {
                         need[c] -= 1;

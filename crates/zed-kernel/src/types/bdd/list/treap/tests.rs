@@ -10,10 +10,7 @@ struct K(u64);
 
 impl Keyed for K {
     fn priority(&self) -> u64 {
-        let mut x = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        x ^ (x >> 31)
+        zed_hash::mix(self.0)
     }
 }
 

@@ -6,6 +6,8 @@
 
 use std::collections::HashMap;
 
+use zed_numtheory::m61::{Prefix, powers};
+
 use crate::address::ContentAddress;
 use crate::ast::{self, Stmt, StmtKind, Target};
 use crate::lex::Span;
@@ -108,9 +110,10 @@ const BASE: u64 = 1_000_003;
 /// `l01_29_repairs_and_printing::suppress::suppressing_every_warning_scales`. A complete solution
 /// would hash each node's text with BLAKE3, at that cost.
 struct Content {
-    /// The hash of the first `i` bytes that are not white space, at `i` for each byte offset.
-    prefix: Vec<u64>,
-    /// The count of bytes that are not white space before each byte offset.
+    /// The prefix hashes of the bytes that are not white space, each as `b + 1`.
+    prefix: Prefix,
+    /// The count of bytes that are not white space before each byte offset, and after the
+    /// last.
     count: Vec<usize>,
     /// `BASE` to each power up to the count of bytes that are not white space.
     power: Vec<u64>,
@@ -118,36 +121,28 @@ struct Content {
 
 impl Content {
     fn new(text: &[u8]) -> Content {
-        use zed_numtheory::m61::{add, mul};
-        let mut content = Content {
-            prefix: Vec::with_capacity(text.len() + 1),
-            count: Vec::with_capacity(text.len() + 1),
-            power: vec![1],
-        };
-        let (mut hash, mut count) = (0u64, 0usize);
+        let kept = text.iter().filter(|b| !b.is_ascii_whitespace());
+        let prefix = Prefix::new(BASE, kept.map(|&b| u64::from(b) + 1));
+        let mut count = Vec::with_capacity(text.len() + 1);
+        count.push(0);
         for &b in text {
-            content.prefix.push(hash);
-            content.count.push(count);
-            if !b.is_ascii_whitespace() {
-                hash = add(mul(hash, BASE), u64::from(b) + 1);
-                count += 1;
-                content.power.push(mul(content.power[count - 1], BASE));
-            }
+            count.push(count[count.len() - 1] + usize::from(!b.is_ascii_whitespace()));
         }
-        content.prefix.push(hash);
-        content.count.push(count);
-        content
+        let power = powers(BASE, prefix.len());
+        Content {
+            prefix,
+            count,
+            power,
+        }
     }
 
     /// The hash of the text of `span`, clamped to the text, with its white space dropped.
     fn hash(&self, span: Span) -> u64 {
-        let last = self.prefix.len() - 1;
+        let last = self.count.len() - 1;
         let (start, end) = (
             span.start.min(last),
             span.end.clamp(span.start.min(last), last),
         );
-        let n = self.count[end] - self.count[start];
-        use zed_numtheory::m61::{mul, sub};
-        sub(self.prefix[end], mul(self.prefix[start], self.power[n]))
+        (self.prefix).span(self.count[start], self.count[end], &self.power)
     }
 }

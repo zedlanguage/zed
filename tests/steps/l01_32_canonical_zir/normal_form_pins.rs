@@ -17,7 +17,7 @@
 use zed_kernel::term::Prim;
 use zed_kernel::term::build::{lam, let_, lit, prim, var};
 use zed_kernel::value::Value;
-use zedc::address::ContentAddress;
+use zedc::address::{ContentAddress, Framed};
 use zedc::canon::{Def, Domain, Facet};
 use zedc::store::interval::IntervalSet;
 use zedc::zir::{binary, canon};
@@ -165,21 +165,17 @@ fn none(_: &str) -> Option<ContentAddress> {
 /// The hash of the bytes the addresses of the fixed set are taken over:
 /// each item's length and then its bytes, the graphs first.
 fn normal_forms() -> String {
-    let mut h = blake3::Hasher::new();
-    let mut put = |bytes: &[u8]| {
-        h.update(&(bytes.len() as u64).to_le_bytes());
-        h.update(bytes);
-    };
+    let mut h = Framed::new(b"");
     for src in graphs() {
-        put(&binary::encode(&canon::canonicalize(&graph(&src))).expect("memory for the bytes"));
+        h.field(&binary::encode(&canon::canonicalize(&graph(&src))).expect("memory for the bytes"));
     }
     for d in defs() {
-        put(
+        h.field(
             &zedc::canon::serialize(&zedc::canon::canonicalize(&d), &none)
                 .expect("memory for the bytes"),
         );
     }
-    h.finalize().to_hex().to_string()
+    blake3::Hash::from(h.digest()).to_hex().to_string()
 }
 
 #[test]

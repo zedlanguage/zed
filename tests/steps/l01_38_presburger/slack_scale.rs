@@ -234,14 +234,11 @@ fn same_refusal_kind<T: PartialEq>(a: &Result<T, Refusal>, b: &Result<T, Refusal
 
 #[test]
 fn i18_decide_matches_satisfiable() {
-    struct Rng(u64);
+    // The MMIX linear congruential sequence (zed-hash's `Lcg64`, where its source is).
+    struct Rng(zed_hash::Lcg64);
     impl Rng {
         fn next(&mut self, bound: u64) -> i64 {
-            self.0 = self
-                .0
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            ((self.0 >> 33) % bound) as i64
+            self.0.below(bound) as i64
         }
     }
     let targets: BTreeSet<u64> = [
@@ -250,7 +247,7 @@ fn i18_decide_matches_satisfiable() {
     .into_iter()
     .collect();
     let max_case = *targets.iter().next_back().expect("non-empty");
-    let mut rng = Rng(777);
+    let mut rng = Rng(zed_hash::Lcg64::new(777));
     let mut checked = 0usize;
     for case in 0..=max_case {
         let k = 3 + rng.next(5) as usize;

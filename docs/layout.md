@@ -97,7 +97,7 @@ only on crates above it in this list:
 | zedc-lattice | base, int |
 | zedc-solvers | int |
 | zedc-presburger | int, lattice, solvers |
-| zedc-types | syntax |
+| zedc-types | base, syntax |
 | zedc-resolve | base, syntax |
 | zedc-stage | base, syntax |
 | zedc-preimage | int, lattice, presburger, stage |

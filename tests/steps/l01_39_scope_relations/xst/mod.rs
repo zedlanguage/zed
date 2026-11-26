@@ -54,16 +54,16 @@ use crate::ints;
 use crate::nests::{and, int, prim, var};
 
 /// The generator every source used: `state * 6364136223846793005 + 1442695040888963407`,
-/// a value below `n` from the high bits.
+/// a value below `n` from the high bits (zed-hash's `Lcg64`, where its source is). The state is
+/// held bare, since the studies pin it and resume from it.
 struct Lcg(u64);
 
 impl Lcg {
     fn next(&mut self, n: u64) -> u64 {
-        self.0 = self
-            .0
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        (self.0 >> 33) % n
+        let mut g = zed_hash::Lcg64::new(self.0);
+        let r = g.below(n);
+        self.0 = g.state();
+        r
     }
 }
 

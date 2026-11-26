@@ -17567,7 +17567,8 @@ mod tests {
         (&a.dom, a.none, a.exact) == (&b.dom, b.none, b.exact)
     }
 
-    use crate::seed::{Rng, Xorshift64};
+    use crate::seed::Rng;
+    use zed_hash::Xorshift64;
 
     /// What a name in scope stands for.
     #[derive(Clone, Copy, PartialEq)]

@@ -8,15 +8,18 @@ fn row(a: i64, b: i64, c: i64) -> (Int, Int, Int) {
     (int(a), int(b), int(c))
 }
 
-/// xorshift64, so every run reads the same rows.
-struct Rng(u64);
+/// xorshift64 (zed-hash's, where its source is), so every run reads the same rows.
+struct Rng(zed_hash::Xorshift64);
 
 impl Rng {
+    /// The generator from `seed`, which is not 0 at any caller, so the stream is xorshift64's
+    /// from `seed` itself.
+    fn new(seed: u64) -> Rng {
+        Rng(zed_hash::Xorshift64::new(seed))
+    }
+
     fn next(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
+        self.0.next_u64()
     }
 
     /// Uniform in `-m..=m`.
@@ -187,7 +190,7 @@ fn failures(seed: u64, runs: usize) -> Vec<String> {
 
 /// The failures of the first `runs` random sequences from `seed`, stopping at the `most`-th.
 fn failures_up_to(seed: u64, runs: usize, most: usize) -> Vec<String> {
-    let mut rng = Rng(seed);
+    let mut rng = Rng::new(seed);
     let mut out = vec![];
     for i in 0..runs {
         if out.len() == most {
@@ -300,7 +303,7 @@ fn pairwise_walk(e: &Row, c: &Row) -> Vec<Row> {
 
 #[test]
 fn the_corner_hull_is_the_walk() {
-    let mut rng = Rng(0x1234_5678_9abc_def1);
+    let mut rng = Rng::new(0x1234_5678_9abc_def1);
     let mut cut = 0;
     for _ in 0..3000 {
         let (ea, eb, ca, cb) = (rng.small(9), rng.small(9), rng.small(9), rng.small(9));
@@ -361,7 +364,7 @@ fn runs(h: &Hull, u: &Row) -> Option<(Run, Run)> {
 /// Rows through a vertex of the tangent hull (ties) and between, each against the scan.
 fn tie_failures(k: i64, bounded: bool, max_nodes: u64) -> Vec<String> {
     let h = tangent_hull(k, bounded);
-    let mut rng = Rng(0xdead_beef_cafe_f00d ^ k as u64);
+    let mut rng = Rng::new(0xdead_beef_cafe_f00d ^ k as u64);
     let mut out = vec![];
     for i in 0..200 {
         let (a, b) = (rng.small(5), rng.small(5));

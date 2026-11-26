@@ -941,14 +941,10 @@ fn holding(name: &str, strings: Vec<zed_kernel::text::Text>) -> zedc::canon::Def
 #[test]
 fn a_definition_with_text_has_the_address_m07_states() {
     use zed_kernel::text::Text;
-    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+    // xorshift64 (zed-hash's, where its source is).
+    let mut rng = zed_hash::Xorshift64::new(0x9e37_79b9_7f4a_7c15);
     let random: String = (0..1 << 20)
-        .map(|_| {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            char::from(b'a' + (x % 26) as u8)
-        })
+        .map(|_| char::from(b'a' + rng.below(26) as u8))
         .collect();
     let distinct: String = (b'!'..=b'~').map(char::from).collect();
     let join = |a: &Text, b: &Text| Text::join(a, b).expect("short");

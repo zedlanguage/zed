@@ -251,12 +251,9 @@ pub(super) const CLUSTERING_ROTATED_GRID: Input = clustering("clustering rotated
     format!("{}\n{}", n / 2, lines(n, point))
 });
 
-/// splitmix64 of `i`, cut to 30 bits.
+/// splitmix64 of `i` (its `i`-th state, finalized: zed-hash's), cut to 30 bits.
 fn hash(i: usize) -> u64 {
-    let mut z = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    (z ^ (z >> 31)) >> 34
+    zed_hash::finalize((i as u64).wrapping_mul(zed_hash::GAMMA)) >> 34
 }
 
 /// The size of the random clustering inputs (their O(n²) check stays at 1000 points). Their cost is

@@ -7,18 +7,18 @@ mod classed_bounds;
 mod columns;
 mod push_down;
 
-/// The pseudo-random number generator of these tests: xorshift64 ([`crate::seed::Xorshift64`]),
+/// The pseudo-random number generator of these tests: xorshift64 ([`zed_hash::Xorshift64`]),
 /// seeded by [`crate::seed::seed`] (a new seed on each run, printed, which `ZED_TEST_SEED`
 /// repeats) or by a fixed seed. Not [`crate::seed::Rng`]: the tests `random_formulas_at_seed_*`
 /// and `disjuncts_shown_empty_are_never_solved_in_full` hold cases sweeps found at those seeds
 /// of this stream, and the seeds the comments here record (10847150771481521372 of
 /// `the_cover_gives_one_answer_in_every_order_of_the_parts`) repeat only on it. The `| 1` at
 /// the seeded calls is kept for the same reason: the recorded seeds were drawn with it.
-struct Rng(crate::seed::Xorshift64);
+struct Rng(zed_hash::Xorshift64);
 
 impl Rng {
     fn new(seed: u64) -> Self {
-        Rng(crate::seed::Xorshift64::new(seed))
+        Rng(zed_hash::Xorshift64::new(seed))
     }
 
     fn below(&mut self, n: u64) -> u64 {

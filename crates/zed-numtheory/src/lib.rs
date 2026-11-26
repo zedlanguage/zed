@@ -778,6 +778,105 @@ pub mod m61 {
         }
     }
 
+    /// The polynomial hash of a string for some base `B < P` with `B` to the string's length,
+    /// `(h, pow)` as [`PolyBytes::hash`] gives them: the monoid of strings under joining,
+    /// `(h, p)·(h', p') = (h p' + h', p p')`, since `h(xy) = h(x) B^|y| + h(y)` (Horner's rule
+    /// split at `|x|`). Its unit is the empty string, `(0, 1)`. Users: zed-kernel
+    /// `Text::poly_hash` over a text's tree, zedc-lattice `interval.rs` over a set's pieces.
+    ///
+    /// Proof that [`PolyHash::then`] is associative, so a tree of joins in any shape gives the
+    /// hash of its leaves in order: `((a·b)·c).h = (a.h b.p + b.h) c.p + c.h = a.h (b.p c.p) +
+    /// (b.h c.p + c.h) = (a·(b·c)).h`, and `pow` is a product, associative and commutative.
+    /// Test: `tests::poly_hashes_join_as_their_strings_do`.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub struct PolyHash {
+        /// The hash, below `P`.
+        pub h: u64,
+        /// `B` to the length, below `P`.
+        pub pow: u64,
+    }
+
+    impl PolyHash {
+        /// The hash of the empty string.
+        pub const EMPTY: PolyHash = PolyHash { h: 0, pow: 1 };
+
+        /// The hash of a string of one digit `x < P` for the base `b < P`.
+        #[inline]
+        pub const fn unit(x: u64, b: u64) -> PolyHash {
+            PolyHash { h: x, pow: b }
+        }
+
+        /// The hash of this string followed by `next`.
+        #[inline]
+        pub const fn then(self, next: PolyHash) -> PolyHash {
+            PolyHash {
+                h: add(mul(self.h, next.pow), next.h),
+                pow: mul(self.pow, next.pow),
+            }
+        }
+    }
+
+    /// `b^k mod P` for `k` in `0..=n`, for `b < P`: the shifts [`Prefix::span`] takes.
+    pub fn powers(b: u64, n: usize) -> Vec<u64> {
+        let mut pow = Vec::with_capacity(n + 1);
+        pow.push(1);
+        for k in 0..n {
+            pow.push(mul(pow[k], b));
+        }
+        pow
+    }
+
+    /// The prefix hashes of a string of digits `d_0 .. d_(n-1)`, each below `P`, for a base
+    /// `B < P`: `H[k] = Σ_(j<k) d_j B^(k-1-j)` for `k` in `0..=n`, by Horner's rule, so the hash
+    /// of any span is O(1) ([`Prefix::span`]). Karp and Rabin's fingerprints (the source is at
+    /// zed-kernel `Text::poly_hash`). Users: zed-collections `spelling.rs`, zedc
+    /// `suppress/addresses.rs`.
+    pub struct Prefix(Vec<u64>);
+
+    impl Prefix {
+        /// The prefix hashes of `digits` for the base `b`.
+        pub fn new(b: u64, digits: impl IntoIterator<Item = u64>) -> Prefix {
+            let digits = digits.into_iter();
+            let mut pre = Vec::with_capacity(digits.size_hint().0 + 1);
+            pre.push(0);
+            let mut h = 0;
+            for d in digits {
+                h = add(mul(h, b), d);
+                pre.push(h);
+            }
+            Prefix(pre)
+        }
+
+        /// The count of digits.
+        pub fn len(&self) -> usize {
+            self.0.len() - 1
+        }
+
+        /// Whether there are no digits.
+        pub fn is_empty(&self) -> bool {
+            self.len() == 0
+        }
+
+        /// `H[k]`, the hash of the first `k` digits.
+        #[inline]
+        pub fn get(&self, k: usize) -> u64 {
+            self.0[k]
+        }
+
+        /// The hash of all the digits.
+        pub fn whole(&self) -> u64 {
+            self.0[self.len()]
+        }
+
+        /// The hash of the digits `start..end`, given `pow[k] = B^k` for `k` up to
+        /// `end - start` ([`powers`]): `H[end] - H[start] B^(end-start)`, since Horner's rule
+        /// over `0..end` is that over `0..start` shifted past the rest, plus the rest.
+        #[inline]
+        pub fn span(&self, start: usize, end: usize, pow: &[u64]) -> u64 {
+            sub(self.0[end], mul(self.0[start], pow[end - start]))
+        }
+    }
+
     /// `1 / a mod P`, for `0 < a < P`: `a^(P - 2)`, since `a^(P - 1) = 1` (Fermat's little
     /// theorem, `P` prime: test `tests::the_mersenne_modulus_is_prime`). 61 squarings and 60
     /// products ([`pow_word`]): `P - 2 = 2^61 - 3` has 61 bits, all set but bit 1, so the loop

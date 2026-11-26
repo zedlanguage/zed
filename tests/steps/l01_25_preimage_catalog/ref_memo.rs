@@ -1071,11 +1071,8 @@ fn answer_table() -> String {
             for (k, (t, ds, d)) in family(name, n).iter().enumerate() {
                 let p = preimage(t, ds, d);
                 let pieces: usize = p.domains.values().map(|s| s.met().len()).sum();
-                let hash = listed_debug(&format!("{p:?}"), &p.domains)
-                    .bytes()
-                    .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-                        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-                    });
+                let hash =
+                    zed_hash::fnv1a_64(listed_debug(&format!("{p:?}"), &p.domains).as_bytes());
                 out += &format!("{name}\t{n}\t{k}\t{pieces}\t{}\t{hash:016x}\n", p.exact);
             }
         }

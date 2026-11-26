@@ -15,6 +15,9 @@ crate-type = ["rlib", "dylib"]
 [dependencies]
 num-bigint.workspace = true
 num-traits.workspace = true
+# SIQS's xorshift64 (siqs.rs), and the generators of tests/src/seed.rs, which the tests and
+# examples/timing.rs compile in by `#[path]`. zed-hash depends on no crate, so this adds no cycle.
+zed-hash.workspace = true
 
 [dev-dependencies]
 # The big gcd the word routines are checked against.

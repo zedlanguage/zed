@@ -195,13 +195,10 @@ fn check_piece(piece: usize) -> usize {
     compared
 }
 
-/// The piece unit `name` is checked in: an FNV-1a hash of its path, so a unit added to the corpus
-/// joins one piece and moves no other unit to the other.
+/// The piece unit `name` is checked in: an FNV-1a hash of its path (zed-hash's), so a unit added
+/// to the corpus joins one piece and moves no other unit to the other.
 fn piece_of(name: &str) -> usize {
-    let h = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-    });
-    (h % PIECES as u64) as usize
+    (zed_hash::fnv1a_64(name.as_bytes()) % PIECES as u64) as usize
 }
 
 /// The pieces the units are checked in, each a test of its own, so each runs in parallel and

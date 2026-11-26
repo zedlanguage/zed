@@ -1124,15 +1124,14 @@ pub(super) mod row_sums {
     /// Cases `0..n` of the generator of `decide_sat.rs` at `seed`, with each atom's values over
     /// the points.
     fn random_cases(seed: u64, n: usize) -> Vec<(Case, Vec<BTreeSet<i64>>)> {
-        struct Rng(u64);
+        // The MMIX linear congruential sequence (zed-hash's `Lcg64`, where its source is).
+        struct Rng(zed_hash::Lcg64);
         impl Rng {
             fn next(&mut self, n: u64) -> i64 {
-                self.0 =
-                    (self.0.wrapping_mul(6364136223846793005)).wrapping_add(1442695040888963407);
-                ((self.0 >> 33) % n) as i64
+                self.0.below(n) as i64
             }
         }
-        let mut rng = Rng(seed);
+        let mut rng = Rng(zed_hash::Lcg64::new(seed));
         let mut out = Vec::new();
         for _ in 0..n {
             let k = 3 + rng.next(5) as usize;

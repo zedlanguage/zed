@@ -31,6 +31,7 @@ num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
 zed-graph.workspace = true
+zed-hash.workspace = true
 zed-collections.workspace = true
 zed-numtheory.workspace = true
 # The stack of `treap_set::Iter`, kept inline to a depth of 16 so that walking or comparing a

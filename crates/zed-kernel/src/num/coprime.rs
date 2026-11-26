@@ -1836,13 +1836,9 @@ mod tests {
     #[test]
     fn the_natural_base_of_products_of_prime_powers() {
         let primes = [2u64, 3, 5, 7, 11, 13];
-        let mut s = 0x2545_f491_4f6c_dd1du64;
-        let mut next = || {
-            s = s
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            s >> 33
-        };
+        // The MMIX linear congruential sequence (zed-hash's `Lcg64`, where its source is).
+        let mut lcg = zed_hash::Lcg64::new(0x2545_f491_4f6c_dd1d);
+        let mut next = || lcg.next_high();
         for round in 0..400 {
             let n = 1 + round % 9;
             let xs: Vec<u64> = (0..n)
@@ -2053,13 +2049,9 @@ mod tests {
     /// `the_kernel_trees_agree_on_wide_values`, its shared-factor half.)
     #[test]
     fn the_shared_factors_of_wide_values_are_the_pairwise_ones() {
-        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
-        let mut next = move || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed
-        };
+        // xorshift64 (zed-hash's, where its source is).
+        let mut rng = zed_hash::Xorshift64::new(0x9e37_79b9_7f4a_7c15);
+        let mut next = move || rng.next_u64();
         let mut wide = || {
             let mut v = big((next() >> 20) | 1);
             for _ in 0..40 {

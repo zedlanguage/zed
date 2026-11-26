@@ -385,31 +385,16 @@ fn sets_of_one_sum_and_root_with_children_on_different_sides_are_not_the_same() 
     assert!(found, "no root of 256 stood above the others");
 }
 
-/// `step(h, x)` of [`crate::digest::step`] solved for `x`: the finalizer's three xor-shifts and
-/// two odd multiplications undone (each multiplication by its inverse modulo 2^64).
-fn step_x(h: u64, out: u64) -> u64 {
-    let inv = |m: u64| {
-        (0..6).fold(m, |y, _| {
-            y.wrapping_mul(2u64.wrapping_sub(m.wrapping_mul(y)))
-        })
-    };
-    let unshift = |z: u64, s: u32| (1..=64 / s).fold(z, |y, k| y ^ (z >> (s * k)));
-    let mut z = unshift(out, 31).wrapping_mul(inv(0x94d0_49bb_1331_11eb));
-    z = unshift(z, 27).wrapping_mul(inv(0xbf58_476d_1ce4_e5b9));
-    z = unshift(z, 30).wrapping_sub(0x9e37_79b9_7f4a_7c15);
-    z ^ h.rotate_left(29)
-}
-
-/// `step(h, x)` solved for `h`.
+/// `step(h, x)` solved for `h` (for `x`, it is [`zed_hash::unstep`]).
 fn step_h(x: u64, out: u64) -> u64 {
-    (step_x(0, out) ^ x).rotate_right(29)
+    (zed_hash::unstep(0, out) ^ x).rotate_right(29)
 }
 
 /// [`mix`] solved for its first or its second argument: `step` with this thread's salt.
 fn mix_inv(a: Option<u64>, b: Option<u64>, out: u64) -> u64 {
     let out = out ^ crate::types::hash::SALT.with(std::cell::Cell::get);
     match (a, b) {
-        (Some(a), None) => step_x(a, out),
+        (Some(a), None) => zed_hash::unstep(a, out),
         (None, Some(b)) => step_h(b, out),
         _ => unreachable!("one argument is given"),
     }

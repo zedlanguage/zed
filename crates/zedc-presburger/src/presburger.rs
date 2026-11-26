@@ -18356,15 +18356,13 @@ impl System {
     }
 }
 
-/// A fixed spread of the bits of a variable's place (the finalizer of SplitMix64), so that the
-/// sums of two different sets of variables rarely agree. Two sets that agree are told apart by
-/// their terms ([`System::over_the_rest`]), so the sums decide only how long a lookup takes,
-/// never its result.
+/// A fixed spread of the bits of a variable's place (SplitMix64's output function, zed-hash's
+/// `mix`, where its source is), so that the sums of two different sets of variables rarely
+/// agree. Two sets that agree are told apart by their terms ([`System::over_the_rest`]), so the
+/// sums decide only how long a lookup takes, never its result.
+#[inline]
 fn spread(i: usize) -> u64 {
-    let mut z = (i as u64).wrapping_add(0x9e37_79b9_7f4a_7c15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
+    zed_hash::mix(i as u64)
 }
 
 /// Whether the inequalities have no rational point once each row is normalized, which keeps
@@ -30934,13 +30932,9 @@ pub(super) mod tests {
     /// `|t| <= max(1, a / g)`, which may be another pair (DRY-number-theory-wide).
     #[test]
     fn bezout_agrees_with_euclid_on_words_and_is_valid_when_wide() {
-        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
-        let mut next = || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed
-        };
+        // xorshift64 (zed-hash's, where its source is).
+        let mut rng = zed_hash::Xorshift64::new(0x9e37_79b9_7f4a_7c15);
+        let mut next = || rng.next_u64();
         let word = |x: u64, y: u64| (i128::from(x) << 63) ^ i128::from(y);
         let mut small: Vec<(Int, Int)> = vec![
             (Int::ZERO, Int::ZERO),
@@ -38710,13 +38704,9 @@ mod upper_envelope_tests {
     /// line is checked at `p·k + 288·q`.
     #[test]
     fn the_upper_envelope_keeps_the_lines_alone_on_top_somewhere() {
-        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
-        let mut rng = |n: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % n
-        };
+        // xorshift64 (zed-hash's, where its source is).
+        let mut xs = zed_hash::Xorshift64::new(0x9e37_79b9_7f4a_7c15);
+        let mut rng = |n: u64| xs.below(n);
         for _ in 0..400 {
             let mut lines: Vec<(i128, i128)> = (0..1 + rng(9))
                 .map(|_| (rng(13) as i128 - 6, rng(13) as i128 - 6))

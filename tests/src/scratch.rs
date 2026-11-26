@@ -2,8 +2,8 @@
 //! path per test. Compiled into this crate as `crate::scratch` (re-exported by
 //! `crate::step_helpers`) and, by `#[path]`, into the test targets of zed-native that run the
 //! zedc executable, which cannot depend on this crate; its own tests are in
-//! `crate::scratch_tests`, so they run once, in this crate only (as TEST-seed-test-once does
-//! for `crate::seed`).
+//! `crate::scratch_tests`, so they run once, in this crate only (as TEST-seed-test-once did
+//! for `crate::seed`, whose generators' tests are now zed-hash's own).
 
 use std::collections::BTreeMap;
 use std::fs::{File, TryLockError};
