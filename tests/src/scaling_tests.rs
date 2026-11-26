@@ -691,8 +691,12 @@ fn a_benchmark_measures_a_fixed_draw_by_any_runner() {
         let out = run.output().expect("this test binary runs");
         let text = String::from_utf8_lossy(&out.stdout).into_owned();
         assert!(out.status.success(), "{text}");
-        text.lines()
-            .find_map(|l| l.strip_prefix("draw: "))
+        // With one test thread libtest writes `test <path> ... ` before the test runs, so the
+        // probe's line follows it on the same line.
+        let line = text
+            .lines()
+            .find_map(|l| l.split_once("draw: ").map(|(_, r)| r));
+        line.and_then(|r| r.split_whitespace().next())
             .map(str::to_owned)
     };
     for settings in [true, false] {
