@@ -15,11 +15,19 @@ fn a_chain_of_separators_is_read_in_linear_time() {
 }
 
 /// The reader recurses once per group (the `Complexity tradeoff:` comment at `Reader::within`),
-/// so the depths stay small.
+/// so the check runs on a stack deep enough for depth 8000.
 #[test]
 fn a_nest_of_separators_is_read_in_linear_time() {
-    let texts = inputs(32, nest_of_separators);
-    check("a grammar line of n nested `%`", 32, |n| {
-        Grammar::read(&[&texts[&n]]).unwrap();
+    // n 1000, up from 32 (SCALE-small-n-rest; DESIGN sec:plan, n log n is under 10.5 only
+    // from n = 777).
+    zed_tests::scaling::on_a_stack(1 << 28, || {
+        zed_tests::scaling::check_inputs(
+            "a grammar line of n nested `%`",
+            1000,
+            nest_of_separators,
+            |text| {
+                Grammar::read(&[text]).unwrap();
+            },
+        );
     });
 }

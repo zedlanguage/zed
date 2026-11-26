@@ -10,8 +10,12 @@ use crate::scaling::{Nest, evals};
 
 #[test]
 fn the_nest_scales() {
-    scaling::check("phase 1 on nested loops", 6, |depth| {
-        evals(depth);
+    // Depth 1000, up from 6 (SCALE-small-n-rest; DESIGN sec:plan, n log n is under 10.5 only
+    // from n = 777), on a stack deep enough for the nest, as the order's check below.
+    scaling::on_a_stack(1 << 28, || {
+        scaling::check("phase 1 on nested loops", 1000, |depth| {
+            evals(depth);
+        });
     });
 }
 

@@ -9,9 +9,7 @@
 //! whose cost at size n is less than 0.4 times all it times (COMPLEXITY.md F85, measured before
 //! F86 cut the parser's work by 3 to 4 times).
 
-use std::collections::BTreeMap;
-
-use zed_tests::scaling::{self, FACTOR, inputs};
+use zed_tests::scaling::{self, inputs};
 use zedc::resolve::resolve;
 
 use crate::scaling::{
@@ -27,14 +25,15 @@ use crate::{Checked, checked, elab};
 fn defaults_calling_functions_with_defaults_scale() {
     // A call leaving a parameter out held a copy of its default, and the copy's own calls
     // copies of theirs, so the chain's term doubled with each function (2.9 million
-    // characters for `main` at `k = 16`).
-    let units: BTreeMap<usize, Checked> = [8, FACTOR * 8]
-        .into_iter()
-        .map(|k| (k, checked(&chain(k))))
-        .collect();
-    scaling::check("elaborating a chain of defaults, by length", 8, |k| {
-        defaults_stay_short(&units[&k]);
-    });
+    // characters for `main` at `k = 16`). Length 1000, up from 8 (SCALE-small-n-rest; DESIGN
+    // sec:plan, n log n is under 10.5 only from n = 777), each unit built only in the process
+    // of its size.
+    scaling::check_inputs(
+        "elaborating a chain of defaults, by length",
+        1000,
+        |k| checked(&chain(k)),
+        defaults_stay_short,
+    );
 }
 
 #[test]
@@ -67,17 +66,17 @@ fn checking_and_ordering_nested_functions_scales() {
     // depth; and once found, a nested function's writes were made again at each finding.
     scaling::on_a_stack(1 << 29, || {
         // The checker and elaboration are timed apart, each from what comes before it,
-        // made before timing.
-        let units: BTreeMap<usize, Checked> = [100, FACTOR * 100]
-            .into_iter()
-            .map(|n| (n, checked(&nested(n))))
-            .collect();
-        scaling::check("checking functions nested n deep", 100, |n| {
-            checks_clean(&units[&n]);
-        });
-        scaling::check("elaborating functions nested n deep", 100, |n| {
-            elaborates_main(&units[&n]);
-        });
+        // made before timing. Depth 1000, up from 100 (SCALE-small-n-rest; DESIGN sec:plan,
+        // n log n is under 10.5 only from n = 777), each unit built only in the process of its
+        // size.
+        let unit = |n| checked(&nested(n));
+        scaling::check_inputs("checking functions nested n deep", 1000, unit, checks_clean);
+        scaling::check_inputs(
+            "elaborating functions nested n deep",
+            1000,
+            unit,
+            elaborates_main,
+        );
         let want = (
             Some("int".to_string()),
             Some("T -> T for T in int | f32 | f64 | rat".to_string()),
@@ -91,10 +90,14 @@ fn checking_nested_functions_beside_many_others_scales() {
     // A nested function's writes were made again each time its signature was found again,
     // the writes of the functions inside it too.
     scaling::on_a_stack(1 << 29, || {
-        let texts = inputs(50, |n| wide(n, 20));
-        scaling::check("functions nested n deep beside 20 others", 50, |n| {
-            wide_finds_main(&texts[&n], n);
-        });
+        // Depth 1000, up from 50 (SCALE-small-n-rest; DESIGN sec:plan, n log n is under 10.5
+        // only from n = 777), each text built only in the process of its size.
+        scaling::check_inputs(
+            "functions nested n deep beside 20 others",
+            1000,
+            |n| (n, wide(n, 20)),
+            |(n, text)| wide_finds_main(text, *n),
+        );
     });
 }
 
@@ -204,9 +207,10 @@ fn searches_through_nested_functions_scale() {
     // added together share one class, of the outermost function, so the innermost one's
     // signature is in terms of `h0`'s variable at every depth.
     scaling::on_a_stack(1 << 29, || {
-        let texts = inputs(128, open);
-        scaling::check("searches through n nested functions", 128, |n| {
-            elab(&texts[&n]).unwrap();
+        // Depth 1000, up from 128 (SCALE-small-n-rest; DESIGN sec:plan, n log n is under 10.5
+        // only from n = 777), each text built only in the process of its size.
+        scaling::check_inputs("searches through n nested functions", 1000, open, |text| {
+            elab(text).unwrap();
         });
         crate::scaling::open_signature_is_h0s(64);
     });
@@ -218,12 +222,15 @@ fn rows_reaching_a_large_definition_scale() {
     // each, so `n` rows reaching a function of `n` terms took `O(n²)`; a definition's digest is
     // now made once and its term shared. The front end's result for each size is made before
     // timing, so that the rows alone are timed.
+    // n 1000, up from 100 (SCALE-small-n-rest; DESIGN sec:plan, n log n is under 10.5 only
+    // from n = 777), each front end's result made only in the process of its size.
     scaling::on_a_stack(1 << 29, || {
-        let warm = inputs(100, |n| front(&big_callee(n)));
-        scaling::check_order("n rows reaching a function of n terms", 100, 1, |n| {
-            let (text, db) = &warm[&n];
-            rows_pass(text, db, n);
-        })
+        scaling::check_inputs(
+            "n rows reaching a function of n terms",
+            1000,
+            |n| (n, front(&big_callee(n))),
+            |(n, (text, db))| rows_pass(text, db, *n),
+        )
     });
 }
 

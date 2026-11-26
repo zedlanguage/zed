@@ -68,13 +68,12 @@ fn refused_guarded_divisions_scale_linearly() {
             guarded_divisions,
         ),
     ] {
-        let texts = zed_tests::scaling::inputs(4, make);
-        let refused = |n: usize| {
+        let refused = |text: &str| {
             let mut out = String::new();
-            refusals("unit", &texts[&n], &mut out);
+            refusals("unit", text, &mut out);
             out
         };
-        let (small, large) = (refused(4), refused(32));
+        let (small, large) = (refused(&make(4)), refused(&make(32)));
         assert_eq!(
             (small.lines().count(), large.lines().count()),
             if what.contains("sites") {
@@ -84,8 +83,13 @@ fn refused_guarded_divisions_scale_linearly() {
             },
             "{what}: refusals linear in n:\n{small}"
         );
-        zed_tests::scaling::check(what, 4, |n| {
-            std::hint::black_box(refused(n));
+        // n 32, up from 4 (SCALE-small-n-rest), and not 777 (DESIGN sec:plan): at about 42
+        // million instructions a guarded function (above), 777 is about 33 billion at 1x and
+        // 261 billion at 8n, minutes a phase, where the runner's phase limit is 20 s; at 32,
+        // 8n is about 11 billion (an estimate from the counts above, measured in the row's
+        // job). Inputs built only at the sizes each process runs.
+        zed_tests::scaling::check_inputs(what, 32, make, |text| {
+            std::hint::black_box(refused(text));
         });
     }
 }

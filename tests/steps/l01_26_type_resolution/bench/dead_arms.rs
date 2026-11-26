@@ -46,16 +46,19 @@ fn a_chain_of_literal_moduli_scales() {
 fn held_refusals_under_nested_refused_tests_scale() {
     // The read of `m` holds the refusals of the `n` scopes it computes, and the read of the
     // division places each once (`Ck::settle`, row NARROW-settle-spurious-warning).
-    let built = scaling::inputs(16, |m| {
+    // n 1000 (SCALE-small-n-rest; DESIGN sec:plan, n log n is under 10.5 only from n = 777),
+    // each size's program built in the process of that size alone.
+    let make = |m: usize| {
         let stmts = zed_tests::deep::statements(&refused_nest(m, NEST_ARMS[2]));
         let res = zedc::resolve::resolve(&stmts).unwrap();
-        (stmts, res)
-    });
-    scaling::check(
+        (m, stmts, res)
+    };
+    scaling::check_inputs(
         "n nested refused tests, a constant read then a division under them",
-        16,
-        |m| {
-            let (stmts, res) = &built[&m];
+        1000,
+        make,
+        |(m, stmts, res)| {
+            let m = *m;
             let info = zedc::check::walk::check(stmts, res);
             // The one error is the division's: `x * x + 1` is not shown nonzero, at any depth.
             assert_eq!(info.errors.len(), 1, "{:?}", info.errors);

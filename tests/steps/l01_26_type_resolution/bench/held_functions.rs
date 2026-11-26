@@ -10,6 +10,11 @@ use super::super::held_functions::{
 };
 use super::super::{Resolved, type_errors};
 
+/// The small size of the checks below at 500 or 200 before: 1000 (SCALE-small-n-rest; DESIGN
+/// sec:plan, n log n is under 10.5 only from n = 777), each unit resolved only in the process
+/// of its size (`scaling::check_inputs`).
+const N: usize = 1000;
+
 /// Each key of a display and each `in` test is checked as data, `O(1)` for a key whose
 /// type's outer level is `O(1)` ([`Ck::data`] reads rows and families at their outer level),
 /// so `n` keys cost `O(n)`; with a function in each key, `n` errors of `O(1)` notes each, each
@@ -35,14 +40,15 @@ fn keys_of_a_display_and_in_tests_are_checked_as_data_in_linear_time() {
         ),
         ("n keys and n `in` tests, each holding an integer", "1", 0),
     ] {
-        let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-            .into_iter()
-            .map(|n| (n, Resolved::new(&text(n, leaf))))
-            .collect();
-        scaling::check_order(what, 500, 1, |n| {
-            let info = units[&n].check();
-            assert_eq!(info.errors.len(), errors * n, "{what} at {n}");
-        });
+        scaling::check_inputs(
+            what,
+            N,
+            |n| (n, Resolved::new(&text(n, leaf))),
+            |(n, u)| {
+                let info = u.check();
+                assert_eq!(info.errors.len(), errors * n, "{what} at {n}");
+            },
+        );
     }
 }
 
@@ -74,14 +80,15 @@ fn keys_of_reads_are_checked_as_data_in_linear_time() {
         ),
         ("n reads and n reads through a call, each key found", "1", 0),
     ] {
-        let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-            .into_iter()
-            .map(|n| (n, Resolved::new(&text(n, leaf))))
-            .collect();
-        scaling::check_order(what, 500, 1, |n| {
-            let info = units[&n].check();
-            assert_eq!(info.errors.len(), errors * n, "{what} at {n}");
-        });
+        scaling::check_inputs(
+            what,
+            N,
+            |n| (n, Resolved::new(&text(n, leaf))),
+            |(n, u)| {
+                let info = u.check();
+                assert_eq!(info.errors.len(), errors * n, "{what} at {n}");
+            },
+        );
     }
 }
 
@@ -118,14 +125,15 @@ fn many_errors_in_one_expression_have_headlines_of_bounded_length() {
             1,
         ),
     ] {
-        let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-            .into_iter()
-            .map(|n| (n, Resolved::new(&text(n))))
-            .collect();
-        scaling::check_order(what, 500, 1, |n| {
-            let info = units[&n].check();
-            assert_eq!(info.errors.len(), n + more, "{what} at {n}");
-        });
+        scaling::check_inputs(
+            what,
+            N,
+            |n| (n, Resolved::new(&text(n))),
+            |(n, u)| {
+                let info = u.check();
+                assert_eq!(info.errors.len(), n + more, "{what} at {n}");
+            },
+        );
     }
 }
 
@@ -169,16 +177,17 @@ fn nested_families_are_checked_as_data_in_linear_time() {
             |_| 0,
         ),
     ] {
-        let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-            .into_iter()
-            .map(|n| (n, Resolved::new(&text(n, leaf))))
-            .collect();
-        scaling::check_order(what, 500, 1, |n| {
-            let info = units[&n].check();
-            assert_eq!(info.errors.len(), errors, "{what} at {n}");
-            let got = info.errors.first().map_or(0, |e| e.notes.len());
-            assert_eq!(got, notes(n), "{what} at {n}");
-        });
+        scaling::check_inputs(
+            what,
+            N,
+            |n| (n, Resolved::new(&text(n, leaf))),
+            |(n, u)| {
+                let info = u.check();
+                assert_eq!(info.errors.len(), errors, "{what} at {n}");
+                let got = info.errors.first().map_or(0, |e| e.notes.len());
+                assert_eq!(got, notes(*n), "{what} at {n}");
+            },
+        );
     }
 }
 
@@ -205,17 +214,18 @@ fn a_function_in_many_nested_tuples_is_one_error_in_linear_time() {
     ] {
         let one = type_errors(&text(3));
         assert_eq!(one.len(), 1, "{what}: {one:?}");
-        let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-            .into_iter()
-            .map(|n| (n, Resolved::new(&text(n))))
-            .collect();
-        scaling::check_order(what, 500, 1, |n| {
-            let info = units[&n].check();
-            // One error, with one note for each step the function passes through and none
-            // that prints a type of the depth of the tuples.
-            assert_eq!(info.errors.len(), 1, "{what} at {n}");
-            assert_eq!(info.errors[0].notes.len(), notes(n), "{what} at {n}");
-        });
+        scaling::check_inputs(
+            what,
+            N,
+            |n| (n, Resolved::new(&text(n))),
+            |(n, u)| {
+                let info = u.check();
+                // One error, with one note for each step the function passes through and none
+                // that prints a type of the depth of the tuples.
+                assert_eq!(info.errors.len(), 1, "{what} at {n}");
+                assert_eq!(info.errors[0].notes.len(), notes(*n), "{what} at {n}");
+            },
+        );
     }
 }
 
@@ -237,19 +247,20 @@ fn a_generic_function_put_in_a_tuple_by_n_bindings_is_one_error_in_linear_time()
     let what = "a generic function put in a tuple by n bindings";
     let one = type_errors(&text(3));
     assert_eq!(one.len(), 1, "{what}: {one:?}");
-    let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-        .into_iter()
-        .map(|n| (n, Resolved::new(&text(n))))
-        .collect();
-    scaling::check_order(what, 500, 1, |n| {
-        let info = units[&n].check();
-        assert_eq!(info.errors.len(), 1, "{what} at {n}");
-        assert_eq!(
-            info.errors[0].notes.len(),
-            notes_in_named_steps(n),
-            "{what} at {n}"
-        );
-    });
+    scaling::check_inputs(
+        what,
+        N,
+        |n| (n, Resolved::new(&text(n))),
+        |(n, u)| {
+            let info = u.check();
+            assert_eq!(info.errors.len(), 1, "{what} at {n}");
+            assert_eq!(
+                info.errors[0].notes.len(),
+                notes_in_named_steps(*n),
+                "{what} at {n}"
+            );
+        },
+    );
 }
 
 /// Besides its ratio: one error where a payload holds a function, none where none does. Small
@@ -332,14 +343,15 @@ fn atoms_nested_in_atoms_are_checked_in_linear_time() {
             in_atoms_twice_in_a_function,
         ),
     ] {
-        let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
-            .into_iter()
-            .map(|n| (n, Resolved::new(&text(n, "1"))))
-            .collect();
-        scaling::check_order(what, 500, 1, |n| {
-            let info = units[&n].check();
-            assert!(info.errors.is_empty(), "{what} at {n}");
-        });
+        scaling::check_inputs(
+            what,
+            N,
+            |n| (n, Resolved::new(&text(n, "1"))),
+            |(n, u)| {
+                let info = u.check();
+                assert!(info.errors.is_empty(), "{what} at {n}");
+            },
+        );
     }
 }
 
@@ -379,14 +391,15 @@ fn a_power_returned_n_deep_is_checked_in_linear_time() {
         ("2 ^ k", "int", 1),
     ] {
         let what = format!("`{body}` returned through n arrows, expected at {c}");
-        let units: BTreeMap<usize, Resolved> = [200, scaling::FACTOR * 200]
-            .into_iter()
-            .map(|n| (n, Resolved::new(&returned_by_lambdas(n, c, body))))
-            .collect();
-        scaling::check_order(&what, 200, 1, |n| {
-            let info = units[&n].check();
-            assert_eq!(info.errors.len(), errors, "{what} at {n}");
-        });
+        scaling::check_inputs(
+            &what,
+            N,
+            |n| (n, Resolved::new(&returned_by_lambdas(n, c, body))),
+            |(n, u)| {
+                let info = u.check();
+                assert_eq!(info.errors.len(), errors, "{what} at {n}");
+            },
+        );
     }
 }
 
@@ -410,14 +423,15 @@ fn a_chain_of_functions_returning_the_one_before_is_checked_in_linear_time() {
         text
     };
     let what = "a chain of n functions, each returning the one before";
-    let units: BTreeMap<usize, Resolved> = [200, scaling::FACTOR * 200]
-        .into_iter()
-        .map(|n| (n, Resolved::new(&chain(n))))
-        .collect();
-    scaling::check_order(what, 200, 1, |n| {
-        let info = units[&n].check();
-        assert!(info.errors.is_empty(), "{what} at {n}");
-    });
+    scaling::check_inputs(
+        what,
+        N,
+        |n| (n, Resolved::new(&chain(n))),
+        |(n, u)| {
+            let info = u.check();
+            assert!(info.errors.is_empty(), "{what} at {n}");
+        },
+    );
 }
 
 /// A type that holds one part twice at each of `d` levels, `t{i} = (t{i-1}, t{i-1})`, or

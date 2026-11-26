@@ -83,24 +83,17 @@ fn a_cycle_of_two_rules_under_a_list_at_the_growing_token_is_quadratic() {
 /// work is linear in the rungs, not quadratic.
 #[test]
 fn each_operand_costs_a_constant_per_rung() {
-    use std::collections::HashMap;
-    use zedc::lex::{Token, lex};
+    use zedc::lex::lex;
     use zedc::parse::{TOP, parse_with};
-    let grammars: HashMap<usize, Grammar> = [8, 64].map(|k| (k, ladder(k))).into();
-    let texts: HashMap<usize, String> = [8, 64]
-        .map(|k| (k, format!("1 o{k} ").repeat(100) + "2"))
-        .into();
-    let tokens: HashMap<usize, Vec<Token>> =
-        texts.iter().map(|(k, t)| (*k, lex(t).unwrap())).collect();
-    zed_tests::scaling::check("a ladder of n rungs", 8, |k| {
-        parse_with(
-            &grammars[&k],
-            &texts[&k],
-            &tokens[&k],
-            &format!("R{k}"),
-            TOP,
-        )
-        .unwrap();
+    // n 1000 (SCALE-small-n-rest; DESIGN sec:plan, n log n is under 10.5 only from n = 777):
+    // each size's grammar, text and tokens are built in the process of that size alone.
+    let make = |k: usize| {
+        let text = format!("1 o{k} ").repeat(100) + "2";
+        let tokens = lex(&text).unwrap();
+        (k, ladder(k), text, tokens)
+    };
+    zed_tests::scaling::check_inputs("a ladder of n rungs", 1000, make, |(k, g, text, tokens)| {
+        parse_with(g, text, tokens, &format!("R{k}"), TOP).unwrap();
     });
 }
 

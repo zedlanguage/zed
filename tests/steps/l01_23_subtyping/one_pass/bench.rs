@@ -10,13 +10,14 @@ use super::*;
 #[test]
 fn exclusive_ors_and_chains_of_overlapping_tuple_types_are_decided_in_one_pass() {
     // TEST-bench-move-l0123, author P169: c 32 before, now 320 (the sizes above are the old
-    // ones); 1x 0.36 s by `ns`, load 41.
-    let types = scaling::inputs(320, families);
-    scaling::check(
+    // ones); 1x 0.36 s by `ns`, load 41. Now 1000 (SCALE-small-n-rest; DESIGN sec:plan, n log
+    // n is under 10.5 only from n = 777), each size's types built in its own process.
+    scaling::check_inputs(
         "one pass over exclusive ors and chains, by tuple types",
-        320,
-        |c| {
-            for (t, expected) in &types[&c] {
+        1000,
+        |c| (c, families(c)),
+        |(c, types)| {
+            for (t, expected) in types {
                 Type::forget_emptiness();
                 assert_eq!(t.is_empty(), *expected == Verdict::Empty, "{c}");
                 Type::forget_emptiness();
@@ -52,13 +53,13 @@ fn an_exclusive_or_built_in_two_orders_is_equal_to_itself_in_linear_time() {
 #[test]
 fn overlapping_exclusive_ors_and_chains_are_compared_in_n_log_n() {
     // TEST-bench-move-l0123, author P169: c 32 before, now 320 (the sizes above are the old
-    // ones); 1x 0.43 s by `ns`, load 41.
-    let types = scaling::inputs(320, comparisons);
-    scaling::check(
+    // ones); 1x 0.43 s by `ns`, load 41. Now 1000 (SCALE-small-n-rest; DESIGN sec:plan, n log
+    // n is under 10.5 only from n = 777), each size's types built in its own process.
+    scaling::check_inputs(
         "an exclusive or or a chain against one more and against each other, by tuple types",
-        320,
-        |c| {
-            let (pairs, meet) = &types[&c];
+        1000,
+        |c| (c, comparisons(c)),
+        |(c, (pairs, meet))| {
             for (x, y) in pairs {
                 Type::forget_emptiness();
                 assert!(!x.equiv(y), "{c}");

@@ -48,12 +48,15 @@ fn built(
 fn searching_the_signatures_of_many_functions_scales() {
     // Twenty constants for each function, each adopting its literal with no search, so that
     // what the unit has found is large beside the searches.
-    let units = resolved(125, constants_and_functions);
-    scaling::check(
+    // n 1000, up from 125 (SCALE-small-n-rest; DESIGN sec:plan, n log n is under 10.5 only
+    // from n = 777), each unit resolved only in the process of its size.
+    scaling::check_inputs(
         "the signatures of n functions beside 20n constants",
-        125,
-        |n| {
-            let info = units[&n].check();
+        1000,
+        |n| (n, Resolved::new(&constants_and_functions(n))),
+        |(n, u)| {
+            let n = *n;
+            let info = u.check();
             assert!(info.errors.is_empty(), "{:?}", info.errors);
             assert_eq!(info.sigs.len(), n);
             assert_eq!(info.adopt.len(), 20 * n);
@@ -1049,7 +1052,7 @@ fn replacing_variables_in_wrappers_of_a_shared_row_scales() {
     let class = |k: usize| Ty::var(format!("${k}").into());
     let bind =
         |v: String| -> Binds { [(Arc::<str>::from(v), Ty::dynamic())].into_iter().collect() };
-    let wrappers = scaling::inputs(40, |m| {
+    let wrappers = |m: usize| {
         let h = Ty::tuple(
             (0..64)
                 .map(class)
@@ -1064,8 +1067,8 @@ fn replacing_variables_in_wrappers_of_a_shared_row_scales() {
                 )
             })
             .collect::<Vec<_>>()
-    });
-    let short = scaling::inputs(80, |m| {
+    };
+    let short = |m: usize| {
         let c = Ty::tuple((0..m).map(class).collect());
         (0..m)
             .map(|i| {
@@ -1074,23 +1077,25 @@ fn replacing_variables_in_wrappers_of_a_shared_row_scales() {
                 (r, binds)
             })
             .collect::<Vec<_>>()
-    });
-    scaling::check_order(
+    };
+    // m 1000, up from 40 and 80 (SCALE-small-n-rest; DESIGN sec:plan, n log n is under 10.5
+    // only from n = 777), each input built only in the process of its size.
+    scaling::check_inputs(
         "one replacement of each of m wrappers of a shared row",
-        40,
-        1,
-        |m| {
-            for (w, b) in &wrappers[&m] {
+        1000,
+        wrappers,
+        |ws| {
+            for (w, b) in ws {
                 assert!(&w.replace(b) == w);
             }
         },
     );
-    scaling::check_order(
+    scaling::check_inputs(
         "two replacements of each of m short rows over one row",
-        80,
-        1,
-        |m| {
-            for (r, binds) in &short[&m] {
+        1000,
+        short,
+        |rs| {
+            for (r, binds) in rs {
                 for b in binds {
                     assert!(&r.replace(b) == r);
                 }
