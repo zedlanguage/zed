@@ -705,7 +705,8 @@ fn canonical(d: &Desc) -> Classed {
 /// near `±10^15`, read by membership; and the answer equal, by `==`, to the one form built
 /// value by value from that description ([`canonical`]), so that a set made by these and the
 /// same set made any other way are one value. Also: union and meet commute;
-/// `(A ∩ B) ∪ (A \ B) == A`; [`Classed::join_all`] of the two is their union; and [`Classed::meet_ranges`] is the meet with the plain set. Negative control:
+/// `(A ∩ B) ∪ (A \ B) == A`; [`Classed::join_all`] of the two is their union; and
+/// [`Classed::meet_ranges`] is the meet with the plain set. Negative control:
 /// the operations on the wider sets (tails dropped, as before this row) give a wrong value in
 /// some case, and some answer has tails.
 #[test]

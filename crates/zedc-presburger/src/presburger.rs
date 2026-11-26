@@ -20665,7 +20665,7 @@ pub fn project(f: &Formula, sym: &Atom) -> Result<One, Refusal> {
 // counterexample, red under the order alone; the second, `3^(2^40)` against the even
 // integers, refused for `Repeats` before CLASSED-periodic-tail and now `false`).
 pub fn decide_at(f: &Formula, sym: &Atom, value: &Num) -> Result<bool, Refusal> {
-    let mut each = project_each_classed(f, std::slice::from_ref(sym))?;
+    let mut each = project_each_tailed(f, std::slice::from_ref(sym))?;
     let set = each.sets.remove(0)?;
     let member = set.contains_end(&End::Fin(value.clone()));
     let exact = set.tails.is_some() && each.causes.iter().all(|c| *c == Refusal::Repeats);
@@ -20806,7 +20806,28 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 /// [`project_each`] with each set kept as ranges met with one class ([`Classed`]) where the
 /// exact projection has that form, the values not listed; [`EachClassed::met`] gives the sets
 /// of [`project_each`]. The memo keeps these answers, for both.
+///
+/// Each set comes without its tails ([`Classed::without_tails`]), its ranges met with its
+/// class as the exact projection gave them, with the cause [`Refusal::Repeats`] where they
+/// are wider, as before row CLASSED-periodic-tail; only [`decide_at`] reads the tails
+/// ([`project_each_tailed`]). Why: the readers of these sets (zedc-preimage's product) read
+/// their ranges and class, not the tails, and with the tails kept they lost what they had
+/// derived: `l01_39_scope_relations::families::answers::two_eq_case_answers` was red, with
+/// `a=[..]` where it had `a=[..=-3, 0..=0, 3..]` after `a == 3 * z0`. Teaching those readers
+/// the tails is a separate change. O(p) for the p ranges of the answers.
 pub fn project_each_classed(f: &Formula, syms: &[Atom]) -> Result<EachClassed, Refusal> {
+    let mut each = project_each_tailed(f, syms)?;
+    for set in each.sets.iter_mut().flatten() {
+        if set.tails.is_some() {
+            *set = set.without_tails();
+        }
+    }
+    Ok(each)
+}
+
+/// [`project_each_classed`] with each set's tails kept (row CLASSED-periodic-tail), for
+/// [`decide_at`]; the memo keeps these answers.
+fn project_each_tailed(f: &Formula, syms: &[Atom]) -> Result<EachClassed, Refusal> {
     let Some(store) = open_store() else {
         return project_each_asked(f, syms);
     };

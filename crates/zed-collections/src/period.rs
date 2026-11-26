@@ -9,10 +9,11 @@
 //! The method: the failure function of Knuth, Morris and Pratt, "Fast pattern matching in
 //! strings", SIAM J. Comput. 6(2):323–350, 1977, doi:10.1137/0206024 (read 2026-11-26 from the
 //! scanned journal pages, p. 327): "Let f\[j\] be the largest i less than j such that
-//! pattern\[1\] . . . pattern\[i − 1\] = pattern\[j − i + 1\] . . . pattern\[j − 1\]", so `f[j] - 1`
-//! is the length of the longest proper border of the first `j - 1` letters; the prefix function
-//! below is that value, indexed from 0. Their definition of a period, p. 333, (5): "We say that
-//! p is a period of α if α\[i\] = α\[i + p\] for 1 ≤ i ≤ |α| − p". The fact used, with its proof
+//! pattern\[1\] . . . pattern\[i − 1\] = pattern\[j − i + 1\] . . . pattern\[j − 1\]", so
+//! `f[j] - 1` is the length of the longest proper border of the first `j - 1` letters; the
+//! prefix function below is that value, indexed from 0. Their definition of a period, p. 333,
+//! (5): "We say that p is a period of α if α\[i\] = α\[i + p\] for 1 ≤ i ≤ |α| − p". The fact
+//! used, with its proof
 //! here so that nothing rests on the citation: let `b = f[n - 1]` be the length of the longest
 //! proper border of `s` (a prefix that is also a suffix, shorter than `s`), and `q = n - b`.
 //! (1) `q` is the least period of `s` as a word, `s[i] == s[i + q]` for all `i + q < n`: a border
