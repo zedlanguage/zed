@@ -1282,6 +1282,7 @@ dependencies = [
  "stacker",
  "zed-alloc-count",
  "zed-collections",
+ "zed-hash",
  "zed-meter-settings",
  "zed-numtheory",
 ]

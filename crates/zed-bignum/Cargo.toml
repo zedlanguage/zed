@@ -28,11 +28,13 @@ zed-collections.workspace = true
 zed-numtheory.workspace = true
 
 [dev-dependencies]
-# The scaling tests (tests/src/scaling.rs). zed-alloc-count and zed-meter-settings depend on no
-# crate of the workspace, so these add no cycle.
+# The scaling tests (tests/src/scaling.rs) and the seeded generators (tests/src/seed.rs, which
+# uses zed-hash). zed-alloc-count, zed-meter-settings and zed-hash depend on no crate of the
+# workspace, so these add no cycle.
 rustix.workspace = true
 zed-alloc-count.workspace = true
 zed-meter-settings.workspace = true
+zed-hash.workspace = true
 stacker.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
