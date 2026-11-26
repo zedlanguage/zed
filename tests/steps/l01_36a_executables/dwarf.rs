@@ -282,7 +282,7 @@ fn gdb_stops_at_a_function_and_at_source_lines_and_walks_the_stack() {
         &[
             "break zed_root",
             &format!("break {name}:2"),
-            // Line 6, the send, has a row: a send takes its statement's site (RT-sites-push).
+            // Line 6, the send, has a row: a send takes its head's site (RT-sites-push).
             &format!("break {name}:6"),
             "run",
             "bt",

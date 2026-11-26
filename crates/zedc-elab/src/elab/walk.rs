@@ -3301,20 +3301,24 @@ impl<'a> Elab<'a> {
                 m.ret = Ret::Stmt(v.map(|v| self.bind(s, v)));
             }
             Frame::Push(s) => {
-                let StmtKind::Push { port, .. } = &s.kind else {
+                let StmtKind::Push { port, value } = &s.kind else {
                     unreachable!("a push")
                 };
                 let out = m.t().map(|v| {
                     let t = self.temp();
                     let pushed = self.push(s.span, port, v);
                     // A send is a statement, not an expression, so no site frame marks it: it
-                    // takes the span of its statement here (RT-sites-push), before the block
-                    // around it would give it its own. The value is marked already, so this
-                    // marks only the send's nodes, O(P) for the P ports `push` tests.
+                    // takes the span of its statement's head, the port and `<-`, here
+                    // (RT-sites-push), before the block around it would give it its own. Not
+                    // the whole statement: an executable keeps each line a site touches, and a
+                    // value over several lines would keep the text of a branch staging dropped
+                    // (test `l02_08d_build_constant::staged`); the value has its own sites. The
+                    // value is marked already, so this marks only the send's nodes, O(P) for
+                    // the P ports `push` tests.
                     if zed_kernel::sites::recording() {
                         let span = zed_kernel::sites::Span {
                             start: s.span.start,
-                            end: s.span.end,
+                            end: value.span.start.max(s.span.start),
                         };
                         zed_kernel::sites::mark(&pushed, span, &mut self.sited);
                     }
