@@ -12,12 +12,15 @@ pub fn lines(port: &str, bytes: &[u8]) -> Value {
     let mut out = Vec::new();
     let mut start = 0;
     while start < bytes.len() {
+        // Cannot panic: `start < bytes.len()` by the loop's test, `start <= end` and `end` is
+        // at most `bytes.len()` (a position in `bytes[start..]` plus `start`, or the length).
         let end = bytes[start..]
             .iter()
             .position(|b| matches!(b, b'\n' | b'\r'))
             .map_or(bytes.len(), |i| start + i);
         let line = &bytes[start..end];
         // The line end's length: two for `\r\n`, one for `\n` or a lone `\r`, none at the end.
+        // Cannot panic: `end <= bytes.len()`, as above.
         let ends = match &bytes[end..] {
             [b'\r', b'\n', ..] => 2,
             [] => 0,

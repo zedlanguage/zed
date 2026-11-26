@@ -24,6 +24,42 @@ use zed_rt::{FunObj, Heap, HeldObj, HeldShape, Obj, Paths, Word};
 
 use crate::tables::{NamedShape, NodeInfo, Placing, Tables};
 
+// Why the panics of this file cannot fire (TEST-runtime-panic-guard). The hooks index the
+// tables by numbers generated code passes, and those numbers hold these facts; each `// Cannot
+// panic:` comment below names the ones it rests on. The executable's start checks the data
+// they rest on before any hook runs (`exe::Program::decode`): the graph by
+// `zedc::zir::validate::validate`, and the carried plan against it by `Plan::from_bytes`.
+// - N1, node numbers. Each node number a hook gets (`id`) is a constant codegen wrote for a
+//   node of the graph (`Gen::slow`, `branch`, `matched`, `named`), the node's index in
+//   `t.nodes`; `Run::merged` and `Run::shapes` have one entry per node (`State::new`).
+// - N2, inputs. Codegen passes a hook one word per input of its node, by `rt_arg` or by the
+//   stores after `rt_args`, so `ins.len()` is the node's number of inputs; `ni.modes` has one
+//   mode per input (`Plan::from_bytes` refuses any other count), and `ni.arms[i]` one per
+//   argument of arm region `i`. `validate` gives a primitive of fixed arity k exactly k inputs
+//   or none (validate.rs, fn `shape`), and codegen makes one with none a PRIM word, never a
+//   hook call (codegen.rs, `t.prims.iter().position`); `apply`, `if` and `match` have their
+//   function or scrutinee as input 0.
+// - N3, lambdas and entries. A closure's lambda number (`Obj::Clo::lambda`) is a lambda node's
+//   `NodeInfo::lambda`, which `Tables::new` sets for each lambda node to its index in
+//   `t.lambdas`, or one copied from such a closure. An entry number codegen passes
+//   (`rt_entry`, `rt_register`) is below `Tables::entry_count`, the length of `Run::entries`.
+//   A body, placed entry or trampoline is asked for only on a call by name of a closure
+//   with a parameter list, which only a `place` node with a literal table makes
+//   (`placed_clo`), at a `callNamed` node with a literal shape; then `Tables::arities` is not
+//   empty, `entry_count` is `trampoline(largest arity) + 1`, and `body(i)`, `placed(i)`
+//   (below `3 L` for `L` lambdas) and `trampoline(a)` for a lambda's arity `a` are below it.
+// - N4, PRIM and SOURCE words. A PRIM word's bits are a position in `t.prims` (made only by
+//   codegen's constant and by [`alloc_made`], each from `t.prims`), and a SOURCE word's a
+//   position in `t.ports` (made only in [`node`] at an `Op::Read` and by [`alloc_made`], each
+//   from `t.port_at`, which maps every port in `t.ports` to its position); `Tables::new` puts
+//   every `Read` node's port in `t.port_at`.
+// - N5, lists and shapes. `NodeInfo::placing` is set only for a `place` node with a literal
+//   table, to its list's index in `t.placings`, and a closure's `placed` only from it
+//   ([`placed_clo`]); `NodeInfo::named` only for a `callNamed` node whose shape
+//   `NamedShape::read` accepts for its number of inputs, `2 + k + names + flags`.
+// - R, the run. `outcome::call` installs the run before generated code runs and removes it once
+//   after (`install`, then `remove` on either path), so every hook finds it.
+
 /// A match's binders: each word and its node in the [`Paths`] of the scrutinee.
 type Binders = Vec<(Word, usize)>;
 
@@ -131,12 +167,15 @@ pub(crate) fn install(s: State) {
 
 /// Removes this thread's run.
 pub(crate) fn remove() -> State {
+    // Cannot panic: R; `outcome::call` calls this once after each `install`.
     STATE.with(|c| c.borrow_mut().take().expect("a run is installed"))
 }
 
 fn with<R>(f: impl FnOnce(&Tables, &mut Run) -> R) -> R {
     STATE.with(|c| {
         let mut slot = c.borrow_mut();
+        // Cannot panic: R; a hook is called only by generated code, which runs only between
+        // `install` and `remove`.
         let s = slot.as_mut().expect("a run is installed");
         #[cfg(debug_assertions)]
         {
@@ -295,6 +334,8 @@ extern "C" fn rt_named(id: i64) -> Named {
         // `place_named` is plain Rust that runs no native code and calls no hook, so the
         // address `rt_args` gave stays valid: only `rt_args` moves the buffer.
         let ins = std::mem::take(&mut s.slots);
+        // Cannot panic: `slots_len` is set only by `rt_args`, after it grows `slots` to at
+        // least that length, and `slots` never shrinks.
         let ins_n = &ins[..s.slots_len];
         let r = place_named(t, s, id as usize, ins_n);
         if matches!(r, Ok(None)) {
@@ -345,6 +386,10 @@ const LEFT: u32 = u32::MAX;
 extern "C" fn rt_direct(id: i64, tag: i64, bits: i64) -> Named {
     with(|t, s| {
         let none = Named { call: 0, buf: 0 };
+        // Cannot panic: N1 for `merged[id]`; N5 for `placings[pi]`, the list of a closure a
+        // `place` made; N3 for `lambdas[lambda]` and for `entries[placed(lambda)]`, a closure
+        // with a list called at a `callNamed` node (`merged[id]` is set only by
+        // [`place_named`], at such a node).
         let Some(Merged {
             placing,
             from: Some(_),
@@ -433,6 +478,10 @@ struct Merged {
 // A node called through lists that alternate merges at each call, as before. Memory: O(p)
 // per node that calls by name.
 fn place_named(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Option<i64>, String> {
+    // Cannot panic: N1 for `nodes[id]` and `merged[id]`; codegen calls `rt_named` only at a
+    // node with `named` set (`Gen::named`), and N5 then gives it `2 + k + names + flags`
+    // inputs, so `ins[1]` and `ins[2..]` exist; N5 for `placings[pi]`; a closure with a fill
+    // has it as its last capture ([`placed_clo`] pushes it).
     let sh = t.nodes[id]
         .named
         .as_deref()
@@ -489,12 +538,17 @@ fn merge(sh: &NamedShape, p: &Placing, flags: &[Word], from: &mut Vec<u32>) -> b
         tag: Word::BOOL,
         bits: 1,
     };
+    // Cannot panic: `i < names.len()`, and `NamedShape::read` gives `opt` that length.
     let left_out = |i: usize| sh.opt[i].is_some_and(|x| flags.get(x) == Some(&yes));
     from.clear();
     from.extend(0..sh.k as u32);
     from.resize(p.n, LEFT);
     // One merge of the call's sorted names with the function's, as the kernel's, by the
     // names' ranks ([`Tables::rank_names`]), which keep their order.
+    // Cannot panic: `i < names.len()`, and `NamedShape::read` gives `at` that length and
+    // `rank_names` gives `ranks` one rank per name; `j < p.ranks.len()`, checked by the `get`,
+    // one rank per name of the list, so `p.places[j]` exists, and it is below `p.n`
+    // (`Placing::read` refuses any other), the length of `from`.
     let (mut i, mut j) = (0, 0);
     while i < sh.names.len() {
         if left_out(i) {
@@ -536,6 +590,7 @@ fn call_placed(
     p: &Placing,
     fill: Option<Word>,
 ) -> Result<Option<i64>, String> {
+    // Cannot panic: N3, `callee` a closure's lambda.
     let (callee, clo, arity) = match fill {
         None => (lambda, f, p.n),
         Some(g) => match s.heap.obj(g)? {
@@ -555,6 +610,10 @@ fn call_placed(
     // and the entry dropped it after, two count changes per argument the body borrows, 25% of
     // a placed call's run time at p = 320 (row CALL-callee-places-native). The cost is the
     // bodies' addresses, registered once a run.
+    // Cannot panic: N3 for `lambdas[callee]`, `entries[body(callee)]` and
+    // `entries[trampoline(arity)]`, `arity` being `callee`'s number of parameters (checked
+    // above); `given[x]` for `x` in `from` other than `LEFT`, each below `k + names` (`merge`
+    // writes `0..k` and `k + at[i]`, `at[i] < names`), the length of `given`.
     b.push(s.entries[t.body(callee)]);
     push(&mut b, clo);
     let left = Word {
@@ -668,6 +727,7 @@ extern "C" fn rt_cap(tag: i64, bits: i64, i: i64) -> Word {
     reason = "a linked executable finds each hook by its symbol (step L1.36a)"
 )]
 extern "C" fn rt_callable(tag: i64, bits: i64, nargs: i64) -> i64 {
+    // Cannot panic: N3, a closure's lambda.
     with(|t, s| match s.heap.obj(Word { tag, bits }) {
         Ok(Some(Obj::Clo { lambda, .. })) if t.lambdas[*lambda].params == nargs as usize => {
             *lambda as i64 + 1
@@ -682,6 +742,8 @@ extern "C" fn rt_callable(tag: i64, bits: i64, nargs: i64) -> i64 {
     reason = "a linked executable finds each hook by its symbol (step L1.36a)"
 )]
 extern "C" fn rt_entry(lambda: i64) -> i64 {
+    // Cannot panic: N3; codegen calls this with `rt_callable`'s result less 1, a lambda's
+    // number, only when that result is not 0.
     with(|_, s| s.entries[lambda as usize])
 }
 
@@ -691,6 +753,7 @@ extern "C" fn rt_entry(lambda: i64) -> i64 {
     reason = "a linked executable finds each hook by its symbol (step L1.36a)"
 )]
 extern "C" fn rt_register(lambda: i64, address: i64) {
+    // Cannot panic: N3; codegen registers entry numbers below `Tables::entry_count`.
     with(|_, s| s.entries[lambda as usize] = address);
 }
 
@@ -726,7 +789,19 @@ extern "C" fn rt_match(id: i64) -> i64 {
     reason = "a linked executable finds each hook by its symbol (step L1.36a)"
 )]
 extern "C" fn rt_out(k: i64) -> Word {
-    with(|_, s| s.outs[k as usize])
+    // Codegen reads binder `k` of the arm `rt_match` chose, below the binders of that arm's
+    // pattern, and [`matched`] gives that many words; a fault in that agreement fails the run.
+    with(|_, s| match s.outs.get(k as usize) {
+        Some(&w) => w,
+        None => {
+            let e = zed_rt::bug(
+                "read a binder the match did not give",
+                &format!("binder {k} of {} the match gave", s.outs.len()),
+            );
+            fail(s, e, None);
+            Word::err()
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -745,6 +820,7 @@ extern "C" fn rt_pending() -> Word {
 )]
 extern "C" fn rt_error(id: i64) -> Word {
     with(|t, s| {
+        // Cannot panic: N1.
         let e = t.nodes[id as usize]
             .error
             .as_deref()
@@ -816,6 +892,7 @@ fn atom_name(x: &Text) -> Option<Arc<str>> {
 // agree with it; one kept shape per atom node. Tests
 // `l01_36_cranelift::scaling::a_list_of_many_atoms_scales` and `l01_36_cranelift::hooks`.
 fn shape(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Option<Shape>, String> {
+    // Cannot panic: both callers ([`node`]) check `ins.len() >= 2`; N1 for `shapes[id]`.
     let key = (ins[0], ins[1]);
     if let Some((a, b, sh)) = &s.shapes[id]
         && (*a, *b) == key
@@ -840,6 +917,7 @@ fn shape(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Option<Shap
                 named.push((x, i));
             }
             // The kernel's order, and its refusal of a repeated name (`Value::atom_named`).
+            // Cannot panic: each `w` of `windows(2)` has two items.
             named.sort_by(|a, b| a.0.cmp(&b.0));
             if named.windows(2).any(|w| w[0].0 == w[1].0) {
                 return Ok(None);
@@ -856,13 +934,14 @@ fn shape(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Option<Shap
         order: order.into(),
     };
     if stable(t, key.0) && stable(t, key.1) {
-        s.shapes[id] = Some((key.0, key.1, sh.clone()));
+        s.shapes[id] = Some((key.0, key.1, sh.clone())); // Cannot panic: N1.
     }
     Ok(Some(sh))
 }
 
 /// Runs node `id` on `ins` as the counting machine does; returns its first output, owned.
 fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String> {
+    // Cannot panic: N1.
     let ni = &t.nodes[id];
     match &ni.node().op {
         Op::Prim(Prim::Tuple) if !ins.is_empty() && all_data(s, ins)? => {
@@ -888,6 +967,9 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         },
         // A held family read: the entry, owned, or what the kernel gives where it is not
         // this one's to make.
+        // Cannot panic: the atom arm's `ins[..2]`, `ins[2..]` and `ins[2 + i]` follow its
+        // check `ins.len() > 2`, each `i` of `sh.order` below `ins.len() - 2` ([`shape`]
+        // keeps a shape per node, N1, whose number of inputs does not change, N2).
         Op::Prim(p) if family_at(s, *p, ins)?.is_some() => match family_read(s, *p, ins)? {
             Some(w) => {
                 consume(s, ni, ins)?;
@@ -907,6 +989,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
             }
         }
         // A held tuple read at a key: the part, or what the kernel gives for a key outside it.
+        // Cannot panic: `ins[0]` and `ins[1]` follow the check `ins.len() == 2`.
         Op::Prim(Prim::TupleGet | Prim::At)
             if ins.len() == 2 && s.heap.held(ins[0])?.is_some_and(|h| h.is_tuple()) =>
         {
@@ -923,6 +1006,8 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         },
         // A held family applied to a key is read at it, as the kernel applies it; a primitive
         // called on one reads it as the primitive's node does.
+        // Cannot panic: the guard has just found `family_called` to be some, on the same
+        // words and heap, so it is some again; its `args` is 0 or 1, and `ins` is not empty.
         Op::Apply if !ins.is_empty() && family_called(t, s, ins)?.is_some() => {
             let (p, args) = family_called(t, s, ins)?.expect("checked above");
             match family_read(s, p, &ins[args..])? {
@@ -940,6 +1025,9 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         },
         // The atom is made from its words, as the kernel would make it: the payload moves
         // into the cell, and the name and field names are borrowed.
+        // Cannot panic: the atom's `ins[2 + i]` as in the arm above, after `ins.len() >= 2`;
+        // `TupleGet` has two inputs (N2); `Concat`'s `ins[0]` and `ins[1]` follow its check
+        // `ins.len() == 2`.
         Op::Prim(Prim::Atom) if ins.len() >= 2 && all_data(s, ins)? => {
             match shape(t, s, id, ins)? {
                 None => slow(t, s, ni, ins),
@@ -974,6 +1062,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
             _ => slow(t, s, ni, ins),
         },
         // A count past `i64::MAX`, a string doubled 63 times, is a big integer the kernel makes.
+        // Cannot panic: `ins[0]` follows the check `ins.len() == 1`.
         Op::Prim(Prim::Len) if ins.len() == 1 => {
             match text(s, ins[0])?.map(|r| i64::try_from(r.char_count())) {
                 Some(Ok(n)) => {
@@ -985,6 +1074,8 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         }
         // A string of one scalar is never a join, whose parts are each at least one scalar, so
         // its text is read in place; any other string gives `#notScalar`, which the kernel makes.
+        // Cannot panic: `ins[0]` follows the check `ins.len() == 1`; a lambda node has its
+        // `lambda` set (N3).
         Op::Prim(Prim::CodePoint) if ins.len() == 1 => {
             if let Some(r) = text(s, ins[0])?
                 && r.char_count() == 1
@@ -1007,6 +1098,7 @@ fn node(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<Word, String
         // is the kernel's.
         // Complexity tradeoff: the kernel's `place` copies the closure's environment into a
         // new closure, O(captures), as this does; nothing more. Nothing is refused.
+        // Cannot panic: N4, `port_at` holds every `Read` node's port.
         Op::Prim(Prim::Place) if ni.placing.is_some() => match placed_clo(t, s, ni, ins)? {
             Some(w) => {
                 consume(s, ni, ins)?;
@@ -1074,6 +1166,8 @@ fn give(s: &mut Run, ni: &NodeInfo, ins: &[Word], w: Word) -> Result<Word, Strin
 /// As the machine's `read_held`.
 fn read_held(s: &Run, h: Word, k: Word) -> Result<Option<Word>, String> {
     if k.tag == Word::INT {
+        // Cannot panic: each caller ([`node`], [`called`]) passes an `h` it has just found
+        // to be a held tuple on the same heap.
         let h = s.heap.held(h)?.expect("a held tuple");
         return Ok(usize::try_from(k.bits)
             .ok()
@@ -1136,6 +1230,7 @@ fn family_at(s: &Run, p: Prim, ins: &[Word]) -> Result<Option<usize>, String> {
     if ins.len() != n {
         return Ok(None);
     }
+    // Cannot panic: `at < n == ins.len()`, from the table above and the check.
     let held = s.heap.held(ins[at])?.is_some_and(|h| h.family().is_some());
     Ok(held.then_some(at))
 }
@@ -1146,9 +1241,11 @@ fn family_called(t: &Tables, s: &Run, ins: &[Word]) -> Result<Option<(Prim, usiz
     if ins.len() == 2 && family_at(s, Prim::Get, ins)?.is_some() {
         return Ok(Some((Prim::Get, 0)));
     }
+    // Cannot panic: the one caller ([`node`]) checks `!ins.is_empty()`; N4 for `prims`.
     if ins[0].tag != Word::PRIM {
         return Ok(None);
     }
+    // Cannot panic: as above.
     let p = t.prims[ins[0].bits as usize];
     Ok(family_at(s, p, &ins[1..])?.map(|_| (p, 1)))
 }
@@ -1164,16 +1261,23 @@ impl HeldFamilyAt for NativeFamily<'_> {
     type Error = String;
 
     fn family(&self) -> &HeldFamily {
+        // Cannot panic: a `NativeFamily` is made only of a held family ([`family_read`] after
+        // [`family_at`], and `sub_family` after its own check).
         self.h
             .family()
             .expect("only held families are read as families")
     }
 
     fn part(&self, i: usize) -> Word {
+        // Cannot panic: `held_family_got` asks only for a part number an entry of the family
+        // holds, and [`HeldFamily::new`] numbers the entries that hold a function 0, 1, ... in
+        // order, as [`held_entries`] pushes their words into `parts` (and the kernel's
+        // `Machine::held_family` and [`alloc_made`] build parts in the same order).
         self.h.parts[i]
     }
 
     fn sub_family(&self, i: usize) -> Result<Option<Self>, String> {
+        // Cannot panic: as `part`.
         Ok(match self.heap.held(self.h.parts[i])? {
             Some(n) if n.family().is_some() => Some(NativeFamily {
                 heap: self.heap,
@@ -1195,9 +1299,13 @@ impl HeldFamilyAt for NativeFamily<'_> {
 // this reads the key and makes the word on the heap. Tests in `completeness` and
 // `l01_36_cranelift::held_values` check that the machines agree.
 fn family_read(s: &mut Run, p: Prim, ins: &[Word]) -> Result<Option<Word>, String> {
+    // Cannot panic: each caller ([`node`]) has just found `family_at` some on these words,
+    // directly or through [`family_called`], and the heap has not changed since; `at` is
+    // below `ins.len()` ([`family_at`]).
     let at = family_at(s, p, ins)?.expect("a held family operand");
     let fam = ins[at];
     // The key read, or the entry tuple stepped from.
+    // Cannot panic: with two words, `at` is 0 or 1.
     let other = match ins.len() {
         2 => Some(ins[1 - at]),
         _ => None,
@@ -1213,6 +1321,7 @@ fn family_read(s: &mut Run, p: Prim, ins: &[Word]) -> Result<Option<Word>, Strin
             } else if s.heap.holds_function(e)? {
                 return Ok(None);
             } else {
+                // Cannot panic: the guard checks `e.len() == 2`.
                 match s.heap.value(e)? {
                     Value::Tuple(e) if e.len() == 2 => Some(e[0].clone()),
                     _ => return Ok(None),
@@ -1236,6 +1345,8 @@ fn family_read(s: &mut Run, p: Prim, ins: &[Word]) -> Result<Option<Word>, Strin
             }
         }
     };
+    // Cannot panic: `family_at` found `fam` held above; the reads since allocated only new
+    // cells, and a live cell's contents never change (heap invariant H3).
     let h = s.heap.held(fam)?.expect("a held family");
     let got = held_family_got(p, NativeFamily { heap: &s.heap, h }, key.as_ref())?;
     Ok(Some(match got {
@@ -1285,9 +1396,13 @@ fn passed(s: &Run, p: Prim, ins: &[Word]) -> Result<Option<Word>, String> {
 fn called(t: &Tables, s: &Run, ins: &[Word]) -> Result<Option<Word>, String> {
     let held_tuple =
         |w: Word| -> Result<bool, String> { Ok(s.heap.held(w)?.is_some_and(|h| h.is_tuple())) };
+    // Cannot panic: the one caller ([`node`]) calls this only when `any_held` finds a held
+    // word in `ins`, so `ins` is not empty; `ins[1]` follows the check `ins.len() == 2`.
     if ins.len() == 2 && held_tuple(ins[0])? {
         return read_held(s, ins[0], ins[1]);
     }
+    // Cannot panic: as above, `ins` is not empty; N4 for `prims`; `args[0]` and `args[1]`
+    // follow the check `args.len() == 2`.
     if s.heap.is_held_atom(ins[0])? {
         return Ok(Some(ins[0]));
     }
@@ -1313,6 +1428,9 @@ fn placed_clo(
     ni: &NodeInfo,
     ins: &[Word],
 ) -> Result<Option<Word>, String> {
+    // Cannot panic: the one caller ([`node`]) checks `ni.placing.is_some()`; `Tables::new`
+    // sets `placing` only on a node of 2 or 3 inputs, so `ins[1]` exists (N2); N5 for
+    // `placings[pi]`; N3 for `lambdas[lambda]`.
     let pi = ni.placing.expect("a placing node");
     let lambda = match s.heap.obj(ins[1])? {
         Some(Obj::Clo { lambda, .. }) if t.lambdas[*lambda].params == t.placings[pi as usize].n => {
@@ -1321,6 +1439,7 @@ fn placed_clo(
         _ => return Ok(None),
     };
     // The lambda's own captures; a fill an earlier `place` gave the closure is after them.
+    // Cannot panic: N3; `LambdaInfo::node` is the lambda node's own number (`Tables::new`).
     let n = t.nodes[t.lambdas[lambda].node].node().inputs.len();
     let fill = match ins.get(2) {
         Some(&f) => match s.heap.obj(f)? {
@@ -1329,6 +1448,9 @@ fn placed_clo(
         },
         None => None,
     };
+    // Cannot panic: `ins[1]` was a closure above, and a live cell's contents never change
+    // (heap invariant H3). A closure of lambda `L` holds one capture per input of `L`'s node
+    // (`rt_cap` fills them), then at most a fill (above), so `caps` has at least `n` words.
     let Some(Obj::Clo { caps, .. }) = s.heap.obj(ins[1])? else {
         unreachable!("checked above")
     };
@@ -1368,11 +1490,20 @@ fn alloc_made(t: &Tables, s: &mut Run, m: Made) -> Result<Word, String> {
     let mut words: Vec<Word> = Vec::with_capacity(m.nodes.len());
     let mut used = vec![false; m.nodes.len()];
     // Node `i`'s word for one more place: the first takes the reference it was made with.
+    // `Made` puts each part before what holds it; a kernel that broke that order is a bug the
+    // run reports, not an index out of range.
     let mut take = |heap: &mut Heap, words: &[Word], i: usize| -> Result<Word, String> {
+        let Some(&w) = words.get(i) else {
+            return Err(zed_rt::bug(
+                "was given back a value whose part comes after what holds it",
+                &format!("node {} holds node {i}", words.len()),
+            ));
+        };
+        // Cannot panic: `i < words.len() <= m.nodes.len() == used.len()`.
         if std::mem::replace(&mut used[i], true) {
-            heap.inc(words[i])?;
+            heap.inc(w)?;
         }
-        Ok(words[i])
+        Ok(w)
     };
     for node in m.nodes {
         let w = match node {
@@ -1437,12 +1568,16 @@ fn alloc_made(t: &Tables, s: &mut Run, m: Made) -> Result<Word, String> {
         };
         words.push(w);
     }
-    Ok(*words.last().expect("a value has a node"))
+    words
+        .last()
+        .copied()
+        .ok_or_else(|| zed_rt::bug("was given back a value of no nodes", "an empty `Made`"))
 }
 
 /// Drops each input the node takes owned.
 fn consume(s: &mut Run, ni: &NodeInfo, ins: &[Word]) -> Result<(), String> {
     for (j, w) in ins.iter().enumerate() {
+        // Cannot panic: N2, one mode per input.
         if ni.modes[j] == Mode::Owned {
             s.heap.dec(*w)?;
         }
@@ -1482,10 +1617,15 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
     let mut stack: Vec<(Word, Vec<HeldPart>)> = Vec::new();
     let mut made = term_of(t, s, w, lets, &mut stack)?;
     loop {
+        // Cannot panic: `made` is none only just after `term_of` pushed a value onto `stack`;
+        // the stack is popped only where `made` is then set, so an empty stack meets a term.
         let Some((clo, terms)) = stack.last_mut() else {
             return Ok((made.expect("an empty stack follows a finished term")).into_term());
         };
         terms.extend(made.take());
+        // Cannot panic: `term_of` enters only a CELL word that `holds_function`, which is a
+        // closure, a kernel closure or a held value (`Heap::holds_function`), and no cell is
+        // freed or changed while a term is built (heap invariant H3).
         let caps = match s.heap.obj(*clo)? {
             Some(Obj::Clo { caps, .. }) => &**caps,
             Some(Obj::Fun(f)) => &*f.caps,
@@ -1495,12 +1635,15 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
         match caps.get(terms.len()) {
             Some(&c) => made = term_of(t, s, c, lets, &mut stack)?,
             None => {
+                // Cannot panic: N3 for `lambdas[lambda]`, whose `node` is the lambda node's own
+                // number.
                 let q = match s.heap.obj(*clo)? {
                     Some(Obj::Clo { lambda, placed, .. }) => {
                         let ni = &t.nodes[t.lambdas[*lambda].node];
                         let mut caps = HeldPart::terms(std::mem::take(terms));
                         // A closure a `place` made ([`placed_clo`]): `place(table, f, fill)`,
                         // the fill its last capture, as the kernel's `placed_fun_term` gives it.
+                        // Cannot panic: N5 for `placings[p]`.
                         let placed = placed.map(|p| &t.placings[p as usize]);
                         let fill = placed.and_then(|p| if p.fill { caps.pop() } else { None });
                         let f = raise_node(ni.node(), ni.number, &t.swapped, &caps)?;
@@ -1522,6 +1665,8 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
                         HeldPart::terms(std::mem::take(terms)),
                         f.placed.as_ref(),
                     ))?,
+                    // Cannot panic: an entered word that is no closure is a held value, as
+                    // above.
                     _ => {
                         let h = s.heap.held(*clo)?.expect("a held value");
                         let (key, parts) = (clo.bits as u64, std::mem::take(terms));
@@ -1535,6 +1680,7 @@ fn term(t: &Tables, s: &mut Run, w: Word, lets: &mut Lets) -> Result<Term, Strin
                         part
                     }
                 };
+                // Cannot panic: the loop reached here through `stack.last_mut()` being some.
                 let (clo, _) = stack.pop().expect("the closure finished");
                 lets.closures.insert(clo.bits, q.clone());
                 made = Some(q);
@@ -1552,6 +1698,7 @@ fn term_of(
     lets: &mut Lets,
     stack: &mut Vec<(Word, Vec<HeldPart>)>,
 ) -> Result<Option<HeldPart>, String> {
+    // Cannot panic: N4 for `prims` and `ports`.
     Ok(Some(match w.tag {
         Word::PRIM => HeldPart::prim(t.prims[w.bits as usize]),
         Word::STATE => HeldPart::data(Value::tuple(Vec::new())),
@@ -1667,12 +1814,15 @@ fn failed(s: &mut Run, ni: &NodeInfo, ins: &[Word], v: Value) -> Result<(), Stri
 /// An `if` whose condition is not a boolean word: the kernel decides. Returns the arm, or 2
 /// for a failure.
 fn branch(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, String> {
+    // Cannot panic: N1; codegen calls `rt_branch` only at an `if` node, whose condition is
+    // input 0 (N2).
     let ni = &t.nodes[id];
     if ins[0].tag == Word::BOOL {
         return Ok(i64::from(ins[0].bits == 0));
     }
     // An atom that holds a function passes through an `if` as any failure does, as the
     // machine passes it.
+    // Cannot panic: N2, as above.
     if s.heap.is_held_atom(ins[0])? {
         s.heap.inc(ins[0])?;
         consume(s, ni, ins)?;
@@ -1680,6 +1830,7 @@ fn branch(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Strin
         return Ok(2);
     }
     // A lookup port as the condition is read by a `let`, as in every other kernel term.
+    // Cannot panic: N2, as above.
     let mut lets = Lets::default();
     let c = term(t, s, ins[0], &mut lets)?;
     let q = Term::If(
@@ -1699,6 +1850,8 @@ fn branch(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Strin
 /// A `match`: the arm whose pattern the scrutinee matches first, its binders in the output
 /// buffer, the scrutinee released as the plan says; or the number of arms for a failure.
 fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, String> {
+    // Cannot panic: N1; codegen calls `rt_match` only at a `match` node, whose scrutinee is
+    // input 0 (N2).
     let ni = &t.nodes[id];
     let Op::Match(ps) = &ni.node().op else {
         unreachable!("a match node")
@@ -1741,7 +1894,16 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
             }
         },
     };
-    let arm = &ni.arms[i];
+    // An arm's region has an argument for each binder of its pattern before its captures
+    // (`validate`), and the plan a mode for each argument (`Plan::from_bytes`); a fault in
+    // that agreement fails the run.
+    let Some(arm) = ni.arms.get(i).filter(|a| a.len() >= binders.len()) else {
+        return Err(zed_rt::bug(
+            "matched an arm whose plan has fewer arguments than its pattern binds",
+            &format!("{}: arm {i} binds {} words", t.path(id), binders.len()),
+        ));
+    };
+    // Cannot panic: `b < binders.len() <= arm.len()`, checked above; N2 for `modes[0]`.
     let mut words = std::mem::take(&mut s.outs);
     words.clear();
     if ni.modes[0] == Mode::Owned {
@@ -1751,6 +1913,8 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
         // With the scrutinee owned, the plan owns every binder the arm uses, so a borrowed
         // binder is one the arm never reads. Its word would point into the released
         // scrutinee; the machine gives it no cell, and the arm gets the error word instead.
+        // Cannot panic: `b < binders.len() <= arm.len()`, as above; each `kept` is below
+        // `binders.len()`.
         for (b, (w, _)) in binders.iter().enumerate() {
             if arm[b] == Mode::Owned || w.tag != Word::CELL {
                 words.push(*w);
@@ -1769,6 +1933,7 @@ fn matched(t: &Tables, s: &mut Run, id: usize, ins: &[Word]) -> Result<i64, Stri
         }
     } else {
         for (b, (w, _)) in binders.iter().enumerate() {
+            // Cannot panic: `b < binders.len() <= arm.len()`, as above.
             if arm[b] == Mode::Owned {
                 return Err(zed_rt::bug(
                     "took ownership of a part of a value that the `match` only borrows",
@@ -1810,6 +1975,8 @@ fn kernel_match(t: &Tables, s: &mut Run, ps: &[Pattern], scrut: Word) -> Result<
     let q = wrap(lets, Term::Match(Shared::new(st), arms));
     Ok(match run(s, &q)? {
         Value::Tuple(xs) => match xs.first() {
+            // Cannot panic: `counts` has one entry per pattern, and the guard checks `i` is
+            // below their number.
             Some(&Value::Int(i)) if xs.len() == 1 && (i as usize) < ps.len() => {
                 Ok((i as usize, counts[i as usize]))
             }

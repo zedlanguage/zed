@@ -492,6 +492,14 @@ fn a_capture_is_read_from_a_closure_and_from_nothing_else() {
     };
     assert_eq!(h.capture(s, 0).unwrap_err(), not_clo(Word::CELL));
     assert_eq!(h.capture(Word::int(1), 0).unwrap_err(), not_clo(Word::INT));
+    // A capture past the closure's is a bug reported, not a panic (TEST-runtime-panic-guard).
+    assert_eq!(
+        h.capture(clo, 2).unwrap_err(),
+        crate::bug::bug(
+            "read a capture the closure does not have",
+            "capture 2 of a closure of 2"
+        )
+    );
     // Dropping the closure drops its captures.
     h.dec(clo).unwrap();
     assert_eq!(h.live(), 0);

@@ -129,6 +129,7 @@ impl Placing {
                 return None;
             }
         }
+        // Cannot panic: each `w` of `windows(2)` has two items.
         let ok = places.len() == names.len()
             && defaulted.len() == n
             && names.windows(2).all(|w| w[0] < w[1]);
@@ -172,6 +173,7 @@ impl NamedShape {
                 return None;
             }
         }
+        // Cannot panic: each `w` of `windows(2)` has two items.
         let ok = at.len() == names.len()
             && opt.len() == names.len()
             && inputs == 2 + k + names.len() + flags
@@ -198,7 +200,7 @@ fn index(v: &Value) -> Option<usize> {
 impl NodeInfo {
     /// The node.
     pub fn node(&self) -> &Node {
-        &self.region.nodes[self.k]
+        &self.region.nodes[self.k] // Cannot panic: [`Tables::visit`] sets `k` below that length.
     }
 }
 
@@ -345,6 +347,8 @@ impl Tables {
             .collect();
         all.sort_unstable();
         all.dedup_by(|a, b| (*a).cmp(*b) == std::cmp::Ordering::Equal);
+        // Cannot panic: `rank` is asked only for names of `placings` and `nodes`, and `all` holds
+        // each of them, sorted, under the same order.
         let rank = |v: &Value| {
             all.binary_search_by(|x| (*x).cmp(v))
                 .expect("every name is ranked") as u32
@@ -405,6 +409,8 @@ impl Tables {
                 stack.pop();
                 continue;
             }
+            // Cannot panic: `k < region.nodes.len()`, tested above; `at` is the region's own
+            // number, pushed to `regions` and `plans` together; `i < 2`, the length of `kinds`.
             let (at, region, pat, k) = (v.at, v.region, v.pat, v.k);
             v.k += 1;
             let node = &region.nodes[k];
@@ -429,6 +435,9 @@ impl Tables {
                 }
                 _ => out,
             };
+            // Cannot panic: `plans[at]` is the plan of region `region` (`Plan::from_bytes`
+            // checks that each region of a plan links to the graph's region it is of), whose
+            // node count it checks equal to the region's, so `k` indexes its nodes.
             let mut info = NodeInfo {
                 region: region.clone(),
                 at,
@@ -474,6 +483,11 @@ impl Tables {
                 }
                 Op::Lambda | Op::If | Op::Match(_) => {
                     // The first region is numbered first, so it is last on the stack.
+                    // Cannot panic: `pat` is the plan's region of `region`, as above, and `sub`
+                    // one the plan has (`Plan::from_bytes` checks each link down); `lambda_at`
+                    // has one entry per region of the plan; `rp.args` has one mode per
+                    // argument of the body, `params` of them and the captures; `first` is at
+                    // most the stack's length.
                     let first = stack.len();
                     for (i, r) in node.regions.iter().enumerate() {
                         let sub = plan.regions[pat].nodes[k].regions.get(i).copied();
@@ -535,6 +549,9 @@ impl Tables {
         plans: &[&RegionPlan],
         lambda_at: &[Option<usize>],
     ) -> Result<(), String> {
+        // Cannot panic: [`Tables::new`] calls this with `id < nodes.len()`; `plans` has the plan
+        // of each region, `ni.k` below its node count (as in [`Tables::visit`]); `lambda_at`
+        // holds lambda numbers only.
         let ni = &self.nodes[id];
         let node = ni.node();
         if node.op != Op::Apply {
@@ -558,6 +575,8 @@ impl Tables {
         // for a lambda of more parameters. A carried plan whose callee was damaged to another
         // lambda can name one (plan row EXE-plan-carried; test
         // `l01_36a_executables::plan_carried::a_callee_of_another_arity_makes_no_direct_call`).
+        // Cannot panic: `i < l.params`, and `l.modes` has `l.params` modes and `ni.modes` one per
+        // input, `l.params + 1` of them by this test; `id < nodes.len()`, as above.
         if l.params + 1 != node.inputs.len() {
             return Ok(());
         }
@@ -648,6 +667,8 @@ impl Tables {
 
     /// Where node `id` is (`r.3/0.1`), for a message.
     pub fn path(&self, id: usize) -> String {
+        // Cannot panic: every caller passes a node's number; a node's `at` is its region's
+        // number and a region's `up` a node's; a write to a `String` does not fail.
         let mut steps = vec![(self.nodes[id].k, None)];
         let mut at = self.nodes[id].at;
         while let Some((up, i)) = self.regions[at].up {
@@ -667,6 +688,7 @@ impl Tables {
 
     /// Where region `at` is (`r.3/0`), for a message.
     pub fn region_path(&self, at: usize) -> String {
+        // Cannot panic: the one caller passes a lambda's body, a region's number.
         match self.regions[at].up {
             None => "r".into(),
             Some((up, i)) => format!("{}/{i}", self.path(up)),
@@ -680,6 +702,9 @@ impl Tables {
     /// classes of a parameter are not in the graph, so an argument stays every kind until row
     /// ZIR-checker-facts writes them on the edges, which this then reads. O(1).
     fn kinds_of(&self, at: usize, region: &Region, s: &Src) -> Kinds {
+        // Cannot panic: the graph is valid (lowering writes it so; `Program::decode` checks it
+        // with `validate`), so an argument is below the region's arguments and an output is of
+        // a node before this one, below its outputs; `at` is the region's number.
         let (k, edge) = match s {
             Src::Const(v) => return Kinds::of(v),
             Src::Arg(a) => (Kinds::ALL, &region.args[*a]),
@@ -713,6 +738,9 @@ impl Tables {
 
     /// The index of non-scalar constant `v`.
     pub fn const_index(&self, v: &Value) -> usize {
+        // Cannot panic: codegen asks (`Gen::src`) only for a constant input of a visited node or
+        // result of a visited region that is not a scalar, and [`Tables::visit`] records each
+        // such constant under the same key.
         *self
             .const_at
             .get(v)

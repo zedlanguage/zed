@@ -68,6 +68,9 @@ struct Program {
 // prints it. Test: `exe::tests::an_executable_keeps_the_lines_of_its_sites_only`,
 // `l02_08d_build_constant::staged`.
 fn kept_lines(text: &str, sites: &[Option<Span>]) -> (String, Vec<Option<Span>>) {
+    // Cannot panic: `starts[0] == 0 <= at`, so `line(at)` is in `0..starts.len()`, and
+    // `touched` has `starts.len() + 1` entries and `removed` one per start; `start <= end <=
+    // text.len()`, each just after a `\n` or at an end, so a character boundary.
     let starts: Vec<usize> = std::iter::once(0)
         .chain(text.match_indices('\n').map(|(i, _)| i + 1))
         .collect();
@@ -220,6 +223,11 @@ impl Program {
         // The data holds the stripped form; a full one would run the same.
         let (graph, _) =
             zedc::zir::binary::decode_form(zir).map_err(|e| format!("{DAMAGED} ({e})"))?;
+        // The decoder checks the bytes, not that each input names an argument or an earlier
+        // node's output that exists (`binary.rs`, `decode`); legalization and the tables index
+        // by those, so a changed file would stop the start with a panic instead of this
+        // message (TEST-runtime-panic-guard). O(size of the graph), as the decode is.
+        zedc::zir::validate::validate(&graph).map_err(|e| format!("{DAMAGED} ({e})"))?;
         let sites = legalized_sites(&graph, crate::legal::EXPANSIONS, &sites);
         let graph = crate::legal::legalize(graph);
         // The plan the code was made from, read and not worked out again; its counts and
@@ -460,6 +468,7 @@ pub(crate) fn define_main<M: Module>(
         b.append_block_params_for_function_params(entry);
         b.switch_to_block(entry);
         b.seal_block(entry);
+        // Cannot panic: `main`'s signature, set above, has the two parameters.
         let (argc, argv) = (b.block_params(entry)[0], b.block_params(entry)[1]);
         let gv = m.declare_data_in_func(at, b.func);
         let data_at = b.ins().symbol_value(ptr, gv);
@@ -472,7 +481,7 @@ pub(crate) fn define_main<M: Module>(
         let call = b
             .ins()
             .call(callee, &[argc, argv, data_at, len, root, table]);
-        let status = b.inst_results(call)[0];
+        let status = b.inst_results(call)[0]; // Cannot panic: `zed_main` returns one value.
         b.ins().return_(&[status]);
         b.finalize(m.isa().frontend_config());
     }
@@ -720,6 +729,13 @@ mod tests {
         let refused = Program::decode(&wrong.unwrap()).err().unwrap();
         assert!(refused.starts_with(DAMAGED), "{refused}");
         assert!(refused.contains("of the memory plan"), "{refused}");
+        // A graph whose input names a node the region does not have, as a changed file can
+        // hold it, is refused, not indexed by (TEST-runtime-panic-guard).
+        let mut bad = graph.clone();
+        bad.nodes[0].inputs[0] = zedc::zir::Src::Out(5, 0);
+        let wrong = data(&plan, address, &ports, &limits, source, &[site], &bad);
+        let refused = Program::decode(&wrong.unwrap()).err().unwrap();
+        assert!(refused.starts_with(DAMAGED), "{refused}");
         let bytes = data(
             &plan_of(&graph, false),
             address,

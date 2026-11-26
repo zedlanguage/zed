@@ -127,6 +127,7 @@ fn file_of(fd: c_int, buf: &'static mut [u8; 4096]) -> Option<&'static str> {
         .ok()
         .filter(|&n| n > 0 && n < buf.len())?;
     // A pipe or a socket reads as `pipe:[inode]` or `socket:[inode]`, which names no file.
+    // Cannot panic: the filter above keeps only `n < buf.len()`.
     std::str::from_utf8(&buf[..n])
         .ok()
         .filter(|p| p.starts_with('/'))
@@ -274,6 +275,7 @@ pub(crate) fn write_all(mut bytes: &[u8]) {
         // SAFETY: `write` reads `bytes`, which is borrowed for the call.
         let n = unsafe { libc::write(libc::STDERR_FILENO, bytes.as_ptr().cast(), bytes.len()) };
         match usize::try_from(n) {
+            // Cannot panic: write(2) writes at most the `bytes.len()` bytes it is given.
             Ok(n) if n > 0 => bytes = &bytes[n..],
             _ if std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) => {}
             _ => return,

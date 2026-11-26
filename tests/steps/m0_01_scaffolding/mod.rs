@@ -11,6 +11,7 @@ mod complexity_tables;
 mod fail_steps_name_layers;
 mod fail_steps_name_plus_sign;
 mod meters;
+mod panic_guard;
 mod scaling;
 
 use std::collections::BTreeSet;

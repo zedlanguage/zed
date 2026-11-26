@@ -548,12 +548,24 @@ enum Shallow<'p> {
     Below(Matching<'p>),
 }
 
+// The facts the `// Cannot panic:` comments below cite (test
+// `m0_01_scaffolding::panic_guard`):
+// H1. A word tagged `CELL` is one [`Heap::alloc`] returned, so its index is below
+//     `cells.len()`, which never shrinks: no other code makes such a word ([`Word::cell`] is
+//     private, and native code's constants are scalars or `VAL` words, `Gen::src`). A freed
+//     cell keeps its slot; its generation tells a stale word ([`obj_in`]).
+// H2. A word tagged `VAL` is one [`Heap::uncounted`] or [`Heap::table_word`] returned, or a
+//     constant's index, which `State::new` enters into the table first and in order (one entry
+//     each: the constants are distinct under `==`, which is the order's equality too); `vals`
+//     never shrinks, so its payload is below `vals.len()`.
+// H3. A live cell's contents never change (the one write is the reuse of a freed slot).
+
 /// What cell `w` of `cells` holds; `None` for a word that is not a cell.
 fn obj_in(cells: &[Cell], w: Word) -> Result<Option<&Obj>, String> {
     if w.tag != Word::CELL {
         return Ok(None);
     }
-    let c = &cells[w.index()];
+    let c = &cells[w.index()]; // Cannot panic: H1.
     match &c.obj {
         Some(o) if c.generation() == w.generation() => Ok(Some(o)),
         _ => Err(freed(Freed::Used, w.index())),
@@ -676,20 +688,24 @@ impl Heap {
 
     /// The uncounted value of word `w`, tagged [`Word::VAL`].
     pub fn value_ref(&self, w: Word) -> &Value {
-        &self.vals[w.bits as usize].value
+        &self.vals[w.bits as usize].value // Cannot panic: H2.
     }
 
     /// The word of entry `i` of the table: the scalar it holds, or the entry.
     fn table_word(&self, i: usize) -> Word {
+        // Cannot panic: the one caller, [`Heap::part`], asks for part `i` of an entry whose
+        // parts [`Heap::table_parts`] entered at `start`, and `i` is below their number.
         Word::scalar(&self.vals[i].value).unwrap_or(Word::val(i))
     }
 
     /// Where the entries of the parts of entry `i` start, entered together the first time.
     fn table_parts(&mut self, i: usize) -> usize {
+        // Cannot panic: the one caller, [`Heap::shape`], passes a `VAL` word's entry (H2).
         if let Some(start) = self.vals[i].parts {
             return start;
         }
         // The table shares the parts with the entry, a count each.
+        // Cannot panic: as above; the table only grows.
         let items = match &self.vals[i].value {
             Value::Tuple(xs) => xs.clone(),
             Value::Atom(a) => a.args().clone(),
@@ -709,6 +725,8 @@ impl Heap {
         self.stats.allocations += 1;
         self.live += 1;
         self.stats.peak = self.stats.peak.max(self.live);
+        // Cannot panic: `free` holds only indices of cells (`free_cell`), and `i` is one of
+        // them or the cell just pushed.
         let i = match self.free.pop() {
             Some(i) => {
                 let c = &mut self.cells[i];
@@ -737,6 +755,8 @@ impl Heap {
     /// Frees cell `i`, whose count has reached 0: its contents, which it gives back, and its
     /// kernel value go, and its generation advances.
     fn free_cell(&mut self, i: usize) -> Obj {
+        // Cannot panic: both callers pass a cell word's index (H1) after checking the cell is
+        // live in the word's generation and setting its count to 0, so it holds its contents.
         let c = &mut self.cells[i];
         let obj = c.obj.take().expect("a live cell holds its contents");
         c.items = None;
@@ -811,6 +831,10 @@ impl Heap {
                 }
             };
             // Each finished value is a part of the one below it on the stack.
+            // Cannot panic: `stack.last_mut()` was some just before the pop; each level's
+            // `start` was `words.len()` when it was pushed, and the words above a level are
+            // truncated only when it is popped, so `start <= words.len()`; `w` is the cell
+            // `alloc` has just made (H1).
             loop {
                 let Some(top) = stack.last_mut() else {
                     return Ok(w);
@@ -889,6 +913,7 @@ impl Heap {
 
     /// Whether data word `w` is an atom, a failure.
     pub fn is_data_atom(&self, w: Word) -> Result<bool, String> {
+        // Cannot panic: H2.
         Ok(match w.tag {
             Word::VAL => matches!(self.vals[w.bits as usize].value, Value::Atom(_)),
             Word::CELL => match self.obj(w)? {
@@ -905,6 +930,9 @@ impl Heap {
     /// path or in a later call, is read once: the value shares its parts as the cells do, and a
     /// value handed to the kernel many times costs its size once (COMPLEXITY.md R1).
     pub fn value(&mut self, w: Word) -> Result<Value, String> {
+        // Cannot panic: [`Heap::read`] gives a value or pushes a level, so `made` is some when
+        // the stack is empty; `stack.last_mut()` was some just before the pop; `r.w` is a live
+        // cell word, read by `read` (H1).
         let mut stack = Vec::new();
         let mut made = self.read(w, &mut stack)?;
         loop {
@@ -937,6 +965,8 @@ impl Heap {
     /// enters it on `stack`.
     fn read(&mut self, w: Word, stack: &mut Vec<Reading>) -> Result<Option<Value>, String> {
         self.stats.converted += 1;
+        // Cannot panic: H2 for `vals`, H1 for `cells`; `obj_in` gives none only for a word that
+        // is not a cell, and this arm's words are cells.
         Ok(Some(match w.tag {
             Word::INT => Value::Int(w.bits),
             Word::FLOAT => Value::float(f64::from_bits(w.bits as u64)),
@@ -969,7 +999,7 @@ impl Heap {
         if w.tag != Word::CELL {
             return Ok(());
         }
-        let c = &mut self.cells[w.index()];
+        let c = &mut self.cells[w.index()]; // Cannot panic: H1.
         if c.count == 0 || c.generation() != w.generation() {
             return Err(freed(Freed::Shared, w.index()));
         }
@@ -1016,7 +1046,7 @@ impl Heap {
             return Ok(None);
         }
         self.stats.decrements += 1;
-        let c = &mut self.cells[w.index()];
+        let c = &mut self.cells[w.index()]; // Cannot panic: H1.
         if c.count == 0 || c.generation() != w.generation() {
             return Err(freed(Freed::Dropped, w.index()));
         }
@@ -1061,7 +1091,7 @@ impl Heap {
             return Ok(());
         }
         self.obj(w)?;
-        let c = &mut self.cells[w.index()];
+        let c = &mut self.cells[w.index()]; // Cannot panic: H1.
         if c.count == 1 {
             c.count = 0;
             let obj = self.free_cell(w.index());
@@ -1100,15 +1130,29 @@ impl Heap {
         let push = |todo: &mut Vec<(Word, usize)>, w: Word, x: usize| {
             let start = todo.len();
             todo.extend(tree.kids(x).map(|k| (w, k)));
-            todo[start..].reverse();
+            todo[start..].reverse(); // Cannot panic: `start` was the length before the extend.
         };
         push(&mut todo, w, x);
         while let Some((holder, k)) = todo.pop() {
             if holder.tag == Word::VAL {
                 continue;
             }
+            // A path the match wrote reads a part the value has (H3); a path from elsewhere
+            // may not, which `release_one` refuses as well.
             let part = match self.obj(holder)? {
-                Some(o) => o.parts()[tree.part(k)],
+                Some(o) => match o.parts().get(tree.part(k)) {
+                    Some(&p) => p,
+                    None => {
+                        return Err(crate::bug::bug(
+                            "kept a part of a value that the value does not have",
+                            &format!(
+                                "a kept path reads part {} of a cell of {} parts",
+                                tree.part(k),
+                                o.parts().len()
+                            ),
+                        ));
+                    }
+                },
                 None => {
                     return Err(crate::bug::bug(
                         "kept a part of a value that has no parts",
@@ -1128,7 +1172,12 @@ impl Heap {
     /// Part `i` of closure `w`, borrowed: a capture.
     pub fn capture(&self, w: Word, i: usize) -> Result<Word, String> {
         match self.obj(w)? {
-            Some(Obj::Clo { caps, .. }) => Ok(caps[i]),
+            Some(Obj::Clo { caps, .. }) => caps.get(i).copied().ok_or_else(|| {
+                crate::bug::bug(
+                    "read a capture the closure does not have",
+                    &format!("capture {i} of a closure of {}", caps.len()),
+                )
+            }),
             _ => Err(crate::bug::bug(
                 "called something that is not a function",
                 &format!("a word tagged {} is not a closure", w.tag),
@@ -1157,6 +1206,8 @@ impl Heap {
                 }
             }
             Word::VAL => {
+                // Cannot panic: H2; the last arm is ruled out by the test that a tuple or an
+                // atom is there.
                 let entry = w.bits as usize;
                 if !matches!(self.vals[entry].value, Value::Tuple(_) | Value::Atom(_)) {
                     return Ok(None);
@@ -1184,6 +1235,10 @@ impl Heap {
 
     /// Part `i` of the tuple or atom in `h`.
     fn part(&self, h: Holder, i: usize) -> Word {
+        // Cannot panic: `h` is a holder [`Heap::shape`] made of a live cell (H1, and it stays
+        // live while the match reads it) or of an entry; `i` is below its parts' number: the
+        // match checks a tuple pattern's length against `len`, and a field's `i` is its place
+        // among the atom's field names, one payload part each (`Atom::payload`).
         match h {
             Holder::Cell(c) => {
                 let o = self.cells[c].obj.as_ref();
@@ -1195,6 +1250,7 @@ impl Heap {
 
     /// The field names of the atom in `h`, sorted; empty for a tuple payload.
     fn field_names(&self, h: Holder) -> &[Arc<str>] {
+        // Cannot panic: `h` is a cell's or an entry's holder, as in [`Heap::part`] (H1, H2).
         match h {
             Holder::Cell(c) => match &self.cells[c].obj {
                 Some(Obj::Atom { fields, .. }) => fields,
@@ -1214,6 +1270,7 @@ impl Heap {
         let mut todo = Vec::new();
         let (mut w, mut l) = (w, l);
         loop {
+            // Cannot panic: H2 for `vals`.
             let same = match w.tag {
                 Word::INT | Word::FLOAT | Word::BOOL => Word::scalar(l) == Some(w),
                 Word::VAL => self.vals[w.bits as usize].value == *l,
@@ -1246,6 +1303,7 @@ impl Heap {
                     // data, as the kernel's matching has it.
                     Some(Obj::Held(_)) => false,
                     Some(Obj::Clo { .. } | Obj::Fun(_)) => return Err(closure_as_data()),
+                    // Cannot panic: `obj_in` gives none only for a word that is not a cell.
                     None => unreachable!("obj_in checks the cell is live"),
                 },
                 t => return Err(not_data(t)),
@@ -1272,7 +1330,7 @@ impl Heap {
     // `l01_36_cranelift::kinds`.
     fn is_in(&mut self, w: Word, t: &Type) -> Result<bool, String> {
         if w.tag == Word::VAL {
-            return Ok(t.contains(&self.vals[w.bits as usize].value));
+            return Ok(t.contains(&self.vals[w.bits as usize].value)); // Cannot panic: H2.
         }
         let kind = match self.obj(w)? {
             Some(Obj::Data(v)) => return Ok(t.contains(v)),
@@ -1297,6 +1355,11 @@ impl Heap {
     /// so the stand-in is in a type exactly when `w` is. The held values in progress are on a
     /// stack, so any depth uses none of the thread's stack; O(the parts above the data).
     fn stand_in(&mut self, w: Word) -> Result<Value, String> {
+        // Cannot panic: the stack is not empty at the loop's head (it starts with the root, and
+        // the loop returns when the root is popped); only held words are pushed, `w` by the
+        // one caller, [`Heap::is_in`], on a held cell, and a part after `held` is some, and a
+        // cell stays live while it is read (H3); the parts of a held family are beneath
+        // distinct keys (`HeldFamily::new`).
         let mut stack: Vec<(Word, Vec<Value>)> = vec![(w, Vec::new())];
         loop {
             let (top, done) = stack.last().expect("the root is popped last");
@@ -1320,7 +1383,8 @@ impl Heap {
                             fields: fields.clone(),
                             payload: Some(done.into()),
                         }),
-                        // Distinct top-level keys, each part beneath its own: no collision.
+                        // Cannot panic: distinct top-level keys, each part beneath its own: no
+                        // collision.
                         HeldShape::Family(f) => Value::Family(
                             f.with_parts(done)
                                 .expect("parts beneath distinct keys do not collide"),
@@ -1368,6 +1432,8 @@ impl Heap {
                     }
                     at = paths.parent(at);
                 }
+                // Cannot panic: the stack is not empty: an ended pattern with an empty stack
+                // returns above, and a pattern that has not ended has just been pushed.
                 let m = stack.last_mut().expect("a pattern is in progress");
                 let k = m.next;
                 m.next += 1;

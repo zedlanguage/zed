@@ -99,6 +99,7 @@ impl<'a> CodeMap<'a> {
     /// Whether `pc` is in a function of the program. O(log f).
     fn holds(&self, pc: usize) -> bool {
         let k = self.functions.partition_point(|&(s, _)| s <= pc);
+        // Cannot panic: `k > 0` is tested first, and `partition_point` is at most the length.
         k > 0 && pc < self.functions[k - 1].1
     }
 
@@ -106,6 +107,7 @@ impl<'a> CodeMap<'a> {
     /// instruction one location. O(log r).
     fn node_at(&self, pc: usize) -> Option<u32> {
         let k = self.nodes.partition_point(|&(s, _, _)| s <= pc);
+        // Cannot panic: `k > 0` is tested first, and `partition_point` is at most the length.
         (k > 0 && pc < self.nodes[k - 1].1).then(|| self.nodes[k - 1].2)
     }
 
@@ -221,6 +223,8 @@ pub(crate) unsafe fn pc_of(context: *mut libc::c_void) -> usize {
     // `aarch64/mod.rs`).
     unsafe {
         #[cfg(target_arch = "x86_64")]
+        // Cannot panic: `gregs` is `[greg_t; 23]` and `REG_RIP` is 16 (libc 0.2.191, x86_64
+        // `mod.rs` lines 195 and 639), a constant index into a fixed array.
         let pc = (*u).uc_mcontext.gregs[libc::REG_RIP as usize] as usize;
         #[cfg(target_arch = "aarch64")]
         let pc = (*u).uc_mcontext.pc as usize;

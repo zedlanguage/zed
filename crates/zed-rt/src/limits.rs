@@ -105,6 +105,7 @@ pub(crate) fn write_bytes(out: &mut Line, n: u64) {
     let (whole, part) = (n >> shift, n & ((1u64 << shift) - 1));
     // The tenths, rounded down, so that a size is never written above what it is.
     let tenths = ((u128::from(part) * 10) >> shift) as u64;
+    // Cannot panic: `k` was found in `0..UNITS.len()`.
     let _ = match tenths {
         0 => write!(out, " ({whole} {})", UNITS[k]),
         t => write!(out, " ({whole}.{t} {})", UNITS[k]),

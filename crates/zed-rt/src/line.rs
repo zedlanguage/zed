@@ -21,6 +21,7 @@ impl Line {
 
     /// The bytes written.
     pub(crate) fn bytes(&self) -> &[u8] {
+        // Cannot panic: `len` starts at 0 and `write_str` keeps it at most `bytes.len()`.
         &self.bytes[..self.len]
     }
 }
@@ -28,6 +29,7 @@ impl Line {
 impl std::fmt::Write for Line {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         let n = s.len().min(self.bytes.len() - self.len);
+        // Cannot panic: `n <= s.len()` and `self.len + n <= self.bytes.len()` by the `min`.
         self.bytes[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
         self.len += n;
         Ok(())
