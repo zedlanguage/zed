@@ -23,7 +23,7 @@
 //! Stage A' (design sec. 3), each step a function below:
 //! 0. The start of [`solve`]: rows divided by the gcd of their coefficients, one row per
 //!    class, the least constant per linear part on each side, and the 2-D cone rule ([`cone`]).
-//! 1. Components with parity over rows and side nodes ([`Parity`]).
+//! 1. Components with parity over rows and side nodes ([`ParityUf`], [`join_parity`]).
 //! 2. Two frames ([`frame`]): blocks of a signed bipartite graph, its unbalanced blocks Z0,
 //!    and a 2-coloring ρ of the rest.
 //! 3. Three sign predicates, glob, frame+ and frame− ([`State`]); Def(r) is the variables of
@@ -424,61 +424,20 @@ struct Out {
     dominated: Vec<(usize, usize)>,
 }
 
-/// Union-find with union by rank and the parity of each node to its parent (step 1). A path's
-/// parity is the xor of its edges', so path compression keeps each node's parity to the root
-/// by xoring the parities along the path. O(α(n)) amortized a step (Tarjan and van Leeuwen,
-/// "Worst-case analysis of set union algorithms", J. ACM 31(2), 1984, doi:10.1145/62.2160,
-/// cited at `products`' union-find; the parity is a label carried along, which changes no
-/// step's count). zed-graph's `UnionFind` keeps no label on an edge, so it is not reused.
-struct Parity {
-    up: Vec<usize>,
-    rank: Vec<u8>,
-    par: Vec<u8>,
-}
+/// Union-find with the parity of each node to its root (step 1): zed-graph's `UnionFind` with
+/// a `Parity` on each edge, full compression and union by rank. O(α(n)) amortized a step
+/// (Tarjan and van Leeuwen, "Worst-case analysis of set union algorithms", J. ACM 31(2),
+/// 1984, doi:10.1145/62.2160, cited at `products`' union-find; the parity is a label carried
+/// along, which changes no step's count).
+type ParityUf = zed_graph::UnionFind<(), zed_graph::Parity>;
 
-impl Parity {
-    fn new(n: usize) -> Parity {
-        Parity {
-            up: (0..n).collect(),
-            rank: vec![0; n],
-            par: vec![0; n],
-        }
-    }
-
-    /// The root of `x` and the parity of `x` to it.
-    fn find(&mut self, x: usize) -> (usize, u8) {
-        let mut path = Vec::new();
-        let mut y = x;
-        while self.up[y] != y {
-            path.push(y);
-            y = self.up[y];
-        }
-        let mut acc = 0;
-        for &z in path.iter().rev() {
-            acc ^= self.par[z];
-            self.par[z] = acc;
-            self.up[z] = y;
-        }
-        (y, if path.is_empty() { 0 } else { self.par[x] })
-    }
-
-    /// Joins `a` and `b` with parity(a) xor parity(b) = d; false on a conflict.
-    fn union(&mut self, a: usize, b: usize, d: u8) -> bool {
-        let ((ra, pa), (rb, pb)) = (self.find(a), self.find(b));
-        if ra == rb {
-            return pa ^ pb == d;
-        }
-        let (hi, lo) = if self.rank[ra] >= self.rank[rb] {
-            (ra, rb)
-        } else {
-            (rb, ra)
-        };
-        self.up[lo] = hi;
-        self.par[lo] = pa ^ pb ^ d;
-        if self.rank[ra] == self.rank[rb] {
-            self.rank[hi] += 1;
-        }
-        true
+/// Joins `a` and `b` with parity(a) xor parity(b) = `d`; false when that contradicts what is
+/// recorded. The root kept is the one of higher rank, `a`'s on equal ranks.
+fn join_parity(uf: &mut ParityUf, a: usize, b: usize, d: bool) -> bool {
+    let d = zed_graph::Parity(d);
+    match uf.join(a, b, &d, zed_graph::Keep::Rule, |_, _, _| {}) {
+        Ok(_) => true,
+        Err(held) => held == d,
     }
 }
 
@@ -784,8 +743,7 @@ struct Side {
 /// exact sorted list, no hash value stands for a set (design sec. 3, "Set identity").
 struct Sets<'a> {
     p: &'a Prob,
-    intern: HashMap<Vec<usize>, usize>,
-    sets: Vec<Vec<usize>>,
+    sets: zed_collections::intern::Interner<Vec<usize>>,
     key: Vec<Option<usize>>,
     f: HashMap<usize, HashSet<usize>>,
     closed: HashMap<(usize, usize), bool>,
@@ -795,14 +753,11 @@ struct Sets<'a> {
 impl Sets<'_> {
     fn id(&mut self, s: Vec<usize>) -> usize {
         self.work += s.len() as u64 + 1;
-        if let Some(&i) = self.intern.get(&s) {
-            return i;
+        let (n, new) = self.sets.insert(s);
+        if new {
+            let key = (self.sets[n].iter().copied()).min_by_key(|&w| (self.p.deg(w), w));
+            self.key.push(key);
         }
-        let n = self.sets.len();
-        self.key
-            .push(s.iter().copied().min_by_key(|&w| (self.p.deg(w), w)));
-        self.sets.push(s.clone());
-        self.intern.insert(s, n);
         n
     }
 
@@ -1050,34 +1005,38 @@ fn solve(p: &Prob, o: Opts) -> Out {
     let bic: Vec<(usize, usize)> = bset.into_iter().collect();
     let ns = sides.len();
     // Step 1. Components with parity: rows 0..nr, side nodes nr..nr+ns.
-    let mut uf = Parity::new(nr + ns);
+    let mut uf = ParityUf::new(
+        nr + ns,
+        zed_graph::Compression::Full,
+        zed_graph::Linking::Rank,
+    );
     let mut live_row = vec![false; nr];
     let mut conflicts = Vec::new();
     for (s, rs) in sides.iter().enumerate() {
         for &r in *rs {
             live_row[r] = true;
-            if !uf.union(r, nr + s, 0) {
+            if !join_parity(&mut uf, r, nr + s, false) {
                 conflicts.push(r);
             }
         }
     }
     for &(x, y) in &bic {
         work1 += 1;
-        if !uf.union(nr + x, nr + y, 1) {
+        if !join_parity(&mut uf, nr + x, nr + y, true) {
             conflicts.push(nr + x);
         }
     }
-    let odd: HashSet<usize> = conflicts.iter().map(|&x| uf.find(x).0).collect();
+    let odd: HashSet<usize> = conflicts.iter().map(|&x| uf.find_offset(x).0).collect();
     let mut cidx: BTreeMap<usize, usize> = BTreeMap::new();
     let mut comp_of = vec![usize::MAX; nr];
     let mut parity = vec![0u8; nr];
     let mut excl = vec![false; nr];
     for r in 0..nr {
         if live_row[r] {
-            let (root, pr) = uf.find(r);
+            let (root, zed_graph::Parity(pr)) = uf.find_offset(r);
             let n = cidx.len();
             comp_of[r] = *cidx.entry(root).or_insert(n);
-            parity[r] = pr;
+            parity[r] = u8::from(pr);
             excl[r] = odd.contains(&root);
         }
     }
@@ -1121,8 +1080,7 @@ fn solve(p: &Prob, o: Opts) -> Out {
     // Step 4.
     let mut sets = Sets {
         p,
-        intern: HashMap::new(),
-        sets: Vec::new(),
+        sets: zed_collections::intern::Interner::default(),
         key: Vec::new(),
         f: HashMap::new(),
         closed: HashMap::new(),

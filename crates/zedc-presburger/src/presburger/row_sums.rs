@@ -360,6 +360,7 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 
+use zed_collections::sorted::{Joined, merge_join};
 use zed_kernel::bits::BitLen;
 use zedc_int::int::{Int, i128_div_ceil};
 use zedc_lattice::interval::{End, IntervalSet, Num};
@@ -1699,20 +1700,7 @@ impl Set {
 
     /// The intersection, written over `out`.
     fn and_into(&self, o: &Set, out: &mut Set) {
-        let fill = &mut out.fill;
-        fill.clear();
-        let (mut i, mut j) = (0, 0);
-        while i < self.fill.len() && j < o.fill.len() {
-            let ((a, x), (b, y)) = (self.fill[i], o.fill[j]);
-            if a.max(b) <= x.min(y) {
-                fill.push((a.max(b), x.min(y)));
-            }
-            if x <= y {
-                i += 1;
-            } else {
-                j += 1;
-            }
-        }
+        zed_collections::intervals::intersect_into(&self.fill, &o.fill, &mut out.fill);
         self.lit.and_into(&o.lit, &mut out.lit);
         for part in [
             Set::within(&self.lit, &o.fill),
@@ -1750,27 +1738,12 @@ impl Set {
 
     /// The keys from `lo` (at least 0) below `hi`, in increasing order.
     fn keys_in(&self, lo: i64, hi: i64) -> impl Iterator<Item = i64> + '_ {
-        let mut lit = self.lit.keys_in(lo, hi).peekable();
         let from = self.fill.partition_point(|&(_, h)| h < lo);
-        let mut full = (self.fill[from..].iter())
+        let full = (self.fill[from..].iter())
             .take_while(move |f| f.0 < hi)
-            .flat_map(move |&(a, z)| a.max(lo)..=z.min(hi - 1))
-            .peekable();
+            .flat_map(move |&(a, z)| a.max(lo)..=z.min(hi - 1));
         // A key of the words may lie in an interval too: it is given once.
-        let mut last = i64::MIN;
-        std::iter::from_fn(move || {
-            loop {
-                let x = match (lit.peek(), full.peek()) {
-                    (Some(a), Some(b)) if a < b => lit.next(),
-                    (Some(_), None) => lit.next(),
-                    _ => full.next(),
-                }?;
-                if x > last {
-                    last = x;
-                    return Some(x);
-                }
-            }
-        })
+        zed_collections::sorted::merge_iter(self.lit.keys_in(lo, hi), full)
     }
 
     fn keys(&self) -> impl Iterator<Item = i64> + '_ {
@@ -3559,32 +3532,24 @@ impl Joins {
         let (xs, gs) = (x.by_row, g.sig);
         let e0 = self.entries.len();
         let entries = &mut self.entries;
-        let (mut a, mut b) = (0, 0);
-        while a < xs.len() || b < gs.len() {
-            let r = match (xs.get(a), gs.get(b)) {
-                (Some(&(p, _)), Some(&q)) => p.min(q),
-                (Some(&(p, _)), None) => p,
-                (None, Some(&q)) => q,
-                (None, None) => break,
+        // `b`: the place in `gs` of the group's next row, which indexes `g.of_row`.
+        let mut b = 0;
+        for j in merge_join(xs, gs, |p, q| p.0.cmp(q)) {
+            let (r, at_x, at_g) = match j {
+                Joined::Left(&(r, d)) => (r, Some(d), None),
+                Joined::Right(&r) => (r, None, Some(b)),
+                Joined::Both(&(r, d), _) => (r, Some(d), Some(b)),
             };
-            let mut e = Entry {
-                x: None,
-                g: None,
+            b += usize::from(at_g.is_some());
+            entries.push(Entry {
+                x: at_x.map(|d| {
+                    let d = x.digits[d];
+                    (d.mult, d.radix, d.lo)
+                }),
+                g: at_g.map(|b| g.of_row[b]),
                 close: (last[r] == i).then(|| (rows.rows[r].k, rows.rows[r].eq)),
                 out: y.digit(r).map(|d| (y.digits[d].lo, y.digits[d].mult)),
-            };
-            if let Some(&(p, d)) = xs.get(a)
-                && p == r
-            {
-                let d = x.digits[d];
-                e.x = Some((d.mult, d.radix, d.lo));
-                a += 1;
-            }
-            if gs.get(b) == Some(&r) {
-                e.g = Some(g.of_row[b]);
-                b += 1;
-            }
-            entries.push(e);
+            });
         }
         let k0 = self.keyed.len();
         let entries = &self.entries[e0..];

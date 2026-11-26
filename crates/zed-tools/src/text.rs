@@ -762,9 +762,7 @@ pub fn read_text(path: &str) -> Result<String, String> {
 
 /// Whether `repr` writes `c`, which is not ASCII, as itself.
 fn printable(c: char) -> bool {
-    let c = c as u32;
-    let at = UNPRINTABLE.partition_point(|r| r.1 < c);
-    UNPRINTABLE.get(at).is_none_or(|r| c < r.0)
+    !zed_collections::intervals::contains(UNPRINTABLE, &(c as u32))
 }
 
 /// Python's `repr(s)` of a string.

@@ -650,8 +650,7 @@ impl Forms {
     /// The union of `kids`: sorted by id with repeats dropped, and the one form where only one
     /// is left.
     fn union(&mut self, mut kids: Vec<FormId>) -> FormId {
-        kids.sort_unstable();
-        kids.dedup();
+        zed_collections::sorted::sort_dedup(&mut kids);
         match kids.as_slice() {
             [one] => *one,
             _ => self.intern(Node {

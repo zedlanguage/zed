@@ -497,3 +497,72 @@ fn fingerprint_instructions() {
         );
     }
 }
+
+/// Two lists of `n` atoms each, sorted, half of them shared: the atoms `2^64 + i` for `i`
+/// below `3n / 2` whose remainder by 3 is not 0, and not 1; every exponent 2 in the first and 3
+/// in the second. `n` is a multiple of 2.
+fn two_atom_lists(n: usize) -> [Vec<(BigUint, BigInt)>; 2] {
+    let list = |skip, e: i32| {
+        (0..3 * n / 2)
+            .filter(|i| i % 3 != skip)
+            .map(|i| ((BigUint::one() << 64u32) + i, BigInt::from(e)))
+            .collect()
+    };
+    [list(0, 2), list(1, 3)]
+}
+
+/// The merges of the kept powers of `num` (DRY-sorted-intervals-2026-11-26, group 1), each 64
+/// times on two lists of `n` atoms, half of them shared: the sum of the exponents
+/// (`merge_atoms`, `sorted::merge_with`), the test for the atoms one lacks (`atoms_within`,
+/// `sorted::merge_join`), the lesser exponents of the shared atoms (`Rat::shared_wide`,
+/// `sorted::meet_with`) and the exponents side by side (`zip_pows`, `sorted::merge_join`).
+/// Correctness: `tests` of `num` and `zed_collections::sorted`'s tests.
+#[test]
+fn the_merges_of_kept_powers_scale_with_their_atoms() {
+    let inputs = crate::scaling::inputs(4096, two_atom_lists);
+    crate::scaling::check_order("merge_atoms of n atoms, 64 times", 4096, 1, |n| {
+        let [a, b] = &inputs[&n];
+        for _ in 0..64 {
+            let m = merge_atoms(std::hint::black_box(a), std::hint::black_box(b), -1);
+            assert_eq!(m.len(), 3 * n / 2);
+        }
+    });
+    crate::scaling::check_order("atoms_within of n atoms, 64 times", 4096, 1, |n| {
+        let [a, _] = &inputs[&n];
+        let half: Vec<(BigUint, BigInt)> = a.iter().step_by(2).cloned().collect();
+        for _ in 0..64 {
+            let lacked = atoms_within(std::hint::black_box(&half), std::hint::black_box(a));
+            assert_eq!(lacked.map(|l| l.len()), Some(n / 2));
+        }
+    });
+    let rat = |wide: &[(BigUint, BigInt)]| Rat {
+        num: BigInt::one(),
+        den: BigInt::one(),
+        pows: Box::default(),
+        wide: wide.into(),
+        ten: None,
+    };
+    let rats = crate::scaling::inputs(4096, |n| two_atom_lists(n).map(|l| rat(&l)));
+    crate::scaling::check_order("Rat::shared_wide of n atoms, 64 times", 4096, 1, |n| {
+        let [x, y] = &rats[&n];
+        for _ in 0..64 {
+            let s = std::hint::black_box(&x).shared_wide(std::hint::black_box(&y));
+            assert_eq!(s.map(|s| s.wide.len()), Some(n / 2));
+        }
+    });
+    let pows = crate::scaling::inputs(4096, |n| {
+        two_atom_lists(n).map(|l| {
+            (l.into_iter())
+                .map(|(q, e)| (q.iter_u64_digits().next().unwrap_or(0), e))
+                .collect::<Vec<(u64, BigInt)>>()
+        })
+    });
+    // `zip_pows` walks the two lists and allocates nothing, so only its instructions count.
+    crate::scaling::check_instructions_only("zip_pows of n primes, 64 times", 4096, 1, |n| {
+        let [a, b] = &pows[&n];
+        for _ in 0..64 {
+            let k = zip_pows(std::hint::black_box(a), std::hint::black_box(b)).count();
+            assert_eq!(k, 3 * n / 2);
+        }
+    });
+}

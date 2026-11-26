@@ -195,10 +195,8 @@ fn res_count(s: &[(Int, Int)]) -> Int {
     total
 }
 
-fn res_contains(s: &[(Int, Int)], r: &Int) -> bool {
-    let idx = s.partition_point(|(_, hi)| hi < r);
-    idx < s.len() && s[idx].0 <= *r
-}
+// Whether the residue `r` lies in `s`, sorted disjoint residue intervals: O(log of `s`).
+use zed_collections::intervals::contains as res_contains;
 
 /// Whether every residue of `inner` lies in `outer`, both sorted and disjoint in `0..m`: no gap
 /// of `outer` meets `inner`. Each gap is tested against the last run of `inner` that starts

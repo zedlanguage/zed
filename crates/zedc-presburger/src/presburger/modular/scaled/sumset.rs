@@ -841,8 +841,7 @@ pub(super) fn solve_by_sums(
                         .chain(bits_of_row[i].iter().map(|&(c, _)| c))
                 })
                 .collect();
-            mv.sort_unstable();
-            mv.dedup();
+            zed_collections::sorted::sort_dedup(&mut mv);
             mv
         })
         .collect();
@@ -877,8 +876,7 @@ pub(super) fn solve_by_sums(
         })
         .chain(bit_places.iter().map(|(c, _)| *c))
         .collect();
-    read_cs.sort_unstable();
-    read_cs.dedup();
+    zed_collections::sorted::sort_dedup(&mut read_cs);
     // The tuples, held in a tree weighted by the tuples expected to visit each coordinate
     // ([`tuples`]): each coordinate weighs one, plus `R_b` for each block `b` moving it, plus the
     // tuples read at the literals when one reads it. Summed in `u128`, exact: each term is below
@@ -1503,8 +1501,7 @@ fn cut_at(set: &ResidueSet, bits: &[&(Int, Int)]) -> ResidueSet {
         starts.push(lo.clone());
         starts.push(hi + &Int::ONE);
     }
-    starts.sort_unstable();
-    starts.dedup();
+    zed_collections::sorted::sort_dedup(&mut starts);
     let mut out = Vec::new();
     for (lo, hi) in set {
         let mut from = lo.clone();

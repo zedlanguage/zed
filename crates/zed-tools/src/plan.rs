@@ -330,8 +330,7 @@ fn check_counts(text: &str, out: &mut String) -> Result<(bool, [usize; 4]), Stri
         edges += row.needs.len();
         // Distinct needs, as the join rows count them: O(k log k) for a row of k needs.
         let mut distinct = row.needs.clone();
-        distinct.sort_unstable();
-        distinct.dedup();
+        zed_collections::sorted::sort_dedup(&mut distinct);
         if distinct.len() > MAX_NEEDS {
             say!(
                 out,

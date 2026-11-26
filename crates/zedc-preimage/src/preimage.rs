@@ -3973,8 +3973,7 @@ struct Terms<'t> {
     src: Vec<Option<&'t Term>>,
     kids: Vec<Tid>,
     params: Vec<Name>,
-    names: Vec<Arc<str>>,
-    name_ids: HashMap<Arc<str>, Name>,
+    names: zed_collections::intern::Interner<Arc<str>>,
     made: HashMap<Made, Tid>,
     /// The integer literals of the given terms, each term counted once.
     ints: Vec<Num>,
@@ -3991,13 +3990,7 @@ struct Terms<'t> {
 
 impl<'t> Terms<'t> {
     fn name(&mut self, x: &Arc<str>) -> Name {
-        if let Some(&n) = self.name_ids.get(x) {
-            return n;
-        }
-        let n = self.names.len() as Name;
-        self.names.push(x.clone());
-        self.name_ids.insert(x.clone(), n);
-        n
+        to_u32(self.names.intern_ref(x), "names")
     }
 
     /// Numbers `root` and its parts. A subterm the given term shares (one [`Shared`] reached
@@ -14812,10 +14805,9 @@ fn cls_unread() -> Rc<Cls> {
 }
 
 /// Whether one of `ranges`, ranges `i..=j` of class numbers, sorted and disjoint, meets the
-/// classes `lo..hi`: `O(log r)` for `r` ranges.
+/// classes `lo..hi`, a half-open range, none when it is empty: `O(log r)` for `r` ranges.
 fn ranges_meet(ranges: &[(usize, usize)], (lo, hi): (usize, usize)) -> bool {
-    let k = ranges.partition_point(|&(_, j)| j < lo);
-    ranges.get(k).is_some_and(|&(i, _)| i < hi)
+    lo < hi && zed_collections::intervals::meets(ranges, &lo, &(hi - 1))
 }
 
 /// The classes `0..n` outside `ranges`, ranges `i..=j` sorted and disjoint, in the same form.
@@ -15233,28 +15225,7 @@ fn neighbor_cuts(starts: &[Vec<i128>]) -> Vec<Vec<i128>> {
                 (false, true) => (&starts[before], &[]),
                 (false, false) => (&starts[before], &starts[after]),
             };
-            let mut out = Vec::with_capacity(a.len() + b.len());
-            let (mut i, mut j) = (0, 0);
-            while i < a.len() || j < b.len() {
-                let c = match (a.get(i), b.get(j)) {
-                    (Some(&x), Some(&y)) if x <= y => {
-                        i += 1;
-                        j += usize::from(x == y);
-                        x
-                    }
-                    (_, Some(&y)) => {
-                        j += 1;
-                        y
-                    }
-                    (Some(&x), None) => {
-                        i += 1;
-                        x
-                    }
-                    (None, None) => unreachable!("the loop runs while one list has more"),
-                };
-                out.push(c);
-            }
-            out
+            zed_collections::sorted::merge(a, b)
         })
         .collect()
 }

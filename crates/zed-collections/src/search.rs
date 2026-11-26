@@ -170,13 +170,30 @@ pub fn gallop<T>(a: &[T], from: usize, mut pred: impl FnMut(&T) -> bool) -> usiz
     if a.get(from).is_none_or(|x| !pred(x)) {
         return from;
     }
-    // `pred` holds at `lo`.
+    gallop_after(a, from, pred)
+}
+
+/// [`gallop`] for a `pred` known to hold at `a[from]`, which is never asked there: the least
+/// `i` in `from + 1..=a.len()` with `!pred(&a[i])`, or `a.len()`. For a costly `pred`, as in
+/// zedc-presburger's search of the bounds a formula implies, where `a[from]` was asked
+/// before. Neither stage asks where the answer is already known: the doubling stops at the
+/// first false it finds, and the binary search runs strictly between that and the last true.
+//
+// `from` must be below `a.len()`; a build with debug assertions panics otherwise.
+// Test: `tests::gallop_after_matches_a_scan`.
+pub fn gallop_after<T>(a: &[T], from: usize, mut pred: impl FnMut(&T) -> bool) -> usize {
+    debug_assert!(
+        from < a.len(),
+        "search::gallop_after from {from}, at or past the end {}",
+        a.len()
+    );
+    // `pred` holds at `lo`, and fails at `lo + step` where that is below `a.len()`.
     let (mut lo, mut step) = (from, 1);
     while lo + step < a.len() && pred(&a[lo + step]) {
         lo += step;
         step *= 2;
     }
-    let hi = (lo + step + 1).min(a.len());
+    let hi = (lo + step).min(a.len());
     lo + 1 + a[lo + 1..hi].partition_point(pred)
 }
 
@@ -307,6 +324,30 @@ mod tests {
                     assert_eq!(got, t, "n={n} from={from} t={t}");
                     let d = (t - from + 1) as u32;
                     assert!(asked <= 2 * d.ilog2() + 3, "{asked} questions for {d}");
+                }
+            }
+        }
+    }
+
+    /// `gallop_after` from every start to every border of every list up to 40 long, against a
+    /// scan: never asked at `from`, where `pred` is known to hold, and at most `2⌊lg d⌋ + 3`
+    /// questions for an answer `d` past `from`, `gallop`'s bound. A place may be asked twice:
+    /// std's `partition_point` can probe one item twice (VM l43, 2026-11-26: [1, 3, 5, 5]).
+    #[test]
+    fn gallop_after_matches_a_scan() {
+        for n in 1..=40usize {
+            let a: Vec<usize> = (0..n).collect();
+            for from in 0..n {
+                for t in from + 1..=n {
+                    let mut asked = Vec::new();
+                    let got = gallop_after(&a, from, |&x| {
+                        asked.push(x);
+                        x < t
+                    });
+                    assert_eq!(got, t, "n={n} from={from} t={t}");
+                    assert!(!asked.contains(&from), "asked at {from}: {asked:?}");
+                    let d = (t - from) as u32;
+                    assert!(asked.len() as u32 <= 2 * d.ilog2() + 3, "{asked:?} for {d}");
                 }
             }
         }

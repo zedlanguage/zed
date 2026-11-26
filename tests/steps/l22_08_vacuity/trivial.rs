@@ -598,18 +598,7 @@ impl Theory {
         self.term_fields(a.rhs, &mut rf);
         zed_collections::sorted::sort_dedup(&mut lf);
         zed_collections::sorted::sort_dedup(&mut rf);
-        let shared = {
-            let (mut i, mut j, mut any) = (0, 0, false);
-            while i < lf.len() && j < rf.len() && !any {
-                match lf[i].cmp(&rf[j]) {
-                    std::cmp::Ordering::Less => i += 1,
-                    std::cmp::Ordering::Greater => j += 1,
-                    std::cmp::Ordering::Equal => any = true,
-                }
-            }
-            any
-        };
-        if shared {
+        if !zed_collections::sorted::disjoint(&lf, &rf, Ord::cmp) {
             return AtomForm::Pairs(self.pair_form(a, &lf, &rf));
         }
         let key = |side: Vec<(Sym, Vec<(usize, Choice)>)>, flip: bool| {
@@ -639,19 +628,13 @@ impl Theory {
             out
         };
         let (lr, rr) = (runs(&left), runs(&right));
-        let mut common: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)> = Vec::new();
-        let (mut i, mut j) = (0, 0);
-        while i < lr.len() && j < rr.len() {
-            match lr[i].0.cmp(&rr[j].0) {
-                std::cmp::Ordering::Less => i += 1,
-                std::cmp::Ordering::Greater => j += 1,
-                std::cmp::Ordering::Equal => {
-                    common.push((lr[i].1.clone(), rr[j].1.clone()));
-                    i += 1;
-                    j += 1;
-                }
-            }
-        }
+        let common: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)> =
+            zed_collections::sorted::meet_with(
+                &lr,
+                &rr,
+                |x, y| x.0.cmp(&y.0),
+                |x, y| Some((x.1.clone(), y.1.clone())),
+            );
         if !common.is_empty() {
             // The sides name different fields, so every pair of paths is consistent and the
             // atom is exactly "the left side ends at s and the right side ends at s" for one

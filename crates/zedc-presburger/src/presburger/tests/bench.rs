@@ -32,3 +32,35 @@ fn difference_ends_of_3000_systems_are_those_found_by_listing_the_points() {
     difference_ends_listed("difference ends of 3000 systems, listed", 3000);
     eprintln!("3000 systems listed in {:.2?}", start.elapsed());
 }
+
+/// The merge of two rows, `f·x + g·y` without one variable (`merge`, now
+/// `zed_collections::sorted::merge_with`; DRY-sorted-intervals-2026-11-26, group 1), 64 times on
+/// two rows of `n` terms, half of their variables shared, the shared terms cancelling: the
+/// variables below `3n / 2` whose remainder by 3 is not 0, and not 1, every coefficient 1, with
+/// `f = 1` and `g = -1`. Correctness: the tests of `presburger` and of `sorted`.
+#[test]
+fn a_merge_of_two_rows_scales_with_their_terms() {
+    let inputs = crate::scaling::inputs(4096, |n| {
+        let row = |skip| -> Vec<Term> {
+            (0..3 * n / 2)
+                .filter(|i| i % 3 != skip)
+                .map(|i| (i, Int::from(1)))
+                .collect()
+        };
+        (row(0), row(1))
+    });
+    let (one, minus_one) = (Int::from(1), Int::from(-1));
+    crate::scaling::check_order("a merge of two rows of n terms, 64 times", 4096, 1, |n| {
+        let (x, y) = &inputs[&n];
+        for _ in 0..64 {
+            let m = merge(
+                std::hint::black_box(x),
+                &one,
+                std::hint::black_box(y),
+                &minus_one,
+                1,
+            );
+            assert_eq!(m.len(), n - 1);
+        }
+    });
+}

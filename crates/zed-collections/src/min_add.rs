@@ -1,8 +1,12 @@
-//! A tree over the items `0..n`, each an integer, all 0 at the start: an addition to every item
-//! of a range, and the search for the first item at or after a place whose value is at most a
-//! bound, each O(log n) steps (PERF-sweep-bounded-wide-interval). The one user so far is
-//! `zedc-presburger`'s `sweep_bounded`, which keeps for each residue modulo `q` the number of
-//! conditions that forbid it, and asks for the first residue no condition forbids.
+//! A tree over the items `0..n`, each an integer, all 0 at the start or given: an addition to
+//! every item of a range, and the search for the first item at or after a place whose value is
+//! at most a bound, each O(log n) steps (PERF-sweep-bounded-wide-interval), and the items of a
+//! range at most a bound, O(log n) each. The users are in `zedc-presburger`: `sweep_bounded`,
+//! which keeps for each residue modulo `q` the number of conditions that forbid it, and asks
+//! for the first residue no condition forbids; `cell_sweep`'s `resolve_disj`, which counts the
+//! guards that exclude each cell and takes the cells no guard excludes; and `values`' `Cover`,
+//! which counts the disjuncts left over each piece and takes the pieces that lose the last
+//! (DRY-sorted-intervals-2026-11-26, group 7).
 //!
 //! The structure is the segment tree with range additions kept at the nodes and not pushed down
 //! ("non-propagating lazy" updates): node `v` covers a range of items, `add[v]` is the sum of
@@ -93,6 +97,32 @@ impl MinAdd {
         }
     }
 
+    /// The items `values`, in order. O(n): each node's `min` from its children's, `add` all 0.
+    pub fn from_values(values: &[i64]) -> Self {
+        let mut t = MinAdd::new(values.len());
+        if !values.is_empty() {
+            t.build(1, 0, values.len() - 1, values);
+        }
+        t
+    }
+
+    fn build(&mut self, v: usize, nl: usize, nr: usize, values: &[i64]) {
+        if nl == nr {
+            self.min[v] = values[nl];
+            return;
+        }
+        let mid = nl + (nr - nl) / 2;
+        self.build(2 * v, nl, mid, values);
+        self.build(2 * v + 1, mid + 1, nr, values);
+        self.min[v] = self.min[2 * v].min(self.min[2 * v + 1]);
+    }
+
+    /// The least value of all the items, `None` when there are none. O(1): the root has no
+    /// ancestors, so its `min` is the least value over its range, the whole.
+    pub fn min(&self) -> Option<i64> {
+        (self.n > 0).then(|| self.min[1])
+    }
+
     /// The number of items.
     pub fn len(&self) -> usize {
         self.n
@@ -159,22 +189,83 @@ impl MinAdd {
         self.first_at(2 * v, nl, mid, from, below)
             .or_else(|| self.first_at(2 * v + 1, mid + 1, nr, from, below))
     }
+
+    /// Calls `f` on each item of `lo..=hi` whose value is at most `bound`, in increasing
+    /// order; nothing when `lo > hi`. For the items a range's addition brought down to a
+    /// bound, such as the counts that reached 0.
+    ///
+    /// Proof: as for `first_at_most`, the search carries `bound` less the `add` of the strict
+    /// ancestors, so a node is left at once exactly when it lies outside `lo..=hi` or no item
+    /// of its range is at most the bound, and every other node is entered, its left child
+    /// first. Cost: O((k + 1) log n) for `k` items found: every node entered either lies on
+    /// the paths to the leaves of `lo` and `hi` (the nodes that meet the range only in part)
+    /// or lies inside the range with an item at most the bound below it, so on the path to a
+    /// found leaf; the nodes left at once are children of those. Test:
+    /// `tests::additions_and_searches_match_an_array`.
+    ///
+    /// # Panics
+    ///
+    /// When `lo <= hi` and `hi` is not below [`Self::len`], as [`Self::add`].
+    #[track_caller]
+    pub fn for_each_at_most(&self, lo: usize, hi: usize, bound: i64, mut f: impl FnMut(usize)) {
+        if lo > hi {
+            return;
+        }
+        let n = self.n;
+        assert!(
+            hi < n,
+            "MinAdd::for_each_at_most over items {lo}..={hi} of a tree of {n} items"
+        );
+        self.each_at(1, 0, n - 1, lo, hi, bound, &mut f);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn each_at(
+        &self,
+        v: usize,
+        nl: usize,
+        nr: usize,
+        lo: usize,
+        hi: usize,
+        bound: i64,
+        f: &mut impl FnMut(usize),
+    ) {
+        if hi < nl || nr < lo || self.min[v] > bound {
+            return;
+        }
+        if nl == nr {
+            f(nl);
+            return;
+        }
+        let below = bound.saturating_sub(self.add[v]);
+        let mid = nl + (nr - nl) / 2;
+        self.each_at(2 * v, nl, mid, lo, hi, below, f);
+        self.each_at(2 * v + 1, mid + 1, nr, lo, hi, below, f);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// After each of 4n random additions to random ranges, by -2 to 2, every search from every
-    /// place, at bounds -1, 0 and 1, gives what a scan of a plain array gives, for every n up
-    /// to 40.
+    /// From all 0 (`new`) and from random values -2 to 2 (`from_values`), after each of 4n
+    /// random additions to random ranges, by -2 to 2, every search from every place, at bounds
+    /// -1, 0 and 1, the least value, and the items at most each bound in a random range, give
+    /// what a scan of a plain array gives, for every n up to 40.
     #[test]
     fn additions_and_searches_match_an_array() {
         let (mut rng, _) = crate::seed::Rng::fresh("additions_and_searches_match_an_array");
         let mut next = move |m: u64| rng.below_u64(m);
-        for n in 0..=40usize {
-            let mut tree = MinAdd::new(n);
-            let mut items = vec![0i64; n];
+        for (n, start) in (0..=40usize).flat_map(|n| [(n, false), (n, true)]) {
+            let mut items: Vec<i64> = match start {
+                false => vec![0; n],
+                true => (0..n).map(|_| next(5) as i64 - 2).collect(),
+            };
+            let mut tree = match start {
+                false => MinAdd::new(n),
+                true => MinAdd::from_values(&items),
+            };
+            assert_eq!(tree.min(), items.iter().copied().min());
             for _ in 0..4 * n {
                 let a = next(n as u64) as usize;
                 let b = next(n as u64) as usize;
@@ -193,6 +284,16 @@ mod tests {
                             "n {n} from {from} bound {bound} items {items:?}"
                         );
                     }
+                }
+                assert_eq!(tree.min(), items.iter().copied().min());
+                let a = next(n as u64) as usize;
+                let b = next(n as u64) as usize;
+                let (lo, hi) = (a.min(b), a.max(b));
+                for bound in -1..=1 {
+                    let mut got = Vec::new();
+                    tree.for_each_at_most(lo, hi, bound, |i| got.push(i));
+                    let want: Vec<usize> = (lo..=hi).filter(|&i| items[i] <= bound).collect();
+                    assert_eq!(got, want, "n {n} {lo}..={hi} bound {bound} items {items:?}");
                 }
             }
             assert_eq!(tree.first_at_most(0, i64::MAX), (n > 0).then_some(0));

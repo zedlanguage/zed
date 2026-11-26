@@ -1,7 +1,8 @@
 //! Sorted lists of disjoint closed intervals of integers (DRY-sorted-structures-2): built from
 //! intervals in any order ([`coalesce`]), grown at the end ([`push`]), and their union
 //! ([`union`]), meet ([`intersect`]), difference ([`minus`]) and complement ([`complement`],
-//! [`complement_spans`]).
+//! [`complement_spans`]), and searches of a list: the interval holding a point ([`position`],
+//! [`contains`]) and those meeting a range ([`window`], [`meets`]).
 //!
 //! A list is *normal* when its intervals are non-empty, sorted, disjoint and not adjacent: no
 //! integer lies outside all of them between two of them. Every function here returns a normal
@@ -224,6 +225,14 @@ pub fn union<I: Interval + Clone>(a: &[I], b: &[I]) -> Vec<I> {
 /// likewise for `a`, so the result is not adjacent anywhere.
 pub fn intersect<I: Interval>(a: &[I], b: &[I]) -> Vec<I> {
     let mut out = Vec::new();
+    intersect_into(a, b, &mut out);
+    out
+}
+
+/// [`intersect`] written over `out`, whose buffer is kept: for a caller that meets many pairs
+/// of lists into one scratch list.
+pub fn intersect_into<I: Interval>(a: &[I], b: &[I], out: &mut Vec<I>) {
+    out.clear();
     let (mut i, mut j) = (0, 0);
     while let (Some(x), Some(y)) = (a.get(i), b.get(j)) {
         if let Some(m) = x.meet(y) {
@@ -235,7 +244,6 @@ pub fn intersect<I: Interval>(a: &[I], b: &[I]) -> Vec<I> {
             j += 1;
         }
     }
-    out
 }
 
 /// Every pair `(i, j)` such that `a[i]` and `b[j]` hold an integer in common, each pair once,
@@ -449,8 +457,38 @@ pub fn complement_spans<T: Discrete>(
 /// Complexity tradeoff: the naive way asks each interval, O(N) for N intervals. Used: one binary
 /// search on the lower ends, O(log N). Test: `tests::contains_matches_bit_sets`.
 pub fn contains<T: Discrete>(list: &[(T, T)], x: &T) -> bool {
-    let after = list.partition_point(|(a, _)| a <= x);
-    after > 0 && list[after - 1].1 >= *x
+    position(list, x).is_some()
+}
+
+/// The place in the sorted disjoint list `list` of the interval holding `x`, `None` when none
+/// does: the first interval whose upper end is at or above `x` is the only one that can hold
+/// it. One binary search, O(log N) for N intervals. Test:
+/// `tests::position_window_and_meets_match_a_scan`.
+pub fn position<T: Discrete>(list: &[(T, T)], x: &T) -> Option<usize> {
+    let i = list.partition_point(|(_, b)| b < x);
+    list.get(i).is_some_and(|(a, _)| a <= x).then_some(i)
+}
+
+/// The places in the sorted disjoint list `list` of the intervals that hold an integer of
+/// `lo..=hi`, a range, empty where `lo > hi`: those after every interval ending below `lo`
+/// and before every interval starting above `hi`. Two binary searches, O(log N) for N
+/// intervals. Test: `tests::position_window_and_meets_match_a_scan`.
+pub fn window<T: Discrete>(list: &[(T, T)], lo: &T, hi: &T) -> std::ops::Range<usize> {
+    if lo > hi {
+        return 0..0;
+    }
+    let first = list.partition_point(|(_, b)| b < lo);
+    first..first + list[first..].partition_point(|(a, _)| a <= hi)
+}
+
+/// Whether an interval of the sorted disjoint list `list` holds an integer of `lo..=hi`,
+/// `false` where `lo > hi`: [`window`] is not empty, found by its first binary search alone.
+/// Test: `tests::position_window_and_meets_match_a_scan`.
+pub fn meets<T: Discrete>(list: &[(T, T)], lo: &T, hi: &T) -> bool {
+    lo <= hi && {
+        let first = list.partition_point(|(_, b)| b < lo);
+        list.get(first).is_some_and(|(a, _)| a <= hi)
+    }
 }
 
 #[cfg(test)]
@@ -464,6 +502,27 @@ mod tests {
             let a = runs(x);
             for v in 0..=255u8 {
                 assert_eq!(contains(&a, &v), v < 8 && x >> v & 1 == 1, "{a:?} {v}");
+            }
+        }
+    }
+
+    /// Every subset of `0..8` and every range `lo..=hi` of `0..=9`, `lo > hi` included:
+    /// [`position`], [`window`] and [`meets`] against a scan of the intervals.
+    #[test]
+    fn position_window_and_meets_match_a_scan() {
+        for x in 0..256u32 {
+            let a = runs(x);
+            for lo in 0..=9u8 {
+                let at = a.iter().position(|&(l, h)| l <= lo && lo <= h);
+                assert_eq!(position(&a, &lo), at, "{a:?} {lo}");
+                for hi in 0..=9u8 {
+                    let meet: Vec<usize> = (0..a.len())
+                        .filter(|&i| lo <= hi && a[i].0 <= hi && lo <= a[i].1)
+                        .collect();
+                    let w = window(&a, &lo, &hi);
+                    assert_eq!(w.clone().collect::<Vec<_>>(), meet, "{a:?} {lo} {hi}");
+                    assert_eq!(meets(&a, &lo, &hi), !meet.is_empty(), "{a:?} {lo} {hi}");
+                }
             }
         }
     }
@@ -764,6 +823,9 @@ mod tests {
             let m = intersect(&a, &b);
             assert_eq!(m, by(|x, y| x && y), "round {round}: intersect {a:?} {b:?}");
             caught[2] |= intersect_passing_the_wrong_one(&a, &b) != m;
+            let mut into = b.clone();
+            intersect_into(&a, &b, &mut into);
+            assert_eq!(into, m, "round {round}: intersect_into {a:?} {b:?}");
             let d = minus(&a, &b);
             assert_eq!(d, by(|x, y| x && !y), "round {round}: minus {a:?} {b:?}");
             caught[3] |= minus_first_only(&a, &b) != d;

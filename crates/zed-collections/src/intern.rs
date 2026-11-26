@@ -14,6 +14,7 @@
 //! lookup through the entry API, O(1) expected a value, plus one clone for a new value. Two of
 //! the copies it replaced hashed a new value twice (a `get`, then an `insert`).
 
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::collections::hash_map::{Entry, RandomState};
 use std::hash::{BuildHasher, Hash};
@@ -53,6 +54,35 @@ impl<K: Eq + Hash + Clone, S: BuildHasher> Interner<K, S> {
     /// The id of `k`, given now if it had none.
     pub fn intern(&mut self, k: K) -> usize {
         self.insert(k).0
+    }
+
+    /// As [`Self::insert`] for a value held by reference: the id of `q` and whether it is new,
+    /// `q` copied into an owned `K` only when it is new (DRY-sorted-intervals-2026-11-26,
+    /// group 8). Complexity tradeoff: a hit costs one hash and no copy, where `insert` would
+    /// need the caller's copy first; a new value is hashed twice (the lookup, then the
+    /// insertion), as the copies this replaced did, since the entry API takes an owned key.
+    pub fn insert_ref<Q>(&mut self, q: &Q) -> (usize, bool)
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = K> + ?Sized,
+    {
+        if let Some(&id) = self.ids.get(q) {
+            return (id, false);
+        }
+        let id = self.values.len();
+        let k = q.to_owned();
+        self.values.push(k.clone());
+        self.ids.insert(k, id);
+        (id, true)
+    }
+
+    /// The id of `q`, given now if it had none; as [`Self::insert_ref`].
+    pub fn intern_ref<Q>(&mut self, q: &Q) -> usize
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = K> + ?Sized,
+    {
+        self.insert_ref(q).0
     }
 
     /// The id of `k`, if it has one.
@@ -204,6 +234,38 @@ mod tests {
             caught,
             "the negative control of the order first seen was never caught"
         );
+    }
+
+    /// `insert_ref` and `intern_ref` by a borrowed form (`&str` for `String`, `&[u64]` for
+    /// `Vec<u64>`) give the same ids and news as `insert` by value, for random draws.
+    #[test]
+    fn by_reference_agrees_with_by_value() {
+        let (mut rng, _) = Rng::fresh("by_reference_agrees_with_by_value");
+        for round in 0..100 {
+            let xs: Vec<Vec<u64>> = (0..rng.below(40))
+                .map(|_| (0..rng.below(3)).map(|_| rng.below_u64(3)).collect())
+                .collect();
+            let mut by_value: Interner<Vec<u64>> = Interner::default();
+            let mut by_ref: Interner<Vec<u64>> = Interner::default();
+            for x in &xs {
+                assert_eq!(
+                    by_ref.insert_ref(x.as_slice()),
+                    by_value.insert(x.clone()),
+                    "round {round}"
+                );
+            }
+            assert_eq!(by_ref.values(), by_value.values(), "round {round}");
+        }
+        let mut names: Interner<String> = Interner::default();
+        assert_eq!(
+            (
+                names.intern_ref("a"),
+                names.intern_ref("b"),
+                names.intern_ref("a")
+            ),
+            (0, 1, 0)
+        );
+        assert_eq!(names.values(), ["a", "b"]);
     }
 
     /// The value of an id not given panics, naming the id and the count.

@@ -39,7 +39,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
-use zed_collections::sorted::sorted_get;
+use zed_collections::sorted::{self, Joined, sorted_get};
 
 use crate::machine_int::BitLen;
 use bound::{Format, Product};
@@ -1703,19 +1703,12 @@ impl Rat {
     /// exponents, as a `Rat` of those atoms alone; `None` where they share none. One merge of
     /// the two sorted lists, O(atoms) comparisons.
     fn shared_wide(&self, b: &Rat) -> Option<Rat> {
-        let mut shared = Vec::new();
-        let (mut i, mut j) = (0, 0);
-        while i < self.wide.len() && j < b.wide.len() {
-            let ((q, e), (r, f)) = (&self.wide[i], &b.wide[j]);
-            match q.cmp(r) {
-                Ordering::Less => i += 1,
-                Ordering::Greater => j += 1,
-                Ordering::Equal => {
-                    shared.push((q.clone(), e.min(f).clone()));
-                    (i, j) = (i + 1, j + 1);
-                }
-            }
-        }
+        let shared = sorted::meet_with(
+            &self.wide,
+            &b.wide,
+            |x, y| x.0.cmp(&y.0),
+            |(q, e), (_, f)| Some((q.clone(), e.min(f).clone())),
+        );
         (!shared.is_empty()).then(|| Rat {
             num: BigInt::one(),
             den: BigInt::one(),
@@ -3201,6 +3194,11 @@ fn push_part(
 
 /// The atoms of `big` that `small` lacks, when every atom of `small` is an atom of `big`;
 /// else `None`. Both lists are sorted by atom ([`Rat`]), so one merge, O(atoms) comparisons.
+///
+/// Kept as its own loop, not `zed_collections::sorted::merge_join`: the walk over `big` alone
+/// tests one list for an end per step, and the shared merge took 2.4% more instructions in
+/// the bench `the_merges_of_kept_powers_scale_with_their_atoms` (VM l43, 2026-11-26: 22.31M
+/// against 21.79M at n = 4096, 176.6M against 172.4M at 8n; DRY-sorted-intervals-2026-11-26).
 fn atoms_within<'a>(
     small: &[(BigUint, BigInt)],
     big: &'a [(BigUint, BigInt)],
@@ -3220,30 +3218,16 @@ fn atoms_within<'a>(
 /// The sorted union of two sorted lists of atoms, an atom in both at `e + s f` for its
 /// exponents `e` in `a` and `f` in `b`, one in `b` alone at `s f`. One merge, O(atoms).
 fn merge_atoms(a: &[(BigUint, BigInt)], b: &[(BigUint, BigInt)], s: i32) -> Vec<(BigUint, BigInt)> {
-    let mut out = Vec::with_capacity(a.len().max(b.len()));
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() || j < b.len() {
-        let order = match (a.get(i), b.get(j)) {
-            (Some((q, _)), Some((r, _))) => q.cmp(r),
-            (Some(_), None) => Ordering::Less,
-            _ => Ordering::Greater,
-        };
-        match order {
-            Ordering::Less => {
-                out.push(a[i].clone());
-                i += 1;
-            }
-            Ordering::Greater => {
-                out.push((b[j].0.clone(), &b[j].1 * s));
-                j += 1;
-            }
-            Ordering::Equal => {
-                out.push((a[i].0.clone(), &a[i].1 + &b[j].1 * s));
-                (i, j) = (i + 1, j + 1);
-            }
-        }
-    }
-    out
+    sorted::merge_with(
+        a,
+        b,
+        |x, y| x.0.cmp(&y.0),
+        |j| match j {
+            Joined::Left(x) => Some(x.clone()),
+            Joined::Right((q, f)) => Some((q.clone(), f * s)),
+            Joined::Both((q, e), (_, f)) => Some((q.clone(), e + f * s)),
+        },
+    )
 }
 
 /// The atoms of an integer ([`Rat::text_atoms`]) as `c*b^e*…`, without the sign: the atoms of
@@ -3306,37 +3290,10 @@ fn zip_pows<'a>(
     a: &'a [(u64, BigInt)],
     b: &'a [(u64, BigInt)],
 ) -> impl Iterator<Item = (u64, BigInt, BigInt)> + 'a {
-    let (mut i, mut j) = (0, 0);
-    std::iter::from_fn(move || {
-        let x = a.get(i);
-        let y = b.get(j);
-        let (p, ex, ey) = match (x, y) {
-            (None, None) => return None,
-            (Some((p, e)), None) => {
-                i += 1;
-                (*p, e.clone(), BigInt::zero())
-            }
-            (None, Some((q, e))) => {
-                j += 1;
-                (*q, BigInt::zero(), e.clone())
-            }
-            (Some((p, e)), Some((q, f))) => match p.cmp(q) {
-                Ordering::Less => {
-                    i += 1;
-                    (*p, e.clone(), BigInt::zero())
-                }
-                Ordering::Greater => {
-                    j += 1;
-                    (*q, BigInt::zero(), f.clone())
-                }
-                Ordering::Equal => {
-                    i += 1;
-                    j += 1;
-                    (*p, e.clone(), f.clone())
-                }
-            },
-        };
-        Some((p, ex, ey))
+    sorted::merge_join(a, b, |x, y| x.0.cmp(&y.0)).map(|j| match j {
+        Joined::Left((p, e)) => (*p, e.clone(), BigInt::zero()),
+        Joined::Right((q, f)) => (*q, BigInt::zero(), f.clone()),
+        Joined::Both((p, e), (_, f)) => (*p, e.clone(), f.clone()),
     })
 }
 
@@ -3698,21 +3655,12 @@ impl Rat {
         }
         // Both `wide` lists are sorted by atom (`Rat`), so one merge pairs the shared atoms.
         let zero = BigInt::zero();
-        let (a, b) = (&self.wide, &other.wide);
-        let (mut i, mut j) = (0, 0);
-        while i < a.len() || j < b.len() {
-            let order = match (a.get(i), b.get(j)) {
-                (Some((q, _)), Some((r, _))) => q.cmp(r),
-                (Some(_), None) => Ordering::Less,
-                _ => Ordering::Greater,
+        for j in sorted::merge_join(&self.wide, &other.wide, |x, y| x.0.cmp(&y.0)) {
+            let (q, e, f) = match j {
+                Joined::Left((q, e)) => (q, e, &zero),
+                Joined::Right((q, f)) => (q, &zero, f),
+                Joined::Both((q, e), (_, f)) => (q, e, f),
             };
-            let (q, e, f) = match order {
-                Ordering::Less => (&a[i].0, &a[i].1, &zero),
-                Ordering::Greater => (&b[j].0, &zero, &b[j].1),
-                Ordering::Equal => (&a[i].0, &a[i].1, &b[j].1),
-            };
-            i += usize::from(order != Ordering::Greater);
-            j += usize::from(order != Ordering::Less);
             match (e - f).into_parts() {
                 (Sign::Plus, k) => n.wide.push((Cow::Borrowed(q), k)),
                 (Sign::Minus, k) => d.wide.push((Cow::Borrowed(q), k)),

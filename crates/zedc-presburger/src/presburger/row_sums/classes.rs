@@ -245,10 +245,11 @@ fn force(rows: &Rows) -> Option<Option<Forcing>> {
     }
     let mut fixed: Vec<Option<i128>> = vec![None; n];
     let mut at = vec![0usize; m];
-    let mut queue: Vec<usize> = (0..m).filter(|&r| rows.rows[r].eq).collect();
-    let mut queued: Vec<bool> = rows.rows.iter().map(|r| r.eq).collect();
+    let mut queue = zed_graph::Worklist::new(m, zed_graph::Order::Lifo);
+    for r in (0..m).filter(|&r| rows.rows[r].eq) {
+        queue.push(r);
+    }
     while let Some(r) = queue.pop() {
-        queued[r] = false;
         while let Some(&(weight, j, c)) = by_weight[r].get(at[r]) {
             if fixed[j].is_some() {
                 at[r] += 1;
@@ -269,7 +270,7 @@ fn force(rows: &Rows) -> Option<Option<Forcing>> {
             let Some(v) = multiple_in(c, from, to)? else {
                 return Some(None);
             };
-            if !in_ranges(&rows.domains[j], v) {
+            if !zed_collections::intervals::contains(&rows.domains[j], &v) {
                 return Some(None);
             }
             fixed[j] = Some(v);
@@ -283,8 +284,7 @@ fn force(rows: &Rows) -> Option<Option<Forcing>> {
                     if !met(&rows.rows[r2], k[r2]) {
                         return Some(None);
                     }
-                } else if rows.rows[r2].eq && !queued[r2] && r2 != r {
-                    queued[r2] = true;
+                } else if rows.rows[r2].eq && r2 != r {
                     queue.push(r2);
                 }
             }
@@ -331,12 +331,6 @@ fn multiple_in(c: i128, from: i128, to: i128) -> Option<Option<i128>> {
         0 => Some(Some(lo)),
         _ => None,
     }
-}
-
-/// Whether `v` lies in one of `ranges` (sorted and disjoint): `O(log r)`.
-fn in_ranges(ranges: &[(i128, i128)], v: i128) -> bool {
-    let i = ranges.partition_point(|&(_, h)| h < v);
-    ranges.get(i).is_some_and(|&(l, _)| l <= v)
 }
 
 /// The rows left open by [`force`], with each atom of them whose ranges are single points

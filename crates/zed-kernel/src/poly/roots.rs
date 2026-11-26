@@ -1291,8 +1291,7 @@ fn chain_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigInt>
             }
         }
     }
-    out.sort();
-    out.dedup();
+    zed_collections::sorted::sort_dedup(&mut out);
     out
 }
 
@@ -1332,8 +1331,7 @@ fn chain_cells(q: &[(u64, BigInt)], below: &[BigInt], a: &BigInt, hi: &BigInt) -
             out.push(chain_search(q, u, v, fu, fv));
         }
     }
-    out.sort();
-    out.dedup();
+    zed_collections::sorted::sort_dedup(&mut out);
     out
 }
 
@@ -1642,8 +1640,7 @@ mod tests {
                 }
             })
             .collect();
-        rs.sort();
-        rs.dedup();
+        zed_collections::sorted::sort_dedup(&mut rs);
         (from_big_roots(&rs), rs)
     }
 

@@ -230,10 +230,7 @@ fn meets(g: &Span, m: &Int, left: &[(Int, Int)]) -> bool {
     if &(b - a) + &Int::ONE >= *m {
         return !left.is_empty();
     }
-    let hit = |lo: &Int, hi: &Int| {
-        let i = left.partition_point(|(_, h)| h < lo);
-        i < left.len() && left[i].0 <= *hi
-    };
+    let hit = |lo: &Int, hi: &Int| zed_collections::intervals::meets(left, lo, hi);
     let start = a.mod_floor(m);
     let end = &start + &(b - a);
     match end < *m {

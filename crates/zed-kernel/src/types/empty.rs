@@ -77,6 +77,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use num_bigint::{BigInt, BigUint};
+use zed_collections::sorted::Joined;
 use zed_numtheory::{factor, gcd_u64};
 
 use super::bdd::{Bdd, Form, Part};
@@ -2945,35 +2946,23 @@ fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> BigUint {
         // rotations of one cycle give about `n` classes from `n` definitions. The largest meet
         // only lowered the estimate more and was not needed for the proof.
         let meet = |a: &[(usize, u64, u64)], b: &[(usize, u64, u64)]| {
-            let (mut i, mut j, mut out) = (0, 0, Vec::new());
-            while i < a.len() || j < b.len() {
-                match (a.get(i), b.get(j)) {
-                    (Some(&x), Some(&y)) if x.0 == y.0 => {
+            zed_collections::sorted::merge_with(
+                a,
+                b,
+                |x, y| x.0.cmp(&y.0),
+                |j| match j {
+                    Joined::Left(&x) | Joined::Right(&x) => Some(x),
+                    Joined::Both(&x, &y) => {
                         // The two residues agree modulo the coarser period: `meet` is called only
                         // on a pair `meeting_pair` found to meet as whole classes, and their fine
                         // parts then meet by the argument above (TEST-kernel-unreached-paths-16,
                         // b22-kernel13: the `return None` this replaces was never reached).
                         let m = x.1.min(y.1);
                         assert_eq!(x.2 % m, y.2 % m, "the classes of a meeting pair meet");
-                        out.push(if x.1 >= y.1 { x } else { y });
-                        (i, j) = (i + 1, j + 1);
+                        Some(if x.1 >= y.1 { x } else { y })
                     }
-                    (Some(&x), Some(&y)) if x.0 < y.0 => {
-                        out.push(x);
-                        i += 1;
-                    }
-                    (Some(&x), None) => {
-                        out.push(x);
-                        i += 1;
-                    }
-                    (_, Some(&y)) => {
-                        out.push(y);
-                        j += 1;
-                    }
-                    (None, None) => unreachable!("the loop stops when both are done"),
-                }
-            }
-            out
+                },
+            )
         };
         if let Some((i, j)) = meeting_pair(&kept) {
             let m = meet(&terms[i].1, &terms[j].1);
@@ -14271,15 +14260,7 @@ fn one_leaf(index: &Index, j: usize) -> OneFn {
 
 /// Whether two sorted lists of components share none.
 fn apart(x: &[usize], y: &[usize]) -> bool {
-    let (mut i, mut j) = (0, 0);
-    while i < x.len() && j < y.len() {
-        match x[i].cmp(&y[j]) {
-            std::cmp::Ordering::Less => i += 1,
-            std::cmp::Ordering::Greater => j += 1,
-            std::cmp::Ordering::Equal => return false,
-        }
-    }
-    true
+    zed_collections::sorted::disjoint(x, y, usize::cmp)
 }
 
 /// The union of two sorted lists of components, sorted.

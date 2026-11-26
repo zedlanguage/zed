@@ -176,12 +176,10 @@ impl HoleSet {
         &self.runs
     }
 
-    /// The run holding `v`, or `None` when `v` lies in no hole. O(log n) by binary search: the
-    /// runs are sorted and disjoint, so the first run whose upper end is at least `v` is the
-    /// only one that can hold it.
+    /// The run holding `v`, or `None` when `v` lies in no hole. O(log n) by binary search
+    /// (`zed_collections::intervals::position`).
     pub fn run_of(&self, v: &Int) -> Option<&(Int, Int)> {
-        let i = self.runs.partition_point(|(_, hi)| hi < v);
-        self.runs.get(i).filter(|(lo, _)| lo <= v)
+        zed_collections::intervals::position(&self.runs, v).map(|i| &self.runs[i])
     }
 
     /// The order of two sets by content: the key, then the runs, so equal content compares

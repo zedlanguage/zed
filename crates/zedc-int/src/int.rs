@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
+use zed_collections::sorted::{Joined, merge_join, merge_with};
 use zed_kernel::bits::BitLen;
 use zed_kernel::num::coprime::coprime_base_exponents;
 use zed_kernel::num::{
@@ -1171,36 +1172,15 @@ impl Core {
         }
         let mut l: Vec<(&Atom, Cow<'_, BigUint>)> = Vec::new();
         let mut r = Vec::new();
-        let (mut i, mut j) = (self.0.iter().peekable(), o.0.iter().peekable());
-        loop {
-            match (i.peek(), j.peek()) {
-                (Some((a, e)), Some((b, f))) => match a.cmp(b) {
-                    Ordering::Less => {
-                        l.push((a, Cow::Borrowed(e)));
-                        i.next();
-                    }
-                    Ordering::Greater => {
-                        r.push((b, Cow::Borrowed(f)));
-                        j.next();
-                    }
-                    Ordering::Equal => {
-                        match e.cmp(f) {
-                            Ordering::Less => r.push((b, Cow::Owned(f - e))),
-                            Ordering::Greater => l.push((a, Cow::Owned(e - f))),
-                            Ordering::Equal => {}
-                        }
-                        i.next();
-                        j.next();
-                    }
+        for j in merge_join(&self.0, &o.0, |x, y| x.0.cmp(&y.0)) {
+            match j {
+                Joined::Left((a, e)) => l.push((a, Cow::Borrowed(e))),
+                Joined::Right((b, f)) => r.push((b, Cow::Borrowed(f))),
+                Joined::Both((a, e), (b, f)) => match e.cmp(f) {
+                    Ordering::Less => r.push((b, Cow::Owned(f - e))),
+                    Ordering::Greater => l.push((a, Cow::Owned(e - f))),
+                    Ordering::Equal => {}
                 },
-                (Some(_), None) => {
-                    l.extend(i.map(|(a, e)| (a, Cow::Borrowed(e))));
-                    break;
-                }
-                (None, _) => {
-                    r.extend(j.map(|(b, f)| (b, Cow::Borrowed(f))));
-                    break;
-                }
             }
         }
         fn ints<'a>(
@@ -1301,36 +1281,15 @@ impl Core {
         }
         // Both factor lists are in the order of their atoms: merge them, adding the exponents
         // of an atom both hold.
-        let mut out = Vec::with_capacity(self.0.len() + o.0.len());
-        let (mut i, mut j) = (self.0.iter().peekable(), o.0.iter().peekable());
-        loop {
-            match (i.peek(), j.peek()) {
-                (Some((a, e)), Some((b, f))) => match a.cmp(b) {
-                    Ordering::Less => {
-                        out.push((a.clone(), e.clone()));
-                        i.next();
-                    }
-                    Ordering::Greater => {
-                        out.push((b.clone(), f.clone()));
-                        j.next();
-                    }
-                    Ordering::Equal => {
-                        out.push((a.clone(), e + f));
-                        i.next();
-                        j.next();
-                    }
-                },
-                (Some(_), None) => {
-                    out.extend(i.cloned());
-                    break;
-                }
-                (None, _) => {
-                    out.extend(j.cloned());
-                    break;
-                }
-            }
-        }
-        Core(out)
+        Core(merge_with(
+            &self.0,
+            &o.0,
+            |x, y| x.0.cmp(&y.0),
+            |j| match j {
+                Joined::Left(x) | Joined::Right(x) => Some(x.clone()),
+                Joined::Both((a, e), (_, f)) => Some((a.clone(), e + f)),
+            },
+        ))
     }
 
     /// `self ^ k`.

@@ -4997,91 +4997,29 @@ mod cell_sweep {
         intervals::coalesce(all)
     }
 
-    /// Lazy range-add, zero-minimum segment tree over `0..n` local cells. Tracks how many active
-    /// ancestor guards exclude each cell (`0` = active).
-    struct SegTree {
-        n: usize,
-        min_val: Vec<u32>,
-        lazy: Vec<i32>,
-    }
+    /// How many active ancestor guards exclude each of the `0..n` local cells (`0` = active),
+    /// in zed-collections' range-add, range-min tree. Every subtraction undoes an earlier
+    /// addition of the same range, so no count goes below 0, and "at most 0" is "0".
+    struct SegTree(zed_collections::min_add::MinAdd);
 
     impl SegTree {
         fn new(n: usize) -> Self {
-            Self {
-                n,
-                min_val: vec![0; 4 * n.max(1)],
-                lazy: vec![0; 4 * n.max(1)],
-            }
+            SegTree(zed_collections::min_add::MinAdd::new(n))
         }
 
         fn has_any_zero(&self) -> bool {
-            self.n > 0 && self.min_val[1] == 0
+            self.0.min() == Some(0)
         }
 
-        fn apply(&mut self, idx: usize, delta: i32) {
-            if delta >= 0 {
-                self.min_val[idx] = self.min_val[idx].saturating_add(delta as u32);
-            } else {
-                self.min_val[idx] = self.min_val[idx].saturating_sub((-delta) as u32);
-            }
-            self.lazy[idx] += delta;
+        fn add_range(&mut self, ql: usize, qr: usize, delta: i64) {
+            self.0.add(ql, qr, delta);
         }
 
-        fn push(&mut self, idx: usize) {
-            let lz = self.lazy[idx];
-            if lz != 0 {
-                let (l, r) = (idx * 2, idx * 2 + 1);
-                self.apply(l, lz);
-                self.apply(r, lz);
-                self.lazy[idx] = 0;
-            }
-        }
-
-        fn add_range(&mut self, ql: usize, qr: usize, delta: i32) {
-            if ql > qr || self.n == 0 {
-                return;
-            }
-            self.add_rec(1, 0, self.n - 1, ql, qr, delta);
-        }
-
-        fn add_rec(&mut self, idx: usize, l: usize, r: usize, ql: usize, qr: usize, delta: i32) {
-            if ql <= l && r <= qr {
-                self.apply(idx, delta);
-                return;
-            }
-            self.push(idx);
-            let mid = l.midpoint(r);
-            if ql <= mid {
-                self.add_rec(idx * 2, l, mid, ql, qr, delta);
-            }
-            if qr > mid {
-                self.add_rec(idx * 2 + 1, mid + 1, r, ql, qr, delta);
-            }
-            self.min_val[idx] = self.min_val[idx * 2].min(self.min_val[idx * 2 + 1]);
-        }
-
-        fn harvest_zeros(&mut self, out: &mut Vec<usize>) {
-            if self.n == 0 || self.min_val[1] > 0 {
-                return;
-            }
-            self.harvest_rec(1, 0, self.n - 1, out);
-        }
-
-        fn harvest_rec(&mut self, idx: usize, l: usize, r: usize, out: &mut Vec<usize>) {
-            if self.min_val[idx] > 0 {
-                return;
-            }
-            if l == r {
-                out.push(l);
-                return;
-            }
-            self.push(idx);
-            let mid = l.midpoint(r);
-            if self.min_val[idx * 2] == 0 {
-                self.harvest_rec(idx * 2, l, mid, out);
-            }
-            if self.min_val[idx * 2 + 1] == 0 {
-                self.harvest_rec(idx * 2 + 1, mid + 1, r, out);
+        /// The cells at 0, in increasing order.
+        fn harvest_zeros(&self, out: &mut Vec<usize>) {
+            if self.has_any_zero() {
+                self.0
+                    .for_each_at_most(0, self.0.len() - 1, 0, |c| out.push(c));
             }
         }
     }
@@ -8087,10 +8025,10 @@ use zed_collections::fenwick::Fenwick;
 use zed_collections::index::to_u32;
 use zed_collections::intern::Interner;
 use zed_collections::intervals::{
-    coalesce as cells_join, intersect as cells_meet, minus as cells_minus,
+    self, coalesce as cells_join, intersect as cells_meet, minus as cells_minus,
 };
-use zed_collections::search::{last_true, try_first_true, try_last_true};
-use zed_collections::sorted::sorted_get;
+use zed_collections::search::{gallop_after, try_first_true, try_last_true};
+use zed_collections::sorted::{Joined, merge_with, sorted_get};
 
 /// The cells of `a` not in `b`, as [`cells_minus`], found by search for each run of `b`.
 // Complexity tradeoff: a merge of the two lists reads every run of `a`, O(A + B). `spread`
@@ -8291,16 +8229,6 @@ impl CellPiece {
         }
     }
 
-    /// The indices of the runs of `set` that meet `lo..=hi`, by two binary searches.
-    fn window_in(set: &[(usize, usize)], lo: usize, hi: usize) -> (usize, usize) {
-        if lo > hi || set.is_empty() {
-            return (0, 0);
-        }
-        let first = set.partition_point(|r| r.1 < lo);
-        let stop = first + set[first..].partition_point(|r| r.0 <= hi);
-        (first, stop)
-    }
-
     fn runs(&self) -> CellPieceRuns<'_> {
         CellPieceRuns {
             set: &self.set,
@@ -8332,8 +8260,7 @@ impl CellPiece {
                 if *lo <= self.set[0].0 && *hi >= self.set[self.set.len() - 1].1 {
                     return self.set.len();
                 }
-                let (first, stop) = Self::window_in(&self.set, *lo, *hi);
-                stop - first
+                intervals::window(&self.set, lo, hi).len()
             }
             CellWindows::Many(ws) => {
                 let mut total = 0;
@@ -8974,7 +8901,8 @@ impl CellWalk<'_> {
                 .expect("nonempty pieces");
             let common = pieces.iter().all(|p| {
                 let (p_lo, p_hi) = p.windows.as_slice()[0];
-                let (a, b) = CellPiece::window_in(&p.set, lo, hi);
+                let w = intervals::window(&p.set, &lo, &hi);
+                let (a, b) = (w.start, w.end);
                 a < b && p.set[a].0.max(lo) >= p_lo && p.set[b - 1].1.min(hi) <= p_hi
             });
             if common {
@@ -13196,7 +13124,7 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
             }
             // `ws[good]` has no point; `ws[bad]`, when `bad < ws.len()`, has one.
             let (mut good, mut step) = (0, 1);
-            let mut bad = loop {
+            let bad = loop {
                 let at = good + step;
                 if at >= ws.len() {
                     break ws.len();
@@ -13220,19 +13148,9 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
             // `good`, one when d = 0, and at most twice the bisection's otherwise; the bisection
             // then runs inside the bracket it finds. Both record the same bound when the tests
             // are monotone in `w`, which is not proved; each bound recorded is tested, so it
-            // stays proved either way.
-            let mut step = 1;
-            while good + step < bad {
-                let at = good + step;
-                if !none(&ws[at]) {
-                    bad = at;
-                    break;
-                }
-                good = at;
-                step *= 2;
-            }
-            // `none` holds at `good` and fails at `bad`.
-            let good = last_true(good, bad - 1, |&m| none(&ws[m]));
+            // stays proved either way. The second search is `gallop_after` (zed-collections
+            // `search.rs`), which asks neither at `good` nor at `bad`.
+            let good = gallop_after(&ws[..bad], good, none) - 1;
             let w = &ws[good];
             if upper {
                 implied.tighten(x, Some(w + &Int::ONE), None);
@@ -16918,34 +16836,19 @@ enum Norm {
 
 /// `f·x + g·y`, without the variable `skip`.
 fn merge(x: &[Term], f: &Int, y: &[Term], g: &Int, skip: usize) -> Coefs {
-    let mut out = Vec::with_capacity(x.len() + y.len());
-    let (mut xs, mut ys) = (x.iter().peekable(), y.iter().peekable());
-    loop {
-        let order = match (xs.peek(), ys.peek()) {
-            (Some(p), Some(q)) => p.0.cmp(&q.0),
-            (Some(_), None) => Ordering::Less,
-            (None, Some(_)) => Ordering::Greater,
-            (None, None) => break,
-        };
-        let (v, c) = match order {
-            Ordering::Less => {
-                let (v, c) = xs.next().expect("peeked");
-                (*v, c * f)
-            }
-            Ordering::Greater => {
-                let (v, d) = ys.next().expect("peeked");
-                (*v, d * g)
-            }
-            Ordering::Equal => {
-                let (v, c) = xs.next().expect("peeked");
-                let (_, d) = ys.next().expect("peeked");
-                (*v, &(c * f) + &(d * g))
-            }
-        };
-        if v != skip && !c.is_zero() {
-            out.push((v, c));
-        }
-    }
+    let out = merge_with(
+        x,
+        y,
+        |p, q| p.0.cmp(&q.0),
+        |j| {
+            let (v, c) = match j {
+                Joined::Left((v, c)) => (*v, c * f),
+                Joined::Right((v, d)) => (*v, d * g),
+                Joined::Both((v, c), (_, d)) => (*v, &(c * f) + &(d * g)),
+            };
+            (v != skip && !c.is_zero()).then_some((v, c))
+        },
+    );
     out.into()
 }
 
@@ -21965,11 +21868,9 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
                 holds.entry(x.clone()).or_default().insert(j);
             }
         }
-        let mut queued = vec![true; ne];
-        let mut work: std::collections::VecDeque<usize> = (0..ne).collect();
+        let mut work = zed_graph::Worklist::all(ne, zed_graph::Order::Fifo);
         let mut pivots: Vec<(Atom, Row)> = Vec::new();
-        while let Some(i) = work.pop_front() {
-            queued[i] = false;
+        while let Some(i) = work.pop() {
             if eq[i].0.is_empty() {
                 if !eq[i].1.is_zero() {
                     return Some(Reduced::Empty);
@@ -22043,9 +21944,8 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
                     }
                     row.1 = &row.1 + &(&f * &k);
                 }
-                if j < ne && !queued[j] {
-                    queued[j] = true;
-                    work.push_back(j);
+                if j < ne {
+                    work.push(j);
                 }
             }
         }
@@ -34404,8 +34304,7 @@ mod probe_order {
                 ors.push(k);
             }
         }
-        cons.sort();
-        cons.dedup();
+        zed_collections::sorted::sort_dedup(&mut cons);
         ors.sort();
         (cons, ors)
     }

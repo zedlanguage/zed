@@ -31,6 +31,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use zed_collections::index::to_u32;
+use zed_collections::sorted::{self, Joined};
 use zed_graph::MinHeap;
 
 use crate::digest::{Digest, step};
@@ -1560,8 +1561,7 @@ impl<'t> Identity<'t> {
                 // increasing by name (`Key::exponents`: "the names with nonzero exponents, in the
                 // names' order"); before, the names of both were joined, sorted and deduplicated
                 // and each looked up in both lists, O((|a| + |b|)²) and a vector per comparison.
-                use zed_collections::sorted::{Joined, merge_join};
-                merge_join(a, b, |(v, _), (w, _)| v.cmp(w))
+                sorted::merge_join(a, b, |(v, _), (w, _)| v.cmp(w))
                     .map(|j| match j {
                         Joined::Left((_, x)) => 0.cmp(x),
                         Joined::Right((_, y)) => y.cmp(&0),
@@ -1815,29 +1815,16 @@ impl Key for Sparse {
         Sparse(Box::new([(v, 1)]))
     }
     fn times(&self, o: &Self) -> Self {
-        let (a, b) = (&self.0, &o.0);
-        let mut out = Vec::with_capacity(a.len() + b.len());
-        let (mut i, mut j) = (0, 0);
-        while i < a.len() && j < b.len() {
-            match a[i].0.cmp(&b[j].0) {
-                std::cmp::Ordering::Less => {
-                    out.push(a[i]);
-                    i += 1;
-                }
-                std::cmp::Ordering::Greater => {
-                    out.push(b[j]);
-                    j += 1;
-                }
-                std::cmp::Ordering::Equal => {
-                    // The shape check bounded every degree by `u64::MAX`.
-                    out.push((a[i].0, a[i].1 + b[j].1));
-                    i += 1;
-                    j += 1;
-                }
-            }
-        }
-        out.extend_from_slice(&a[i..]);
-        out.extend_from_slice(&b[j..]);
+        let out = sorted::merge_with(
+            &self.0,
+            &o.0,
+            |x, y| x.0.cmp(&y.0),
+            |j| match j {
+                Joined::Left(&x) | Joined::Right(&x) => Some(x),
+                // The shape check bounded every degree by `u64::MAX`.
+                Joined::Both(&(v, e), &(_, f)) => Some((v, e + f)),
+            },
+        );
         Sparse(out.into_boxed_slice())
     }
     fn power(&self, n: u64) -> Self {
@@ -1929,34 +1916,19 @@ impl<K: Key> Poly<K> {
             }
         };
         let flip = |c: BigInt| if sub { -c } else { c };
-        let (a, b) = (&self.terms, &o.terms);
-        let mut out = Vec::with_capacity(a.len() + b.len());
-        let (mut i, mut j) = (0, 0);
-        while i < a.len() || j < b.len() {
-            let ord = match (a.get(i), b.get(j)) {
-                (Some(x), Some(y)) => x.0.cmp(&y.0),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, _) => std::cmp::Ordering::Greater,
-            };
-            match ord {
-                std::cmp::Ordering::Less => {
-                    out.push((a[i].0.clone(), scale(&a[i].1, &fa)));
-                    i += 1;
+        let out = sorted::merge_with(
+            &self.terms,
+            &o.terms,
+            |x, y| x.0.cmp(&y.0),
+            |j| match j {
+                Joined::Left((m, c)) => Some((m.clone(), scale(c, &fa))),
+                Joined::Right((m, c)) => Some((m.clone(), flip(scale(c, &fb)))),
+                Joined::Both((m, c), (_, d)) => {
+                    let c = scale(c, &fa) + flip(scale(d, &fb));
+                    (!c.is_zero()).then(|| (m.clone(), c))
                 }
-                std::cmp::Ordering::Greater => {
-                    out.push((b[j].0.clone(), flip(scale(&b[j].1, &fb))));
-                    j += 1;
-                }
-                std::cmp::Ordering::Equal => {
-                    let c = scale(&a[i].1, &fa) + flip(scale(&b[j].1, &fb));
-                    if !c.is_zero() {
-                        out.push((a[i].0.clone(), c));
-                    }
-                    i += 1;
-                    j += 1;
-                }
-            }
-        }
+            },
+        );
         Some(Poly { den, terms: out }.reduced())
     }
 
@@ -3365,5 +3337,8 @@ pub mod crossover {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod bench;
 
 pub mod roots;

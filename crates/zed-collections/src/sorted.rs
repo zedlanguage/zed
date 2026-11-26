@@ -1,7 +1,9 @@
 //! Sorted lists: sorting with duplicates removed ([`sort_dedup`], [`sort_dedup_by_key`],
 //! [`sort_dedup_by`]), the walk
-//! of two sorted lists side by side ([`merge_join`]), and their union in one merge ([`merge_into`],
-//! [`merge`], [`union_all`]), and the lookup of a key in a sorted list of pairs ([`sorted_get`]).
+//! of two sorted lists side by side ([`merge_join`]), their union in one merge ([`merge_into`],
+//! [`merge`], [`union_all`], [`merge_iter`]) or with the items of each step made by a closure
+//! ([`merge_with`]), the pairs they share ([`meet_with`], [`disjoint`]), and the lookup of a key
+//! in a sorted list of pairs ([`sorted_get`]).
 
 use std::borrow::Borrow;
 use std::cmp::Ordering;
@@ -127,6 +129,135 @@ pub fn merge_join<'a, A, B, F: FnMut(&A, &B) -> Ordering>(
     MergeJoin { a, b, cmp }
 }
 
+/// The steps of the [`merge_join`] of `a` and `b`, both sorted increasing under `cmp`, each
+/// given to `combine`, which makes the item to write or `None` to drop it: a sum of two sparse
+/// vectors adds the two coefficients of an index both hold and drops a sum of 0; a product of
+/// two lists of powers adds the exponents. One merge, O(|a| + |b|) comparisons and calls of
+/// `combine`; one allocation, of room for |a| + |b| items, so the list never grows.
+///
+/// The former copies (DRY-sorted-intervals-2026-11-26, group 1: the sums and products of
+/// `zed-kernel`'s polynomials and kept powers, `zedc-int`'s cores, `zedc-presburger`'s rows)
+/// wrote the tail left after one list ends with one `extend_from_slice`; here each tail item
+/// goes through `combine` like the others, which costs the same order of steps.
+///
+/// Constant factors: the walk is written out with two indices and one call of `combine`, so
+/// the closure is inlined once. Two other forms were measured against the copies above in
+/// their benches (VM l43, 2026-11-26, instructions at n = 4096): `merge_join(..)
+/// .filter_map(combine)` collected took up to 1.55 times as many (a product of sparse keys
+/// 26.5M against 17.0M); `combine` called at three places, one per step kind, took up to
+/// 1.15 times as many (a merge of two rows 74.0M against 64.2M, a difference of polynomials
+/// 166.7M against 152.8M). This form: sparse keys 12.2M, rows 63.2M, polynomials 152.9M,
+/// `merge_atoms` 225.8M against 226.7M; at 8n the same ratios within 0.1%.
+#[inline]
+pub fn merge_with<A, B, T>(
+    a: &[A],
+    b: &[B],
+    mut cmp: impl FnMut(&A, &B) -> Ordering,
+    mut combine: impl FnMut(Joined<&A, &B>) -> Option<T>,
+) -> Vec<T> {
+    let mut out = Vec::with_capacity(a.len() + b.len());
+    let (mut i, mut j) = (0, 0);
+    loop {
+        let step = match (a.get(i), b.get(j)) {
+            (Some(x), Some(y)) => match cmp(x, y) {
+                Ordering::Less => {
+                    i += 1;
+                    Joined::Left(x)
+                }
+                Ordering::Greater => {
+                    j += 1;
+                    Joined::Right(y)
+                }
+                Ordering::Equal => {
+                    (i, j) = (i + 1, j + 1);
+                    Joined::Both(x, y)
+                }
+            },
+            (Some(x), None) => {
+                i += 1;
+                Joined::Left(x)
+            }
+            (None, Some(y)) => {
+                j += 1;
+                Joined::Right(y)
+            }
+            (None, None) => break,
+        };
+        if let Some(t) = combine(step) {
+            out.push(t);
+        }
+    }
+    out
+}
+
+/// The items `both` makes of each pair of an item of `a` and one of `b` that `cmp` calls equal,
+/// both lists sorted increasing under `cmp`, in that order; `None` from `both` drops the pair.
+/// The intersection side of [`merge_with`]: the walk stops when either list ends, so it costs
+/// O(|a| + |b|) comparisons at most, and fewer when one list ends early.
+#[inline]
+pub fn meet_with<A, B, T>(
+    a: &[A],
+    b: &[B],
+    mut cmp: impl FnMut(&A, &B) -> Ordering,
+    mut both: impl FnMut(&A, &B) -> Option<T>,
+) -> Vec<T> {
+    let mut out = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while let (Some(x), Some(y)) = (a.get(i), b.get(j)) {
+        match cmp(x, y) {
+            Ordering::Less => i += 1,
+            Ordering::Greater => j += 1,
+            Ordering::Equal => {
+                if let Some(t) = both(x, y) {
+                    out.push(t);
+                }
+                (i, j) = (i + 1, j + 1);
+            }
+        }
+    }
+    out
+}
+
+/// Whether no item of `a` equals one of `b` under `cmp`, both sorted increasing under it. One
+/// walk that stops at the first shared item or when either list ends: O(|a| + |b|) comparisons
+/// at most.
+#[inline]
+pub fn disjoint<A, B>(a: &[A], b: &[B], mut cmp: impl FnMut(&A, &B) -> Ordering) -> bool {
+    let (mut i, mut j) = (0, 0);
+    while let (Some(x), Some(y)) = (a.get(i), b.get(j)) {
+        match cmp(x, y) {
+            Ordering::Less => i += 1,
+            Ordering::Greater => j += 1,
+            Ordering::Equal => return false,
+        }
+    }
+    true
+}
+
+/// The union of two iterators, each giving its items increasing (repeats allowed), increasing
+/// with each item once. O(n + m) comparisons for the n and m items the two give, no
+/// allocation: each item is compared with the head of the other and with the last item given.
+pub fn merge_iter<T: Ord + Clone>(
+    a: impl IntoIterator<Item = T>,
+    b: impl IntoIterator<Item = T>,
+) -> impl Iterator<Item = T> {
+    let (mut a, mut b) = (a.into_iter().peekable(), b.into_iter().peekable());
+    let mut last: Option<T> = None;
+    std::iter::from_fn(move || {
+        loop {
+            let x = match (a.peek(), b.peek()) {
+                (Some(x), Some(y)) if x <= y => a.next(),
+                (Some(_), None) => a.next(),
+                _ => b.next(),
+            }?;
+            if last.as_ref().is_none_or(|l| *l < x) {
+                last = Some(x.clone());
+                return Some(x);
+            }
+        }
+    })
+}
+
 /// The union of `a` and `b`, both strictly increasing, written to `out` (cleared first), strictly
 /// increasing, keeping only the items `keep` keeps; `out` may be kept from one call to the next,
 /// so the merge allocates only when it outgrows it.
@@ -225,6 +356,63 @@ mod tests {
             }
         }
         assert_eq!(union_all::<u32>(Vec::new()), Vec::<u32>::new());
+    }
+
+    /// Every pair of subsets of `0..6`, each item with a random value from -2 to 2: `merge_with`
+    /// as a sum that drops 0 against a map of the sums, `meet_with` as the lesser value of each
+    /// shared item against a scan, `disjoint` against the bits, and `merge_iter` of the items
+    /// each repeated by a random count against a sort. The counts at the end show that the
+    /// cases that tell a wrong merge apart were met: sums that cancel, and lists that share
+    /// items without one being in the other.
+    #[test]
+    fn merge_with_meet_with_and_merge_iter_match_a_map() {
+        let (mut rng, _) =
+            crate::seed::Rng::fresh("merge_with_meet_with_and_merge_iter_match_a_map");
+        let (mut cancelled, mut crossed) = (0, 0);
+        let by_key = |p: &(u32, i64), q: &(u32, i64)| p.0.cmp(&q.0);
+        for x in 0..64 {
+            for y in 0..64 {
+                let mut valued = |bits| -> Vec<(u32, i64)> {
+                    (members(bits).into_iter())
+                        .map(|k| (k, rng.below_u64(5) as i64 - 2))
+                        .collect()
+                };
+                let (a, b) = (valued(x), valued(y));
+                let mut sums = std::collections::BTreeMap::new();
+                for &(k, v) in a.iter().chain(&b) {
+                    *sums.entry(k).or_insert(0) += v;
+                }
+                let want: Vec<(u32, i64)> = sums.into_iter().filter(|&(_, v)| v != 0).collect();
+                let got = merge_with(&a, &b, by_key, |j| {
+                    let (k, v) = match j {
+                        Joined::Left(&p) | Joined::Right(&p) => p,
+                        Joined::Both(&(k, v), &(_, w)) => {
+                            cancelled += usize::from(v != 0 && v + w == 0);
+                            (k, v + w)
+                        }
+                    };
+                    (v != 0).then_some((k, v))
+                });
+                assert_eq!(got, want, "a {a:?} b {b:?}");
+                let meet: Vec<(u32, i64)> = (a.iter())
+                    .filter_map(|&(k, v)| b.iter().find(|q| q.0 == k).map(|q| (k, v.min(q.1))))
+                    .collect();
+                let got = meet_with(&a, &b, by_key, |p, q| Some((p.0, p.1.min(q.1))));
+                assert_eq!(got, meet, "a {a:?} b {b:?}");
+                assert_eq!(disjoint(&a, &b, by_key), x & y == 0);
+                crossed += usize::from(x & y != 0 && x & !y != 0 && y & !x != 0);
+                let repeated = |v: &[(u32, i64)]| -> Vec<u32> {
+                    (v.iter())
+                        .flat_map(|&(k, c)| std::iter::repeat_n(k, c.unsigned_abs() as usize + 1))
+                        .collect()
+                };
+                let (ra, rb) = (repeated(&a), repeated(&b));
+                let mut all: Vec<u32> = ra.iter().chain(&rb).copied().collect();
+                sort_dedup(&mut all);
+                assert_eq!(merge_iter(ra, rb).collect::<Vec<u32>>(), all);
+            }
+        }
+        assert!(cancelled > 100 && crossed > 100, "{cancelled} {crossed}");
     }
 
     /// Of the items of one key, the first in the input is kept.

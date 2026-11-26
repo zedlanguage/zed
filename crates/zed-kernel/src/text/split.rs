@@ -347,8 +347,7 @@ mod tests {
                     .flat_map(|j| [j * PIECE, j * PIECE + 1, (j * PIECE).saturating_sub(1)])
                     .chain([n * PIECE + 7, usize::MAX])
                     .collect();
-                at.sort_unstable();
-                at.dedup();
+                zed_collections::sorted::sort_dedup(&mut at);
                 for &a in &at {
                     for &b in &at {
                         agrees(&t, &s, a, b);

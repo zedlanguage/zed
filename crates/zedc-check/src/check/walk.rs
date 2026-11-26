@@ -5186,8 +5186,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 stack.push(k)
             });
         }
-        ids.sort_unstable();
-        ids.dedup();
+        zed_collections::sorted::sort_dedup(&mut ids);
         let names: Arc<[usize]> = ids.into();
         self.remap_free.insert(e.span, names.clone());
         names
@@ -28279,8 +28278,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .filter(|&&(_, k)| k == kind)
                 .map(|&(s, _)| s)
                 .collect();
-            spans.sort_unstable();
-            spans.dedup();
+            zed_collections::sorted::sort_dedup(&mut spans);
             for span in std::iter::once(u.span).chain(spans) {
                 match &u.kind {
                     NeedKind::Destructure { n, .. } => self.not_a_tuple(&p, *n, span),

@@ -445,85 +445,27 @@ impl MinTree {
 struct Cover {
     /// The ends: piece `i` holds the segments `ends[i]..ends[i + 1]`.
     ends: Vec<usize>,
-    /// The least count below each node, the leaves from 1 + the number of pieces rounded up.
-    least: Vec<i64>,
-    /// The count to add to every piece below each node, not yet added below it.
-    add: Vec<i64>,
-    size: usize,
+    /// The count of each piece, in zed-collections' range-add, range-min tree.
+    counts: zed_collections::min_add::MinAdd,
 }
 
 impl Cover {
     fn new(ends: Vec<usize>, counts: &[i64]) -> Cover {
-        let size = counts.len().max(1).next_power_of_two();
-        let mut least = vec![i64::MAX; 2 * size];
-        least[size..size + counts.len()].copy_from_slice(counts);
-        for i in (1..size).rev() {
-            least[i] = least[2 * i].min(least[2 * i + 1]);
-        }
         Cover {
             ends,
-            least,
-            add: vec![0; 2 * size],
-            size,
+            counts: zed_collections::min_add::MinAdd::from_values(counts),
         }
     }
 
     /// Lowers the count of pieces `from..to` by one, a disjunct covering them having been
-    /// taken out, and gives each that no disjunct covers now: none of them was uncovered
-    /// before, since the disjunct covered it.
+    /// taken out, and gives each that no disjunct covers now, in increasing order: none of
+    /// them was uncovered before, since the disjunct covered it, so no count goes below 0, and
+    /// "at most 0" is "0". O((k + 1) log n) for `k` pieces given, of `n`.
     fn remove(&mut self, from: usize, to: usize, out: &mut Vec<usize>) {
-        // An explicit stack of (node, its first piece, one past its last), depth log2 of the
-        // pieces.
-        let mut stack = vec![(1usize, 0usize, self.size)];
-        let mut path: Vec<usize> = Vec::new();
-        while let Some((i, l, r)) = stack.pop() {
-            if r <= from || to <= l {
-                continue;
-            }
-            if from <= l && r <= to {
-                self.least[i] -= 1;
-                self.add[i] -= 1;
-                self.zeros(i, l, r, out);
-                continue;
-            }
-            self.push(i);
-            path.push(i);
-            let m = l.midpoint(r);
-            stack.push((2 * i + 1, m, r));
-            stack.push((2 * i, l, m));
-        }
-        // The nodes split above, deepest first, take the least of their children.
-        while let Some(i) = path.pop() {
-            self.least[i] = self.least[2 * i].min(self.least[2 * i + 1]);
-        }
-    }
-
-    /// Adds the count held at node `i` to its children.
-    fn push(&mut self, i: usize) {
-        let a = std::mem::take(&mut self.add[i]);
-        if a != 0 {
-            for c in [2 * i, 2 * i + 1] {
-                self.least[c] = self.least[c].saturating_add(a);
-                self.add[c] += a;
-            }
-        }
-    }
-
-    /// The pieces below node `i`, holding pieces `l..r`, with count 0.
-    fn zeros(&mut self, i: usize, l: usize, r: usize, out: &mut Vec<usize>) {
-        let mut stack = vec![(i, l, r)];
-        while let Some((i, l, r)) = stack.pop() {
-            if self.least[i] != 0 {
-                continue;
-            }
-            if r - l == 1 {
-                out.push(l);
-                continue;
-            }
-            self.push(i);
-            let m = l.midpoint(r);
-            stack.push((2 * i + 1, m, r));
-            stack.push((2 * i, l, m));
+        if from < to {
+            self.counts.add(from, to - 1, -1);
+            self.counts
+                .for_each_at_most(from, to - 1, 0, |p| out.push(p));
         }
     }
 }

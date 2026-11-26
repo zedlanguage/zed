@@ -172,8 +172,7 @@ struct Sweep {
     c: Option<Arc<str>>,
     links: Vec<Link>,
     ids: ByType<usize>,
-    es: Vec<BTreeSet<Arc<str>>>,
-    e_ids: BTreeMap<BTreeSet<Arc<str>>, usize>,
+    es: zed_collections::intern::Interner<BTreeSet<Arc<str>>>,
     heads: Vec<Type>,
     head_ids: ByType<usize>,
     classes: BTreeMap<(usize, Vec<usize>), Classes>,
@@ -372,12 +371,7 @@ fn component_candidates(cs: &[Type]) -> Vec<Value> {
 
 impl Sweep {
     fn e_id(&mut self, e: BTreeSet<Arc<str>>) -> usize {
-        if let Some(&i) = self.e_ids.get(&e) {
-            return i;
-        }
-        self.es.push(e.clone());
-        self.e_ids.insert(e, self.es.len() - 1);
-        self.es.len() - 1
+        self.es.intern(e)
     }
 
     fn head_id(&mut self, h: &Type) -> usize {
@@ -1795,7 +1789,7 @@ fn check_list_value(t: &Type, value: &Value) -> bool {
         items.push(args[0].clone());
         v = &args[1];
     };
-    let plain = Plain::new(&sw.links, &sw.es);
+    let plain = Plain::new(&sw.links, sw.es.values());
     sw.check(&plain, &roots, &items, &last)
 }
 
@@ -1906,7 +1900,7 @@ fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
     for r in &refused {
         roots.push((sw.row(r, none)?, false));
     }
-    let plain = Plain::new(&sw.links, &sw.es);
+    let plain = Plain::new(&sw.links, sw.es.values());
     let plain_roots = roots.clone();
     // Complexity tradeoff: testing every pair of refused roots for inclusion costs O(R²).
     // Equal-tail rows are exactly one row with their heads joined. Index tails, then use

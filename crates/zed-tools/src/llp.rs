@@ -175,7 +175,7 @@ fn show(g: &Grammar, e: &Expr) -> String {
 struct Conv<'g> {
     g: &'g Grammar,
     cfg: Cfg,
-    terms: HashMap<String, u32>,
+    terms: zed_collections::intern::Interner<String>,
     /// Each rule's nonterminal, by the value of the head flag.
     rules: HashMap<(usize, bool), u32>,
     /// Each helper nonterminal, by the address of its expression, used only as its identity,
@@ -194,13 +194,12 @@ struct Conv<'g> {
 
 impl Conv<'_> {
     fn term(&mut self, name: &str) -> u32 {
-        if let Some(&t) = self.terms.get(name) {
-            return t;
+        // `cfg.terms` is filled here alone, so it holds the interner's values in id order.
+        let (id, new) = self.terms.insert_ref(name);
+        if new {
+            self.cfg.terms.push(name.to_string());
         }
-        let t = to_u32(self.cfg.terms.len(), "terminals");
-        self.cfg.terms.push(name.to_string());
-        self.terms.insert(name.to_string(), t);
-        t
+        to_u32(id, "terminals")
     }
 
     /// The terminal of a read of `name` in rule `rule`, after re-tagging.
@@ -401,7 +400,7 @@ impl Cfg {
         let mut c = Conv {
             g,
             cfg: Cfg::default(),
-            terms: HashMap::new(),
+            terms: zed_collections::intern::Interner::default(),
             rules: HashMap::new(),
             helpers: HashMap::new(),
             work: Vec::new(),

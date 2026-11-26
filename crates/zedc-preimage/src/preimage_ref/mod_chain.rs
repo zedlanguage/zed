@@ -85,6 +85,8 @@
 
 use std::collections::BTreeSet;
 
+use zed_collections::intervals;
+
 use zedc_lattice::interval::End::{self, Fin};
 use zedc_lattice::interval::IntervalSet;
 
@@ -248,28 +250,22 @@ pub(super) fn set_of(p: &[(i128, i128)]) -> IntervalSet {
     )
 }
 
+// The interval helpers below are the library's (`zed_collections::intervals`): this file is a
+// second implementation of the stage logic, not of interval arithmetic
+// (DRY-sorted-intervals-2026-11-26, group 3).
+
 /// Sorts and merges overlapping or adjacent pieces. O(m log m).
-pub(super) fn normal(mut p: Vec<(i128, i128)>) -> Pieces {
-    p.sort_unstable();
-    let mut out: Pieces = Vec::with_capacity(p.len());
-    for (a, b) in p {
-        match out.last_mut() {
-            Some(last) if a <= last.1 + 1 => last.1 = last.1.max(b),
-            _ => out.push((a, b)),
-        }
-    }
-    out
+pub(super) fn normal(p: Vec<(i128, i128)>) -> Pieces {
+    intervals::coalesce(p)
 }
 
-/// Whether some piece of `p` meets `[a, b]`: the last piece starting at or below `b` is the
-/// one that reaches highest among them, since the pieces are sorted and disjoint. O(log |p|).
+/// Whether some piece of `p` meets `[a, b]`, for `a <= b`. O(log |p|).
 fn overlaps(p: &[(i128, i128)], a: i128, b: i128) -> bool {
-    let i = p.partition_point(|&(lo, _)| lo <= b);
-    i > 0 && p[i - 1].1 >= a
+    intervals::meets(p, &a, &b)
 }
 
 pub(super) fn contains(p: &[(i128, i128)], v: i128) -> bool {
-    overlaps(p, v, v)
+    intervals::contains(p, &v)
 }
 
 /// Whether some member of `s` lies in `p`. O(|p| log |s|).
@@ -279,31 +275,12 @@ pub(super) fn hits(s: &BTreeSet<i128>, p: &[(i128, i128)]) -> bool {
 
 /// The residues in `[0, m)` outside `p`. O(|p|).
 pub(super) fn gaps(p: &[(i128, i128)], m: i128) -> Pieces {
-    let mut out = Vec::with_capacity(p.len() + 1);
-    let mut next = 0;
-    for &(a, b) in p {
-        if a > next {
-            out.push((next, a - 1));
-        }
-        next = b + 1;
-    }
-    if next < m {
-        out.push((next, m - 1));
-    }
-    out
+    intervals::complement(p, 0, m - 1)
 }
 
 /// The intersection of two piece lists, by a merge. O(|a| + |b|).
 pub(super) fn meet(a: &[(i128, i128)], b: &[(i128, i128)]) -> Pieces {
-    let (mut i, mut j, mut out) = (0, 0, Vec::new());
-    while i < a.len() && j < b.len() {
-        let (lo, hi) = (a[i].0.max(b[j].0), a[i].1.min(b[j].1));
-        if lo <= hi {
-            out.push((lo, hi));
-        }
-        if a[i].1 < b[j].1 { i += 1 } else { j += 1 }
-    }
-    out
+    intervals::intersect(a, b)
 }
 
 /// The residues mod `m` of the members of `cell`. A piece of `m` or more members has every
