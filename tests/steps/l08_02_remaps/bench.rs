@@ -1525,3 +1525,34 @@ fn a_strictly_monotone_key_of_n_terms_is_checked_in_linear_time() {
         run,
     );
 }
+
+#[test]
+fn n_maps_by_a_function_returning_a_lambda_that_reads_its_parameter_check_in_linear_time() {
+    // Plan row FAIL-map-chain-clashing-held-name-quadratic, the second case: `k` returns a
+    // lambda that reads `x`, a variable not the lambda's own, and each link's forward is
+    // decoded to its flat needs, O(i) at link i, at two places in `Ck::finished_with`
+    // (b22-free2, 2026-11-27, by a backtrace at `FwdNeed::decode_from`):
+    // 1. `Ck::r10_promote_one` decodes it, since `sig_vars` lists `k`'s own `$0` and `$1`,
+    //    which are not `h_i`'s own, though `k` binds them;
+    // 2. with that test made "a variable no signature of the nest binds", the naming loop
+    //    decodes it instead (`unnamed`, `VarFacts::fwd_unfinished`), since
+    //    `r10_finish_one_fwd_callee` leaves the held names `$0` and `$1` unfinished.
+    // Both must go. Parked in wt/failing-tests by b22-checkwalk14 (2026-11-24): sizes 25 and
+    // 200, ratio 33.531 on a VM (limit 10.5), against 7.389 for the own-variables chain in the
+    // same job; 31.906 against 7.684 on main 4d419d0a1, local.
+    let n_links = 25;
+    let srcs = scaling::inputs(n_links, |n| {
+        let mut src =
+            String::from("k(positional x) = y -> (x, y);\nh0(positional m) = m.map(k);\n");
+        for i in 1..n {
+            src.push_str(&format!("h{i}(positional m) = h{}(m).map(k);\n", i - 1));
+        }
+        src
+    });
+    let run = |n: usize| assert!(elab(&srcs[&n]).is_ok(), "{}", &srcs[&n]);
+    scaling::check(
+        "n functions chained, each mapping by `k`, which returns a lambda reading its parameter",
+        n_links,
+        run,
+    );
+}
