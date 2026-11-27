@@ -4475,9 +4475,11 @@ fn seed_393_case_13_asks_fewer_hull_sides() {
     presburger::hull_sides_asked();
     boxed_names(&scope(&bs), &formula(&items), &item_names(&items));
     let sides = presburger::hull_sides_asked();
+    // PERF-pendants-dnf-hull-one-side: where the union reaches one end of a name's hull, only
+    // the other side is asked, so fewer than the 840 sides of PERF-pendants-dnf-hull-sides.
     assert!(
-        sides <= 840,
-        "{sides} hull sides, more than the 840 asked since PERF-pendants-dnf-hull-sides"
+        sides < 840,
+        "{sides} hull sides, not fewer than the 840 asked since PERF-pendants-dnf-hull-sides"
     );
     check_refused_case(393, 13, true, (0, 0, 0));
 }
