@@ -1097,7 +1097,7 @@ fn the_fallback_under_drrun_counts() {
 
 /// A loop of `steps` steps of the shell `sh`, run in a new process.
 fn a_shell_loop(steps: u32) {
-    let out = std::process::Command::new("sh")
+    let out = zed_meter_settings::counted("sh")
         .args([
             "-c",
             &format!("i=0; while [ $i -lt {steps} ]; do i=$((i + 1)); done"),

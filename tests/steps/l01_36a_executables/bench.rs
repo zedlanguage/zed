@@ -75,11 +75,11 @@ fn an_executable_reading_n_files_scales() {
     // it starts links) and runs it. The run of the executable alone was the measure before,
     // and under DynamoRIO's zed_icount (the Colab VMs) that counted only this process's start
     // of it and its pipes, 145,484 and 915,752 instructions at 200 and 1600 (job dv52 of
-    // b22-free2, 2026-11-26): the client never counts a child process
-    // (tools/icount/zed_icount.c, "Threads", case 3), so neither the build nor the executable's
-    // own work was measured there, and the linker's and the executable's are not now. Where perf
-    // counts with `inherit` the ended children count too. `link::build` of the reader took
-    // 5,888,951,454 and 36,561,376,157 instructions at 400 and 3200, 6.21 times, in 7.6 s and
+    // b22-free2, 2026-11-26): the client counted no child process then. It now counts the
+    // executable, which `executable` starts through `zed_meter_settings::counted`
+    // (ICOUNT-child-processes), but not the linker, which zed_native::link starts with
+    // `Command::new`. Where perf counts with `inherit`, both count. `link::build` of the reader
+    // took 5,888,951,454 and 36,561,376,157 instructions at 400 and 3200, 6.21 times, in 7.6 s and
     // 23.3 s on a Colab VM (job dv51), so the sizes are 200 and 1600. Each process makes only
     // the size it runs (`scaling::check_inputs`; FAIL-exe-reader-bench-first-phase).
     let words = |m: usize| -> (usize, Vec<OsString>) {

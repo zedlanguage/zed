@@ -57,8 +57,9 @@ pub struct Ran {
 }
 
 /// The executable `exe` run on the words `words` after its name, with `stdin` as its input.
+/// Started through [`zed_meter_settings::counted`], so that a measured run counts its work.
 pub fn executable(exe: &Path, words: &[OsString], stdin: &[u8]) -> Ran {
-    let mut child = std::process::Command::new(exe)
+    let mut child = zed_meter_settings::counted(exe)
         .args(words)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
