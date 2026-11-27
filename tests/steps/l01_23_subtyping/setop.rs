@@ -1086,6 +1086,49 @@ fn a_short_chain_with_morphism_split_arms_is_inhabited() {
     }
 }
 
+/// `M(g, p, v)`: the closures defined on at least the keys `g` and at most the keys `p`, each
+/// returning a value of `v`.
+fn mor(g: Type, p: Type, v: Type) -> Type {
+    Type::morphism(g, p, v)
+}
+
+/// A morphism difference whose value is the closure defined on the whole permission is
+/// inhabited alone, as it is as the arm of a chain ([`blame_chain`]): `M(x, x | y, int) -
+/// {x: int}` holds the closure defined on `x` and `y`, and `M(empty, x | y, int) - ({x: int} |
+/// {y: int})` the same closure. On origin/main at f3fcb5705 each was
+/// `Refused(MorphismSplit)` alone and Inhabited as `C0` of `blame_chain(1, arm)`
+/// (REP-morphism-split-alone-refused).
+#[test]
+fn a_morphism_difference_holds_the_closure_defined_on_its_whole_permission() {
+    let (x, y, int) = (Type::atom("x"), Type::atom("y"), Type::int());
+    let xy = &x | &y;
+    let one = &mor(x.clone(), xy.clone(), int.clone()) - &Type::exact(x.clone(), int.clone());
+    let both = &mor(Type::empty(), xy.clone(), int.clone())
+        - &(&Type::exact(x.clone(), int.clone()) | &Type::exact(y.clone(), int.clone()));
+    for (name, t) in [("one", &one), ("both", &both)] {
+        assert_eq!(verdict_and_searched(t).0, Verdict::Inhabited, "{name}");
+        let chain = blame_chain(1, || Expr::Type(t.clone()));
+        Type::forget_emptiness();
+        assert_eq!(chain[0].verdict(), Verdict::Inhabited, "{name} as an arm");
+    }
+}
+
+/// Negative control of [`a_morphism_difference_holds_the_closure_defined_on_its_whole_permission`]:
+/// `M(x, x | y, int) - ({x: int} | {x | y: int})` is empty, since a closure of the first is
+/// defined on `x` alone or on `x` and `y`, and the closure defined on the whole permission is a
+/// value of `{x | y: int}`, so no closure is shown for it; and the difference with the keys
+/// `y` added to the type taken away, `M(x, x | y, int) - M(x, top, int)`, is proved empty.
+#[test]
+fn a_morphism_difference_left_empty_has_no_closure() {
+    let (x, y, int) = (Type::atom("x"), Type::atom("y"), Type::int());
+    let xy = &x | &y;
+    let m = mor(x.clone(), xy.clone(), int.clone());
+    let covered = &m - &(&Type::exact(x.clone(), int.clone()) | &Type::exact(xy, int.clone()));
+    assert_ne!(verdict_and_searched(&covered).0, Verdict::Inhabited);
+    let within = &m - &mor(x, Type::top(), int);
+    assert_eq!(verdict_and_searched(&within).0, Verdict::Empty);
+}
+
 /// Small instance of `bench::bounded_empty_parity_decided_on_another_thread_costs_the_same_here`:
 /// a bounded parity decided empty on another thread, and kept alive, is decided empty here
 /// too. The benchmark measures that the work here is not less; this checks the answer.

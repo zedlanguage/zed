@@ -11987,8 +11987,57 @@ impl<'m> Searching<'m> {
                 let dropped = Type::union_all(dropped.iter().map(|a| {
                     Type::morphism(a.guarantee.clone(), a.permission.clone(), a.value.clone())
                 }));
-                if !self.no_key(&Type::meet_all([kept, dropped])).await {
+                if !self.no_key(&Type::meet_all([kept, dropped.clone()])).await {
+                    // A row that meets a type dropped may still hold a closure apart from every
+                    // type dropped: the closure defined on the row's whole permission, as in
+                    // `M(x, x | y, int) - {x: int}`, whose closure defined on `x` and `y` is no
+                    // value of `{x: int}` (REP-morphism-split-alone-refused, b22-names,
+                    // 2026-11-27; before, that difference was `Refused(MorphismSplit)` alone
+                    // and Inhabited only as an arm of a chain). Each row `m` is replaced by
+                    // `w = (P) -> V` with `P` and `V` the permission and value type of `m`,
+                    // the closures defined on exactly `P`. Proof that a closure `c` of `w` is
+                    // a value of the part, by steps 1 to 4 above with `w` for the row: `w`
+                    // lies within `m` when the guarantee `G` of `m` lies within `P` (checked
+                    // as written, as `permitted` below checks it: a closure of `w` has the keys
+                    // `P`, which hold `G` and lie within `P`, and returns values of `V`), so
+                    // `c` is in `m` and step 2 holds; step 3 is the same check with the union
+                    // of the rows `w` for `kept`, so `c` is in no type dropped; step 4 is
+                    // unchanged. A row whose `G` is not known to lie within `P` is left out.
+                    // Mutant: with the check of step 3 skipped, the closure of `(x | y) -> int`
+                    // is shown for the empty `M(x, x | y, int) - ({x: int} | {x | y: int})`
+                    // (`l01_23_subtyping::setop::a_morphism_difference_left_empty_has_no_closure`).
+                    // Complexity tradeoff: one more check of the same size as the first, so
+                    // the cost stays linear in the part; given up: a closure defined on some
+                    // keys between `G` and `P`, apart from the types dropped while neither the
+                    // row nor `w` is, is not built (the search below may still find it).
+                    let whole: Vec<Morphism> = (meets.iter())
+                        .map(|(m, _)| m)
+                        .filter(|m| {
+                            m.guarantee == m.permission
+                                || m.guarantee == Type::empty()
+                                || m.permission == Type::top()
+                                || &m.guarantee - &m.permission == Type::empty()
+                        })
+                        .map(|m| {
+                            Morphism::new(
+                                m.permission.clone(),
+                                m.permission.clone(),
+                                m.value.clone(),
+                            )
+                        })
+                        .collect();
+                    let rows = Type::union_all(whole.iter().map(|w| {
+                        Type::morphism(w.guarantee.clone(), w.permission.clone(), w.value.clone())
+                    }));
                     meets.clear();
+                    if !whole.is_empty() && self.no_key(&Type::meet_all([rows, dropped])).await {
+                        meets = (whole.into_iter())
+                            .map(|w| {
+                                let keys = vec![w.guarantee.clone()];
+                                (w, keys)
+                            })
+                            .collect();
+                    }
                 }
             }
             // Whether the shared keys are known empty, and whether they are proved empty, asked
