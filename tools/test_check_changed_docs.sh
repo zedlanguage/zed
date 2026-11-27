@@ -92,6 +92,8 @@ base() {
   pushd "$ws" >/dev/null || exit 1
   git checkout -q -- . 2>/dev/null
   echo /target >.gitignore
+  echo /target-docfeatures >>.gitignore
+  echo /mark >>.gitignore
   echo /doc.log >>.gitignore
   echo /a/src/extra.rs >.git/info/exclude
   printf '[workspace]\nresolver = "3"\nmembers = ["a", "b", "c"]\n' >Cargo.toml
@@ -130,6 +132,20 @@ edit a/src/lib.rs 's|^/// A public function\.$|/// A public function, beside [`u
 check "a changed doc line documents its package alone and with the workspace's features" \
   "0
 $a_both" "$(run)"
+
+# PERF-doc-check-every-run: the build with the workspace's features goes to a directory of its own,
+# so a second call finds both builds fresh and writes no doc file. Before, the two wrote the same
+# directory and each call documented the package again in both.
+base
+edit a/src/lib.rs 's|^/// A public function\.$|/// A public function, beside [`uses`].|'
+run >/dev/null
+touch "$ws/mark"
+check "a second call documents a again, alone and with the workspace's features" "0
+$a_both" "$(run)"
+check "the two builds write two directories" "yes yes" \
+  "$([ -e "$ws/target/doc/a/index.html" ] && echo yes) $([ -e "$ws/target-docfeatures/doc/a/index.html" ] && echo yes)"
+check "a second call writes no doc file" "" \
+  "$(find "$ws/target/doc" "$ws/target-docfeatures/doc" -type f -newer "$ws/mark" 2>&1)"
 
 base
 edit a/src/lib.rs 's|^/// A public function\.$|/// A public function, beside [`private_item`].|'
