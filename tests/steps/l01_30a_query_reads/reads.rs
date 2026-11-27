@@ -74,7 +74,16 @@ fn two_runs_from_scratch_record_the_same() {
 fn a_tree_of_calls_records_one_read_per_definition_and_one_reverse_entry_per_read() {
     let n = 50;
     let mut db = Db::new();
-    test_in(&mut db, &tree(n));
+    let outcomes = test_in(&mut db, &tree(n));
+    // The tree's one row runs and passes, so what it records is a row's reads.
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(
+        (
+            outcomes[0].failure.as_deref(),
+            outcomes[0].not_run.as_deref()
+        ),
+        (None, None)
+    );
     let mut want: Vec<String> = (0..n).map(|i| format!("d{i}")).collect();
     want.sort();
     assert_eq!(rows(&db), [want]);
