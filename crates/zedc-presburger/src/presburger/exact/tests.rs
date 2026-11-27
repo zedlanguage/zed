@@ -6342,3 +6342,102 @@ fn a_strides_question_that_finds_a_point_in_a_kept_piece_ends() {
     }
     assert!(cause, "a kept piece gives the cause");
 }
+
+/// [`forest`] on random trees of rows over two to four of four atoms (the graph of atoms and
+/// rows has no cycle), each atom boxed in `-B..=B`: every atom's set is the values that trying
+/// every point of the box gives, and a conjunction with no point gives every atom none. Before
+/// PRES-sum-chain-cost `forest` took rows over two atoms only, and declined the rest (red: the
+/// `expect` fails). Two rows that share two atoms close a cycle and are declined, as is an
+/// equation over two atoms. Cannot catch a fault that needs more than four atoms, or values
+/// past the box.
+#[test]
+fn berge_forests_project_to_the_values_of_their_points() {
+    const N: [&str; 4] = ["x", "y", "z", "w"];
+    let seed = crate::seed::seed("berge_forests_project_to_the_values_of_their_points");
+    let mut rng = Rng::new(seed | 1);
+    fn row(terms: &[(&str, i64)], k: i64) -> Con {
+        Con::ge(&lin(terms, k), &Lin::constant(0))
+    }
+    let (mut some, mut none) = (0, 0);
+    for round in 0..300 {
+        let mut rows: Vec<Con> = (N.iter())
+            .flat_map(|n| [row(&[(n, 1)], B), row(&[(n, -1)], B)])
+            .collect();
+        // A random tree: each row joins one atom already in the tree to one to three new ones.
+        let mut order: Vec<&str> = N.to_vec();
+        for i in (1..order.len()).rev() {
+            order.swap(i, rng.below(i as u64 + 1) as usize);
+        }
+        let mut placed = 1;
+        while placed < order.len() {
+            let from = order[rng.below(placed as u64) as usize];
+            let new = 1 + rng.below((order.len() - placed).min(3) as u64) as usize;
+            let mut terms = vec![(from, rng.int(1, 3) * if rng.below(2) == 0 { 1 } else { -1 })];
+            for &n in &order[placed..placed + new] {
+                terms.push((n, rng.int(1, 3) * if rng.below(2) == 0 { 1 } else { -1 }));
+            }
+            rows.push(row(&terms, rng.int(-6, 6)));
+            placed += new;
+        }
+        let mut work = Work {
+            used: 0,
+            limit: EXACT_LIMIT,
+            solver: SOLVER,
+        };
+        let got = forest(&rows, &mut work)
+            .expect("within the work")
+            .unwrap_or_else(|| panic!("round {round}: a tree of rows is declined: {rows:?}"));
+        let mut want: Vec<IntervalSet> = vec![IntervalSet::empty(); N.len()];
+        let r = -B..=B;
+        for x in r.clone() {
+            for y in r.clone() {
+                for z in r.clone() {
+                    for w in r.clone() {
+                        let p = [x, y, z, w];
+                        let m: Model = (N.iter().zip(p))
+                            .map(|(n, v)| (a(n), Int::from(v)))
+                            .collect();
+                        if rows.iter().all(|c| c.holds(&m)) {
+                            for (s, v) in want.iter_mut().zip(p) {
+                                *s = s.join(&IntervalSet::single(v));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if want[0].is_empty() {
+            none += 1;
+        } else {
+            some += 1;
+        }
+        for (n, s) in N.iter().zip(&want) {
+            assert_eq!(&got[&a(n)], s, "round {round}, `{n}` of {rows:?}");
+        }
+    }
+    // How many had a point is printed, not asked: it depends on the seed.
+    eprintln!("{some} with a point, {none} without");
+    assert!(some > 0, "no case had a point");
+    let mut work = Work {
+        used: 0,
+        limit: EXACT_LIMIT,
+        solver: SOLVER,
+    };
+    let two = [
+        row(&[("x", 1), ("y", 1), ("z", 1)], 0),
+        row(&[("x", 1), ("y", -1), ("w", 1)], 1),
+    ];
+    assert!(forest(&two, &mut work).expect("within the work").is_none());
+    let three = [
+        row(&[("x", 1), ("y", 1)], 0),
+        row(&[("y", 1), ("z", -1), ("w", 2)], 0),
+        row(&[("z", 1), ("x", 1)], 3),
+    ];
+    assert!(
+        forest(&three, &mut work)
+            .expect("within the work")
+            .is_none()
+    );
+    let eq2 = [Con::eq(&lin(&[("x", 2), ("y", -1)], 0), &Lin::constant(0))];
+    assert!(forest(&eq2, &mut work).expect("within the work").is_none());
+}
