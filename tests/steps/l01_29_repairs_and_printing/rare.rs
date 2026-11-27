@@ -366,7 +366,9 @@ fn a_value_no_use_has_typed_is_said_to_have_no_type_yet() {
     // A parameter of no written type that its uses leave every value, as `x` pushed alone, has
     // no type yet: its notes say so and do not print `_`, which would read as the type of every
     // value (row MSG-untyped-note-placeholder). Its name, its origin, a call of it and another
-    // expression of that type each have one such note.
+    // expression of that type each have one such note, except the note on the pushed value
+    // itself, which prints the type the call binds, as the headline does (DESIGN.md
+    // sec:diagnostics, "Types in a message"; row MSG-untyped-signature-placeholder).
     assert_eq!(
         shown(
             "h(x, out: Lines) { out <- x; }\n\
@@ -374,7 +376,7 @@ fn a_value_no_use_has_typed_is_said_to_have_no_type_yet() {
              main(m: MainArgs) {\n  g(y: 5, out: m.stdout);\n}\n"
         ),
         r#"1:27: A `Lines` port takes a `String` or a family of strings: `out <- x : 5`. Try `out <- "${x}";` instead.
-  [1] 1:27: `x` has no type yet here
+  [1] 1:27: `x` is 5 here
       1 | h(x, out: Lines) { out <- x; }
         |   ^ [2]                   ^ [1, 3, 4, 5, 7]
   [2] 1:3: `x` has no declared type; its uses give it no type yet
@@ -391,7 +393,7 @@ fn a_value_no_use_has_typed_is_said_to_have_no_type_yet() {
          main(m: MainArgs) {\n  h(f: (k) -> k, out: m.stdout);\n}\n",
     );
     assert!(
-        call.contains("\n  [1] 1:27: this call of `f` has no type yet\n"),
+        call.contains("\n  [1] 1:27: this call of `f` gives 1\n"),
         "{call}"
     );
     let other = shown(
@@ -399,7 +401,7 @@ fn a_value_no_use_has_typed_is_said_to_have_no_type_yet() {
          main(m: MainArgs) {\n  h(x: 5, c: false, out: m.stdout);\n}\n",
     );
     for note in [
-        "\n  [1]  1:30: this `if` has no type yet\n",
+        "\n  [1]  1:30: this `if` gives 5 | \"z\"\n",
         "\n  [4]  1:35: this block has no type yet\n",
         "\n  [5]  1:37: `x` has no type yet here\n",
         "\n  [6]  1:3: `x` has no declared type; its uses give it no type yet\n",
