@@ -537,17 +537,18 @@ test("a ledger line with no id is read from its row field, which may name severa
   assert.deepEqual(g.problems, ['LEDGER LINE WITH NO ID: {"row":" ","state":"blocked"}']);
 });
 
-test("a ledger line with no id or row is read from its item field, then from its rows list (DECIDE-ledger-row-field-as-id)", () => {
+test("a ledger line with no id or row is read from its item field, and not from a rows list (DECIDE-ledger-row-field-as-id)", () => {
   const g = buildGraph(inputs("",
     '{"item":"A","state":"blocked"}\n' +
-      '{"rows":["B","LR2"],"state":"waiting"}\n' +
-      // A row comes before an item, and an item before a rows list.
-      '{"row":"C","item":"LR2","rows":["LR2"],"state":"blocked"}\n' +
-      '{"rows":[],"state":"blocked"}\n',
+      '{"item":"B LR2","state":"waiting"}\n' +
+      // A row comes before an item.
+      '{"row":"C","item":"LR2","state":"blocked"}\n' +
+      // The only rows lists (2026-11-16) use the L40/L41 numbers from before 908b6b969 swapped them.
+      '{"rows":["C"],"state":"waiting"}\n',
   ));
   const nodes = by(g.nodes);
   assert.deepEqual(["A", "B", "LR2", "C"].map((id) => nodes.get(id)?.state), ["blocked", "waiting", "waiting", "blocked"]);
-  assert.deepEqual(g.problems, ['LEDGER LINE WITH NO ID: {"rows":[],"state":"blocked"}']);
+  assert.deepEqual(g.problems, ['LEDGER LINE WITH NO ID: {"rows":["C"],"state":"waiting"}']);
 });
 
 test("with a fixture QUESTIONS.md, every plan row an open question holds is blocked, a sub-step id (L10.3b) holds its row, and a row held only by an answered question or by nothing is not", () => {
