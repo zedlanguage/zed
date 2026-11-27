@@ -309,3 +309,82 @@ fn the_text_of_8_times_the_levels_is_at_most_24_times_as_long() {
         }
     }
 }
+
+/// `c -> { x0 = 0; …; x3 = 0; t }` with `t` drawn from `seed`: two pools of nodes, integers and
+/// pairs of integers, built bottom-up, each node a read of an `xi`, a sum of an integer node
+/// and a literal, a pair of two integer nodes, a `let` of an `xi` to an `xj` plus a literal
+/// over a node, or an `if` on `c` or on `xi >= 1` over two nodes of one pool. Any later node
+/// may hold a node, so parts are shared, and they read names their places bind differently,
+/// in chains of `let`s of one or several names.
+fn drawn(seed: u64, size: usize) -> Term {
+    let mut s = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+    let mut next = |n: usize| {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        (s % n as u64) as usize
+    };
+    let x = |i: usize| format!("x{i}");
+    // pools[0]: integers, pools[1]: pairs of integers.
+    let mut pools: [Vec<Shared>; 2] = [(0..4).map(|i| Shared::new(var(&x(i)))).collect(), vec![]];
+    let mut top = pools[0][0].clone();
+    for _ in 0..size {
+        let ints = &pools[0];
+        let (a, b) = (
+            ints[next(ints.len())].clone(),
+            ints[next(ints.len())].clone(),
+        );
+        let kind = match pools[1].is_empty() {
+            true => 0,
+            false => next(2),
+        };
+        let pool = &pools[kind];
+        let (p, q) = (
+            pool[next(pool.len())].clone(),
+            pool[next(pool.len())].clone(),
+        );
+        let k = next(5) as i64;
+        let (kind, t) = match next(5) {
+            0 => (0, prim(Prim::Add, vec![(*a).clone(), lit(k)])),
+            1 => (1, prim(Prim::Tuple, vec![(*a).clone(), (*b).clone()])),
+            2 => {
+                // `xj` with j not i, and a body that is not a `let`: in a program every binding
+                // of a block is in scope in the whole block, so a text cannot write `xi = xi + k`
+                // reading the `xi` outside, nor a chain whose binding reads a name a later `let`
+                // of the chain binds, and the printer writes a chain as one block (plan row
+                // PRINT-let-reading-its-own-name).
+                let p = match &*p {
+                    Term::Let(..) => Shared::new(Term::If(Shared::new(var("c")), p.clone(), p)),
+                    _ => p,
+                };
+                let i = next(4);
+                let e = prim(Prim::Add, vec![var(&x((i + 1 + next(3)) % 4)), lit(k)]);
+                (kind, Term::Let(x(i).into(), Shared::new(e), p))
+            }
+            3 => (kind, Term::If(Shared::new(var("c")), p, q)),
+            _ => {
+                let guard = prim(Prim::Ge, vec![var(&x(next(4))), lit(1i64)]);
+                (kind, Term::If(Shared::new(guard), p, q))
+            }
+        };
+        let t = Shared::new(t);
+        pools[kind].push(t.clone());
+        top = t;
+    }
+    let body = (0..4).rev().fold(top, |body, i| {
+        Shared::new(Term::Let(x(i).into(), Shared::new(lit(0i64)), body))
+    });
+    Term::Lam(vec!["c".into()], body)
+}
+
+/// 400 drawn terms with shared parts: the text for a user, on one line and broken into lines,
+/// and a message's text, each read back, give what the term gives at `c` true and false.
+#[test]
+fn drawn_terms_with_shared_parts_read_back_with_the_same_value() {
+    for seed in 0..400 {
+        let t = drawn(seed, 4 + (seed as usize % 12));
+        reads_back_the_same(&t, &shown(&t), &bools());
+        reads_back_the_same(&t, &pretty_in(&t, 40, &none), &bools());
+        reads_back_the_same(&t, &written(&t, |x| x, &none), &bools());
+    }
+}

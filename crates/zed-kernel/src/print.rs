@@ -669,11 +669,19 @@ impl<'a> Pieces<'a> {
             Term::PrimFn(p) => {
                 self.text(prim_fn(*p));
             }
+            // A chain of `let`s is one block, up to a binder of a name the block binds already:
+            // a block binds a name once (resolution refuses a second binding with "`x` is
+            // already bound in this scope"), so that
+            // binder starts a nested block, where it shadows the first. O(1) expected a binder.
             Term::Let(..) => {
                 self.list("{", " ", "}");
+                let mut bound = HashSet::new();
                 let mut t = t;
                 while let Term::Let(x, e, body) = t {
                     let x = self.name(x);
+                    if !bound.insert(x) {
+                        break;
+                    }
                     self.cat()
                         .text(format!("{x} = "))
                         .term(e)
