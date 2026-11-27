@@ -20,15 +20,22 @@ fn statements(text: &str) -> Result<Vec<zedc::ast::Stmt>, String> {
 /// The signature of each declared function, by binder, the type of each top-level name bound by
 /// `=`, sorted by name, and the number of type errors, of the unit `text`; or the message of
 /// the first error that stops it before the checker (a corpus program written with a form this
-/// zedc does not take yet), or that it does not resolve alone (a corpus program that imports
-/// units of its package).
+/// zedc does not take yet), or that it does not resolve alone, with the first error's message
+/// (a corpus program with a form of a later step, or one that imports units of its package,
+/// which a step not yet built checks).
 fn printed(text: &str) -> String {
     let stmts = match statements(text) {
         Ok(stmts) => stmts,
         Err(message) => return format!("  does not parse: {message}\n"),
     };
-    let Ok(res) = zedc::resolve::resolve(&stmts) else {
-        return "  does not resolve alone\n".into();
+    let res = match zedc::resolve::resolve(&stmts) {
+        Ok(res) => res,
+        // The first error says why: 19 of the corpus programs use a form a later step
+        // compiles, and 6 import units of their package (measured 2026-11-27).
+        Err(errors) => {
+            let why = errors.first().map_or("", |e| e.message.as_str());
+            return format!("  does not resolve alone: {why}\n");
+        }
     };
     let info = zedc::check::walk::check(&stmts, &res);
     let mut out = String::new();
