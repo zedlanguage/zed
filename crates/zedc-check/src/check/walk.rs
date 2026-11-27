@@ -21348,6 +21348,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             // A literal whose type shows as the literal itself is annotated with its carrier,
             // as `m.stdout <- 42 : int`.
+            let bound = shown.clone();
             let shown = match self.show(&shown) {
                 s if code == Some(s.as_str()) => self.show(&shown.carriers()),
                 s => s,
@@ -21380,7 +21381,26 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .into(),
                 );
             }
-            self.error_offering(span, message, menu);
+            // The note on the pushed value prints the type the headline prints, the one this
+            // call binds: "A note of a message about a call prints the types that call binds,
+            // as the headline does: the rejection of `h(x: "a", y: 5, out: m.stdout)` writes
+            // the note `this expression is (0 | 1 | 2) -> 5 | String`, not
+            // `(0 | 1 | 2) -> _`" (DESIGN.md sec:diagnostics, "Types in a message"; plan row
+            // MSG-untyped-signature-placeholder). The type recorded for the value is the one
+            // the function's body found, which holds the parameter's class, so for the
+            // derivation alone it is replaced by `bound` and then put back: the steps under it
+            // (each name's own note) and every later message read the body's type as before.
+            // Cost: two lookups of one span.
+            let kept = (self.seen.get_mut(&span)).map(|s| s.0.replace(bound));
+            let mut notes = self.derive(&[span]);
+            if let (Some(old), Some(s)) = (kept, self.seen.get_mut(&span)) {
+                s.0 = old;
+            }
+            notes.extend(menu.into_iter().map(|text| Note {
+                span,
+                text: text.into(),
+            }));
+            self.error_with(span, message, notes);
         }
     }
 
