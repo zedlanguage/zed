@@ -1448,6 +1448,38 @@ fn span_mask((lo, hi): (i64, i64), blk: i64) -> u64 {
 // O(g²·W/64); with the full words kept as intervals, an operation reads the words not full and
 // one item per interval. A shift or a reflection maps the intervals and the words each on its
 // own, and the two stay apart; a union lays the words over the intervals, once.
+//
+// A bound on the words of a group's table, proved (PRES-c12-proof, part 1). Lemma: let A be the
+// values (each in `[0, U]`) of a group's atoms, T(A) the set of the sums of its subsets, and B a
+// part of A whose T(B) holds an interval I of `|I| >= U` keys. Then T(A) holds the interval
+// from `min I` to `max I + Σ(A \ B)`, and every key of T(A) outside it lies in `[0, min I)` or
+// in `(max I + Σ(A \ B), ΣA]`, two stretches of `ΣB - |I| + 1 <= ΣB` keys in all. Proof: add
+// the atoms of `A \ B` one at a time; if the sums hold an interval J of at least U keys, adding
+// a value `v <= U` gives `J ∪ (J + v)`, one interval (J + v starts at most one past J's end),
+// longer by v; so after all of them the interval is `[min I, max I + Σ(A \ B)]`. Every sum is in
+// `[0, ΣA]`, and the two stretches left have `min I + ΣA - max I - Σ(A \ B)` keys, that is
+// `ΣB - (max I - min I)`. So a settled table holds at most `⌈ΣB/64⌉ + 3` words outside the
+// interval (`⌈a/64⌉ + ⌈b/64⌉ <= ⌈(a + b)/64⌉ + 1` for the two stretches, and one block each
+// where the interval starts and ends partway), and the interval, of at least U keys, holds at
+// least `(U - 126)/64` full words, at least `MIN_FILL` for `U >= 64·MIN_FILL + 126 = 1150`,
+// so its full words are one item of `fill`, whatever the number of atoms. For a table in the middle of
+// the forward pass (the sums of the first j atoms of the group in its order): once the first t
+// atoms are B, the lemma holds for each j >= t; before, the table's keys are at most `ΣB`, so
+// it has at most `⌈ΣB/64⌉ + 1` words. So every table of the group's forward pass has O(t·U/64) words
+// whatever its number of atoms, where t is the number of atoms needed to make the core B.
+// For the family `coefficients_one_and_two` (and `overlap_rows`) of
+// `l01_38_omega_test::disj_groups`, `w_i = 1000 + (37·i² mod 991)`: the groups are `y_0 ..`
+// (step 1, values `w_i`), the shared atoms of each parity (step 2, values `w_i`), and the
+// second sum's own atoms (step 1, values `(1 + i mod 2)·w_i`). The values of t atoms from a
+// start index s depend on s only through `s mod 1982` (`w` has period 991 in i, the factor
+// period 2), so a check of every start residue covers every k: `tests::the_group_tables_of_
+// coefficients_one_and_two_have_a_dense_core` finds the core within `CORE_ATOMS` atoms from
+// every start, for each kind of group. Not proved here (the open part of PRES-c12-proof): the
+// words of the layers of the join and of the fused images (`Fused::s`, `Fused::q`, and the
+// `d` that `lattice` gives back), which are sums and maps of these tables; and that each group
+// takes its atoms in the order of their index (`Plan::rest` steps through `g.atoms` in their
+// order, which is not traced here to the order of the rows). The test cannot catch a fault in
+// how a group's table is built: it checks the sums of the values, not the tables of `Plan`.
 #[derive(Clone, Default)]
 struct Set {
     lit: Lits,
@@ -4378,6 +4410,61 @@ impl Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `bits |= bits << v`, the bits past the end dropped. Read from the top down, so that each
+    /// word read (at `i - q` or below) is not yet written.
+    fn shift_or(bits: &mut [u64], v: usize) {
+        let (q, r) = (v / 64, v % 64);
+        for i in (q..bits.len()).rev() {
+            let lo = bits[i - q] << r;
+            let hi = if r == 0 || i == q {
+                0
+            } else {
+                bits[i - q - 1] >> (64 - r)
+            };
+            bits[i] |= lo | hi;
+        }
+    }
+
+    /// PRES-c12-proof, part 1 (the lemma at [`Set`]): for each kind of group of
+    /// `l01_38_omega_test::disj_groups::coefficients_one_and_two`, from every start index modulo
+    /// the period of its values, the sums of at most `CORE_ATOMS` atoms hold an interval of at
+    /// least U keys, U the greatest value of that kind. It looks for `⌈U/64⌉ + 1` full words in
+    /// a row, which hold such an interval (a stronger test, so it proves no more than the
+    /// lemma needs). The values are those of the family's `weights`: `w_i = 1000 + (37·i² mod
+    /// 991)`. Every start is checked, also for the group `y_0 ..`, which starts at 0 only.
+    #[test]
+    fn the_group_tables_of_coefficients_one_and_two_have_a_dense_core() {
+        const CORE_ATOMS: usize = 64;
+        let w = |i: usize| 1000 + 37 * (i * i) as i64 % 991;
+        let twice = |i: usize| (1 + (i % 2) as i64) * w(i);
+        // The step between the indices of a group's atoms, the value of atom i, and the
+        // period of the values in the start index.
+        let kinds: [(usize, &dyn Fn(usize) -> i64, usize); 3] =
+            [(1, &w, 991), (2, &w, 991), (1, &twice, 1982)];
+        let mut most = 0;
+        for (kind, &(step, value, period)) in kinds.iter().enumerate() {
+            let top = (0..1982).map(value).max().expect("1982 values");
+            let need = (top as usize).div_ceil(64) + 1;
+            for s in 0..period {
+                let mut bits = vec![0u64; CORE_ATOMS * top as usize / 64 + 2];
+                bits[0] = 1;
+                let found = (0..CORE_ATOMS).position(|m| {
+                    shift_or(&mut bits, value(s + step * m) as usize);
+                    let mut run = 0;
+                    bits.iter().any(|&x| {
+                        run = if x == u64::MAX { run + 1 } else { 0 };
+                        run >= need
+                    })
+                });
+                let t = found.unwrap_or_else(|| {
+                    panic!("kind {kind}, start {s}: no dense core within {CORE_ATOMS} atoms")
+                });
+                most = most.max(t + 1);
+            }
+        }
+        eprintln!("the dense core of every group needs at most {most} atoms");
+    }
 
     /// [`lattice`] on random sets of words and intervals, with `d` given and not, against the
     /// points taken pair by pair: each part of the points (y in words; x in words; `x + y` in
