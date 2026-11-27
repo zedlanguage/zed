@@ -4566,7 +4566,10 @@ mod tests {
                 }
                 if k >= 512 {
                     let t = core.map_or(usize::MAX, |c| c.1);
-                    assert!(t <= CORE_ATOMS, "k {k}, group {i}: the core needs {t} atoms");
+                    assert!(
+                        t <= CORE_ATOMS,
+                        "k {k}, group {i}: the core needs {t} atoms"
+                    );
                 }
             }
         }
