@@ -1,7 +1,8 @@
 #!/bin/bash
 # Runs a benchmark under a time limit for each of its phases (author P214, A160 of 2026-11-20), in
 # place of `timeout -k 5 <seconds>`. Usage: tools/bench_limit.sh <seconds> <file> <command>...
-# The command runs in phases, each under a limit counted from the phase's own start: the first
+# A cargo test or cargo bench command is built first, outside the limits (see below). The
+# command runs in phases, each under a limit counted from the phase's own start: the first
 # phase starts with the command and has the limit <seconds> (the runner's limit, raised with
 # load), and each line `<start> <ms>` written to <file> starts a new phase at <start>
 # (milliseconds since 1970) with the limit max(<seconds>, <ms> milliseconds). zed_tests::scaling
@@ -18,6 +19,26 @@
 base_ms=$(($1 * 1000)) file=$2
 shift 2
 : >"$file"
+# A `cargo test` or `cargo bench` command first builds its test binaries, with the same arguments
+# up to any `--` and --no-run, outside every limit; a failed build ends the script with cargo's
+# exit code and runs nothing. Before, the build was in the first phase: a bench line
+# `tools/bench_limit.sh 20 <file> cargo test ...` of b22-kept5's job 33 spent its 20 s rebuilding
+# the zed-kernel dylib and was stopped before the bench ran (FARM-bench-line-compile-in-limit,
+# 2026-11-26). colab/job.sh's prebuild of the workspace does not prevent this: a -p build can
+# resolve the features differently and rebuild a dylib. tools/run_tests.sh --bench runs test
+# binaries already built, so it is unchanged. Test: tools/test_bench_limit.sh, the fake-cargo cases.
+if [ "${1-}" = cargo ] && { [ "${2-}" = test ] || [ "${2-}" = bench ]; }; then
+  build=()
+  for a; do
+    [ "$a" = -- ] && break
+    build+=("$a")
+  done
+  "${build[@]}" --no-run >&2 || {
+    rc=$?
+    echo "$base_ms" >"$file"
+    exit "$rc"
+  }
+fi
 # descendants <pid>: the pids of the processes under <pid>, children before their own children.
 descendants() {
   local p
