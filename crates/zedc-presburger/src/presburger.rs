@@ -12389,8 +12389,8 @@ fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
 /// every later state, and a removal needs a proof that the disjunct has none), and removes a
 /// disjunct that its tests refute. So where its tests refute every disjunct without a point,
 /// in every order, the parts it leaves, and the hulls read from them, are the same in every
-/// order. Not proved: that a disjunct without a point that some order's tests refute is
-/// refuted in every order. `learn`'s implied bounds and the points found, and so which
+/// order. Not proved by this argument: that a disjunct without a point that some order's tests
+/// refute is refuted in every order (proved another way below, by [`content_order`]). `learn`'s implied bounds and the points found, and so which
 /// disjuncts reach `settle`, depend on the order of the disjunctions, and `settle` does not
 /// refute every disjunct without a point (a disjunct `point_with` finds no point for and
 /// `settle` leaves is kept, `live_held` false). Measured: the s22 reverse-order tests, 0 boxes
@@ -12433,6 +12433,16 @@ fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
 /// the order of their content ([`read_order`], whose note proves that the readings then depend
 /// on the parts alone), so neither depends on the order now; the four sub-cases are read again
 /// below, each against the code as it stands.
+///
+/// Closed for the top-level order (2026-11-27, PROOF-probe-order-independent): each round of
+/// [`probe_kept_status`] now first puts its parts in the order of their content
+/// ([`content_order`], whose note has the proof), so a round, and by induction on the rounds
+/// the probe, does the same work and gives the same answer in every order the top-level
+/// constraints, disjunctions and disjuncts are written in, whether or not (M1) and (M2) hold.
+/// That settles (a), (b) and (d), and in (c) the `Err` of `settle` with no meter. Still open:
+/// the meter of (c), which counts the work before the probe, and the order of the disjunctions
+/// nested inside a disjunct, which is not changed. The sub-cases below are the argument as it
+/// stood before.
 ///
 /// (a) A bound of [`learn`] proved by [`bounds_refute`] alone. `bounds_refute` of given parts
 /// and bound no longer depends on their order, but `learn` asks it only after a disjunct is
@@ -12691,6 +12701,10 @@ fn probe_kept_status(
         // only gains constraints or stays equal from round to round, so they hold to the end.
         let mut implied = Near::default();
         loop {
+            // Each round reads the parts in the order of their content, so that what it finds
+            // does not follow the order they were written in ([`content_order`]); `settle`
+            // below gives a new formula, so the order is made again each round.
+            content_order(&mut p, kept);
             // The disjuncts the bounds of single atoms leave without a point are removed first,
             // all in one pass ([`drop_by_bounds`]), not each by a propagation of its own below.
             // A question of the cover is charged each round's constraints, and each disjunct
@@ -13307,6 +13321,105 @@ impl<'a> Unit<'a> {
             .chain(f.ors.iter().map(|ds| Unit::Or(ds)))
             .collect()
     }
+}
+
+/// Puts the parts of a round of [`probe_kept_status`] in the order of their content: the
+/// constraints sorted, the disjuncts of each disjunction sorted by whether `kept` names them
+/// and then by their constraints, sorted, and the disjunctions sorted by their disjuncts'
+/// keys. Ties are broken by [`content_cmp`], which reads the disjunctions inside the disjuncts.
+///
+/// Proof that a round then does the same in every written order (PROOF-probe-order-independent).
+/// Two written orders of the same parts are two permutations of the same constraints, the same
+/// disjunctions and, in each, the same disjuncts. The sort is by a total preorder on content
+/// alone, so it gives both the same sequence of keys; two items with the same key are the same
+/// constraint, or two disjuncts with the same constraints, the same disjunctions inside them in
+/// the same order and the same mark in `kept`, or two disjunctions of such disjuncts. Such two
+/// are told apart by nothing the round reads: a point holds both or neither, every test of the
+/// round ([`drop_by_bounds`], `implied`, [`refuted_by_links`], [`SlackIndex`], [`learn`],
+/// [`point_with`], [`search_by_halves`], `settle`) reads their constraints and disjunctions,
+/// and the ids they are named by ([`Parts::id`]) are only looked up in sets and memos, never
+/// compared or iterated (every `.id()` read, 2026-11-27). So swapping two of them leaves the round's work the same up to that swap, and
+/// both orders give the same answer, written in the same order. `settle` gives the next
+/// round's parts, which this function orders again, so by induction on the rounds the probe's
+/// answer, `None`, or its refusal is the same in every written order. Each of the four sources
+/// the comment at [`probe_unhandled`] named, the bounds of `learn`, the slack index, `settle`'s
+/// refusals and `Immune`, follows only the round's state, so it is now the same in every
+/// order too. What still differs between two calls: a refusal under the cover's meter
+/// ([`meter::charge`]), whose budget the work before the probe has spent, and the order of the
+/// disjunctions nested inside a disjunct, which this function does not change (a disjunct is
+/// shared and not changed once made) and which is content here. Assumed, not traced through
+/// every helper: no step chooses by the iteration order of a hash map, whose seed changes from
+/// run to run (the rule of deterministic checking).
+///
+/// Complexity tradeoff (COMPLEXITY.md row PROOF-probe-order-independent): each round sorts its
+/// parts, `O(n log n)` comparisons for parts of `n`
+/// terms, each comparing two keys of at most a part's size; the keys are built once per part
+/// and round, `O(n log n)` in all. A round already costs at least `O(n)` (the meter charges its
+/// constraints and disjuncts), and in practice one search of the formula per disjunct tested.
+/// Naive version: the order as written, which made the answer, and the hulls read from it,
+/// depend on the written order wherever the four sources above found different bounds. A
+/// cheaper fix would sort once before the first round, but `settle` writes its answer in an
+/// order of its own, so the later rounds would follow it.
+fn content_order(p: &mut Parts, kept: &HashSet<u64>) {
+    /// A disjunct's key: whether `kept` names it (a disjunct with no id drawn yet, 0, is not
+    /// named, and none is drawn here) and its constraints, sorted.
+    fn key<'a>(d: &'a Parts, kept: &HashSet<u64>) -> (bool, Vec<&'a Con>) {
+        let mut cs: Vec<&Con> = d.cons.iter().collect();
+        cs.sort();
+        let id = d.id.get();
+        (id != 0 && kept.contains(&id), cs)
+    }
+    p.cons.sort();
+    let mut ors = std::mem::take(&mut p.ors);
+    for o in &mut ors {
+        let keys: Vec<(bool, Vec<&Con>)> = o.iter().map(|d| key(d, kept)).collect();
+        let mut at: Vec<usize> = (0..o.len()).collect();
+        at.sort_by(|&a, &b| keys[a].cmp(&keys[b]).then_with(|| content_cmp(&o[a], &o[b])));
+        let sorted: Vec<Rc<Parts>> = at.iter().map(|&i| o[i].clone()).collect();
+        drop(keys);
+        *o = sorted;
+    }
+    let keys: Vec<Vec<(bool, Vec<&Con>)>> =
+        ors.iter().map(|o| o.iter().map(|d| key(d, kept)).collect()).collect();
+    let mut at: Vec<usize> = (0..ors.len()).collect();
+    at.sort_by(|&a, &b| {
+        keys[a].cmp(&keys[b]).then_with(|| {
+            (ors[a].iter().zip(&ors[b]))
+                .map(|(d, e)| content_cmp(d, e))
+                .find(|o| o.is_ne())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    });
+    let sorted: Vec<Vec<Rc<Parts>>> = at.iter().map(|&i| ors[i].clone()).collect();
+    drop(keys);
+    p.ors = sorted;
+}
+
+/// Two parts by their content: their constraints, sorted, then their disjunctions in their
+/// order, each by its length and then its disjuncts in their order. Asked by [`content_order`]
+/// only for two parts whose constraints are the same, so its recursion reads the nested parts
+/// of such ties alone.
+fn content_cmp(a: &Parts, b: &Parts) -> std::cmp::Ordering {
+    let sorted = |p: &Parts| -> Vec<Con> {
+        let mut cs = p.cons.clone();
+        cs.sort();
+        cs
+    };
+    (sorted(a).cmp(&sorted(b)))
+        .then_with(|| a.ors.len().cmp(&b.ors.len()))
+        .then_with(|| {
+            (a.ors.iter().zip(&b.ors))
+                .map(|(o, q)| {
+                    o.len().cmp(&q.len()).then_with(|| {
+                        (o.iter().zip(q))
+                            .map(|(d, e)| content_cmp(d, e))
+                            .find(|x| x.is_ne())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                })
+                .find(|x| x.is_ne())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
 }
 
 /// The order in which [`bounds_refute`] and [`drop_by_bounds`] read `units`: breadth first
