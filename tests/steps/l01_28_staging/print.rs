@@ -572,17 +572,13 @@ fn drawn(seed: u64, size: usize) -> Term {
             0 => (0, prim(Prim::Add, vec![(*a).clone(), lit(k)])),
             1 => (1, prim(Prim::Tuple, vec![(*a).clone(), (*b).clone()])),
             2 => {
-                // `xj` with j not i, and a body that is not a `let`: in a program every binding
-                // of a block is in scope in the whole block, so a text cannot write `xi = xi + k`
-                // reading the `xi` outside, nor a chain whose binding reads a name a later `let`
-                // of the chain binds, and the printer writes a chain as one block (plan row
-                // PRINT-let-reading-its-own-name).
-                let p = match &*p {
-                    Term::Let(..) => Shared::new(Term::If(Shared::new(var("c")), p.clone(), p)),
-                    _ => p,
-                };
+                // `xi = xj + k`, j = i included, over a body that may be a `let` itself: in a
+                // program every binding of a block is in scope in the whole block, so the
+                // printer must not write `xi = xi + k` reading the `xi` outside, nor a chain
+                // whose binding reads a name a later `let` of the chain binds, in one block
+                // (PRINT-let-reading-its-own-name).
                 let i = next(4);
-                let e = prim(Prim::Add, vec![var(&x((i + 1 + next(3)) % 4)), lit(k)]);
+                let e = prim(Prim::Add, vec![var(&x(next(4))), lit(k)]);
                 (kind, Term::Let(x(i).into(), Shared::new(e), p))
             }
             3 => (kind, Term::If(Shared::new(var("c")), p, q)),
@@ -704,4 +700,142 @@ fn sibling_updates_of_one_env_read_its_pairs_named_once() {
         assert!(text.contains("part1"), "{text}");
         reads_back_the_same(&t, &text, &bools());
     }
+}
+
+/// A binding that reads a name its block binds: its own (`x = x + 1`, the `x` above), one a
+/// later binding of the chain binds (`y = x + 1; x = 5`), or a parameter its lambda's body
+/// binds again (`x -> { x = x + 1; x }`). Each text reads back to the term's value
+/// (PRINT-let-reading-its-own-name).
+#[test]
+fn a_binding_reading_a_name_its_block_binds_reads_back_with_the_same_value() {
+    let sh = |t: Term| Shared::new(t);
+    let add = |a: Term, b: Term| prim(Prim::Add, vec![a, b]);
+    let lam = |ps: &[&str], b: Term| Term::Lam(ps.iter().map(|p| (*p).into()).collect(), sh(b));
+    let let_ = |x: &str, e: Term, b: Term| Term::Let(x.into(), sh(e), sh(b));
+    let ints = vec![vec![Value::Int(3)], vec![Value::Int(-1)]];
+    let cases = vec![
+        // Its own name.
+        (
+            lam(
+                &["c"],
+                let_(
+                    "x",
+                    lit(0i64),
+                    Term::If(
+                        sh(var("c")),
+                        sh(let_("x", add(var("x"), lit(1i64)), var("x"))),
+                        sh(var("x")),
+                    ),
+                ),
+            ),
+            bools(),
+        ),
+        // A later binder's name.
+        (
+            lam(
+                &["c"],
+                let_(
+                    "x",
+                    lit(0i64),
+                    Term::If(
+                        sh(var("c")),
+                        sh(let_(
+                            "y",
+                            add(var("x"), lit(1i64)),
+                            let_("x", lit(5i64), add(var("y"), var("x"))),
+                        )),
+                        sh(var("x")),
+                    ),
+                ),
+            ),
+            bools(),
+        ),
+        // A parameter bound again, read and not read.
+        (
+            lam(&["x"], let_("x", add(var("x"), lit(1i64)), var("x"))),
+            ints.clone(),
+        ),
+        (
+            lam(&["x"], let_("x", lit(1i64), add(var("x"), lit(2i64)))),
+            ints.clone(),
+        ),
+        // A chain of three, each reading the one above.
+        (
+            lam(
+                &["x"],
+                let_(
+                    "x",
+                    add(var("x"), lit(1i64)),
+                    let_(
+                        "x",
+                        add(var("x"), lit(10i64)),
+                        let_("x", add(var("x"), lit(100i64)), var("x")),
+                    ),
+                ),
+            ),
+            ints.clone(),
+        ),
+        // Its own name, read only under a binder inside the bound term: not a call.
+        (
+            lam(
+                &["c"],
+                let_(
+                    "x",
+                    let_("x", lit(1i64), add(var("x"), lit(1i64))),
+                    add(var("x"), lit(2i64)),
+                ),
+            ),
+            bools(),
+        ),
+    ];
+    for (t, inputs) in &cases {
+        for text in [shown(t), pretty_in(t, 20, &none), written(t, |x| x, &none)] {
+            reads_back_the_same(t, &text, inputs);
+        }
+    }
+    // The forms, on one line.
+    let texts: Vec<String> = cases.iter().map(|(t, _)| shown(t)).collect();
+    assert_eq!(
+        texts,
+        [
+            "c -> { x = 0; if c { (x -> x)((x + 1)) } else { x } }",
+            "c -> { x = 0; if c { { y = (x + 1); { x = 5; (y + x) } } } else { x } }",
+            "x -> (x -> x)((x + 1))",
+            "x -> { { x = 1; (x + 2) } }",
+            "x -> (x -> (x -> (x -> x)((x + 100)))((x + 10)))((x + 1))",
+            "c -> { x = { x = 1; (x + 1) }; (x + 2) }",
+        ]
+    );
+
+    // A message writes `x@1` and `x@2` both `x` (`zed_kernel::text::ident::written_name`), so
+    // they are one name in its text: `x@2 = x@1 + 1` reads its own name there, and
+    // `y = x@1 + 1; x@2 = 5` ends the block at `x@2`.
+    fn at(x: &str) -> &str {
+        x.split_once('@').map_or(x, |(w, _)| w)
+    }
+    let cases = [
+        lam(
+            &["x@1"],
+            let_("x@2", add(var("x@1"), lit(1i64)), var("x@2")),
+        ),
+        lam(
+            &["x@1"],
+            let_(
+                "y",
+                add(var("x@1"), lit(1i64)),
+                let_("x@2", lit(5i64), add(var("y"), var("x@2"))),
+            ),
+        ),
+    ];
+    let texts: Vec<String> = cases.iter().map(|t| written(t, at, &none)).collect();
+    for (t, text) in cases.iter().zip(&texts) {
+        reads_back_the_same(t, text, &ints);
+    }
+    assert_eq!(
+        texts,
+        [
+            "x -> (x -> x)(x + 1)",
+            "x -> { { y = x + 1; { x = 5; y + x } } }"
+        ]
+    );
 }

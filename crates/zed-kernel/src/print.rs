@@ -31,7 +31,8 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness, walk};
+use crate::term::walk::{Binds, Kid, kids};
+use crate::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
 use crate::text::ident::numbered;
 use crate::types::defs;
 use crate::value::Value;
@@ -135,7 +136,7 @@ pub fn written(t: &Term, name: fn(&str) -> &str, resolves: Resolves<'_>) -> Stri
 /// whose reads are proved right on kernel names (module `dag`), so it is enough that each read
 /// in the text names the binder its kernel name names.
 ///
-/// The walk goes over `t` with each binder over the parts it binds over ([`walk::kids`]: the
+/// The walk goes over `t` with each binder over the parts it binds over ([`kids`]: the
 /// text writes a binder exactly where the evaluator binds it), keeping for each spelling the
 /// binders of it in scope, the innermost on top. At a read of `k`, every binder above the
 /// innermost binder of `k` on its spelling's stack, or every binder there when `k` is bound
@@ -190,7 +191,7 @@ fn respelled<'t>(t: &'t Term, name: fn(&str) -> &str) -> HashMap<&'t str, String
                     }
                 }
                 let mut parts = Vec::new();
-                walk::kids(u, |kid, binds| parts.push((kid.term(), binds)));
+                kids(u, |kid, binds| parts.push((kid.term(), binds)));
                 for (part, binds) in parts.into_iter().rev() {
                     let mut xs = Vec::new();
                     binds.each(|x| xs.push((&**x, binders + xs.len())));
@@ -530,8 +531,192 @@ enum Piece<'a> {
     Pattern(&'a Pattern),
 }
 
-/// The pieces one term or pattern is laid out as, in order, and how names are written.
-struct Pieces<'a>(Vec<Piece<'a>>, Names<'a>);
+/// The pieces one term or pattern is laid out as, in order, how names are written, and what
+/// the `let`s laid out read.
+struct Pieces<'a>(Vec<Piece<'a>>, Names<'a>, LetReads<'a>);
+
+/// Which `let`s of the term in hand read a name written as one a block binds, found by one walk
+/// of the term per `let` the printer meets first (PRINT-let-reading-its-own-name; see the
+/// `Term::Let` case of [`Pieces::lay_out`] for how the printer uses them).
+///
+/// A block `{ x1 = e1; …; body }` binds each `x_i` in the whole block, while the kernel's
+/// `e_i` reads the binders above it. So the printer asks, for a `let` `x = e`, whether `e`
+/// reads a name written as `x` that is bound outside `e` ([`LetReads::own`]), and for the
+/// `let`s of a block from `S`, whether a binding above `x = e` in the block reads one
+/// ([`LetReads::above`]). The walk is in the order of the text (each `let`'s bound term
+/// before its body, as [`kids`] gives them). Each binder of a name pushes the time it is
+/// reached on a stack for that kernel name; each variable records a read, its time `t` and
+/// the time `p` of the binder it reads (0 when free), under the name as written. A bound term
+/// begun at time `T` reads a name written `x` from outside it exactly when a read of a name
+/// written `x` has `t >= T` and `p < T`: the reads after `T` are those of the bound term, and
+/// a binder reached before `T` is outside it. The bindings of a block from `S` begun at `T`
+/// are read between `T` and the binding in hand, the same test; the block's own binders are
+/// reached after `T`, and none is written `x` (else the block ends at that binder).
+///
+/// The test is one binary search: for each name as written the reads are kept in order of
+/// `t`, and a read with a `p` no less than a later read's is dropped, as every range of `t`
+/// that holds the earlier read holds the later one, so the reads kept have `p` rising with
+/// `t`, and the least `p` of the reads with `t >= T` is that of the first. Exact on the text
+/// written: names are compared as written, so `x@1` and `x@2`, both written `x` in a message
+/// ([`written`]), are one name, as the text reads them.
+// Complexity tradeoff: O(m log m) for a walk over m nodes, a node held in two places walked at
+// each, as the printer writes it at each, so O(the text's nodes · log) in all: a labeled part
+// (`Display`, which writes `#1#` at its other places) is walked at its first place only, so
+// its reads at the other places are not seen (that text is not a program). The method before
+// this one took `eval::made::reads` of each bound term, which walks a part shared by m bound
+// terms m times: Θ(m k) for a part reading k names (bench
+// `writing_a_part_reading_many_names_bound_twice_scales`, 51.9 times the bytes at 8n).
+#[derive(Default)]
+struct LetReads<'a> {
+    /// The labeled parts, by address ([`Form::labels`](dag::Form)), and those a walk has read.
+    labels: HashSet<*const Term>,
+    walked: HashSet<*const Term>,
+    /// The `let`s a walk has read, and those it has read as the first `let` of a block: a node
+    /// held in two places may be first at one and in a block at the other, and [`Self::above`]
+    /// holds the pairs of the blocks walked.
+    seen: HashSet<*const Term>,
+    starts: HashSet<*const Term>,
+    /// The `let`s `x = e` whose `e` reads a name written `x` from outside it.
+    own: HashSet<*const Term>,
+    /// `(S, L)`: in the block of `let`s from `S`, a binding above `L` reads a name written as
+    /// `L`'s from outside the block.
+    above: HashSet<(*const Term, *const Term)>,
+    /// The time, one more at each step of a walk, kept across walks so that a read of an
+    /// earlier walk is before every time of a later one.
+    now: u64,
+    /// For each kernel name, the times its binders in scope were reached.
+    binders: HashMap<&'a str, Vec<u64>>,
+    /// For each name as written, the reads `(t, p)` kept, `t` and `p` rising.
+    reads: HashMap<&'a str, Vec<(u64, u64)>>,
+}
+
+impl<'a> LetReads<'a> {
+    /// Walks the term from the `let` `root`, as the first `let` of a block. A `let` met in the walk is in the block of the one whose body it is, unless that
+    /// one's bound term reads its own name (then its body is a lambda's) or the block ends at
+    /// it, as the printer writes them.
+    fn walk(&mut self, root: &'a Term, names: Names<'a>) {
+        // A part to read, in the block with that index if it is a `let` in one; a binder's
+        // names bound or unbound; or a `let` whose bound term, begun at that time, is read.
+        enum Step<'a> {
+            Read(&'a Term, Option<usize>),
+            Bind(Binds<'a>),
+            Unbind(Binds<'a>),
+            Bound(&'a Term, usize, u64),
+        }
+        // A block: its first `let`, the time before its first bound term, its names written.
+        struct Block<'a> {
+            first: *const Term,
+            from: u64,
+            bound: HashSet<&'a str>,
+        }
+        if !matches!(root, Term::Let(..)) {
+            return;
+        }
+        // As the printer writes each name ([`Names::spell`]), a binder given a new spelling
+        // ([`respelled`]) included.
+        let spelled = |x: &'a str| names.spell(x);
+        let mut blocks: Vec<Block<'a>> = Vec::new();
+        let mut steps = vec![Step::Read(root, None)];
+        while let Some(step) = steps.pop() {
+            self.now += 1;
+            let now = self.now;
+            match step {
+                Step::Bind(b) => b.each(|x| self.binders.entry(x).or_default().push(now)),
+                Step::Unbind(b) => b.each(|x| {
+                    self.binders.get_mut(&**x).and_then(Vec::pop);
+                }),
+                Step::Read(Term::Var(x), _) => {
+                    let p = self
+                        .binders
+                        .get(&**x)
+                        .and_then(|v| v.last())
+                        .map_or(0, |&p| p);
+                    let reads = self.reads.entry(spelled(x)).or_default();
+                    while reads.last().is_some_and(|&(_, q)| q >= p) {
+                        reads.pop();
+                    }
+                    reads.push((now, p));
+                }
+                Step::Read(t @ Term::Let(x, e, _), block) => {
+                    let x = spelled(x);
+                    self.seen.insert(std::ptr::from_ref(t));
+                    let block = match block {
+                        Some(b) if blocks[b].bound.contains(x) => None,
+                        Some(b) if self.read_since(x, blocks[b].from) => {
+                            self.above.insert((blocks[b].first, t));
+                            None
+                        }
+                        b => b,
+                    };
+                    let block = block.unwrap_or_else(|| {
+                        self.starts.insert(std::ptr::from_ref(t));
+                        blocks.push(Block {
+                            first: t,
+                            from: now,
+                            bound: HashSet::new(),
+                        });
+                        blocks.len() - 1
+                    });
+                    steps.push(Step::Bound(t, block, now));
+                    if !self.labeled_again(e) {
+                        steps.push(Step::Read(e, None));
+                    }
+                }
+                Step::Bound(t, block, from) => {
+                    let Term::Let(x, _, body) = t else {
+                        unreachable!("a `Bound` step is a `let`'s")
+                    };
+                    let own = self.read_since(spelled(x), from);
+                    let next = match own {
+                        true => {
+                            self.own.insert(std::ptr::from_ref(t));
+                            None
+                        }
+                        false => {
+                            blocks[block].bound.insert(spelled(x));
+                            Some(block)
+                        }
+                    };
+                    let b = Binds::Names(std::slice::from_ref(x));
+                    steps.push(Step::Unbind(b));
+                    if !self.labeled_again(body) {
+                        steps.push(Step::Read(body, next));
+                    }
+                    steps.push(Step::Bind(b));
+                }
+                Step::Read(t, _) => {
+                    // Popped in reverse: each part's names bound, the part read, then unbound.
+                    let mut parts = Vec::new();
+                    kids(t, |k, b| parts.push((k, b)));
+                    for (k, b) in parts.into_iter().rev() {
+                        steps.push(Step::Unbind(b));
+                        match k {
+                            Kid::Inline(u) => steps.push(Step::Read(u, None)),
+                            Kid::Shared(s) if self.labeled_again(s) => {}
+                            Kid::Shared(s) => steps.push(Step::Read(s, None)),
+                        }
+                        steps.push(Step::Bind(b));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether `u` is a labeled part a walk has read, so is not read again; the first call on a
+    /// labeled part marks it read.
+    fn labeled_again(&mut self, u: &Term) -> bool {
+        let u = std::ptr::from_ref(u);
+        self.labels.contains(&u) && !self.walked.insert(u)
+    }
+
+    /// Whether a read of a name written `x` has a time `t >= from` and its binder's `p < from`.
+    fn read_since(&self, x: &str, from: u64) -> bool {
+        self.reads.get(x).is_some_and(|r| {
+            let i = r.partition_point(|&(t, _)| t < from);
+            r.get(i).is_some_and(|&(_, p)| p < from)
+        })
+    }
+}
 
 impl<'a> Pieces<'a> {
     /// How the name `x` is written.
@@ -649,13 +834,69 @@ impl<'a> Pieces<'a> {
         self.cat().text(format!("{key}: "))
     }
 
-    /// `(x, y) -> body`, or `x -> body` for one parameter.
+    /// Whether the `let` `t`, `x = e`, has an `e` that reads a name written `x` from outside it
+    /// ([`LetReads::own`]): O(1) once a walk has read `t`.
+    fn own(&mut self, t: &'a Term) -> bool {
+        let at = std::ptr::from_ref(t);
+        if !self.2.seen.contains(&at) {
+            self.2.walk(t, self.1);
+        }
+        self.2.own.contains(&at)
+    }
+
+    /// Whether, in the block of `let`s from `first`, a binding above the `let` `t` reads a name
+    /// written as `t`'s from outside the block ([`LetReads::above`]).
+    fn above(&mut self, first: &'a Term, t: &'a Term) -> bool {
+        if !self.2.starts.contains(&std::ptr::from_ref(first)) {
+            self.2.walk(first, self.1);
+        }
+        (self.2.above).contains(&(std::ptr::from_ref(first), std::ptr::from_ref(t)))
+    }
+
+    /// `(x -> body)(e)`: a `let` of `x` to an `e` that reads `x`, as a call, so that `e`
+    /// reads the `x` outside. Unlike a call's head in the `Term::App` case, the lambda is not
+    /// kept on one line, as it holds the rest of the chain.
+    fn called(&mut self, x: &'a str, e: &'a Term, body: &'a Term) -> &mut Self {
+        self.cat().text("(").lambda(&[x], body).text(")");
+        self.call("").items(std::slice::from_ref(e)).end().end()
+    }
+
+    /// `(x, y) -> body`, or `x -> body` for one parameter. A body that is a chain of `let`s
+    /// binding a parameter is written in one more block: the parameters share one scope with
+    /// the statements of a body block (zedc-resolve, resolve.rs: "so `f(x) { x = 1; }`
+    /// rebinds `x`"), so `x -> { x = 1; x }` is refused with "`x` is already bound in this
+    /// scope", and `x -> { { x = 1; x } }` binds it in a nested block, where it shadows the
+    /// parameter (PRINT-let-reading-its-own-name). The walk stops at a binding that reads its
+    /// own name, written as a call whose lambda holds the rest of the chain
+    /// ([`Pieces::own`]). O(the chain's length + the parameters), each chain read by the one
+    /// lambda right above it.
     fn lambda(&mut self, params: &[&str], body: &'a Term) -> &mut Self {
         let head = match params {
             [p] => format!("{p} -> "),
             _ => format!("({}) -> ", params.join(", ")),
         };
-        self.cat().text(head).term(body).end()
+        self.cat().text(head);
+        let mut rebinds = false;
+        if let Term::Let(..) = body {
+            let params: HashSet<&str> = params.iter().copied().collect();
+            let mut t = body;
+            while let Term::Let(x, _, rest) = t {
+                if self.own(t) {
+                    break;
+                }
+                let x = self.name(x);
+                if params.contains(x) {
+                    rebinds = true;
+                    break;
+                }
+                t = rest;
+            }
+        }
+        match rebinds {
+            true => self.block(body),
+            false => self.term(body),
+        };
+        self.end()
     }
 
     fn evidence(&mut self, ev: &Evidence) -> &mut Self {
@@ -803,19 +1044,43 @@ impl<'a> Pieces<'a> {
             Term::PrimFn(p) => {
                 self.text(prim_fn(*p));
             }
-            // A chain of `let`s is one block, up to a binder of a name the block binds already:
-            // a block binds a name once (resolution refuses a second binding with "`x` is
-            // already bound in this scope"), so that
-            // binder starts a nested block, where it shadows the first. O(1) expected a binder.
+            // A chain of `let`s is one block, `{ x1 = e1; …; body }`, where every binding is
+            // in scope in the whole block and a binding reads itself (zedc-resolve,
+            // resolve.rs: "a name bound anywhere in a scope is in scope throughout it"), while
+            // the kernel's `e_i` reads the binders above it. So the block ends where that
+            // would change what a name reads (PRINT-let-reading-its-own-name):
+            // - at a binder of a name the block binds already ("`x` is already bound in this
+            //   scope"), or one an earlier `e_i` of the block reads ("used above its
+            //   definition"): that binder starts a nested block, where it shadows the outer
+            //   name, and the earlier `e_i` still reads the outer one;
+            // - at a binder `x = e` whose `e` reads `x` ("defined in terms of its own value"),
+            //   which no block can write: it is written `(x -> rest)(e)`, the call binding the
+            //   parameter `x` over `rest` and `e` read outside it ([`Pieces::called`]). Such a
+            //   binding first in the chain is the call alone, with no braces: `{ e }` with no
+            //   statement in it reads back as a set (`{ (x -> x)(x + 1) }` gave
+            //   `Family({1: 1})`, not 1).
+            // Which `e_i` reads which name is found by one walk of the term ([`LetReads`]),
+            // O(1) a binding after it, so the block costs O(its bindings) more.
+            Term::Let(x, e, body) if self.own(t) => {
+                self.called(self.name(x), e, body);
+            }
             Term::Let(..) => {
                 self.list("{", " ", "}");
                 let mut bound = HashSet::new();
+                let first = t;
                 let mut t = t;
+                let mut called = false;
                 while let Term::Let(x, e, body) = t {
                     let x = self.name(x);
-                    if !bound.insert(x) {
+                    if bound.contains(x) || self.above(first, t) {
                         break;
                     }
+                    if self.own(t) {
+                        self.called(x, e, body);
+                        called = true;
+                        break;
+                    }
+                    bound.insert(x);
                     self.cat()
                         .text(format!("{x} = "))
                         .term(e)
@@ -824,7 +1089,10 @@ impl<'a> Pieces<'a> {
                         .sep();
                     t = body;
                 }
-                self.term(t).end();
+                if !called {
+                    self.term(t);
+                }
+                self.end();
             }
             // `c && b` and `c || b` as elaboration gives them, and `!c && b` and `!c || a`,
             // written as the operators when the text is for a message ([`written`]).
@@ -1163,7 +1431,11 @@ impl<'a> Doc<'a> {
             root,
             Piece::Tok(Tok::Start(Group::Cat)),
         ];
-        let mut out = Pieces(Vec::new(), names);
+        let lets = LetReads {
+            labels: labels.clone(),
+            ..LetReads::default()
+        };
+        let mut out = Pieces(Vec::new(), names, lets);
         let mut seen: HashMap<*const Term, usize> = HashMap::new();
         while let Some(piece) = todo.pop() {
             let whole = match piece {
