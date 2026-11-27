@@ -21263,7 +21263,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if !c.fixes.list.iter().any(|p| p.at_push) {
                 continue;
             }
-            let (_, found) = self.trial(|ck| ck.pushed(&c.ty, port, span, bubbles));
+            let (_, found) = self.trial(|ck| ck.pushed(&c.ty, port, span, bubbles, None));
             if !found.is_some_and(|f| f.is_empty()) {
                 (c.fixes.list.iter())
                     .filter(|p| p.at_push)
@@ -36589,7 +36589,7 @@ mod tests {
         let string = Ty::carrier(Carrier::Str);
         let errors = |ty: &Ty| {
             let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
-            ck.pushed(ty, "out", at, true);
+            ck.pushed(ty, "out", at, true, None);
             (ck.errors.iter())
                 .map(|e| e.m.text.clone())
                 .collect::<Vec<_>>()
