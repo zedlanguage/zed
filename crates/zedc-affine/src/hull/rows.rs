@@ -13,7 +13,7 @@ use std::sync::Arc;
 use zed_collections::priority::Priorities;
 use zed_collections::treap::{self, Item, Node, Tree};
 
-use super::Form;
+use crate::form::Form;
 
 /// A row and its pivot: an item of the treap.
 struct Row<F: Form> {
@@ -228,8 +228,8 @@ fn open<F: Form>(stack: &mut Vec<Step<'_, F>>) {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::super::tests::Lin;
     use super::*;
+    use crate::form::tests::Lin;
     use zedc_int::int::Int;
 
     type Atom = Arc<str>;

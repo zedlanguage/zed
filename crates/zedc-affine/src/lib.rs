@@ -12,9 +12,11 @@
 //! vector to a unimodular matrix, LLL reduction under a quadratic form and Babai's nearest
 //! plane point. Module [`equalities`] solves a system's unit equalities and substitutes them
 //! out (the Gauss–Jordan step on unit pivots). Module [`hull`] holds the affine hull of a set
-//! of integer points as its equalities in echelon form, and their join (Karr's affine union).
+//! of integer points as its equalities in echelon form, and their join (Karr's affine union),
+//! over rows of the trait in module [`form`].
 
 pub mod equalities;
+pub mod form;
 pub mod hull;
 pub mod lines;
 pub mod plane;
