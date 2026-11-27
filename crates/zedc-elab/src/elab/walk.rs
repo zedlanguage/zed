@@ -60,6 +60,54 @@ fn main_key_inputs(key: &Expr) -> Option<Vec<&'static str>> {
     }
 }
 
+/// The outputs a row of `main`'s table may expect, each by the field of the same name of a
+/// value that is a record `{ stdout:, stderr:, status: }` (DESIGN.md, the row `f(x) = e test
+/// { … }` of the syntax table), in this order in the tuple `zedc`'s `rows.rs` reads; one left
+/// out is `""`, or 0 for `status`. A value that is no record is the standard output.
+pub const MAIN_VALUE: [&str; 3] = ["stdout", "stderr", "status"];
+
+/// Why the expected value `want` of a row of `main` is refused, at the span to show: a tuple,
+/// whose items named the outputs by place before the record was built (plan row
+/// MAIN-test-value-record), with the record as the repair, or a record with a field that is
+/// no output. `None` for any other value. O(f) for its f fields.
+fn main_value_refusal(want: &Expr) -> Option<(Span, String)> {
+    match &want.kind {
+        ExprKind::Tuple(items) => {
+            let fields: Vec<String> = (MAIN_VALUE.iter().zip(items))
+                .map(|(k, _)| format!("{k}: …"))
+                .collect();
+            let more = if items.len() > MAIN_VALUE.len() {
+                "; a value has at most the three fields `stdout`, `stderr` and `status`"
+            } else {
+                ""
+            };
+            Some((
+                want.span,
+                format!(
+                    "the expected value of a row of `main` is a String or a record of the run's \
+                     outputs, not a tuple: repair: write `{{ {} }}`, the fields in any order and \
+                     any of them left out{more}",
+                    fields.join(", ")
+                ),
+            ))
+        }
+        // A field given twice is refused where the record is read (`ast::builder`, the note at
+        // the first field), before elaboration.
+        ExprKind::Record(fields) => fields.iter().find_map(|(name, e)| {
+            (!MAIN_VALUE.contains(&name.as_str())).then(|| {
+                (
+                    e.span,
+                    format!(
+                        "`{name}` is not an output of a run: the expected value of a row of \
+                         `main` has the fields `stdout`, `stderr` and `status`"
+                    ),
+                )
+            })
+        }),
+        _ => None,
+    }
+}
+
 /// What a job gives back.
 enum Ret {
     /// Nothing yet.
@@ -190,6 +238,9 @@ enum Frame<'a> {
     FnTests(Box<FnF<'a>>),
     TestArgs(Box<TestsF<'a>>),
     TestWant(Box<TestsF<'a>>, Option<Vec<Term>>),
+    /// The fields of a record value of a row of `main` ([`MAIN_VALUE`]), once elaborated: the
+    /// row's table, its arguments and the fields.
+    MainWant(Box<TestsF<'a>>, Option<Vec<Term>>, &'a [(String, Expr)]),
     /// A call through the value of its callee, once the callee is elaborated.
     CallOf(Call<'a>),
     /// An atom's payload: the atom's name and its fields.
@@ -1053,7 +1104,15 @@ impl<'a> Elab<'a> {
     /// The next case of a function's test tables.
     fn test_case(&mut self, m: &mut M<'a>, mut tf: Box<TestsF<'a>>) {
         let f = tf.f;
-        while let Some((input, _)) = f.tests.get(tf.i) {
+        while let Some((input, expected)) = f.tests.get(tf.i) {
+            if f.main.is_some()
+                && let Some((span, msg)) = main_value_refusal(expected)
+            {
+                tf.ok = false;
+                self.error::<()>(span, msg);
+                tf.i += 1;
+                continue;
+            }
             // A row of `main` is keyed by the fields of `MainArgs`, not by the fields its body
             // reads: "the key may be a record `{ stdin:, args:, env:, files: }`" (DESIGN.md,
             // the row `f(x) = e test { … }` of the syntax table), each field the input of
@@ -3503,9 +3562,39 @@ impl<'a> Elab<'a> {
             }
             Frame::TestArgs(tf) => {
                 let args = all(m.got());
-                let expected = &tf.f.tests[tf.i].1;
+                let f = tf.f;
+                let expected = &f.tests[tf.i].1;
+                match &expected.kind {
+                    // The fields of a record value are its outputs (`main_value_refusal` has
+                    // refused any other field), elaborated one by one.
+                    ExprKind::Record(fields) if f.main.is_some() => {
+                        m.k(Frame::MainWant(tf, args, fields));
+                        m.seq(fields.iter().map(|(_, e)| e).collect(), true);
+                    }
+                    _ => {
+                        m.k(Frame::TestWant(tf, args));
+                        m.stack.push(Job::Expr(expected));
+                    }
+                }
+            }
+            Frame::MainWant(tf, args, fields) => {
+                // The tuple `(stdout, stderr, status)` `zedc`'s `rows.rs` reads, each output the
+                // record leaves out `""`, or 0 for `status`.
+                let want = all(m.got()).map(|ts| {
+                    let mut out = vec![
+                        Term::Lit(Value::str("")),
+                        Term::Lit(Value::str("")),
+                        Term::Lit(Value::Int(0)),
+                    ];
+                    for ((name, _), t) in fields.iter().zip(ts) {
+                        if let Some(i) = MAIN_VALUE.iter().position(|n| n == name) {
+                            out[i] = t;
+                        }
+                    }
+                    Term::Prim(Prim::Tuple, out)
+                });
                 m.k(Frame::TestWant(tf, args));
-                m.stack.push(Job::Expr(expected));
+                m.give(want);
             }
             Frame::TestWant(mut tf, args) => {
                 let want = m.t();

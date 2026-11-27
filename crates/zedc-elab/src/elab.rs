@@ -42,7 +42,7 @@ mod walk;
 use mark::Mark;
 use state::Elab;
 
-pub use walk::MAIN_KEY;
+pub use walk::{MAIN_KEY, MAIN_VALUE};
 pub use zedc_resolve::resolve::topo::{topo, topo_joined};
 pub use zedc_stage::defs::{CallNames, Def, Test, Unit, written_name};
 pub use zedc_stage::stage::Cones;

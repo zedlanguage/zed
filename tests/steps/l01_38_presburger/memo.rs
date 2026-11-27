@@ -57,3 +57,69 @@ fn a_question_under_other_names_is_answered_from_the_memo() {
     );
     assert_eq!(got, alone.1);
 }
+
+/// Red before PROOF-memo-off-test-flags, for each control but the first two and the solver's:
+/// with a memo open, a question asked again after a test control is set was answered from the
+/// memo, so a test that compares the paths a control selects compared an answer with itself.
+/// Each control here is set after the question was asked once, and the question asked again
+/// must reach the solver, then be answered from the memo once the control is cleared.
+#[test]
+fn a_test_control_set_after_a_question_asks_it_again() {
+    use zedc::store::presburger::exact::{
+        CLASS_ROOM_OFF, DIRECT_OFF, EXACT_LIMIT_SET, EXACT_OFF, GUARDED_OFF, METHOD, Method,
+        PART_CACHE_OFF, SHARED_OFF, SPARE_OFF, TWO_DISTRIBUTED_OFF, TWO_PIN_LINE_OFF,
+    };
+    use zedc::store::presburger::extend::counts::HOLE_ROUTE_OFF;
+    use zedc::store::presburger::{JOIN_LIMIT_SET, ROW_SUMS_JOIN, ROW_SUMS_OFF};
+    type Flag = std::thread::LocalKey<std::cell::Cell<bool>>;
+    let flags: [(&str, &'static Flag); 11] = [
+        ("EXACT_OFF", &EXACT_OFF),
+        ("DIRECT_OFF", &DIRECT_OFF),
+        ("GUARDED_OFF", &GUARDED_OFF),
+        ("SHARED_OFF", &SHARED_OFF),
+        ("PART_CACHE_OFF", &PART_CACHE_OFF),
+        ("TWO_DISTRIBUTED_OFF", &TWO_DISTRIBUTED_OFF),
+        ("TWO_PIN_LINE_OFF", &TWO_PIN_LINE_OFF),
+        ("CLASS_ROOM_OFF", &CLASS_ROOM_OFF),
+        ("SPARE_OFF", &SPARE_OFF),
+        ("ROW_SUMS_OFF", &ROW_SUMS_OFF),
+        ("ROW_SUMS_JOIN", &ROW_SUMS_JOIN),
+    ];
+    let set = |name: &str, on: bool| match name {
+        "EXACT_LIMIT_SET" => EXACT_LIMIT_SET.set(on.then_some(u64::MAX)),
+        "JOIN_LIMIT_SET" => JOIN_LIMIT_SET.set(on.then_some(u64::MAX)),
+        "METHOD" => METHOD.set(on.then_some(Method::Pugh)),
+        "HOLE_ROUTE_OFF" => HOLE_ROUTE_OFF.set(on),
+        _ => flags.iter().find(|(n, _)| *n == name).unwrap().1.set(on),
+    };
+    let names = flags.iter().map(|(n, _)| *n).chain([
+        "EXACT_LIMIT_SET",
+        "JOIN_LIMIT_SET",
+        "METHOD",
+        "HOLE_ROUTE_OFF",
+    ]);
+    let syms = [Atom::Sym("x".into()), Atom::Sym("y".into())];
+    let question = group("x", "y", "z");
+    let alone = sets(&question, &syms);
+    let store = ProjectionStore::default();
+    let _memo = ProjectionMemo::open_in(&store);
+    assert_eq!(sets(&question, &syms), alone);
+    for name in names {
+        set(name, true);
+        systems_solved();
+        let got = sets(&question, &syms);
+        let solved = systems_solved();
+        set(name, false);
+        assert!(
+            solved > 0,
+            "with {name} set, the question is asked again, not answered from the memo"
+        );
+        assert_eq!(got, alone, "{name}");
+        sets(&question, &syms);
+        assert_eq!(
+            systems_solved(),
+            0,
+            "{name} cleared: answered from the memo"
+        );
+    }
+}

@@ -2539,9 +2539,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// refusals of a stdin or args that is no String a checked program no longer reaches, by
     /// a key here or by a clause ([`Self::test_ports`]).
     ///
-    /// A row's value is the standard output, or `(stdout, stderr)`, or `(stdout, stderr,
-    /// status)` (`zedc`'s `rows.rs`); the status is checked here ([`Ck::row_status`]) after
-    /// the row's key, and the rest when the table runs.
+    /// A row's value is the standard output, or a record `{ stdout:, stderr:, status: }`, any
+    /// field left out `""`, or 0 for `status` (`zedc_elab`'s `MAIN_VALUE`; its `test_case`
+    /// refuses a tuple, plan row MAIN-test-value-record); the status is checked here
+    /// ([`Ck::row_status`]) after the row's key, and the rest when the table runs.
     ///
     /// Cost: one check of each key item, as of an argument, and of each status; the next
     /// item is found by its place `(row, k)`, O(1) a step.
@@ -2563,8 +2564,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.k(Frame::MainKey(s, f, (row, k), e, ty, self.errors.len()));
                 return m.job(Job::Arg(e, want));
             }
-            if let ExprKind::Tuple(items) = &want.kind
-                && let [_, _, status] = items.as_slice()
+            if let ExprKind::Record(fields) = &want.kind
+                && let Some((_, status)) = fields.iter().find(|(n, _)| n == "status")
             {
                 m.k(Frame::MainStatus(s, f, row, status));
                 return m.job(Job::Arg(status, Want::default()));
@@ -9938,7 +9939,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Not proved: a type variable of the function (a generic parameter whose class was made
     /// one), and the unknown `_`, are taken as fitting, since a caller's argument fixes them;
     /// a class narrowed to the values that are neither carrier still allows a tuple, which
-    /// only a call that passes one shows. Test:
+    /// only a call that passes one shows. The `_` cannot be written in this zedc (refused as
+    /// unsupported), so only the variable is reached; that each way of calling the function
+    /// checks the argument, case 1 of PROOF-sweep-zedc-check-rest, is by test, not proof:
+    /// `l01_26_type_resolution::soundness::a_payload_of_a_function_s_parameter_is_checked_at_each_way_of_calling_it`
+    /// (directly, passed on, nested, a lambda, a bound value, an argument, `map`). Test:
     /// `l01_27_absences::merge::an_errs_the_program_wrote_with_a_payload_that_is_no_set_of_failures_is_rejected`
     /// (its eight payloads), with the field, two-item, narrowed-parameter and accepted cases
     /// beside it in merge.rs, and `#bug` in loose.rs.
@@ -16095,6 +16100,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         // the three tests in `l01_26_type_resolution/soundness.rs` added with this test, and
         // 476 of 481 random seeds (the 5 others fail from an unrelated fault in the test).
         // If false, a program that takes apart, indexes or calls a number is accepted: unsound.
+        // Each kind of `NeedKind`, case 3 of PROOF-sweep-zedc-check-rest (2026-11-27): those
+        // that need a value of no carrier, `Component`, `Index`, `Destructure`, `Call`, `Into`
+        // at a closed type of no carrier, `Order` at a tuple, `Sum`, `SumMethod`, `Map` and
+        // `Entries` (`map`, `where`, `flatMap` with a lambda), `Group`, `Reduce`, `Fold`,
+        // `Zip`, `Remap`, `Concat`, `Level` (`count`, `first`, `any`) and `Strings` at its
+        // pieces (`concat`), are each refused on the literal `3` of `(3, 1)` taken apart and
+        // passed through a call, the use checked when the call binds it: test
+        // `l01_26_type_resolution::soundness::a_component_of_carriers_alone_is_refused_by_each_use_that_needs_another_value`.
+        // The others take a carrier or check no shape: `Data` (show, compare, key, merge),
+        // `Narrow` (an `is` test takes any value), `NoInt`, `Power` and `InDomain` (numbers),
+        // `Payload` (an `else` pattern, which a carrier never matches) and `Push` (the value
+        // checked as a push written there is); `Fwd` holds only `Entries`, `Call` and `Map`.
+        // By reading and test, not proof: a new kind needs a row in that test.
         self.class_of(p)
             .is_some_and(|k| self.classes[self.find(k)].mask & OTHER == 0)
     }
@@ -16878,9 +16896,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `check_on`, `meet` and `flow`; `meet` reads the masks of the classes of the type
     /// variables in `n` and `t` at the time of the check, so (b) is a property of every arm
     /// of `meet`, and an arm whose result is not monotone in those masks would refute it, as
-    /// would a program whose result changes with the order of the roots. No test checks the
-    /// order independence with use checks; the test
-    /// `tests::join_narrowed_joins_a_chain_whatever_the_order_of_its_roots` checks it without.
+    /// would a program whose result changes with the order of the roots. The test
+    /// `tests::join_narrowed_joins_a_chain_whatever_the_order_of_its_roots` checks the order
+    /// independence without use checks, and
+    /// `l01_26_type_resolution::narrowing::the_tested_classes_end_alike_whatever_the_order_of_their_tests_and_uses`
+    /// with them: a chain of three tested classes and a use, in all 24 orders, gives one
+    /// signature and one set of errors (PROOF-join-narrowed-rescan-rounds part (b), evidence,
+    /// not proof).
     // Complexity tradeoff (COMPLEXITY.md row F119): the naive version passes over the links
     // until no join changes a class, O(n²) for a chain of n links where each pass moves a
     // carrier one link (inferred). The two passes it was replaced with were O(n log n) but

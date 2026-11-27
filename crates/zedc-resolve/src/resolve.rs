@@ -2915,18 +2915,19 @@ impl Resolver<'_> {
                     body: &f.body,
                     this: None,
                 });
-                for (a, b) in f.tests.iter().rev() {
-                    todo.push(Task::Expr(b));
-                    match &a.kind {
-                        // The key of a row of `main` is a record of the run's inputs (DESIGN.md
-                        // "The operator inventory", row test table), which elaboration takes
-                        // apart by field, so it is no record display of a later step: its
-                        // values alone are walked.
-                        ExprKind::Record(fields) if f.main.is_some() => {
-                            todo.extend(fields.iter().rev().map(|(_, v)| Task::Expr(v)))
-                        }
-                        _ => todo.push(Task::Expr(a)),
+                // The key of a row of `main` is a record of the run's inputs, and its value a
+                // record of the run's outputs (DESIGN.md "The operator inventory", row test
+                // table), which elaboration takes apart by field, so neither is a record
+                // display of a later step: their values alone are walked.
+                let row_side = |todo: &mut Vec<Task<'a>>, e: &'a Expr| match &e.kind {
+                    ExprKind::Record(fields) if f.main.is_some() => {
+                        todo.extend(fields.iter().rev().map(|(_, v)| Task::Expr(v)))
                     }
+                    _ => todo.push(Task::Expr(e)),
+                };
+                for (a, b) in f.tests.iter().rev() {
+                    row_side(todo, b);
+                    row_side(todo, a);
                 }
                 self.test_ports(f, todo);
                 todo.extend(ports.iter().rev().map(|p| Task::Ty(&p.ty)));
@@ -3081,7 +3082,9 @@ impl Resolver<'_> {
             StmtKind::Local(d) => d,
             _ => decl,
         };
-        let mut marked = false;
+        // The first `@nonblocking` written before the declaration, which a second one's error
+        // notes (QUESTIONS A111, plan row MSG-multi-line-context).
+        let mut marked: Option<Span> = None;
         let mut facts: Vec<&Annot> = Vec::new();
         let is_main = self.scopes.len() <= TOP
             && matches!(&decl.kind, StmtKind::Function(f) if f.main.is_some());
@@ -3122,7 +3125,7 @@ impl Resolver<'_> {
                     unreachable!("an annotated declaration and a unit item are no `Decl`")
                 }
             };
-            let message = if marked {
+            let message = if marked.is_some() {
                 "`@nonblocking` is written twice before one declaration. Remove one.".into()
             } else if a.called {
                 "`@nonblocking` takes no arguments. Write `@nonblocking` alone before the \
@@ -3134,16 +3137,23 @@ impl Resolver<'_> {
                      it, or write it before a function declaration."
                 )
             } else {
-                marked = true;
+                marked.get_or_insert(a.span);
                 continue;
             };
-            marked = true;
+            let notes = match marked {
+                Some(first) => vec![Note {
+                    span: first,
+                    text: "the first `@nonblocking`".into(),
+                }],
+                None => Vec::new(),
+            };
+            marked.get_or_insert(a.span);
             self.errors.push(Error {
                 row: None,
                 menu: String::new(),
                 span: a.span,
                 message,
-                notes: Vec::new(),
+                notes,
             });
         }
     }
@@ -3213,6 +3223,14 @@ impl Resolver<'_> {
         } else {
             None
         };
+        // A second `@name` notes the first (QUESTIONS A111, plan row MSG-multi-line-context).
+        let notes = match seen.iter().find(|s| s.name == name) {
+            Some(first) if is_main => vec![Note {
+                span: first.span,
+                text: format!("the first `@{name}`").into(),
+            }],
+            _ => Vec::new(),
+        };
         seen.push(a);
         if let Some(message) = message {
             self.errors.push(Error {
@@ -3220,7 +3238,7 @@ impl Resolver<'_> {
                 menu: String::new(),
                 span: a.span,
                 message,
-                notes: Vec::new(),
+                notes,
             });
             return;
         }

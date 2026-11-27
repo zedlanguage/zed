@@ -10,6 +10,6 @@ main(m: MainArgs) {
   m.stderr <- if name == line { "unchanged" } else { "normalized \"${line}\"" };
 }
 test {
-  "eve\n" -> ("eve\n", "unchanged\n"),
-  "Ada\n" -> ("ada\n", "normalized \"Ada\"\n"),
+  "eve\n" -> { stdout: "eve\n", stderr: "unchanged\n" },
+  "Ada\n" -> { stdout: "ada\n", stderr: "normalized \"Ada\"\n" },
 }

@@ -20960,6 +20960,20 @@ impl Drop for ProjectionMemo {
 /// the reversed order, the check of the modular solver, and the test controls), so that
 /// [`project_each`] neither reads nor keeps an answer: those answers are asked as the flags
 /// say.
+///
+/// Every thread-local test control that `project_each_asked` reads on its way to an answer is
+/// listed: those of the solver here, of the join (`row_sums`: [`ROW_SUMS_OFF`],
+/// [`ROW_SUMS_JOIN`], [`JOIN_LIMIT_SET`]), of the cover (`meter`, and `exact::METHOD`, the
+/// in-cell method) and of the reading of call nodes (`extend::counts::HOLE_ROUTE_OFF`, which
+/// `Formula::atoms` reads). Each makes a test ask a question on another path than the one it
+/// was first asked on, to compare the two, or under another work limit, where the answer may
+/// be a refusal; with an answer kept from the first path, the comparison compares an answer
+/// with itself and a limit is not applied (PROOF-memo-off-test-flags; before it, the join's
+/// three, `METHOD`, `HOLE_ROUTE_OFF` and the cover's controls but `EXACT_OFF` and
+/// `EXACT_LIMIT_SET` were missing). `TWO_AT_A_TIME` is not read here: it changes how a
+/// formula is built (`Formula::and_keeping`), not how a built formula is asked, and the memo
+/// is keyed by the formula. Test:
+/// `l01_38_presburger::memo::a_test_control_set_after_a_question_asks_it_again`.
 fn memo_off() -> bool {
     old_path()
         || REVERSED.with(Cell::get)
@@ -20969,8 +20983,21 @@ fn memo_off() -> bool {
         || UNIT_RESCAN.with(Cell::get)
         || HULL_BISECT.with(Cell::get)
         || ROW_ORDER_SCAN.with(Cell::get)
+        || ROW_SUMS_OFF.with(Cell::get)
+        || ROW_SUMS_JOIN.with(Cell::get)
+        || JOIN_LIMIT_SET.with(|c| c.get().is_some())
         || meter::EXACT_OFF.with(Cell::get)
         || meter::EXACT_LIMIT_SET.with(|c| c.get().is_some())
+        || meter::DIRECT_OFF.with(Cell::get)
+        || meter::GUARDED_OFF.with(Cell::get)
+        || meter::SHARED_OFF.with(Cell::get)
+        || meter::PART_CACHE_OFF.with(Cell::get)
+        || meter::TWO_DISTRIBUTED_OFF.with(Cell::get)
+        || meter::TWO_PIN_LINE_OFF.with(Cell::get)
+        || meter::CLASS_ROOM_OFF.with(Cell::get)
+        || meter::SPARE_OFF.with(Cell::get)
+        || exact::METHOD.with(|c| c.get().is_some())
+        || extend::counts::HOLE_ROUTE_OFF.with(Cell::get)
 }
 
 /// [`project_each`] with no memo of the question as asked: the solver's answer made exact by

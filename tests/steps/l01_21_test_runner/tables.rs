@@ -58,12 +58,14 @@ fn a_main_row_compares_the_bytes_each_port_writes() {
 fn a_port_not_pushed_writes_nothing() {
     let src = "main(m: MainArgs) {\n  \
                m.stdout <- m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n}\n\
-               test { \"a\" -> (\"a\\n\", \"\"), \"a\" -> (\"a\\n\", \"warning\\n\") }\n";
+               test { \"a\" -> { stdout: \"a\\n\", stderr: \"\" }, \
+               \"a\" -> { stdout: \"a\\n\", stderr: \"warning\\n\" } }\n";
     assert_eq!(
         checks(src),
         [
             "4:8: ok",
-            "4:28: `\"a\" -> (\"a\\n\", \"warning\\n\")` of `main`: `m.stderr` writes \"\"",
+            "4:46: `\"a\" -> { stdout: \"a\\n\", stderr: \"warning\\n\" }` of `main`: `m.stderr` \
+             writes \"\"",
         ]
     );
 }
@@ -80,19 +82,22 @@ fn a_files_port_is_given_as_a_function_of_the_path() {
 fn a_row_of_the_wrong_shape_says_what_a_port_takes() {
     let src = "main(m: MainArgs) {\n  \
                m.stdout <- \"x\";\n  m.stderr <- \"y\";\n}\n\
-               test { \"\" -> \"x\\n\", \"\" -> (\"x\\n\", 2) }\n";
+               test { \"\" -> \"x\\n\", \"\" -> { stdout: \"x\\n\", stderr: 2 } }\n";
     assert_eq!(
         checks(src),
         [
             "5:8: ok",
-            "5:21: `\"\" -> (\"x\\n\", 2)` of `main`: the expected value of `m.stderr` is a String, \
-             not 2",
+            "5:21: `\"\" -> { stdout: \"x\\n\", stderr: 2 }` of `main`: the expected value of \
+             `m.stderr` is a String, not 2",
         ]
     );
     // A standard input that is no String is refused when the unit is checked (plan row
     // PORT-main-key-values-unchecked); until then `3 -> …` failed only its own row, with "the
     // `Lines` port `m.stdin` is given as a String, not 3".
-    let src = src.replace("test { ", "test { 3 -> (\"x\\n\", \"y\\n\"), ");
+    let src = src.replace(
+        "test { ",
+        "test { 3 -> { stdout: \"x\\n\", stderr: \"y\\n\" }, ",
+    );
     let got = checks(&src);
     assert_eq!(got.len(), 4, "{got:?}");
     assert!(got[0].contains("`main::stdin` does not take 3"), "{got:?}");
@@ -134,17 +139,19 @@ fn a_main_with_a_wrong_header_reports_once_and_runs_no_row() {
 
 #[test]
 fn a_main_row_may_give_the_exit_status() {
-    // The third item of the value is the status the run exits with, from 0 to 255.
+    // The field `status` of the value is the status the run exits with, from 0 to 255.
     let src = "main(m: MainArgs) -> int {\n  m.stdout <- \"x\";\n  \
                if (m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") == \"no\" { 3 } else { 0 }\n}\n\
-               test { \"no\" -> (\"x\\n\", \"\", 3), \"yes\" -> (\"x\\n\", \"\", 3), \
-               \"no\" -> (\"x\\n\", \"\", 255) }\n";
+               test { \"no\" -> { stdout: \"x\\n\", status: 3 }, \"yes\" -> { stdout: \"x\\n\", status: 3 }, \
+               \"no\" -> { stdout: \"x\\n\", status: 255 } }\n";
     assert_eq!(
         checks(src),
         [
             "5:8: ok",
-            "5:32: `\"yes\" -> (\"x\\n\", \"\", 3)` of `main`: the run exits with status 0",
-            "5:57: `\"no\" -> (\"x\\n\", \"\", 255)` of `main`: the run exits with status 3",
+            "5:46: `\"yes\" -> { stdout: \"x\\n\", status: 3 }` of `main`: the run exits with \
+             status 0",
+            "5:85: `\"no\" -> { stdout: \"x\\n\", status: 255 }` of `main`: the run exits with \
+             status 3",
         ]
     );
 }
@@ -154,10 +161,11 @@ fn a_main_row_expecting_a_status_past_255_is_rejected_before_it_runs() {
     // DESIGN.md: the `status` of a row of `main` is an `int[0..=255]`, the range of `main`'s
     // result, so a row expecting a status outside it is rejected at compile time (step
     // L1.19), whether the status is written as a literal or computed.
-    for (status, col) in [("256", 48), ("-1", 48), ("250 + 6", 48)] {
+    for (status, col) in [("256", 75), ("-1", 75), ("250 + 6", 75)] {
         let src = format!(
             "main(m: MainArgs) -> int {{\n  m.stdout <- \"x\";\n  0\n}}\n\
-             test {{ \"\" -> (\"x\\n\", \"\", 0), \"\" -> (\"x\\n\", \"\", {status}) }}\n"
+             test {{ \"\" -> {{ stdout: \"x\\n\", status: 0 }}, \
+             \"\" -> {{ stdout: \"x\\n\", status: {status} }} }}\n"
         );
         // The lines come in source order: both rows, then the error at the status.
         let got = checks(&src);
@@ -180,6 +188,51 @@ fn a_main_row_expecting_a_status_past_255_is_rejected_before_it_runs() {
             "{got:?}"
         );
     }
+}
+
+#[test]
+fn a_main_value_is_a_record_of_outputs_and_a_tuple_is_refused() {
+    // DESIGN.md: a row's value is the standard output or the record `{ stdout:, stderr:,
+    // status: }`; a tuple is refused with the record as the repair, as a key's is (plan row
+    // MAIN-test-value-record).
+    let head = "main(m: MainArgs) -> int {\n  m.stdout <- \"x\";\n  0\n}\n";
+    let got = checks(&format!("{head}test {{ \"\" -> (\"x\\n\", \"\", 0) }}\n"));
+    // The lines come in source order: the row at 5:8, then the error at the tuple.
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert!(
+        got[1].starts_with(
+            "5:14: the expected value of a row of `main` is a String or a record of the run's \
+             outputs, not a tuple: repair: write `{ stdout: …, stderr: …, status: … }`"
+        ),
+        "{got:?}"
+    );
+    assert!(
+        got[0].ends_with("of `main`: not run, since the unit is rejected"),
+        "{got:?}"
+    );
+    let got = checks(&format!(
+        "{head}test {{ \"\" -> {{ stdout: \"x\\n\", exit: 0 }} }}\n"
+    ));
+    assert!(
+        got.iter()
+            .any(|l| l.contains("`exit` is not an output of a run")),
+        "{got:?}"
+    );
+    let got = checks(&format!(
+        "{head}test {{ \"\" -> {{ stdout: \"x\\n\", stdout: \"y\" }} }}\n"
+    ));
+    // Refused where the record is read, with the note at the first field (QUESTIONS A111).
+    assert!(
+        got.iter()
+            .any(|l| l.contains("the field `stdout` is given twice")
+                && l.contains("the first field `stdout`")),
+        "{got:?}"
+    );
+    // The record's fields in any order, any of them left out.
+    let got = checks(&format!(
+        "{head}test {{ \"\" -> {{ status: 0, stdout: \"x\\n\" }}, \"\" -> {{ stdout: \"x\\n\" }} }}\n"
+    ));
+    assert_eq!(got, ["5:8: ok", "5:44: ok"]);
 }
 
 #[test]

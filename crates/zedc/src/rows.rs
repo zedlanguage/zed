@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Lookup, Shared, Term, Value, World};
 
-use crate::elab::{Cones, MAIN_KEY, Test};
+use crate::elab::{Cones, MAIN_KEY, MAIN_VALUE, Test};
 use crate::interp;
 use crate::run::{PortKind, Program, Through};
 
@@ -163,14 +163,15 @@ pub(crate) fn wave(
             program.run_main_through(&main, &lines, &args, |name| files[name].clone(), map)?
         }
     };
-    // The value is standard output, or `(stdout, stderr)`, or `(stdout, stderr, status)`;
-    // what it leaves out is `""`, and the status 0.
+    // The value is standard output, or the record `{ stdout:, stderr:, status: }`, which
+    // elaboration gives as the tuple `(stdout, stderr, status)`, what it leaves out `""`, and
+    // the status 0 (`zedc_elab`'s `MAIN_VALUE`; a tuple written as the value is refused there).
     let wants = match value(cones, swap, &t.want, map)? {
-        Value::Tuple(xs) if (2..=3).contains(&xs.len()) => xs.into_vec(),
+        Value::Tuple(xs) if xs.len() == MAIN_VALUE.len() => xs.into_vec(),
         v @ Value::Tuple(_) => {
             return Err(format!(
                 "the expected value of a row of `main` is the standard output of the run, as a \
-                 String, or the tuple `(stdout, stderr)` or `(stdout, stderr, status)`, not {v}"
+                 String, or the record `{{ stdout:, stderr:, status: }}`, not {v}"
             ));
         }
         v => vec![v],

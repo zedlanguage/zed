@@ -11131,9 +11131,29 @@ impl<'t, 'a> Ck<'t, 'a> {
                 hull: sig.hull.clone(),
                 facts: Default::default(),
             };
+            // A bound that lets values of no carrier in is not printed in the signature, which
+            // has no syntax for it (`Scope::open`), so the carriers it leaves out are said in
+            // words, at the parameter whose type is the bounded variable: `T -> #errs(T),
+            // where the argument `s` is not int | …` for the payload of `#errs` (plan row
+            // MSG-takes-note-hides-bound). By the parameter, not the variable: the printer
+            // names such a variable only where it stands twice, in a walk after this one
+            // (`VarSlot::Free`), so its name is not known here. A bounded variable inside a
+            // parameter's type, `[T]`, is not said. O(parameters) beside the text.
+            let mut text = format!("{what} takes {}", self.sig_text(&one));
+            let left_out = (arrow.params.iter().zip(&one.params))
+                .filter_map(|(t, p)| Some((p, *one.bounds.get(t.as_var()?)?)))
+                .filter(|&(_, m)| m & OTHER != 0 && m != EVERY)
+                .map(|(p, m)| {
+                    let out = Carrier::of_mask(EVERY & !OTHER & !m);
+                    format!("the argument `{}` is not {}", p.name, carriers_text(out))
+                })
+                .collect::<Vec<_>>();
+            if !left_out.is_empty() {
+                text = format!("{text}, where {}", left_out.join(" and "));
+            }
             out.push(Note {
                 span,
-                text: format!("{what} takes {}", self.sig_text(&one)).into(),
+                text: text.into(),
             });
         }
         out

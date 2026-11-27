@@ -64,6 +64,65 @@ fn without_a_test_the_whole_union_must_fit() {
 }
 
 #[test]
+fn the_tested_classes_end_alike_whatever_the_order_of_their_tests_and_uses() {
+    // Plan row PROOF-join-narrowed-rescan-rounds (b): each test `if a is int { a } else { b }`
+    // links the class of `a` to the class it gives, which holds `b`'s, and the uses (`* 2`,
+    // `len`, `+`) are checked when their classes are joined, so the joins run with use checks
+    // inside them (`Ck::join_narrowed`). The statements are independent, and each of their 24
+    // orders makes the classes, and so their roots and links, in another order; the
+    // signature and the errors are the same in every order.
+    let parts = [
+        "  x1 = if a is int { a } else { b };\n",
+        "  x2 = if b is int { b } else { c };\n",
+        "  x3 = if c is int { c + 1 } else { d };\n",
+        "  y = d * 2;\n",
+    ];
+    for last in ["", "  z = len(d);\n"] {
+        let mut seen: Option<(String, Vec<String>)> = None;
+        for order in permutations(4) {
+            let body: String = order.iter().map(|&i| parts[i]).collect();
+            let text = format!(
+                "f(positional a, positional b, positional c, positional d) {{\n{body}{last}  \
+                 return (x1, x2, x3, y);\n}}\n"
+            );
+            let mut errors = type_errors(&text);
+            errors.sort();
+            let got = (
+                if errors.is_empty() {
+                    sig(&text, "f")
+                } else {
+                    String::new()
+                },
+                errors,
+            );
+            match &seen {
+                None => seen = Some(got),
+                Some(first) => assert_eq!(&got, first, "{text}"),
+            }
+        }
+        // The program with `len(d)` beside `d * 2` is rejected, and the one without accepted.
+        let (sig, errors) = seen.expect("24 orders");
+        assert_eq!(last.is_empty(), errors.is_empty(), "{sig} {errors:?}");
+    }
+}
+
+/// Every order of `0..n`.
+fn permutations(n: usize) -> Vec<Vec<usize>> {
+    if n == 0 {
+        return vec![Vec::new()];
+    }
+    let mut out = Vec::new();
+    for rest in permutations(n - 1) {
+        for at in 0..=rest.len() {
+            let mut p = rest.clone();
+            p.insert(at, n - 1);
+            out.push(p);
+        }
+    }
+    out
+}
+
+#[test]
 fn a_condition_must_be_bool() {
     assert_eq!(
         type_errors("c = if 1 { 2 } else { 3 };\n"),

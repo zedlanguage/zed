@@ -1009,6 +1009,141 @@ fn equal_destructurings_are_each_refused_in_every_order() {
     }
 }
 
+#[test]
+fn a_component_of_carriers_alone_is_refused_by_each_use_that_needs_another_value() {
+    // Plan row PROOF-sweep-zedc-check-rest, case 3: `Ck::carriers_only` (walk.rs) assumes
+    // that every use that needs a tuple, a family or a function refuses a class of carriers
+    // alone. Here the class is the literal `3` of `(3, 1)`, taken apart in `h` and passed
+    // through `hh`, so the use is checked when the call binds it; each use kind of `NeedKind`
+    // that needs a value of no carrier, with the words of its refusal.
+    let defs = |use_: &str| {
+        format!(
+            "inc(positional x) = x + 1;\ng(positional t: (int, int)) = t[0];\n\
+             h(positional p) {{\n  a, b = p;\n  return {use_};\n}}\nhh(positional p) = h(p);"
+        )
+    };
+    for (use_, words) in [
+        ("a[1]", "`[1]` takes a tuple, not 3"),
+        ("{ k = 1; a[k] }", "this value is 3, not a function"),
+        (
+            "{ x, y = a; x }",
+            "apart into 2 names: it is not a tuple of 2",
+        ),
+        ("a(1)", "`a` is 3, not a function"),
+        ("g(a)", "`g` does not take 3, only (int, int)"),
+        // `min` on a tuple refuses the call of `hh` itself.
+        ("min(a, (1, 2))", "`hh` does not take ((3, 1))"),
+        ("sum(a)", "`sum` does not take (3)"),
+        ("a.sum", "`sum` does not take (3)"),
+        ("a.map(x -> x + 1)", "`map` works on each entry of a family"),
+        ("a.map(inc)", "`map` works on each entry of a family"),
+        (
+            "a.where(x -> x > 1)",
+            "`where` works on each entry of a family",
+        ),
+        (
+            "a.flatMap(x -> [x])",
+            "`flatMap` works on each entry of a family",
+        ),
+        (
+            "a.group(v -> v)",
+            "`group` works on the entries of a family",
+        ),
+        ("a >< (+)", "`><` folds the entries of a family"),
+        (
+            "a.foldl(0, (s, x) -> s + x)",
+            "`foldl` folds the entries of a family",
+        ),
+        ("a.zip([1])", "`zip` reads the entries of a family"),
+        (
+            "a as (k -> v) into (k -> v)",
+            "a remap rearranges the keys of a family",
+        ),
+        ("a.count", "`count` reads the entries of a family"),
+        ("a.first", "`first` reads the entries of a family"),
+        ("a ++ [1]", "`++` joins two lists or two strings"),
+        ("concat(a)", "`concat`"),
+        ("a.any(x -> x > 1)", "`any` reads the entries of a family"),
+    ] {
+        let e = rejected(&defs(use_), "\"${hh((3, 1))}\"");
+        assert!(e.contains(words), "{use_}: {e}");
+    }
+}
+
+#[test]
+fn a_payload_of_a_function_s_parameter_is_checked_at_each_way_of_calling_it() {
+    // Plan row PROOF-sweep-zedc-check-rest, case 1: `Ck::fixed_payload_fits` takes a class
+    // of the function as fitting the payload of `#bug` or `#errs`, since a caller's argument
+    // fixes it. Each way a call reaches the function checks the argument: directly, through a
+    // function that passes it on, a nested function, a lambda, a value bound to the
+    // function, a function passed as an argument, and `map`.
+    for (defs, call, words) in [
+        (
+            "f(positional s) = #bug(s);",
+            "f(5)",
+            "`f` does not take (5)",
+        ),
+        (
+            "f(positional s) = #errs(s);",
+            "f(5)",
+            "`f` does not take (5)",
+        ),
+        (
+            "f(positional s) = #bug(s);\nh(positional k) = f(k);",
+            "h(5)",
+            "`h` does not take (5)",
+        ),
+        (
+            "f(positional s) {\n  g(positional t) = #bug(t);\n  return g(s);\n}",
+            "f(5)",
+            "`f` does not take (5)",
+        ),
+        (
+            "f(positional s) = (t -> #bug(t))(s);",
+            "f(5)",
+            "`f` does not take (5)",
+        ),
+        (
+            "f(positional s) = #bug(s);\nk = f;",
+            "k(5)",
+            "`k` does not take (5)",
+        ),
+        (
+            "ap(positional g, positional x) = g(x);\nf(positional s) = #bug(s);",
+            "ap(f, 5)",
+            "`g` does not take (5)",
+        ),
+        (
+            "f(positional s) = #bug(s);",
+            "[1, 2].map(f)",
+            "the function given to `map` does not take (1 | 2)",
+        ),
+    ] {
+        let errors = r_errors(defs, call);
+        assert_eq!(errors.len(), 1, "{defs}\n{call}: {errors:?}");
+        assert!(errors[0].contains(words), "{defs}\n{call}: {errors:?}");
+    }
+    // Plan row MSG-takes-note-hides-bound: the note of what `f` takes says the bound on its
+    // variable, which the signature cannot print, so the refusal of `int` is explained; the
+    // printer names that variable only where it stands twice, so the note says it by the
+    // parameter.
+    let e = rejected(
+        "f(positional s) = #errs(s);\ng(positional y: int) = f(y);",
+        "\"x\"",
+    );
+    let note = e
+        .lines()
+        .find(|l| l.contains("`f` takes T"))
+        .unwrap_or_else(|| panic!("{e}"));
+    assert!(
+        note.contains("`f` takes T -> #errs(T), where the argument `s` is not "),
+        "{e}"
+    );
+    for c in ["int", "f64", "rat", "String", "bool", "f32"] {
+        assert!(note.contains(c), "{c}: {e}");
+    }
+}
+
 /// The `stdout` expression that is `"int"` or `"other"` as the value of `call` is an `int` or
 /// not. The `is` test takes a value of any type, so only the uses in the functions called can
 /// reject the program.

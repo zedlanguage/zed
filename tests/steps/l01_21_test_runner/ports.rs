@@ -46,12 +46,14 @@ fn a_clause_gives_the_arguments_and_the_environment() {
                m.stderr <- m.env(\"HOME\") else #notFound -> \"none\";\n}\n\
                test with main::args = \"q\\n\", \
                main::env = { \"HOME\" -> \"/h\" } \
-               { \"a\" -> (\"aq\\n\", \"/h\\n\"), \"b\" -> (\"bq\\n\", \"none\\n\") }\n";
+               { \"a\" -> { stdout: \"aq\\n\", stderr: \"/h\\n\" }, \
+               \"b\" -> { stdout: \"bq\\n\", stderr: \"none\\n\" } }\n";
     assert_eq!(
         checks(src),
         [
             "5:64: ok",
-            "5:89: `\"b\" -> (\"bq\\n\", \"none\\n\")` of `main`: `m.stderr` writes \"/h\\n\"",
+            "5:107: `\"b\" -> { stdout: \"bq\\n\", stderr: \"none\\n\" }` of `main`: `m.stderr` \
+             writes \"/h\\n\"",
         ]
     );
 }
@@ -66,12 +68,14 @@ fn a_row_that_writes_a_port_compares_its_writes_and_status() {
                m.stderr <- fs[\"b\"] else #ioError -> \"no b\" else #notFound -> \"no b\";\n  \
                if (fs[\"b\"] else #ioError -> \"\" else #notFound -> \"\") == \"\" { 1 } else { 0 }\n}\n\
                test with main::files = { \"a\" -> \"x\" } \
-               { \"\" -> (\"x\\n\", \"no b\\n\", 1), \"\" -> (\"x\\n\", \"no b\\n\") }\n";
+               { \"\" -> { stdout: \"x\\n\", stderr: \"no b\\n\", status: 1 }, \
+               \"\" -> { stdout: \"x\\n\", stderr: \"no b\\n\" } }\n";
     assert_eq!(
         checks(src),
         [
             "7:42: ok",
-            "7:70: `\"\" -> (\"x\\n\", \"no b\\n\")` of `main`: the run exits with status 1",
+            "7:96: `\"\" -> { stdout: \"x\\n\", stderr: \"no b\\n\" }` of `main`: the run exits \
+             with status 1",
         ]
     );
 }

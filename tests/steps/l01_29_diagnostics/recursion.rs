@@ -271,7 +271,9 @@ pub(super) fn a_long_cycle_checked((_, stmts, res): &Resolved, n: usize) {
 
 #[test]
 fn reporting_and_checking_a_long_cycle() {
-    for n in [2, 3, 12] {
+    // A cycle is noted at every step, past the five lines a derivation is cut to (QUESTIONS
+    // A111, plan row MSG-multi-line-context: a cycle of 7 steps printed whole).
+    for n in [2, 3, 7, 12] {
         let unit = a_long_cycle(n);
         the_report_of_a_long_cycle(&unit, n);
         a_long_cycle_checked(&unit, n);
