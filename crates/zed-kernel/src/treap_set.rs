@@ -62,8 +62,9 @@
 //! 8-wise independence (plan row PROOF-join-work-limited-independence). Keys at one point tie
 //! whatever the draw; which keys share a point is said at each [`Elem`] implementation.
 //!
-//! Every walk keeps a stack of its own, and a set is dropped in a loop, so the stack needed does
-//! not depend on a set's height.
+//! Every walk keeps a stack of its own, and a set is dropped by a recursion of at most
+//! [`DEEPEST`] levels that goes on in a loop past them, so the stack needed does not depend on a
+//! set's height.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -187,24 +188,70 @@ thread_local! {
     static IS_SUBSET_WORK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// A set is freed in a loop, a node whose last handle goes handing its children on, so a set of
-/// any height is dropped on a small stack (`zed_collections::treap` drops recursively instead,
-/// and says what the loop cost there).
+// A set is freed by [`free`]: a node whose last handle goes is freed, its right child next in the
+// same loop and its left child by a call one level deeper, and past [`DEEPEST`] levels of calls
+// the rest goes to [`free_in_a_loop`], which keeps the handles on a vector. The stack needed is
+// then at most `DEEPEST` frames of `free` (each holding one `Node<T>`) and one of
+// `free_in_a_loop`, whatever the set's height; a tall set, a path of keys whose priorities fall
+// as the keys rise (`a_path_of_keys_chosen_against_the_fixed_draw_is_dropped_on_a_small_stack`),
+// reaches the vector. A key whose own drop frees another set starts a new count, as each `Node::drop` does,
+// so a set of sets needs `DEEPEST` frames per level of nesting; the nesting is that of the key
+// types, a constant.
+//
+// Complexity tradeoff: freeing every node through the vector (the drop this replaced) made a
+// vector for each drop of a node with a child to free, and pushed and popped each node freed.
+// Instructions at the two sizes of zed-kernel `treap_set::bench`, the loop drop against this one
+// (l42, 2026-11-26, dry-coll, measured on 4b5f0326f): "HashConsTable::share of 2n sets {i, -i}"
+// 50,330,923 / 402,312,592 against 39,846,252 / 318,729,513 (20.8% fewer), "HashConsTable::share
+// of 2n distinct sets" 512,569,625 / 5,105,550,554 against 502,109,511 / 5,021,870,381 (2.0%
+// fewer), every other bench of that run within 1.3%. A drop with no vector at all, recursing on
+// both children, measured the same (39,825,269 / 318,781,956) but needs a stack as deep as the
+// set.
+
+/// The levels of calls [`free`] makes before it hands a subtree to [`free_in_a_loop`]. A treap of
+/// random priorities has the shape of a random binary search tree, whose height is
+/// `4.311... ln n` asymptotically (L. Devroye, "A note on the height of binary search trees",
+/// J. ACM 33(3), 1986, doi:10.1145/5925.5930): about 96 at `n = 2^32`, and `free` counts only the
+/// left edges of a path. So a set of random keys is freed with no vector, and only a tall set (keys
+/// tied at one point, or chosen against the draw) reaches it.
+const DEEPEST: u32 = 128;
+
 impl<T> Drop for Node<T> {
+    #[inline]
     fn drop(&mut self) {
-        let mut stack: Vec<Node<T>> = Vec::new();
-        let free = |c: Tree<T>, stack: &mut Vec<Node<T>>| {
-            if let Some(c) = c
-                && let Ok(n) = Arc::try_unwrap(c)
-            {
-                stack.push(n);
-            }
+        free(self.left.take(), 1);
+        free(self.right.take(), 1);
+    }
+}
+
+/// Frees the nodes of `t` that no other tree holds, `depth` frames of [`free`] below the node
+/// dropped: down the left child by a call, along the right one by the loop.
+#[inline]
+fn free<T>(mut t: Tree<T>, depth: u32) {
+    while let Some(a) = t {
+        let Some(mut n) = Arc::into_inner(a) else {
+            return;
         };
-        free(self.left.take(), &mut stack);
-        free(self.right.take(), &mut stack);
-        while let Some(mut n) = stack.pop() {
-            free(n.left.take(), &mut stack);
-            free(n.right.take(), &mut stack);
+        let left = n.left.take();
+        t = n.right.take();
+        drop(n);
+        if depth < DEEPEST {
+            free(left, depth + 1);
+        } else {
+            free_in_a_loop(left);
+        }
+    }
+}
+
+/// Frees the nodes of `t` that no other tree holds, with a stack of handles of its own.
+#[cold]
+#[inline(never)]
+fn free_in_a_loop<T>(t: Tree<T>) {
+    let mut stack: Vec<Arc<Node<T>>> = t.into_iter().collect();
+    while let Some(a) = stack.pop() {
+        if let Some(mut n) = Arc::into_inner(a) {
+            stack.extend(n.left.take());
+            stack.extend(n.right.take());
         }
     }
 }

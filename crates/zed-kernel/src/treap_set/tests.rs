@@ -570,3 +570,32 @@ fn comparing_and_combining_tall_tied_sets() {
     assert_eq!(keys(a.difference(&other)), vec![n - 1]);
     assert!(a.difference(&other).is_subset(&a) && a.intersection(&other).is_subset(&a));
 }
+
+fn a_path_against_seed_0(n: u64) -> TreapSet<i64> {
+    let band = u64::MAX / n;
+    let mut keys = Vec::new();
+    let mut k = 0i64;
+    for j in 0..n {
+        loop {
+            k += 1;
+            if k.priority() / band == j {
+                break;
+            }
+        }
+        keys.push(k);
+    }
+    let s: TreapSet<i64> = keys.into_iter().collect();
+    let (mut height, mut t) = (0, &s.root);
+    while let Some(m) = t {
+        assert!(m.right.is_none(), "not a path");
+        (height, t) = (height + 1, &m.left);
+    }
+    assert_eq!(height, n);
+    s
+}
+
+#[test]
+fn a_path_of_keys_chosen_against_the_fixed_draw_is_dropped_on_a_small_stack() {
+    let s = a_path_against_seed_0(2048);
+    crate::scaling::on_a_stack(64 * 1024, move || drop(s));
+}
