@@ -26859,6 +26859,104 @@ mod tests {
         assert_eq!(t.to_string(), "(_, int)");
     }
 
+    /// A recursive type stands among the type variables by its name, as the order of a union
+    /// puts named types (DESIGN.md sec:diagnostics); before, it stood first, `L(int) | A | Z`
+    /// (MSG-union-order-rest). Named `T` or after beside marks, it is sorted with them once
+    /// they are named ([`Ty::write_vars`]). `_ \ c`, a difference, still stands first.
+    #[test]
+    fn a_recursive_type_stands_among_the_variables_by_its_name() {
+        use zed_kernel::types::rec::{Def, Expr, Group};
+        let list = |name: &str| {
+            let tail = Expr::Ref(0, vec![Expr::Param(0)]);
+            let body = Expr::Union(vec![
+                Expr::Type(KType::atom("nil")),
+                Expr::Atom("cons".into(), vec![Expr::Param(0), tail]),
+            ]);
+            let def = Def {
+                name: name.into(),
+                params: vec!["a".into()],
+                body,
+            };
+            Group::new(vec![def])
+                .unwrap()
+                .instance(vec![KType::int()])
+                .remove(0)
+        };
+        let v = |n: &str| Ty::var(n.into());
+        // Variables printed by names a function around the text binds (`Scope::around`); a
+        // variable no signature binds would print `_` (DESIGN.md sec:diagnostics, "Types in a
+        // message").
+        let plain = |_: &Value| zed_kernel::types::Spelled {
+            text: None,
+            everywhere: true,
+        };
+        let names: [(Arc<str>, Arc<str>); 3] = [
+            ("A".into(), "A".into()),
+            ("Z".into(), "Z".into()),
+            ("L'".into(), "L'".into()),
+        ];
+        let named = Ty::set(list("L")).union(&v("A")).union(&v("Z"));
+        assert_eq!(named.text_named(false, &plain, &names), "A | L(int) | Z");
+        // By its name `L`, which comes before `L'`; by its text it would not, `(` being
+        // below `'` (SPEC-union-order-recursive).
+        let primed = Ty::set(list("L")).union(&v("L'"));
+        assert_eq!(primed.text_named(false, &plain, &names), "L(int) | L'");
+        // A run of digits compares as a number, `T5` before `T10` (NAME-cmp-digit-runs).
+        let digits: [(Arc<str>, Arc<str>); 2] =
+            [("T10".into(), "T10".into()), ("T5".into(), "T5".into())];
+        let runs = v("T10").union(&v("T5"));
+        assert_eq!(runs.text_named(false, &plain, &digits), "T5 | T10");
+        // Beside two marks, the own variables of a signature that stand twice each, named
+        // between them in order of first place.
+        let mut marked = one_of(
+            v("A"),
+            Ty::tuple(vec![
+                Ty::set(list("Ta")).union(&v("A")).union(&v("B")),
+                v("B"),
+            ]),
+        );
+        marked.own = ["A".into(), "B".into()].into_iter().collect();
+        assert_eq!(marked.to_string(), "T -> (T | Ta(int) | U, U)");
+        // Named before `T`, before the marks.
+        let mut early = one_of(v("A"), Ty::set(list("L")).union(&v("A")));
+        early.own = ["A".into()].into_iter().collect();
+        assert_eq!(early.to_string(), "T -> L(int) | T");
+        let rest = Ty::set(&KType::top() - &KType::atom("x")).union(&v("A"));
+        assert!(rest.to_string().starts_with("(_ \\ #x)"), "{rest}");
+    }
+
+    /// Tuples print by their components, "a shorter tuple before a longer one that starts the
+    /// same way", and two payloads of one atom by theirs (DESIGN.md sec:diagnostics,
+    /// MSG-union-order-tuples): one type written in two orders prints one text. Before, the
+    /// tuple shapes printed in the order they were written.
+    #[test]
+    fn tuples_print_by_their_components_a_shorter_one_first() {
+        let atom = |n: &str| Ty::set(KType::atom(n));
+        let int = || Ty::set(KType::int());
+        let pair = |x: Ty, y: Ty| Ty::tuple(vec![x, y]);
+        let ba = pair(int(), atom("b")).union(&pair(int(), atom("a")));
+        let ab = pair(int(), atom("a")).union(&pair(int(), atom("b")));
+        assert_eq!(ba.to_string(), "(int, #a) | (int, #b)");
+        assert_eq!(ab.to_string(), ba.to_string());
+        // A shorter tuple first, written after or before the longer.
+        let one = Ty::tuple(vec![int()]);
+        let long = pair(int(), atom("a")).union(&one);
+        assert_eq!(long.to_string(), "(int,) | (int, #a)");
+        assert_eq!(
+            one.union(&pair(int(), atom("a"))).to_string(),
+            long.to_string()
+        );
+        // The first component decides, by the order of a union: `int` before `_`, which comes
+        // last; a variable standing in one place prints `_` (DESIGN.md sec:diagnostics).
+        let var = pair(Ty::var("A".into()), atom("a")).union(&pair(int(), atom("b")));
+        assert_eq!(var.to_string(), "(int, #b) | (_, #a)");
+        // Two payloads of one atom, by their components.
+        let p = |x: Ty| Ty::atom_of("p", vec![x], BTreeMap::new());
+        let pb = p(atom("b")).union(&p(atom("a")));
+        let pa = p(atom("a")).union(&p(atom("b")));
+        assert_eq!(pb.to_string(), pa.to_string());
+    }
+
     /// An atom whose payload is not known (`None`) equals only an atom whose payload is not
     /// known either, and a union in which one member's payload is not known has a payload not
     /// known, in either order ([`join_payloads`]; row TEST-types-unreached-paths-3).
