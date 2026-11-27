@@ -5,8 +5,8 @@
 # max(base, 10.5 × t1), each counted from the phase's own start. Run from a checkout's root;
 # about 25 s. The base here is 1 s, not 20 s, so the test is short; the scaling side's numbers at
 # 20 s are tested in tests/src/scaling_tests.rs (bench_limit_*). It writes only
-# build/test-bench-limit.limit and build/test-bench-limit.pid, which each run overwrites and none
-# deletes.
+# build/test-bench-limit.limit, build/test-bench-limit.pid and the fake cargo's files in
+# build/test-bench-limit-bin, which each run overwrites and none deletes.
 limit=$(pwd)/tools/bench_limit.sh
 file=$(pwd)/build/test-bench-limit.limit
 mkdir -p build
@@ -64,6 +64,45 @@ else
   state=gone
 fi
 check "a command stopped at its limit takes the process it started with it" "124 gone" "$stopped $state"
+# A cargo test or cargo bench command builds its test binaries outside every limit
+# (FARM-bench-line-compile-in-limit): a bench line `tools/bench_limit.sh 20 <file> cargo test ...`
+# of b22-kept5's job 33 spent its first phase's 20 s rebuilding the zed-kernel dylib (7.log:
+# Compiling zed-kernel, then the stop), so the bench never ran and read as a slow one. A fake
+# cargo, first on PATH, stands for it: a first call builds for 1.5 s (a marker file, emptied before each
+# case, then says it is built), a call with --no-run then ends, and a run takes 0.3 s; each call's arguments go to a
+# file. The base is 1 s, so a build inside the limit is stopped.
+bin=$(pwd)/build/test-bench-limit-bin
+mkdir -p "$bin"
+cat >"$bin/cargo" <<'EOF'
+#!/bin/bash
+echo "$*" >>"$FAKE_CARGO_DIR/calls"
+[ -z "${FAKE_CARGO_FAIL-}" ] || exit 101
+[ -s "$FAKE_CARGO_DIR/built" ] || { sleep 1.5; echo built >"$FAKE_CARGO_DIR/built"; }
+for a; do [ "$a" = --no-run ] && exit 0; done
+sleep 0.3
+EOF
+chmod +x "$bin/cargo"
+# Runs cargo with the arguments under a base limit of 1 s, from a fresh fake build, and prints
+# its exit code and then each call's arguments, a line each.
+run_cargo() {
+  : >"$bin/calls"
+  : >"$bin/built"
+  PATH=$bin:$PATH FAKE_CARGO_DIR=$bin "$limit" 1 "$file" cargo "$@" 2>/dev/null
+  echo $?
+  cat "$bin/calls"
+}
+check "a cargo test command is built before its first phase starts" \
+  "0
+test -p zed-tests --test l01_38 --no-run
+test -p zed-tests --test l01_38 -- bench:: --exact" \
+  "$(run_cargo test -p zed-tests --test l01_38 -- bench:: --exact)"
+check "a cargo bench command is built so too" "0
+bench -p a --no-run
+bench -p a" "$(run_cargo bench -p a)"
+check "a failed build ends with cargo's exit code and runs nothing" "101
+test -p a --no-run" "$(FAKE_CARGO_FAIL=1 run_cargo test -p a)"
+check "another command is not built first, so its build is in the limit (negative control)" "124
+check -p a" "$(run_cargo check -p a)"
 # A command that ignores SIGTERM gets SIGKILL 5 s later; not run here (6 s).
 [ "$fails" = 0 ] || { echo "$fails FAILED"; exit 1; }
 echo "all passed"
