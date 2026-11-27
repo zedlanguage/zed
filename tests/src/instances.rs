@@ -50,6 +50,26 @@ pub fn bmc_floats() -> Vec<Value> {
     BMC_FLOATS.iter().map(|&x| Value::float(x)).collect()
 }
 
+/// All `k!` permutations of `0..k`, the `j`th by the factorial digits of `j` (the Lehmer
+/// code), so in lexicographic order.
+pub fn permutations(k: usize) -> Vec<Vec<usize>> {
+    let count: usize = (1..=k).product();
+    let perms: Vec<Vec<usize>> = (0..count)
+        .map(|mut j: usize| {
+            let mut left: Vec<usize> = (0..k).collect();
+            let mut p = Vec::with_capacity(k);
+            for f in (1..=k).rev() {
+                let fact: usize = (1..f).product();
+                p.push(left.remove(j / fact));
+                j %= fact;
+            }
+            p
+        })
+        .collect();
+    assert_eq!(perms.iter().collect::<BTreeSet<_>>().len(), count);
+    perms
+}
+
 /// Every sequence of at most `max_len` elements of `alphabet`, in shortlex order: by length,
 /// then lexicographically in the alphabet's order.
 pub fn shortlex<T: Clone>(alphabet: &[T], max_len: usize) -> Vec<Vec<T>> {

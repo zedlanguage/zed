@@ -1321,7 +1321,7 @@ fn an_atom_the_factored_formula_leaves_out_keeps_its_own_set() {
     use zedc::store::interval::IntervalSet;
     use zedc::store::presburger::project_each;
     let base = ["a", "b", "c", "d"];
-    for p in super::canonical::permutations(4) {
+    for p in zed_tests::instances::permutations(4) {
         let n = |x: usize| base[p[x]];
         let (a, b, c, d) = (n(0), n(1), n(2), n(3));
         let u = and(vec![

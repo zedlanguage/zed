@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use zed_tests::instances::Rng;
+use zed_tests::instances::{Rng, permutations};
 use zedc::store::presburger::{self, Atom, Con, Lin, Rel};
 
 fn var(name: &str) -> Atom {
@@ -78,25 +78,6 @@ pub(super) fn random(rng: &mut Rng, n: usize, rows: usize, prefix: &str) -> Vec<
 
 fn distinct(c: &BTreeMap<Atom, u64>) -> usize {
     c.values().collect::<BTreeSet<_>>().len()
-}
-
-/// All k! permutations of 0..k, the j-th by the factorial digits of j.
-pub(super) fn permutations(k: usize) -> Vec<Vec<usize>> {
-    let count: usize = (1..=k).product();
-    let perms: Vec<Vec<usize>> = (0..count)
-        .map(|mut j: usize| {
-            let mut left: Vec<usize> = (0..k).collect();
-            let mut p = Vec::new();
-            for f in (1..=k).rev() {
-                let fact: usize = (1..f).product();
-                p.push(left.remove(j / fact));
-                j %= fact;
-            }
-            p
-        })
-        .collect();
-    assert_eq!(perms.iter().collect::<BTreeSet<_>>().len(), count);
-    perms
 }
 
 /// `sys` with `base[i]` renamed to `base[p[i]]`, and its rows reversed.
