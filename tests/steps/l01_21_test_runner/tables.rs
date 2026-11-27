@@ -72,7 +72,7 @@ fn a_port_not_pushed_writes_nothing() {
 fn a_files_port_is_given_as_a_function_of_the_path() {
     let src = "main(m: MainArgs) {\n  fs = main::files;\n  \
                m.stdout <- (fs[\"a.txt\"] else #ioError -> \"\" else #notFound -> \"\") ++ (fs[\"b.txt\"] else #ioError -> \"\" else #notFound -> \"\");\n}\n\
-               test { (\"\", \"\", (n -> #notFound), (p -> if p == \"a.txt\" { \"1\" } else { \"2\" })) -> \"12\\n\" }\n";
+               test { (\"\", \"\", {}, (p -> if p == \"a.txt\" { \"1\" } else { \"2\" })) -> \"12\\n\" }\n";
     assert_eq!(checks(src), ["5:8: ok"]);
 }
 
@@ -80,17 +80,22 @@ fn a_files_port_is_given_as_a_function_of_the_path() {
 fn a_row_of_the_wrong_shape_says_what_a_port_takes() {
     let src = "main(m: MainArgs) {\n  \
                m.stdout <- \"x\";\n  m.stderr <- \"y\";\n}\n\
-               test { 3 -> (\"x\\n\", \"y\\n\"), \"\" -> \"x\\n\", \"\" -> (\"x\\n\", 2) }\n";
+               test { \"\" -> \"x\\n\", \"\" -> (\"x\\n\", 2) }\n";
     assert_eq!(
         checks(src),
         [
-            "5:8: `3 -> (\"x\\n\", \"y\\n\")` of `main`: the `Lines` port `m.stdin` is given as a \
-             String, not 3",
-            "5:29: ok",
-            "5:42: `\"\" -> (\"x\\n\", 2)` of `main`: the expected value of `m.stderr` is a String, \
+            "5:8: ok",
+            "5:21: `\"\" -> (\"x\\n\", 2)` of `main`: the expected value of `m.stderr` is a String, \
              not 2",
         ]
     );
+    // A standard input that is no String is refused when the unit is checked (plan row
+    // PORT-main-key-values-unchecked); until then `3 -> …` failed only its own row, with "the
+    // `Lines` port `m.stdin` is given as a String, not 3".
+    let src = src.replace("test { ", "test { 3 -> (\"x\\n\", \"y\\n\"), ");
+    let got = checks(&src);
+    assert_eq!(got.len(), 4, "{got:?}");
+    assert!(got[0].contains("`main::stdin` does not take 3"), "{got:?}");
 }
 
 #[test]
@@ -180,7 +185,7 @@ fn a_main_row_expecting_a_status_past_255_is_rejected_before_it_runs() {
 #[test]
 fn a_main_key_of_more_than_four_items_is_rejected() {
     let src = "main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n\
-               test { (\"\", \"\", (n -> #notFound), (p -> #notFound), \"\") -> \"x\\n\" }\n";
+               test { (\"\", \"\", {}, {}, \"\") -> \"x\\n\" }\n";
     let got = checks(src);
     // The rejection rejects the unit, so the row is also reported as not run.
     assert_eq!(got.len(), 2, "{got:?}");

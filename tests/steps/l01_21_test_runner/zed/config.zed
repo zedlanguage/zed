@@ -6,8 +6,8 @@ main(m: MainArgs) {
   m.stdout <- "mode=${mode}" else #ioError -> "app.conf is unreadable";
 }
 test {
-  ("", "", (n -> #notFound), (path -> if path == "app.conf" { "  verbose  \n" } else { #notFound }))
-    -> "mode=verbose\n",
-  ("", "", (n -> #notFound), (path -> #notFound)) -> "mode=quiet\n",
-  ("", "", (n -> #notFound), (path -> #ioError)) -> "app.conf is unreadable\n",
+  ("", "", {}, { "app.conf" -> "  verbose  \n" }) -> "mode=verbose\n",
+  ("", "", {}, {}) -> "mode=quiet\n",
+  ("", "", {}, (path -> #ioError(op: "read", path: path, why: "denied")))
+    -> "app.conf is unreadable\n",
 }

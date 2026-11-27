@@ -80,7 +80,7 @@ fn a_row_that_writes_a_port_compares_its_writes_and_status() {
 fn an_input_given_by_the_key_and_the_clause_is_rejected() {
     let src = "main(m: MainArgs) {\n  m.stdout <- main::files[\"a\"] else #ioError -> \"\" else #notFound -> \"\";\n}\n\
                test with main::files = (p -> \"1\") \
-               { (\"\", \"\", (n -> #notFound), (p -> \"2\")) -> \"2\\n\" }\n";
+               { (\"\", \"\", {}, (p -> \"2\")) -> \"2\\n\" }\n";
     let got = checks(src);
     assert_eq!(
         got[0],
@@ -269,6 +269,65 @@ fn a_clause_value_of_the_ports_type_is_accepted() {
                main(m: MainArgs) {\n  m.stdout <- size(\"a\");\n}\n";
     let got = checks(src);
     assert_eq!(got.len(), 4, "{got:?}");
+    assert!(got.iter().all(|g| g.ends_with(": ok")), "{got:?}");
+}
+
+#[test]
+fn a_key_item_outside_its_inputs_type_is_rejected() {
+    // A row of `main` keyed `(stdin, args, env, files)` gives each input "a value of the
+    // port's type `K ->? V`, so a function given there answers only values of `V`, never
+    // `#notFound` for a key it lacks" (DESIGN.md, the row `f(x) = e test { … }` of the syntax
+    // table; plan row PORT-main-key-values-unchecked), and `stdin` and `args` as Strings. So
+    // each item is checked as the clause giving the same input is. Before, the lambdas were
+    // accepted, and a key that was no String failed only when its row ran.
+    let main = "main(m: MainArgs) {\n  \
+                m.stdout <- (main::files[\"a\"] else #ioError -> \"io\" else #notFound -> \"none\") \
+                ++ (m.env(\"A\") else #notFound -> \"-\");\n}\n";
+    let row = |key: &str| rejected(&format!("{main}test {{ {key} -> \"x\" }}\n"));
+    let got = row("(\"\", \"\", (n -> #notFound))");
+    assert!(got.contains("answers `#notFound`"), "{got}");
+    let got = row("(\"\", \"\", {}, (p -> if p == \"a\" { \"x\" } else { #notFound }))");
+    assert!(got.contains("answers `#notFound`"), "{got}");
+    assert!(
+        got.contains("repair: give the keys present as a display, as `{ \"a\" -> \"x\" }`"),
+        "{got}"
+    );
+    let got = row("(\"\", \"\", {}, (p -> 5))");
+    assert!(
+        got.contains("the lambda returns") && got.contains("5") && got.contains("String"),
+        "{got}"
+    );
+    // A real file port gives `#ioError(op:, path:, why:)`, never the bare atom: "The bare `#a`
+    // matches `#a` with any payload or none" says a pattern does (DESIGN.md sec:steps, L1,
+    // the paragraph on the family marking), and "a payload pattern ... keeps the bare `#e`"
+    // says the bare atom is a value apart from its payloads; the port's type lists only the
+    // payload (`io_error` in zedc-check, read by zedc-types' `payload_set`).
+    let got = row("(\"\", \"\", {}, (p -> #ioError))");
+    assert!(!got.ends_with(": ok") && got.contains("#ioError"), "{got}");
+    let got = row("(\"\", \"\", {}, 5)");
+    assert!(got.contains("`main::files` does not take 5"), "{got}");
+    let got = row("(\"\", 3)");
+    assert!(got.contains("`main::args` does not take 3"), "{got}");
+    let got = row("3");
+    assert!(got.contains("`main::stdin` does not take 3"), "{got}");
+    let got = row("(\"\", \"\", 4)");
+    assert!(got.contains("`main::env` does not take 4"), "{got}");
+}
+
+#[test]
+fn a_key_item_of_its_inputs_type_is_accepted() {
+    // A display, the empty display `{}`, a total lambda, and a lambda that gives the port's
+    // own failure, each in a key; items left off the key's end are empty.
+    let src = "main(m: MainArgs) {\n  \
+               m.stdout <- (main::files[\"a\"] else #ioError -> \"io\" else #notFound -> \"none\") \
+               ++ (m.env(\"A\") else #notFound -> \"-\");\n}\n\
+               test { (\"\", \"\", { \"A\" -> \"1\" }, { \"a\" -> \"x\" }) -> \"x1\\n\", \
+               (\"\", \"\", {}, {}) -> \"none-\\n\", \
+               (\"\", \"\", (n -> \"2\"), (p -> \"y\")) -> \"y2\\n\", \
+               (\"\", \"\", {}, (p -> #ioError(op: \"read\", path: p, why: \"gone\"))) -> \"io-\\n\", \
+               (\"in\", \"a\\nb\") -> \"none-\\n\", \"\" -> \"none-\\n\" }\n";
+    let got = checks(src);
+    assert_eq!(got.len(), 6, "{got:?}");
     assert!(got.iter().all(|g| g.ends_with(": ok")), "{got:?}");
 }
 

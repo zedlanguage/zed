@@ -67,6 +67,22 @@ pub(super) fn clause_tables(n: usize, rows: usize) -> String {
     text
 }
 
+/// `main` with one table of `n` rows, each keyed by all four inputs `(stdin, args, env,
+/// files)`, the environment a display and the files a lambda, every row reading both.
+pub(super) fn keyed_rows(n: usize) -> String {
+    let mut text = String::from(
+        "main(m: MainArgs) {\n  m.stdout <- (main::files[\"a\"] else #ioError -> \"\" else #notFound -> \"\") \
+         ++ (m.env(\"A\") else #notFound -> \"\");\n}\ntest {\n",
+    );
+    for i in 0..n {
+        text.push_str(&format!(
+            "  (\"\", \"\", {{ \"A\" -> \"{i}\" }}, (p -> \"f\")) -> \"f{i}\\n\",\n"
+        ));
+    }
+    text.push_str("}\n");
+    text
+}
+
 /// `text` with the front end's result held, so that a run of its rows on a copy of the `Db`
 /// times the rows alone.
 pub(super) fn warm(text: String) -> (String, Db) {
@@ -116,6 +132,7 @@ fn the_rows_of_each_benchmark_unit_run_at_small_sizes() {
         elaborates_rows(&checked(&wide_row(n)), 1);
         elaborates_rows(&checked(&clause_tables(n, 1)), n);
         all_rows_pass(&warm(clause_tables(1, n)), n);
+        all_rows_pass(&warm(keyed_rows(n)), n);
     }
 }
 

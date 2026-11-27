@@ -64,6 +64,18 @@ fn checking_tables_with_clauses_scales() {
 }
 
 #[test]
+fn checking_the_keys_of_many_main_rows_scales() {
+    // The checker checks each item of each key of `main`'s rows against its input's type
+    // (plan row PORT-main-key-values-unchecked), finding the next item by its place `(row,
+    // k)`, O(1) a step: a step that counted the rows from the first would be quadratic in them.
+    let n = 400;
+    let texts = inputs(n, keyed_rows);
+    check("checking the four-item keys of n rows of main", n, |m| {
+        checked(&texts[&m]);
+    });
+}
+
+#[test]
 fn the_rows_of_tables_with_clauses_scale() {
     // Rows × clauses: elaborating `n` tables of one row each finds each row's clause by a
     // cursor that moves forward, and running `n` rows of one clause gives each row the clause's

@@ -87,16 +87,22 @@ fn a_main_row_gives_the_arguments_one_per_line() {
     let src = "main(m: MainArgs) {\n  \
                m.stdout <- \"${m.args[0] else #outOfBounds -> \"-\"}+${m.args[1] else #outOfBounds -> \"-\"}\";\n}\n\
                test { (\"\", \"a\\nb c\\n\") -> \"a+b c\\n\", (\"\", \"only\") -> \"only+-\\n\", \
-               \"\" -> \"-+-\\n\", (\"\", 3) -> \"\" }\n";
-    assert_eq!(
-        checks(src),
-        [
-            "4:8: ok",
-            "4:39: ok",
-            "4:67: ok",
-            "4:82: `(\"\", 3) -> \"\"` of `main`: the `CommandLine` port `m.args` is given as a String, \
-             one argument per line, not 3",
-        ]
+               \"\" -> \"-+-\\n\" }\n";
+    assert_eq!(checks(src), ["4:8: ok", "4:39: ok", "4:67: ok"]);
+    // Arguments given as anything but a String are refused when the unit is checked (plan row
+    // PORT-main-key-values-unchecked), before any row runs; until then `("", 3)` failed only
+    // its own row, when it ran.
+    let src = src.replace(
+        "\"\" -> \"-+-\\n\" }",
+        "\"\" -> \"-+-\\n\", (\"\", 3) -> \"\" }",
+    );
+    let got = checks(&src);
+    // The rejection, then each of the four rows as not run.
+    assert_eq!(got.len(), 5, "{got:?}");
+    assert!(got[0].contains("`main::args` does not take 3"), "{got:?}");
+    assert!(
+        (got.iter().skip(1)).all(|g| g.ends_with("not run, since the unit is rejected")),
+        "{got:?}"
     );
 }
 

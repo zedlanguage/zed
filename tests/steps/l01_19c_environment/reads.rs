@@ -116,8 +116,8 @@ fn the_environment_is_a_field_of_main_args() {
 #[test]
 fn a_main_row_gives_the_environment_as_a_function() {
     let src = format!(
-        "{TWO}test {{ (\"\", \"\", (n -> if n == \"ZED_A\" {{ \"1\" }} else {{ #notFound }})) -> \"1|-\\n\", \
-         (\"\", \"\", (n -> \"v\")) -> \"v|v\\n\", (\"\", \"\", (n -> #notFound)) -> \"x\" }}\n"
+        "{TWO}test {{ (\"\", \"\", {{ \"ZED_A\" -> \"1\" }}) -> \"1|-\\n\", \
+         (\"\", \"\", (n -> \"v\")) -> \"v|v\\n\", (\"\", \"\", {{}}) -> \"x\" }}\n"
     );
     let got = checks(&src);
     assert_eq!(got.len(), 3, "{got:?}");
