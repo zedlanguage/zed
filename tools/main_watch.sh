@@ -185,6 +185,24 @@ short() { git -C "$repo" rev-parse --short=9 "$1"; }
 
 # fixed_of <known line>: the commit its `fixed-by <commit>` names (fields after the row), if any.
 fixed_of() { awk '{ for (i = 3; i < NF; i++) if ($i == "fixed-by") { print $(i + 1); exit } }' <<<"$1"; }
+# unhash: each line on stdin with the build hash of cargo's form (- and 16 hexadecimal digits)
+# taken off the first name of its first field, `<kind>:<binary>-<hash>[::<path>]`, so
+# test:zed_kernel-647156406bbd16e1::x becomes test:zed_kernel::x; a line without `<kind>:` is
+# taken as a bare piece name. A library's unit tests and benchmarks are named after their
+# binary, hash and all, and the hash changes with each build of the library: the same piece had
+# one name at the head and another at a bisect step or in a known line, so a known failure
+# written without the hash, as FAIL-main-escape-tied-true's was, was never matched
+# (MAINWATCH-lib-piece-hash, 2026-11-27). Every name the watcher reads from a run goes through
+# this, and so does every known line, so the names it compares, stores and passes on are
+# without the hash; tools/run_tests.sh --only and --except select a piece by its name with the
+# hash taken off (`selected` and the --except loop there), so a name without it runs the same
+# piece. No group, step or test name holds a - followed by 16 hexadecimal digits before `::`
+# (tools/run_tests.sh, at --only), so nothing else is changed. Test: tools/test_main_watch.sh
+# case hash. It is defined here, above the --pieces branch below, because the process that
+# branch starts runs run_pieces, and with it known_lines, before the rest of this file is read:
+# defined after that branch, unhash was no command there, known_lines printed nothing, and a
+# piece marked skip was run (test_main_watch.sh case skip).
+unhash() { sed -E 's/^(([a-z]+:)?[A-Za-z0-9_]+)-[0-9a-f]{16}(::| |$)/\1\3/'; }
 # known_lines <commit> in|fixed: `in`, the lines of the known list in force at the commit, as
 # written: all but comments, blank lines, and lines whose fixed-by commit the commit contains (is
 # an ancestor of it, or is it); `fixed`, those last lines alone. Why the first is the right set:
@@ -313,21 +331,6 @@ run() {
   reap "$(cat "$o.sid" 2>/dev/null)" "$o.out" >&2
   echo "$o.out"
 }
-# unhash: each line on stdin with the build hash of cargo's form (- and 16 hexadecimal digits)
-# taken off the first name of its first field, `<kind>:<binary>-<hash>[::<path>]`, so
-# test:zed_kernel-647156406bbd16e1::x becomes test:zed_kernel::x; a line without `<kind>:` is
-# taken as a bare piece name. A library's unit tests and benchmarks are named after their
-# binary, hash and all, and the hash changes with each build of the library: the same piece had
-# one name at the head and another at a bisect step or in a known line, so a known failure
-# written without the hash, as FAIL-main-escape-tied-true's was, was never matched
-# (MAINWATCH-lib-piece-hash, 2026-11-27). Every name the watcher reads from a run goes through
-# this, and so does every known line, so the names it compares, stores and passes on are
-# without the hash; tools/run_tests.sh --only and --except select a piece by its name with the
-# hash taken off (`selected` and the --except loop there), so a name without it runs the same
-# piece. No group, step or test name holds a - followed by 16 hexadecimal digits before `::`
-# (tools/run_tests.sh, at --only), so nothing else is changed. Test: tools/test_main_watch.sh
-# case hash.
-unhash() { sed -E 's/^(([a-z]+:)?[A-Za-z0-9_]+)-[0-9a-f]{16}(::| |$)/\1\3/'; }
 # The pieces of kind $2 that failed, or passed, in the output $1, as <kind>:<piece>, one a line,
 # without the build hash (unhash); a failed build is <kind>:BUILD.
 failed_in() {
