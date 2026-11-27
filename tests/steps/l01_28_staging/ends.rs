@@ -9,7 +9,7 @@ use zed_kernel::{FixKind, GuardPos, Pattern, Prim, Term};
 use zed_tests::instances::Rng;
 use zedc::stage::{ends, reading};
 
-pub(super) fn app(f: Term, args: Vec<Term>) -> Term {
+fn app(f: Term, args: Vec<Term>) -> Term {
     Term::App(Shared::new(f), args)
 }
 
@@ -21,7 +21,7 @@ fn if_(c: Term, a: Shared, b: Shared) -> Term {
     Term::If(Shared::new(c), a, b)
 }
 
-pub(super) fn prim(p: Prim, args: Vec<Term>) -> Term {
+fn prim(p: Prim, args: Vec<Term>) -> Term {
     Term::Prim(p, args)
 }
 

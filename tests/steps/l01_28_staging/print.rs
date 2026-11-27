@@ -68,7 +68,7 @@ pub(super) fn lets(d: usize) -> Term {
 /// node `B = { z1 = { q = Q; (q, 1) }; …; zm = { q = Q; (q, m) }; (z1, …, zm) }` and the `m`
 /// blocks one node `Q = x1 + … + xk`: `Q` reads `k` names each bound in two places, and is
 /// held in `m` places, each under a binder of `q`, which is bound in `m` places too.
-pub(super) fn wide(k: usize, m: usize) -> Term {
+fn wide(k: usize, m: usize) -> Term {
     let x = |i: usize| format!("x{i}");
     let q = (2..=k).fold(Term::Var(x(1).into()), |s, i| {
         prim(Prim::Add, vec![s, Term::Var(x(i).into())])
