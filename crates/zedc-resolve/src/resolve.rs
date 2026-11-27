@@ -2917,7 +2917,16 @@ impl Resolver<'_> {
                 });
                 for (a, b) in f.tests.iter().rev() {
                     todo.push(Task::Expr(b));
-                    todo.push(Task::Expr(a));
+                    match &a.kind {
+                        // The key of a row of `main` is a record of the run's inputs (DESIGN.md
+                        // "The operator inventory", row test table), which elaboration takes
+                        // apart by field, so it is no record display of a later step: its
+                        // values alone are walked.
+                        ExprKind::Record(fields) if f.main.is_some() => {
+                            todo.extend(fields.iter().rev().map(|(_, v)| Task::Expr(v)))
+                        }
+                        _ => todo.push(Task::Expr(a)),
+                    }
                 }
                 self.test_ports(f, todo);
                 todo.extend(ports.iter().rev().map(|p| Task::Ty(&p.ty)));

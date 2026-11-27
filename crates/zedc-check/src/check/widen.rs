@@ -44,15 +44,15 @@
 //! others. The bound on k is DESIGN's, 128 (test
 //! `l01_29_diagnostics::widen::a_reduction_by_a_power_of_two_up_to_2_to_the_128_does_not_warn`,
 //! with 2^129 and 2^128 + 2 as controls that warn; row DOC-widen-model-narrower-than-design).
-//! Still narrower than DESIGN: the operand widths a warning names are the signed `i8` to
-//! `i64`, where DESIGN names the narrowest of `i8`…`i128` and `u8`…`u128`. An operand is
-//! always an interval inside `i64` here (a value past the word is any `int`), so `i128` never
-//! applies; the unsigned names wait on row SPEC-widen-unsigned-width-names, since DESIGN does
-//! not say which of `i8` and `u8` names a value both hold. This changes only the text of a
-//! notice, never which operations are reported.
+//! The operand widths a warning names are the narrowest of `i8`…`i64` and `u8`…`u32` (DESIGN
+//! names `i8`…`i128` and `u8`…`u128`). An operand is always an interval inside `i64` here (a
+//! value past the word is any `int`), so `i128`, `u64` and `u128` never apply. DESIGN does not
+//! say which of `i8` and `u8` names a value both hold; `width` takes the signed one while
+//! QUESTIONS A232 waits (row SPEC-widen-unsigned-width-names). That choice changes only the
+//! text of a notice, never which operations are reported.
 //!
-//! The warning names the value, the widths of the operands (the narrowest of `i8`, `i16`,
-//! `i32` and `i64` that holds each) and the interval the operation gives, and shows the
+//! The warning names the value, the widths of the operands (the narrowest name that holds
+//! each, as `width` says) and the interval the operation gives, and shows the
 //! derivation of each operand's interval from its literals and bindings, and the repair.
 //! It does not stop the build.
 //!
@@ -662,7 +662,10 @@ impl<'t, 'a> Walk<'t, 'a> {
         let widths: Vec<String> = operands
             .iter()
             .filter_map(|&d| values[d as usize])
-            .map(|w| format!("an {}", width(w)))
+            .map(|w| match width(w) {
+                name @ ("i8" | "i16" | "i32" | "i64") => format!("an {name}"),
+                name => format!("a {name}"),
+            })
             .collect();
         let label = self.labels[&n.root].text();
         let message = format!(
@@ -824,15 +827,25 @@ fn interval(lo: i128, hi: i128) -> String {
     }
 }
 
-/// The narrowest of `i8`, `i16`, `i32` and `i64` that holds `w`.
+/// The narrowest of `i8`…`i64` and `u8`…`u32` that holds `w` (DESIGN.md sec:domains). Of two
+/// names of one width that both hold `w`, as `i8` and `u8` both hold `0..=127`, the signed
+/// one: DESIGN does not say which (QUESTIONS A232, answer (a) in force); every answer A232
+/// offers agrees with this function wherever only one name of the narrowest width holds `w`.
+/// `u64` never applies, since an operand is inside `i64`; nor do `i128` and `u128`.
 fn width((lo, hi): Word) -> &'static str {
     let holds = |min: i64, max: i64| min <= lo && hi <= max;
     if holds(i8::MIN.into(), i8::MAX.into()) {
         "i8"
+    } else if holds(0, u8::MAX.into()) {
+        "u8"
     } else if holds(i16::MIN.into(), i16::MAX.into()) {
         "i16"
+    } else if holds(0, u16::MAX.into()) {
+        "u16"
     } else if holds(i32::MIN.into(), i32::MAX.into()) {
         "i32"
+    } else if holds(0, u32::MAX.into()) {
+        "u32"
     } else {
         "i64"
     }

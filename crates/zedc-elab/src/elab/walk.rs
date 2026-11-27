@@ -36,11 +36,29 @@ use fp_ops::Quantifier;
 use zedc_check::check::ty::{Carrier, Sig};
 use zedc_syntax::ast::Param;
 
-/// The inputs a row of `main`'s table gives, by the position of each in a key that is a tuple:
-/// standard input, the arguments one per line, the environment as a function of the name, and
-/// the files as a function of the path (DESIGN.md sec:syntax_tour, `test`), each the field of
-/// `MainArgs` that gives it, or `main::files`.
+/// The inputs a row of `main`'s table may give, each by the field of the same name of a key
+/// that is a record `{ stdin:, args:, env:, files: }`: standard input, the arguments one per
+/// line, the environment as a function of the name, and the files as a function of the path
+/// (DESIGN.md, the row `f(x) = e test { … }` of the syntax table), each written as the field
+/// of `MainArgs` that gives it, or `main::files`. A key that is no record is the standard
+/// input, the first.
 pub const MAIN_KEY: [&str; 4] = ["stdin", "args", "env", "main::files"];
+
+/// The input of [`MAIN_KEY`] the field `name` of a key of `main`, or the port `main::name`
+/// of a clause, gives.
+fn main_input(name: &str) -> Option<&'static str> {
+    (MAIN_KEY.iter().copied()).find(|k| k.strip_prefix("main::").unwrap_or(k) == name)
+}
+
+/// The inputs of [`MAIN_KEY`] a key of `main`'s table gives, in the order of `args`: a record
+/// its fields', and any other key the standard input. `None` for a record with a field that
+/// is no input, which [`Elab::test_case`] refuses.
+fn main_key_inputs(key: &Expr) -> Option<Vec<&'static str>> {
+    match &key.kind {
+        ExprKind::Record(fields) => fields.iter().map(|(n, _)| main_input(n)).collect(),
+        _ => Some(vec![MAIN_KEY[0]]),
+    }
+}
 
 /// What a job gives back.
 enum Ret {
@@ -334,10 +352,7 @@ impl<'a> TestsF<'a> {
 /// field of `main` (on another function's table, only `main::files`), and the resolver no name.
 fn main_field(port: &PortName) -> Option<&'static str> {
     match port {
-        PortName::Main(f, _) => MAIN_KEY
-            .iter()
-            .copied()
-            .find(|k| k.strip_prefix("main::").unwrap_or(k) == f),
+        PortName::Main(f, _) => main_input(f),
         PortName::Name(..) => None,
     }
 }
@@ -1040,26 +1055,61 @@ impl<'a> Elab<'a> {
         let f = tf.f;
         while let Some((input, _)) = f.tests.get(tf.i) {
             // A row of `main` is keyed by the fields of `MainArgs`, not by the fields its body
-            // reads (DESIGN.md sec:syntax_tour, `test`): standard input as a String, or the
-            // tuple `(stdin, args, env, files)` of [`MAIN_KEY`], items left off its end empty.
+            // reads: "the key may be a record `{ stdin:, args:, env:, files: }`" (DESIGN.md,
+            // the row `f(x) = e test { … }` of the syntax table), each field the input of
+            // [`MAIN_KEY`] of its name and the inputs it leaves out empty, or standard input
+            // alone. A tuple, whose items named the inputs by place before the record was
+            // built (plan row DESIGN-main-key-record-vs-tuple), is refused with the record.
             let args = match (&input.kind, f.params.len()) {
                 (ExprKind::Tuple(items), _) if f.main.is_some() => {
-                    if items.len() > MAIN_KEY.len() {
-                        tf.ok = false;
-                        self.error::<()>(
-                            input.span,
+                    let fields: Vec<String> = (MAIN_KEY.iter().zip(items))
+                        .map(|(k, _)| format!("{}: …", k.strip_prefix("main::").unwrap_or(k)))
+                        .collect();
+                    let more = if items.len() > MAIN_KEY.len() {
+                        "; a key has at most the four fields `stdin`, `args`, `env` and `files`"
+                    } else {
+                        ""
+                    };
+                    tf.ok = false;
+                    self.error::<()>(
+                        input.span,
+                        format!(
+                            "a test key of `main` is a String or a record of the run's inputs, \
+                             not a tuple: repair: write `{{ {} }}`, the fields in any order and \
+                             any of them left out{more}",
+                            fields.join(", ")
+                        ),
+                    );
+                    tf.i += 1;
+                    continue;
+                }
+                (ExprKind::Record(fields), _) if f.main.is_some() => {
+                    // At most four fields are seen before a refusal, so `contains` is O(1).
+                    let mut seen = Vec::with_capacity(MAIN_KEY.len());
+                    let refusal = fields.iter().find_map(|(name, e)| match main_input(name) {
+                        None => Some((
+                            e.span,
                             format!(
-                                "a test key of `main` is the standard input of the run, as a \
-                                 String, or the tuple `(stdin, args, env, files)` of its inputs, \
-                                 with the items left off its end empty, and this key has {} \
-                                 items",
-                                items.len()
+                                "`{name}` is not an input of a run: a test key of `main` has \
+                                 the fields `stdin`, `args`, `env` and `files`"
                             ),
-                        );
+                        )),
+                        Some(k) if seen.contains(&k) => Some((
+                            e.span,
+                            format!("this key gives `{name}` twice; give it once"),
+                        )),
+                        Some(k) => {
+                            seen.push(k);
+                            None
+                        }
+                    });
+                    if let Some((span, msg)) = refusal {
+                        tf.ok = false;
+                        self.error::<()>(span, msg);
                         tf.i += 1;
                         continue;
                     }
-                    items.iter().collect()
+                    fields.iter().map(|(_, e)| e).collect()
                 }
                 _ if f.main.is_some() => vec![input],
                 (_, 1) => vec![input],
@@ -1083,8 +1133,8 @@ impl<'a> Elab<'a> {
             let mut args = args;
             if let Some(clause) = tf.clause() {
                 let keyed = match f.main {
-                    Some(_) => &MAIN_KEY[..args.len()],
-                    None => &MAIN_KEY[..0],
+                    Some(_) => main_key_inputs(input).unwrap_or_default(),
+                    None => Vec::new(),
                 };
                 let twice = (clause.ports.iter())
                     .find(|p| main_field(&p.port).is_some_and(|k| keyed.contains(&k)));
@@ -3470,11 +3520,21 @@ impl<'a> Elab<'a> {
                         // the checker decided the identities of the folds it runs.
                         let kernel = self.fkernel(tf.id, input.span);
                         let callee = Shared::new(Term::Var(kernel.clone()));
-                        // The inputs of `main` a clause gives the row, by field; their values
-                        // end `args`, and the call takes the key's alone.
-                        let ports: Vec<&'static str> = (tf.clause().into_iter())
-                            .flat_map(|c| &c.ports)
-                            .filter_map(|p| main_field(&p.port))
+                        // The inputs of `main` a record key gives the row, then those its
+                        // clause gives, by field; their values end `args`, and the call takes
+                        // the key's alone: a String key of `main`, or another function's.
+                        let named = match (&input.kind, tf.f.main.is_some()) {
+                            (ExprKind::Record(_), true) => {
+                                main_key_inputs(input).unwrap_or_default()
+                            }
+                            _ => Vec::new(),
+                        };
+                        let ports: Vec<&'static str> = (named.into_iter())
+                            .chain(
+                                (tf.clause().into_iter())
+                                    .flat_map(|c| &c.ports)
+                                    .filter_map(|p| main_field(&p.port)),
+                            )
                             .collect();
                         let keyed = args[..args.len() - ports.len()].to_vec();
                         let call = self.row_call(tf.f, input, callee, keyed);

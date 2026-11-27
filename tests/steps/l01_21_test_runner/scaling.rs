@@ -76,7 +76,7 @@ pub(super) fn keyed_rows(n: usize) -> String {
     );
     for i in 0..n {
         text.push_str(&format!(
-            "  (\"\", \"\", {{ \"A\" -> \"{i}\" }}, (p -> \"f\")) -> \"f{i}\\n\",\n"
+            "  {{ stdin: \"\", args: \"\", env: {{ \"A\" -> \"{i}\" }}, files: (p -> \"f\") }} -> \"f{i}\\n\",\n"
         ));
     }
     text.push_str("}\n");

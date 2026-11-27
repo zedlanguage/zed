@@ -6,8 +6,8 @@ main(m: MainArgs) {
   m.stdout <- "mode=${mode}" else #ioError -> "app.conf is unreadable";
 }
 test {
-  ("", "", {}, { "app.conf" -> "  verbose  \n" }) -> "mode=verbose\n",
-  ("", "", {}, {}) -> "mode=quiet\n",
-  ("", "", {}, (path -> #ioError(op: "read", path: path, why: "denied")))
+  { stdin: "", args: "", env: {}, files: { "app.conf" -> "  verbose  \n" } } -> "mode=verbose\n",
+  { stdin: "", args: "", env: {}, files: {} } -> "mode=quiet\n",
+  { stdin: "", args: "", env: {}, files: (path -> #ioError(op: "read", path: path, why: "denied")) }
     -> "app.conf is unreadable\n",
 }

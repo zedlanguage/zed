@@ -76,7 +76,7 @@ fn zedc_test_prints_the_warning_zedc_run_prints() {
         err,
         format!(
             "\
-{file}:4:10: `area` widens past a machine word: this `*` of an i64 and an i64 gives a big integer.
+{file}:4:10: `area` widens past a machine word: this `*` of a u32 and a u32 gives a big integer.
   [1] 4:10: this `*` gives 9223372037000250000, past i64
       4 |   area = side * side;
         |          ^^^^ [2]
@@ -170,12 +170,12 @@ fn several_warnings_keep_their_order() {
                  i64 gives a big integer."
             ),
             format!(
-                "{file}:5:11: `taxed` widens past a machine word: this `*` of an i64 and an \
-                 i64 gives a big integer."
+                "{file}:5:11: `taxed` widens past a machine word: this `*` of an i64 and a \
+                 u32 gives a big integer."
             ),
             format!(
-                "{file}:6:11: `total` widens past a machine word: this `*` of an i64 and an \
-                 i64 gives a big integer."
+                "{file}:6:11: `total` widens past a machine word: this `*` of a u32 and a \
+                 u32 gives a big integer."
             ),
         ]
     );
@@ -282,7 +282,7 @@ fn a_rejection_is_reported_alone_and_its_repair_reports_the_notice() {
     let notices: Vec<(usize, usize)> = program.warnings().iter().map(|w| (w.line, w.col)).collect();
     assert_eq!(notices, [(4, 10)]);
     let notice = format!(
-        "{file}:4:10: `area` widens past a machine word: this `*` of an i64 and an i64 gives a \
+        "{file}:4:10: `area` widens past a machine word: this `*` of a u32 and a u32 gives a \
          big integer."
     );
     let (status, out, err) = test(&[&file]);

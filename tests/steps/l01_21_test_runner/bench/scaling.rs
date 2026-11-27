@@ -70,7 +70,7 @@ fn checking_the_keys_of_many_main_rows_scales() {
     // k)`, O(1) a step: a step that counted the rows from the first would be quadratic in them.
     let n = 400;
     let texts = inputs(n, keyed_rows);
-    check("checking the four-item keys of n rows of main", n, |m| {
+    check("checking the four-field keys of n rows of main", n, |m| {
         checked(&texts[&m]);
     });
 }

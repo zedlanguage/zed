@@ -2031,8 +2031,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let a = m.take_arg();
                 // A lambda refused while it was fitted to the input's type is not refused
                 // again as a value outside it, as at a clause (`Frame::TestPort`).
-                if self.errors.len() == before {
-                    let what = format!("`{}`", MAIN_KEY_PORTS[k]);
+                if self.errors.len() == before
+                    && let Some(Some((input, _))) = main_key_item(&f.tests[row].0, k)
+                {
+                    let what = format!("`{}`", MAIN_KEY_PORTS[input]);
                     self.passes_into(&a.ty, &ty, &what, None, e.span);
                 }
                 self.main_rows(m, s, f, (row, k + 1));
@@ -2515,9 +2517,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The keys and expected exit statuses of the rows of `main`, `f`, from item `k` of the
     /// key of row `row` on, then the scope's other tables.
     ///
-    /// A row's key is the standard input as a String, or the tuple `(stdin, args, env, files)`
-    /// of [`MAIN_KEY_PORTS`], items left off its end empty (`zedc_elab`'s `MAIN_KEY`, which
-    /// refuses a tuple of more items). Each item is "a value of the port's type `K ->? V`, so a
+    /// A row's key is the standard input as a String, or a record `{ stdin:, args:, env:,
+    /// files: }` of the inputs of [`MAIN_KEY_PORTS`], any left out empty (`zedc_elab`'s
+    /// `MAIN_KEY`; its `test_case` refuses a tuple, and a field that names no input, whose
+    /// items [`main_key_item`] skips). Each item is "a value of the port's type `K ->? V`, so a
     /// function given there answers only values of `V`, never `#notFound` for a key it lacks"
     /// (DESIGN.md, the row `f(x) = e test { … }` of the syntax table; plan row
     /// PORT-main-key-values-unchecked). So each is checked as the clause `test with main::f =
@@ -2542,17 +2545,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         (mut row, mut k): (usize, usize),
     ) {
         while let Some((key, want)) = f.tests.get(row) {
-            if k < MAIN_KEY_PORTS.len() {
-                let items = match &key.kind {
-                    ExprKind::Tuple(items) => items.as_slice(),
-                    _ => std::slice::from_ref(key),
+            while let Some(item) = main_key_item(key, k) {
+                let Some((input, e)) = item else {
+                    k += 1;
+                    continue;
                 };
-                if let Some(e) = items.get(k) {
-                    let ty = main_key_type(k);
-                    let want = Want::of(&ty);
-                    m.k(Frame::MainKey(s, f, (row, k), e, ty, self.errors.len()));
-                    return m.job(Job::Arg(e, want));
-                }
+                let ty = main_key_type(input);
+                let want = Want::of(&ty);
+                m.k(Frame::MainKey(s, f, (row, k), e, ty, self.errors.len()));
+                return m.job(Job::Arg(e, want));
             }
             if let ExprKind::Tuple(items) = &want.kind
                 && let [_, _, status] = items.as_slice()

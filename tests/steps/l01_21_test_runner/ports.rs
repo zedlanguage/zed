@@ -80,7 +80,7 @@ fn a_row_that_writes_a_port_compares_its_writes_and_status() {
 fn an_input_given_by_the_key_and_the_clause_is_rejected() {
     let src = "main(m: MainArgs) {\n  m.stdout <- main::files[\"a\"] else #ioError -> \"\" else #notFound -> \"\";\n}\n\
                test with main::files = (p -> \"1\") \
-               { (\"\", \"\", {}, (p -> \"2\")) -> \"2\\n\" }\n";
+               { { files: (p -> \"2\") } -> \"2\\n\" }\n";
     let got = checks(src);
     assert_eq!(
         got[0],
@@ -274,7 +274,7 @@ fn a_clause_value_of_the_ports_type_is_accepted() {
 
 #[test]
 fn a_key_item_outside_its_inputs_type_is_rejected() {
-    // A row of `main` keyed `(stdin, args, env, files)` gives each input "a value of the
+    // A row of `main` keyed `{ stdin:, args:, env:, files: }` gives each input "a value of the
     // port's type `K ->? V`, so a function given there answers only values of `V`, never
     // `#notFound` for a key it lacks" (DESIGN.md, the row `f(x) = e test { … }` of the syntax
     // table; plan row PORT-main-key-values-unchecked), and `stdin` and `args` as Strings. So
@@ -292,15 +292,15 @@ fn a_key_item_outside_its_inputs_type_is_rejected() {
         assert!(errors.len() == 1 && notes.len() == 1, "{got:?}");
         errors[0].clone()
     };
-    let got = row("(\"\", \"\", (n -> #notFound))");
+    let got = row("{ env: (n -> #notFound) }");
     assert!(got.contains("answers `#notFound`"), "{got}");
-    let got = row("(\"\", \"\", {}, (p -> if p == \"a\" { \"x\" } else { #notFound }))");
+    let got = row("{ env: {}, files: (p -> if p == \"a\" { \"x\" } else { #notFound }) }");
     assert!(got.contains("answers `#notFound`"), "{got}");
     assert!(
         got.contains("repair: give the keys present as a display, as `{ \"a\" -> \"x\" }`"),
         "{got}"
     );
-    let got = row("(\"\", \"\", {}, (p -> 5))");
+    let got = row("{ files: (p -> 5) }");
     assert!(
         got.contains("the lambda returns") && got.contains("5") && got.contains("String"),
         "{got}"
@@ -310,16 +310,60 @@ fn a_key_item_outside_its_inputs_type_is_rejected() {
     // the paragraph on the family marking), and "a payload pattern ... keeps the bare `#e`"
     // says the bare atom is a value apart from its payloads; the port's type lists only the
     // payload (`io_error` in zedc-check, read by zedc-types' `payload_set`).
-    let got = row("(\"\", \"\", {}, (p -> #ioError))");
+    let got = row("{ files: (p -> #ioError) }");
     assert!(!got.ends_with(": ok") && got.contains("#ioError"), "{got}");
-    let got = row("(\"\", \"\", {}, 5)");
+    let got = row("{ files: 5 }");
     assert!(got.contains("`main::files` does not take 5"), "{got}");
-    let got = row("(\"\", 3)");
+    let got = row("{ args: 3 }");
     assert!(got.contains("`main::args` does not take 3"), "{got}");
     let got = row("3");
     assert!(got.contains("`main::stdin` does not take 3"), "{got}");
-    let got = row("(\"\", \"\", 4)");
+    let got = row("{ stdin: 3 }");
+    assert!(got.contains("`main::stdin` does not take 3"), "{got}");
+    // The fields are found by name, in any order.
+    let got = row("{ env: 4, stdin: \"\" }");
     assert!(got.contains("`main::env` does not take 4"), "{got}");
+}
+
+#[test]
+fn a_main_key_is_a_record_of_inputs_and_a_tuple_is_refused() {
+    // "From L2 the key may be a record `{ stdin:, args:, env:, files: }`" (DESIGN.md, the row
+    // `f(x) = e test { … }` of the syntax table; plan row DESIGN-main-key-record-vs-tuple).
+    // Before, a tuple `(stdin, args, env, files)` named the inputs by place, and a record was
+    // refused as a standard input that is no String.
+    let main = "main(m: MainArgs) {\n  \
+                m.stdout <- (main::files[\"a\"] else #ioError -> \"io\" else #notFound -> \"none\") \
+                ++ (m.env(\"A\") else #notFound -> \"-\");\n}\n";
+    // The fields in any order, and any left out; the arguments by name are in
+    // `l01_19a_command_line`'s `a_main_row_gives_the_arguments_one_per_line`.
+    let got = checks(&format!(
+        "{main}test {{ {{ files: {{ \"a\" -> \"x\" }}, env: {{ \"A\" -> \"1\" }} }} -> \"x1\\n\", \
+         {{ stdin: \"in\" }} -> \"none-\\n\", \"\" -> \"none-\\n\" }}\n"
+    ));
+    assert_eq!(got.len(), 3, "{got:?}");
+    assert!(got.iter().all(|g| g.ends_with(": ok")), "{got:?}");
+    // A row's key is refused, and the unit with it, so each row is also noted as not run.
+    let refused = |key: &str| {
+        let got = checks(&format!("{main}test {{ {key} -> \"x\" }}\n"));
+        let (notes, errors): (Vec<&String>, Vec<&String>) =
+            (got.iter()).partition(|g| g.ends_with("not run, since the unit is rejected"));
+        assert!(errors.len() == 1 && notes.len() == 1, "{got:?}");
+        errors[0].clone()
+    };
+    let got = refused("(\"\", \"a\")");
+    assert!(
+        got.contains(
+            "a test key of `main` is a String or a record of the run's inputs, not a tuple: \
+             repair: write `{ stdin: …, args: … }`, the fields in any order and any of them left \
+             out"
+        ),
+        "{got}"
+    );
+    let got = refused("{ stdout: \"\" }");
+    assert!(
+        got.contains("`stdout` is not an input of a run: a test key of `main` has the fields"),
+        "{got}"
+    );
 }
 
 #[test]
@@ -329,11 +373,11 @@ fn a_key_item_of_its_inputs_type_is_accepted() {
     let src = "main(m: MainArgs) {\n  \
                m.stdout <- (main::files[\"a\"] else #ioError -> \"io\" else #notFound -> \"none\") \
                ++ (m.env(\"A\") else #notFound -> \"-\");\n}\n\
-               test { (\"\", \"\", { \"A\" -> \"1\" }, { \"a\" -> \"x\" }) -> \"x1\\n\", \
-               (\"\", \"\", {}, {}) -> \"none-\\n\", \
-               (\"\", \"\", (n -> \"2\"), (p -> \"y\")) -> \"y2\\n\", \
-               (\"\", \"\", {}, (p -> #ioError(op: \"read\", path: p, why: \"gone\"))) -> \"io-\\n\", \
-               (\"in\", \"a\\nb\") -> \"none-\\n\", \"\" -> \"none-\\n\" }\n";
+               test { { env: { \"A\" -> \"1\" }, files: { \"a\" -> \"x\" } } -> \"x1\\n\", \
+               { env: {}, files: {} } -> \"none-\\n\", \
+               { env: (n -> \"2\"), files: (p -> \"y\") } -> \"y2\\n\", \
+               { files: (p -> #ioError(op: \"read\", path: p, why: \"gone\")) } -> \"io-\\n\", \
+               { stdin: \"in\", args: \"a\\nb\" } -> \"none-\\n\", \"\" -> \"none-\\n\" }\n";
     let got = checks(src);
     assert_eq!(got.len(), 6, "{got:?}");
     assert!(got.iter().all(|g| g.ends_with(": ok")), "{got:?}");

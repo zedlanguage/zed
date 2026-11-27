@@ -72,7 +72,7 @@ fn a_port_not_pushed_writes_nothing() {
 fn a_files_port_is_given_as_a_function_of_the_path() {
     let src = "main(m: MainArgs) {\n  fs = main::files;\n  \
                m.stdout <- (fs[\"a.txt\"] else #ioError -> \"\" else #notFound -> \"\") ++ (fs[\"b.txt\"] else #ioError -> \"\" else #notFound -> \"\");\n}\n\
-               test { (\"\", \"\", {}, (p -> if p == \"a.txt\" { \"1\" } else { \"2\" })) -> \"12\\n\" }\n";
+               test { { files: (p -> if p == \"a.txt\" { \"1\" } else { \"2\" }) } -> \"12\\n\" }\n";
     assert_eq!(checks(src), ["5:8: ok"]);
 }
 
@@ -183,7 +183,9 @@ fn a_main_row_expecting_a_status_past_255_is_rejected_before_it_runs() {
 }
 
 #[test]
-fn a_main_key_of_more_than_four_items_is_rejected() {
+fn a_main_key_that_is_a_tuple_is_rejected() {
+    // A tuple of more items than the four inputs is refused as any tuple is, with the note
+    // of the four fields (plan row DESIGN-main-key-record-vs-tuple).
     let src = "main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n\
                test { (\"\", \"\", {}, {}, \"\") -> \"x\\n\" }\n";
     let got = checks(src);
@@ -195,9 +197,10 @@ fn a_main_key_of_more_than_four_items_is_rejected() {
     );
     assert!(
         got[0].contains(
-            "a test key of `main` is the standard input of the run, as a String, or the tuple \
-             `(stdin, args, env, files)` of its inputs, with the items left off its end empty, \
-             and this key has 5 items"
+            "a test key of `main` is a String or a record of the run's inputs, not a tuple: \
+             repair: write `{ stdin: …, args: …, env: …, files: … }`, the fields in any order \
+             and any of them left out; a key has at most the four fields `stdin`, `args`, `env` \
+             and `files`"
         ),
         "{got:?}"
     );

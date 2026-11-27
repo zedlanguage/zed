@@ -86,15 +86,15 @@ fn the_arguments_of_a_record_round_trip() {
 fn a_main_row_gives_the_arguments_one_per_line() {
     let src = "main(m: MainArgs) {\n  \
                m.stdout <- \"${m.args[0] else #outOfBounds -> \"-\"}+${m.args[1] else #outOfBounds -> \"-\"}\";\n}\n\
-               test { (\"\", \"a\\nb c\\n\") -> \"a+b c\\n\", (\"\", \"only\") -> \"only+-\\n\", \
+               test { { args: \"a\\nb c\\n\" } -> \"a+b c\\n\", { args: \"only\" } -> \"only+-\\n\", \
                \"\" -> \"-+-\\n\" }\n";
-    assert_eq!(checks(src), ["4:8: ok", "4:39: ok", "4:67: ok"]);
+    assert_eq!(checks(src), ["4:8: ok", "4:43: ok", "4:75: ok"]);
     // Arguments given as anything but a String are refused when the unit is checked (plan row
-    // PORT-main-key-values-unchecked), before any row runs; until then `("", 3)` failed only
-    // its own row, when it ran.
+    // PORT-main-key-values-unchecked), before any row runs; until then `{ args: 3 }` failed
+    // only its own row, when it ran.
     let src = src.replace(
         "\"\" -> \"-+-\\n\" }",
-        "\"\" -> \"-+-\\n\", (\"\", 3) -> \"\" }",
+        "\"\" -> \"-+-\\n\", { args: 3 } -> \"\" }",
     );
     let got = checks(&src);
     // Each of the four rows as not run, and the rejection, at the key item of the last row,
@@ -113,6 +113,6 @@ fn a_main_rows_arguments_end_at_each_line_end() {
     // one (author, 2026-11-13, QUESTIONS A90).
     let src = "main(m: MainArgs) {\n  \
                m.stdout <- \"${m.args[0] else #outOfBounds -> \"-\"}+${m.args[1] else #outOfBounds -> \"-\"}\";\n}\n\
-               test { (\"\", \"a\\rb\\r\\nc\") -> \"a+b\\n\", (\"\", \"a\\r\\r\\n\") -> \"a+\\n\", (\"\", \"a\\r\") -> \"a+-\\n\" }\n";
-    assert_eq!(checks(src), ["4:8: ok", "4:38: ok", "4:65: ok"]);
+               test { { args: \"a\\rb\\r\\nc\" } -> \"a+b\\n\", { args: \"a\\r\\r\\n\" } -> \"a+\\n\", { args: \"a\\r\" } -> \"a+-\\n\" }\n";
+    assert_eq!(checks(src), ["4:8: ok", "4:42: ok", "4:73: ok"]);
 }

@@ -33,7 +33,7 @@ fn the_area_of_a_large_square_warns_with_its_derivation() {
     assert_eq!(
         warned(&src),
         "\
-3:10: `area` widens past a machine word: this `*` of an i64 and an i64 gives a big integer.
+3:10: `area` widens past a machine word: this `*` of a u32 and a u32 gives a big integer.
   [1] 3:10: this `*` gives 9223372037000250000, past i64
       3 |   area = side * side;
         |          ^^^^ [2]
@@ -106,13 +106,55 @@ fn each_operand_width_is_named() {
             "3:7: `b` widens past a machine word: this `^` of an i16 and an i8 gives a big integer.",
             "4:7: `c` widens past a machine word: this `^` of an i32 and an i8 gives a big integer.",
             "5:7: `d` widens past a machine word: this `*` of an i64 and an i64 gives a big integer.",
-            "6:7: `e` widens past a machine word: this `*` of an i16 and an i64 gives a big integer.",
+            "6:7: `e` widens past a machine word: this `*` of a u8 and an i64 gives a big integer.",
             "7:7: `f` widens past a machine word: this `*` of an i8 and an i64 gives a big integer.",
         ]
     );
     let shown = warned(&src);
     assert!(shown.contains("this `^` gives 1091533853073393531649, past i64"));
     assert!(shown.contains("this `*` gives 18446744073709551616, past i64"));
+}
+
+/// The narrowest of `i8`…`i64` and `u8`…`u32` names each operand (row
+/// SPEC-widen-unsigned-width-names): an unsigned name where only it holds the value at that
+/// width (128 and 255 are `u8`, 32768 and 65535 `u16`, 2^31 `u32`), the signed one where both
+/// hold it (127 is `i8` while QUESTIONS A232 waits), and the next signed width for a negative
+/// value past the narrower signed one (-129 is `i16`). Each is multiplied by 2^62, an `i64`.
+#[test]
+fn an_operand_only_an_unsigned_name_holds_is_named_unsigned() {
+    let p = "4611686018427387904";
+    let body: String = [
+        "127",
+        "128",
+        "255",
+        "256",
+        "32768",
+        "65535",
+        "65536",
+        "2147483648",
+        "4294967296",
+        "-129",
+    ]
+    .iter()
+    .zip('a'..)
+    .map(|(v, name)| format!("  {name} = {v} * {p};\n"))
+    .collect();
+    let widths = [
+        "an i8", "a u8", "a u8", "an i16", "a u16", "a u16", "an i32", "a u32", "an i64", "an i16",
+    ];
+    let expected: Vec<String> = widths
+        .iter()
+        .zip('a'..)
+        .enumerate()
+        .map(|(i, (w, name))| {
+            format!(
+                "{}:7: `{name}` widens past a machine word: this `*` of {w} and an i64 gives a big \
+                 integer.",
+                i + 2
+            )
+        })
+        .collect();
+    assert_eq!(messages(&main_with(&body, "0")), expected);
 }
 
 #[test]
@@ -152,11 +194,11 @@ fn a_reduction_by_a_power_of_two_up_to_2_to_the_128_does_not_warn() {
     assert_eq!(
         messages(&past),
         [
-            "2:7: `f` widens past a machine word: this `*` of an i64 and an i64 gives a big \
+            "2:7: `f` widens past a machine word: this `*` of a u32 and a u32 gives a big \
              integer.",
-            "2:37: `f` widens past a machine word: this `^` of an i8 and an i16 gives a big \
+            "2:37: `f` widens past a machine word: this `^` of an i8 and a u8 gives a big \
              integer.",
-            "3:7: `g` widens past a machine word: this `*` of an i64 and an i64 gives a big \
+            "3:7: `g` widens past a machine word: this `*` of a u32 and a u32 gives a big \
              integer.",
         ]
     );
@@ -174,9 +216,9 @@ fn a_reduction_that_does_not_wrap_still_warns() {
     assert_eq!(
         messages(&src),
         [
-            "2:10: `half` widens past a machine word: this `*` of an i64 and an i64 gives a big \
+            "2:10: `half` widens past a machine word: this `*` of a u32 and a u32 gives a big \
              integer.",
-            "3:10: `last` widens past a machine word: this `*` of an i64 and an i64 gives a big \
+            "3:10: `last` widens past a machine word: this `*` of a u32 and a u32 gives a big \
              integer.",
         ]
     );
@@ -231,7 +273,7 @@ fn an_if_gives_the_interval_of_its_branches() {
     assert_eq!(
         warned(&src),
         "\
-3:8: `sq` widens past a machine word: this `*` of an i64 and an i64 gives a big integer.
+3:8: `sq` widens past a machine word: this `*` of a u32 and a u32 gives a big integer.
   [1]  3:8: this `*` gives int[100..=9223372037000250000], past i64
        3 |   sq = n * n;
          |        ^ [2]
@@ -260,7 +302,7 @@ fn top_level_definitions_are_read_in_any_order() {
     assert_eq!(
         messages(src),
         [
-            "1:8: `area` widens past a machine word: this `*` of an i64 and an i64 gives a big integer."
+            "1:8: `area` widens past a machine word: this `*` of a u32 and a u32 gives a big integer."
         ]
     );
     assert!(warned(src).contains("2:8: `side` is defined as this expression, 3037000500"));
@@ -312,7 +354,7 @@ fn zedc_run_prints_the_warning_and_runs_the_program() {
     let first = out.stderr.lines().next().unwrap_or_default();
     assert!(
         first.ends_with(
-            "prog.zed:3:10: `area` widens past a machine word: this `*` of an i64 and an i64 \
+            "prog.zed:3:10: `area` widens past a machine word: this `*` of a u32 and a u32 \
              gives a big integer."
         ),
         "{}",

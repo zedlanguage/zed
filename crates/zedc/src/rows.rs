@@ -93,9 +93,10 @@ pub(crate) fn wave(
         Some(p) if f != "main::files" => format!("{p}.{f}"),
         _ => f.to_string(),
     };
-    // The key gives the inputs by field (`MAIN_KEY`), so a row means the same whichever fields
-    // the body reads, and each item is checked whether the body reads it or not; an input the
-    // key leaves out is empty.
+    // The key gives the inputs by field (`MAIN_KEY`): a String key the standard input, and a
+    // record key each of its fields, named in `t.ports` as a clause's are. So a row means the
+    // same whichever fields the body reads, and each is checked whether the body reads it or
+    // not; an input the key leaves out is empty.
     let mut stdin: Arc<[u8]> = Arc::from(&b""[..]);
     let mut args = Vec::new();
     let mut lookups: HashMap<&str, Arc<dyn Lookup>> = HashMap::new();

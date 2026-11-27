@@ -18843,12 +18843,31 @@ fn port(key: Carrier, io: bool) -> Ty {
     }))
 }
 
-/// The inputs of `main` that the items of a tuple key of its table give, in order, by the
-/// names a clause `test with main::f = e` gives them by: `zedc_elab`'s `MAIN_KEY`, `(stdin,
-/// args, env, files)`, whose order the runner (`zedc`'s `rows.rs`) reads the items in.
+/// The inputs of `main` that the fields of a record key of its table give, by the names a
+/// clause `test with main::f = e` gives them by: `zedc_elab`'s `MAIN_KEY`, the fields `stdin`,
+/// `args`, `env` and `files` of a key `{ stdin:, args:, env:, files: }`.
 const MAIN_KEY_PORTS: [&str; 4] = ["main::stdin", "main::args", "main::env", "main::files"];
 
-/// The type of item `k` of a key of `main`'s table ([`MAIN_KEY_PORTS`]): `stdin` and `args`
+/// Item `k` of the key `key` of a row of `main`'s table, as the input of [`MAIN_KEY_PORTS`] it
+/// gives and its expression: field `k` of a record, or the key itself, standard input, for
+/// `k = 0` of a key that is no record. `Some(None)` for a field that names no input, and for
+/// the items of a tuple: `zedc_elab`'s `test_case` refuses both (plan row
+/// DESIGN-main-key-record-vs-tuple), so no item of them is checked as an input. `None` past
+/// the last item. O(1) for a field name of at most a few characters.
+fn main_key_item(key: &Expr, k: usize) -> Option<Option<(usize, &Expr)>> {
+    match &key.kind {
+        ExprKind::Record(fields) => fields.get(k).map(|(name, e)| {
+            let input = MAIN_KEY_PORTS
+                .iter()
+                .position(|p| p.strip_prefix("main::") == Some(name.as_str()));
+            input.map(|i| (i, e))
+        }),
+        ExprKind::Tuple(items) => items.get(k).map(|_| None),
+        _ => (k == 0).then_some(Some((0, key))),
+    }
+}
+
+/// The type of input `k` of a key of `main`'s table ([`MAIN_KEY_PORTS`]): `stdin` and `args`
 /// are Strings, the text a run reads, split into lines as a `Lines` input is; `env` is the
 /// port `Utf8String ->? Utf8String`, and `files` the port `Files = Path ->? Utf8String |
 /// #ioError` (DESIGN.md sec:ports), the types [`Ck::test_ports`] gives the clauses of the
