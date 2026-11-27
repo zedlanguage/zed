@@ -21,7 +21,9 @@
 # one log directory; `trace`; `nobus`, four pieces run with no user bus (FARM-run-tests-systemd-run,
 # FAIL-nobus-data-limit-stacks);
 # and `warm`, the report of a piece that fails in the linking warm-up (FAIL-warm-step-drops-output)
-# and the order and thread bound of the warm-up's pieces (FAIL-warm-binaries-rc101-cause).
+# and the order and thread bound of the warm-up's pieces (FAIL-warm-binaries-rc101-cause), with
+# the split of pieces into correctness pieces and benchmarks on fake binaries
+# (TOOL-split-benchmarks-forks).
 # select, table, except and benches are run after list, with no build of the tests between them. With no part named
 # it runs list, select, table, except, benches, fresh, short, copy and concurrent one after another.
 # Each part has a log directory of its own, under which every run of run_tests.sh writes a
@@ -88,7 +90,8 @@ fi
 # tools/lib.sh, FAIL-warm-step-drops-output) on fake binaries, with `capped` and `in_run_copy`
 # as plain runs: it builds and lists nothing (under 1 s). Before the fix the output of a failing
 # piece was emptied unread, and only "rc=101" was printed. It also checks the order and thread
-# bound of `warm_all` (tools/lib.sh, FAIL-warm-binaries-rc101-cause), in about 1 s more.
+# bound of `warm_all` (tools/lib.sh, FAIL-warm-binaries-rc101-cause), in about 1 s more, and
+# `split_benchmarks` (tools/lib.sh, TOOL-split-benchmarks-forks) on fake binaries.
 if [ "$part" = warm ]; then
   w=$(pwd)/$logs-warm
   mkdir -p "$w"
@@ -188,6 +191,72 @@ start bad -
 end bad
 end q
 start q 8" "$(printf '%s\n' "$got" | sed 's/ rc=\([0-9]*\) [0-9]*ms$/ rc=\1/')"
+  # `split_benchmarks` (tools/lib.sh, TOOL-split-benchmarks-forks) on three fake test binaries:
+  # $w/la has no benchmark, $w/lb has benchmarks in two modules, and $w/lc cannot be listed.
+  # Each binary records its listing in $w/forks, and sed, awk, grep and tr are wrappers, first on
+  # PATH, that record each start there too. The pieces cover each kind of split: a piece with no
+  # benchmark, a module with tests and benchmarks (skipped by `--skip bench::`), a piece run with
+  # --exact (each benchmark skipped by name), a piece of benchmarks alone (no correctness piece),
+  # one whose `--skip bench::` leaves no benchmark, a benchmark two pieces hold (one bench piece),
+  # and a binary that cannot be listed (kept as it is). The output must be the same for any table,
+  # and the processes started must not grow with the pieces: the old split started piece_tests'
+  # awk and two to four greps, seds and trs for each piece of a binary with benchmarks, about
+  # 3.4 ms a piece and 48 s for `run_tests.sh --list` at load 61 (2026-11-19).
+  mkdir -p "$w/bin"
+  printf '#!/bin/bash\necho "list $0" >>"$FORKS"\n[ "$1" = --list ] && printf "%%s: test\\n" a::x a::y\n' >"$w/la"
+  printf '#!/bin/bash\necho "list $0" >>"$FORKS"\n[ "$1" = --list ] && printf "%%s: test\\n" m::bench::b1 m::bench::b2 m::t1 n::bench::b3 n::t2\n' >"$w/lb"
+  printf '#!/bin/bash\necho "list $0" >>"$FORKS"\nexit 1\n' >"$w/lc"
+  for t in sed awk grep tr; do
+    # type -P: the path of the program, never a shell function of the same name.
+    printf '#!/bin/bash\necho %s >>"$FORKS"\nexec %q "$@"\n' "$t" "$(type -P "$t")" >"$w/bin/$t"
+  done
+  chmod +x "$w/la" "$w/lb" "$w/lc" "$w/bin/sed" "$w/bin/awk" "$w/bin/grep" "$w/bin/tr"
+  {
+    echo "ga ga ga tests $w/la"
+    echo "gb gb gb::m tests $w/lb m::"
+    echo "gb gb gb::x tests $w/lb --exact m::t1 m::bench::b1"
+    echo "gb gb gb::o tests $w/lb bench::"
+    echo "gb gb gb::n tests $w/lb n:: --skip bench::"
+    echo "gc gc gc tests $w/lc"
+  } >"$w/table"
+  # The same three binaries in 301 pieces: 150 of a module of lb with its benchmarks, 150 of la
+  # and lc's.
+  {
+    for i in $(seq 1 150); do
+      echo "gb gb gb::m$i tests $w/lb m::"
+      echo "ga ga ga$i tests $w/la"
+    done
+    echo "gc gc gc tests $w/lc"
+  } >"$w/table300"
+  split_run() {
+    (
+      export FORKS=$w/forks PATH=$w/bin:$PATH
+      : >"$FORKS"
+      . tools/lib.sh || exit 2
+      split_benchmarks <"$1"
+    )
+  }
+  check "split_benchmarks splits each kind of piece" \
+    "test ga ga ga tests $w/la
+test gb gb gb::m tests $w/lb m:: --skip bench::
+bench gb gb gb::m::bench::b1 tests $w/lb --exact m::bench::b1
+bench gb gb gb::m::bench::b2 tests $w/lb --exact m::bench::b2
+test gb gb gb::x tests $w/lb --exact m::t1 m::bench::b1 --skip m::bench::b1
+bench gb gb gb::n::bench::b3 tests $w/lb --exact n::bench::b3
+test gb gb gb::n tests $w/lb n:: --skip bench::
+test gc gc gc tests $w/lc" "$(split_run "$w/table")"
+  check "split_benchmarks lists each binary once" "list $w/la
+list $w/lb
+list $w/lc" "$(command grep -a '^list ' "$w/forks")"
+  forks6=$(command grep -a -c -v '^list ' "$w/forks")
+  got=$(split_run "$w/table300")
+  check "split_benchmarks on 301 pieces: a correctness piece each, the two benchmarks once" \
+    "301 150 2" \
+    "$(printf '%s\n' "$got" | command grep -a -c '^test ') $(printf '%s\n' "$got" | command grep -a -c -- '--skip bench::$') $(printf '%s\n' "$got" | command grep -a -c '^bench ')"
+  # Each binary's listing is checked above; the other processes are counted here.
+  check "split_benchmarks starts as many processes for 301 pieces as for 6, and at most 2 a binary and 1 more" \
+    "same at most 7" \
+    "$(f=$(command grep -a -c -v '^list ' "$w/forks"); [ "$f" = "$forks6" ] && echo -n "same " || echo -n "$forks6 for 6 pieces, $f for 301; "; [ "$forks6" -le 7 ] && echo at most 7 || echo "$forks6 for 6 pieces")"
   echo "checks failed: $fails"
   [ "$fails" = 0 ]
   exit
