@@ -780,13 +780,28 @@ case_benches! {
     r8_residue_boundary_r8residuesout: "r8residuesout", Verdict::Inhabited, 64 -> 4096, "211962730" at "29.65";
 }
 
+/// [`big`] for a test that holds two of its own meter readings to a ratio
+/// (`f.units <= 2 * b.units`), run again alone in a new process where its meter would count
+/// processor time beside other tests (`scaling::ran_alone_in_a_new_process`,
+/// BENCH-self-counted-meters-processor-time). Beside three other tests on v5e2
+/// (`--test-threads=4`), `r9_a_list_in_an_atom_payload_is_decided_as_the_list_alone` failed that
+/// ratio and passed alone in 6.3 s (FLAKE-r9-atom-payload-work-under-load): the processor time of
+/// a run of a few milliseconds varies with the load, while the instructions do not. Where the
+/// hardware or DynamoRIO counts instructions, the test runs here as before.
+fn big_alone(f: impl FnOnce() + Send) {
+    if scaling::ran_alone_in_a_new_process(&scaling::Meter::new()) {
+        return;
+    }
+    big(f)
+}
+
 /// A list type in a tuple or record field gets the verdict of the list alone, at near the list's
 /// work (R8, Q5). The prefix chains and the escape solve ran on the query's own types only, so a
 /// list in a field was left to the search, which refused `chain`, `r5remin` and `r6twoun` there,
 /// at 12 to 530 times the work of the list alone.
 #[test]
 fn r8_a_list_in_a_field_is_decided_as_the_list_alone() {
-    big(|| {
+    big_alone(|| {
         let n = 64;
         let tag = format!("_r8field{n}");
         for case in ["chain", "r5remin", "r6twoun"] {
@@ -821,7 +836,7 @@ fn r8_a_list_in_a_field_is_decided_as_the_list_alone() {
 /// cost that grows faster in a field than alone fails at the larger one.
 #[test]
 fn r9_a_front_sweep_list_in_a_field_is_decided_as_the_list_alone() {
-    big(|| {
+    big_alone(|| {
         for n in [16, 128] {
             let tag = format!("_r9field{n}");
             for case in [
@@ -862,7 +877,7 @@ fn r9_a_front_sweep_list_in_a_field_is_decided_as_the_list_alone() {
 /// `#wrap((l,))` with `l` of `r5remout` at 32 was Refused(Fork) at 34 times the list's work.
 #[test]
 fn r9_a_list_in_an_atom_payload_is_decided_as_the_list_alone() {
-    big(|| {
+    big_alone(|| {
         for n in [16, 128] {
             let tag = format!("_r9atom{n}");
             for case in [
