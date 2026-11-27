@@ -30122,9 +30122,9 @@ mod tests {
     /// each [`Block::sync_holed`], on each of its three paths: the walk of the two maps'
     /// difference that ends, the walk that passes the block's number of names and builds the
     /// set again, and the scan of the block's names. The block is the star of `a` over
-    /// `a >= x0 + x1 + x2 + x3` with `xi >= 0` (5 names, the leaf `a`); the scope adds `b0`..`b5`, which
-    /// sort before the `x`s, so the 6 of them changing fill the walk before it reaches the
-    /// holed names. A hole on the leaf stays out of the set.
+    /// `a >= x0 + x1 + x2 + x3` with `xi >= 0` (5 names, the leaf `a`); the scope adds
+    /// `b0`..`b5`, which sort before the `x`s, so the 6 of them changing fill the walk before
+    /// it reaches the holed names. A hole on the leaf stays out of the set.
     #[test]
     fn holed_users_match_the_set_from_scratch_on_each_path_of_sync_holed() {
         let int = |lo: i64, hi: i64| {
