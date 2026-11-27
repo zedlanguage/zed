@@ -411,3 +411,74 @@ fn solve_answers_every_renaming_and_order_of_rows_alike() {
     let found = differing(seed, 400, 12);
     assert!(found.is_empty(), "{}", found.join("\n"));
 }
+
+/// [`reduce_subset_row_eqs`], which [`parts`] runs before it splits the rows, gives the same
+/// rows in every order of its rows (PROOF-solve-omega-path-renaming). The systems: 2 to 4
+/// disjoint blocks of 2 to 4 variables, a unit equation on each, and a unit equation on the
+/// union of 2 or more blocks, sometimes with one more variable. An equation that is the sum of
+/// two shorter ones had only the first of them by place subtracted: the rest was then as long
+/// as the second, which was skipped, so which block the rest joined in `parts` followed the
+/// order of the rows. Compared as the sorted rows.
+#[test]
+fn the_subset_reduction_gives_the_same_rows_in_every_order() {
+    type Rows = Vec<(super::Row, Rel)>;
+    let unit = |vs: &[usize], s: i128, k: i128| {
+        let mut a: Vec<Term> = vs.iter().map(|&v| (v, Int::from(s))).collect();
+        a.sort();
+        (
+            super::Row {
+                a: a.into(),
+                k: k.into(),
+            },
+            Rel::Eq,
+        )
+    };
+    let sorted = |rows: Rows| {
+        let mut v: Vec<(Vec<Term>, Int, bool)> = (rows.into_iter())
+            .map(|(r, rel)| (r.a.to_vec(), r.k, matches!(rel, Rel::Eq)))
+            .collect();
+        v.sort();
+        v
+    };
+    let mut rng = Rng::new(0x5_0B5E_7000);
+    let mut diffs = Vec::new();
+    for case in 0..400 {
+        let blocks: Vec<usize> = (0..2 + rng.below(3)).map(|_| 2 + rng.below(3)).collect();
+        let extra = rng.below(2) == 1;
+        let vars = blocks.iter().sum::<usize>() + usize::from(extra);
+        let place = shuffled(&mut rng, vars);
+        let mut rows: Rows = Vec::new();
+        let (mut at, mut union) = (0, Vec::new());
+        let joined = 2 + rng.below(blocks.len() - 1);
+        for (b, &w) in blocks.iter().enumerate() {
+            let vs = &place[at..at + w];
+            at += w;
+            let s = if rng.below(2) == 0 { 1 } else { -1 };
+            rows.push(unit(vs, s, rng.int_i128(-4, 4)));
+            if b < joined {
+                union.extend_from_slice(vs);
+            }
+        }
+        if extra {
+            union.push(place[vars - 1]);
+        }
+        rows.push(unit(&union, 1, rng.int_i128(-8, 8)));
+        let mut orders: Vec<Rows> = vec![rows.clone(), rows.iter().rev().cloned().collect()];
+        let p = shuffled(&mut rng, rows.len());
+        orders.push(p.iter().map(|&i| rows[i].clone()).collect());
+        let got: Vec<_> = (orders.into_iter())
+            .map(|o| sorted(reduce_subset_row_eqs(o, vars)))
+            .collect();
+        if got.iter().any(|g| *g != got[0]) {
+            diffs.push(format!(
+                "case {case}: blocks {blocks:?}, extra {extra}: {got:?}"
+            ));
+        }
+    }
+    assert!(
+        diffs.is_empty(),
+        "{} of 400 differ:\n{}",
+        diffs.len(),
+        diffs.join("\n")
+    );
+}
