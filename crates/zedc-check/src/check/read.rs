@@ -23,6 +23,10 @@ use zedc_syntax::ast::{self, Expr, ExprKind, RangeEnd, Type, TypeKind};
 use zedc_syntax::lex::{self, Part, Tok};
 use zedc_syntax::parse::{self, TOP};
 
+/// A part of a printed type's text: the name of its definition (none for the text's own part),
+/// the range of its tokens, and the bytes of the text it spans, from and to.
+type TextPart = (Option<Arc<str>>, std::ops::Range<usize>, usize, usize);
+
 /// The type `text` states. Text that is no type is an error, as is a form `denoted` has no
 /// meaning for at layer L1 other than an atom with its payload type, and a leaf of layer L10
 /// other than the three above. A printed type opens with a definition `type Tk = …;` for each
@@ -40,7 +44,7 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
     let tokens = lex::lex(text).map_err(|e| format!("`{text}`: {e}"))?;
     // Each definition by its name and the tokens of its body, and last the text's, each with
     // the bytes of the text it spans.
-    let mut parts: Vec<(Option<Arc<str>>, std::ops::Range<usize>, usize, usize)> = Vec::new();
+    let mut parts: Vec<TextPart> = Vec::new();
     let mut i = 0;
     loop {
         let tok = |j: usize| tokens.get(i + j).map(|t| &t.tok);
@@ -121,10 +125,7 @@ struct Times {
 }
 
 impl Times {
-    fn of<'t>(
-        tokens: &'t [lex::Token],
-        parts: &[(Option<Arc<str>>, std::ops::Range<usize>, usize, usize)],
-    ) -> Times {
+    fn of<'t>(tokens: &'t [lex::Token], parts: &[TextPart]) -> Times {
         let capital = |n: &str| n.starts_with(|c: char| c.is_ascii_uppercase());
         let clause: HashSet<&str> = (tokens.windows(2))
             .filter_map(|w| match (&w[0].tok, &w[1].tok) {
