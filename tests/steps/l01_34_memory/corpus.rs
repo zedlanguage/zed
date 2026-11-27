@@ -54,9 +54,10 @@ fn every_row_passes_through_the_machine() {
         // standard input and the command line, which its `main` does not read (QUESTIONS Q51).
         // Its rows give the environment and the files as displays, and the read error as the
         // payload a file port gives, since a key item is checked against its port's type (plan
-        // row PORT-main-key-values-unchecked): 16 cells and 15 fused writes more than the
-        // lambdas they replace.
-        let want = if fuse { 214 } else { 256 };
+        // row PORT-main-key-values-unchecked): 16 cells, 15 fused writes and 18 unfused writes
+        // more than the lambdas they replace (the same counts at the test commit, before the
+        // checker's change: config.zed alone moves them).
+        let want = if fuse { 214 } else { 259 };
         assert_eq!((runs.get(), cells.get(), writes.get()), (115, 211, want));
     }
 }
