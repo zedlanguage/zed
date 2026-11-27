@@ -16,7 +16,7 @@ interface Node {
 interface LogLine { at: number; time: string; label: string; text: string }
 interface State {
   now: number; nodes: Node[]; log: LogLine[];
-  machine: { load: string; lock: string; origin: string | null; main: string | null; ahead: number };
+  machine: { load: string; landing: string; origin: string | null; main: string | null; ahead: number };
 }
 interface Point { x: number; y: number }
 interface Layout {
@@ -369,7 +369,7 @@ function render(s: State): void {
   stat(counts, "retries", String(s.nodes.reduce((a, n) => a + n.retries, 0)));
   machine.replaceChildren();
   stat(machine, "load", s.machine.load);
-  stat(machine, "merge lock", s.machine.lock || "free");
+  stat(machine, "last landing", s.machine.landing || "none");
   stat(machine, "main / origin", `${s.machine.main ?? "?"} / ${s.machine.origin ?? "?"}`);
   stat(machine, "commits ahead", String(s.machine.ahead));
 

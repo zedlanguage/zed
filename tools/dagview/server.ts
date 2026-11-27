@@ -3,7 +3,7 @@
 //
 // Reads, on each request for the state: docs/plan_dag.md, wt/running-log.md,
 // wt/ledger.jsonl, the author's open questions in
-// wt/zed0-review/pass2/QUESTIONS.md, wt/merge.lock/owner, /proc/loadavg and git
+// wt/zed0-review/pass2/QUESTIONS.md, the end of wt/landings.log, /proc/loadavg and git
 // (five small commands, and one rev-list of new commits when origin/main moves). Lays the plan out when the page posts its graph to /api/layout (see
 // layout.ts). It watches those files and the main and origin/main refs, and
 // tells the page over /api/events when one changes or a layout finishes, so an
@@ -11,13 +11,13 @@
 
 import { execFile } from "node:child_process";
 import { watch } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { open, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { buildGraph, CommitList, shapeProblems, parseLedger, parseLog, parsePlan, parseQuestions, resolveId } from "./state.ts";
+import { buildGraph, CommitList, lastLanding, shapeProblems, parseLedger, parseLog, parsePlan, parseQuestions, resolveId } from "./state.ts";
 import { Layouts, layoutInWorker } from "./layout.ts";
 import type { Graph } from "./layout.ts";
 
@@ -35,6 +35,24 @@ async function text(path: string): Promise<string> {
     return await readFile(path, "utf8");
   } catch {
     return "";
+  }
+}
+
+// The last `bytes` bytes of a file that only grows by appends (landings.log, 83 kB on 2026-11-27
+// and one line a landing), so a request for the state reads O(1) of it, not the whole history.
+async function tailText(path: string, bytes: number): Promise<string> {
+  let f;
+  try {
+    f = await open(path, "r");
+    const { size } = await f.stat();
+    const start = Math.max(0, size - bytes);
+    const buf = Buffer.alloc(size - start);
+    const { bytesRead } = await f.read(buf, 0, buf.length, start);
+    return buf.subarray(0, bytesRead).toString("utf8");
+  } catch {
+    return "";
+  } finally {
+    await f?.close();
   }
 }
 
@@ -79,12 +97,13 @@ function updateOrigin(): Promise<void> {
 }
 
 async function state() {
-  const [plan, logText, ledgerText, questionsText, lock, loadavg, origin, main, ahead] = await Promise.all([
+  const [plan, logText, ledgerText, questionsText, landings, loadavg, origin, main, ahead] = await Promise.all([
     text(join(repo, "docs/plan_dag.md")),
     text(join(work, "running-log.md")),
     text(join(work, "ledger.jsonl")),
     text(questions),
-    text(join(work, "merge.lock/owner")),
+    // A landing line is about 120 bytes; 4 kB holds the last thirty.
+    tailText(join(work, "landings.log"), 4096),
     text("/proc/loadavg"),
     git("rev-parse", "--short", "origin/main"),
     git("rev-parse", "--short", "main"),
@@ -111,7 +130,7 @@ async function state() {
     outside,
     machine: {
       load: loadavg.split(" ").slice(0, 3).join(" "),
-      lock: lock.trim(),
+      landing: lastLanding(landings),
       origin,
       main,
       ahead: Number(ahead ?? 0),
@@ -149,8 +168,7 @@ function watchNames(dir: string, names: string[]): void {
   }
 }
 watchNames(join(repo, "docs"), ["plan_dag.md"]);
-watchNames(work, ["running-log.md", "ledger.jsonl", "merge.lock"]);
-watchNames(join(work, "merge.lock"), ["owner"]);
+watchNames(work, ["running-log.md", "ledger.jsonl", "landings.log"]);
 watchNames(dirname(questions), [basename(questions)]);
 for (const dir of [repo, spec]) {
   watchNames(join(dir, ".git"), ["packed-refs"]);

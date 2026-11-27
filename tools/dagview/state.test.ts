@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { buildGraph, buildNodes, CommitList, ledgerCommits, parseLedger, parseQuestions, parseLog, parsePlan, resolveId, shapeProblems, shortLabel } from "./state.ts";
+import { buildGraph, buildNodes, CommitList, lastLanding, ledgerCommits, parseLedger, parseQuestions, parseLog, parsePlan, resolveId, shapeProblems, shortLabel } from "./state.ts";
 
 const plan = `# Plan
 ## Items by level
@@ -624,4 +624,14 @@ test("an agent's unsolved or todo line leaves the node unstarted; ready leaves i
   assert.equal(st("todo"), "unstarted");
   assert.equal(st("ready"), "waiting");
   assert.equal(st("running"), "active");
+});
+
+test("the last landing is the last whole line of landings.log", () => {
+  const a = "14a171065f0ec812f8b6b07449b5a0e9758c0fd2 2026-11-26T22:55:28Z /home/luke/Work/wt/trees/pith-rows wt/pith-rows";
+  const b = "a1c20cb6845fbc0a2478955d723e3069faab53fe 2026-11-27T00:33:41Z /home/luke/Work/wt/trees/b22-scale1-b29-l2 wt/b22-scale1-b29-l2";
+  assert.equal(lastLanding(`${a}\n${b}\n`), "a1c20cb68 2026-11-27T00:33:41Z wt/b22-scale1-b29-l2");
+  // The read starts part way through a line, and the last line is an append still being written.
+  assert.equal(lastLanding(`9758c0fd2 2026-11-26T22:55:28Z /x wt/y\n${a}\n${b.slice(0, 50)}`), "14a171065 2026-11-26T22:55:28Z wt/pith-rows");
+  assert.equal(lastLanding(""), "");
+  assert.equal(lastLanding("short 2026-11-26T22:55:28Z /x wt/y\n"), "");
 });

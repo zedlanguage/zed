@@ -160,6 +160,22 @@ export function parseLog(text: string): LogEntry[] {
   return out;
 }
 
+// The last landing on zed-impl main, from the end of wt/landings.log, as "<short commit> <time>
+// <branch>"; "" when the text holds no landing. merge-push.sh and coupled-push.sh append one line
+// per landing, `<commit> <UTC time> <checkout> <branch>` (push-common.sh, record_landing). The
+// merge lock this replaces (wt/merge.lock/owner) has had no writer since NO-LOCKS-optimistic
+// (2026-11-19), so the page showed "free" for good (DAGVIEW-merge-lock-reader). The text may start
+// part way through a line (the server reads only the file's last bytes), and the last line may be
+// an append still in progress, so a line counts only when it has the four fields and a full hash.
+export function lastLanding(text: string): string {
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = /^([0-9a-f]{40}) (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) \S+ (\S+)$/.exec(lines[i]);
+    if (m) return `${m[1].slice(0, 9)} ${m[2]} ${m[3]}`;
+  }
+  return "";
+}
+
 export function parseLedger(text: string): LedgerEntry[] {
   const out: LedgerEntry[] = [];
   for (const line of text.split("\n")) {
