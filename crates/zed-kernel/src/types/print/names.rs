@@ -525,6 +525,19 @@ fn var_place(name: &str) -> Option<usize> {
     }
 }
 
+/// Whether `name` may be one of the first `count` picks of [`fresh_name`] on this thread, from
+/// place 0: a name of [`Names::Variables`] at a place below `count` that the program being
+/// checked does not bind ([`ProgramNames`]). A name for which this is false was not made up
+/// there, so a signature whose own names were picked from `T` on, `count` of them
+/// ([`fresh_name`] leaves its `n` past the last pick), wrote it: it is a name of the
+/// program, or of another file, or past every pick. Why: every pick is a [`Names::Variables`]
+/// name, at a place below the `n` it leaves, and [`fresh_name`] steps over every place the
+/// program binds. Picks from a later start than 0 (a function inside another) only shrink
+/// the set of names picked, so the answer is false for no picked name. O(1).
+pub fn may_be_picked(name: &str, count: usize) -> bool {
+    var_place(name).is_some_and(|p| p < count && HELD.with_borrow(|held| !held_at(held, p)))
+}
+
 /// Whether the program binds the name at place `p`.
 fn held_at(held: &Held, p: usize) -> bool {
     if p < 4 {
