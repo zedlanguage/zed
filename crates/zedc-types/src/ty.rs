@@ -20127,7 +20127,24 @@ fn arrow_text_naming(
             Some(key) => mention.key = Some(key.into()),
             None => mention.name = n,
         },
-        Some(VarSlot::Free(_)) => {}
+        // An unbounded variable that stands twice or more is written as the mark of its root,
+        // `VAR<root>` ([`Ty::write_vars`]); the capture is taken in the first walk, and the
+        // second pushes the same variables in the same order and joins them alike, so the
+        // root here is the plan's. ([`arrow_sig`] keeps no needs, so no two are joined here
+        // and the root is `k`; the root is still the key the mark is written with.) One that
+        // stands once is printed `_` and has no mark: the key is set only when the text holds
+        // the mark, so that a mention is written only after a type region (zedc-check
+        // `holds_lay_out_mark`). Cost: one pass over the text.
+        Some(VarSlot::Free(k)) => {
+            let key = scope.root(k).to_string();
+            let mark = format!("{}{key}", defs::VAR);
+            let stands = text
+                .match_indices(&mark)
+                .any(|(i, _)| text[i + mark.len()..].starts_with([defs::NEXT, defs::UNION_END]));
+            if stands {
+                mention.key = Some(key.into());
+            }
+        }
         // Bound outside the text, by the name given with it.
         None => {
             if let Some((_, n)) = names.iter().find(|(w, _)| w == v) {
@@ -26957,6 +26974,35 @@ mod tests {
             range: None,
         };
         Sig::one(vec![x], vec![t], result)
+    }
+
+    /// PRINT-headline-note-same-name, the [`VarSlot::Free`] case of [`arrow_text_naming`]: an
+    /// unbounded own variable `A` that stands twice is printed by a mark, named apart from the
+    /// words of the message, so a mention of it must be named by that mark too, not written as
+    /// the program's `A`; one that stands once is printed `_`, holds no mark, and the mention
+    /// writes `A`. Red before: the mention of the variable standing twice wrote `A`.
+    #[test]
+    fn a_mention_of_an_unbounded_variable_names_it_as_the_arrow_does() {
+        let a: Arc<str> = "A".into();
+        let mut twice = one_of(Ty::var(a.clone()), Ty::var(a.clone()));
+        twice.own = [a.clone()].into_iter().collect();
+        let mut once = one_of(Ty::var(a.clone()), Ty::lit(&Value::Int(0)));
+        once.own = [a.clone()].into_iter().collect();
+        let cases = [
+            (&twice, "T -> T", "T", "U -> U with U"),
+            (&once, "_ -> 0", "A", "_ -> 0 with A"),
+        ];
+        for (s, alone, named, in_message) in cases {
+            // Alone: the arrow is finished here, and the mention with it.
+            let (text, m) = arrow_text_naming(s, &s.arrows[0], &[], &a);
+            assert_eq!((text.as_str(), m.text(0).as_str()), (alone, named));
+            // In a message, which writes `T`: the arrow's variable skips it, the mention too.
+            let _on = defs::collect();
+            let (text, m) = arrow_text_naming(s, &s.arrows[0], &[], &a);
+            let mut message = format!("{text} with {}", m.text(0));
+            defs::name_vars(&mut message, 0, &|w| w == "T");
+            assert_eq!(message, in_message);
+        }
     }
 
     #[test]
