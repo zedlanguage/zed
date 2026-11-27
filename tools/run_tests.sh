@@ -1135,6 +1135,16 @@ fi
 # which the chain of 8000 maps on a 2 MiB stack is 6.8 s), kernel 5.5 s (39), collisions 4.8 s,
 # moves 1.8 s, three_way 0.8 s, kept 0.8 s. Each module is a piece
 # (FAIL-l08-02-remaps-piece-past-20s, b22-tests7).
+# l01_36a_executables and l01_36b_link_identity each ran as one piece near or past the limit of
+# 20 s on a loaded hm VM. Each module of both is a piece, and each test of plan_carried, dwarf,
+# port_in_family and command (l01_36a) and of prelink, linkers and deps (l01_36b); the links are
+# made before the timed pieces, so a piece does not link again. Three tests were over 10 s alone
+# at load 8-17 on hm2: plan_carried's damaged plans 15.5-19.9 s, its kinds of damage 6.2-10.7 s
+# and port_in_family's six forms 6.2-10.6 s; they are four, two and two tests over parts of
+# their corpus or forms, which took 5.1-7.2 s (damaged plans) and 6.0-7.0 s (forms) in three
+# runs at load 11-16 on hm4, beside eight busy loops. prelink's test of three builds took
+# 6.7-12.0 s in those runs; the check that a prelink made again has the same bytes is a test of
+# its own, of two builds (FAIL-link-pieces-at-20s-limit, b31-tools, 2026-11-27).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_groups_and_refusals l01_23_groups_and_refusals::r6_reduction
@@ -1150,7 +1160,10 @@ split="
   l01_29_repairs_and_printing::offered_repairs::every_offered_repair_inside_a_sum_checks_as_written
   l01_29_repairs_and_printing::offered_repairs::every_offered_repair_inside_a_call_checks_as_written
   l01_36_cranelift l01_36_cranelift::scaling l01_36_cranelift::table
-  l01_36_cranelift::mul_edges
+  l01_36_cranelift::mul_edges l01_36a_executables l01_36b_link_identity
+  l01_36a_executables::plan_carried l01_36a_executables::dwarf
+  l01_36a_executables::port_in_family l01_36a_executables::command
+  l01_36b_link_identity::prelink l01_36b_link_identity::linkers l01_36b_link_identity::deps
   l01_38_omega_test l01_38_presburger l01_38_presburger::oracle
   l01_38_presburger::deep l01_38_presburger::shared
   l01_38_omega_test::omega l01_38_omega_test::scaling

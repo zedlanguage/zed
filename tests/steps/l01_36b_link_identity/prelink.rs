@@ -141,7 +141,6 @@ fn a_build_prelinks_the_runtime_once_beside_it_and_removes_stale_ones() {
     assert!(!unfinished.exists(), "{} removed", unfinished.display());
     assert!(kept.exists(), "{} kept", kept.display());
     assert!(other.exists(), "{} kept", other.display());
-    let bytes = std::fs::read(&object).unwrap();
     // A second build reads the object as it is.
     let made = std::fs::metadata(&object).unwrap().modified().unwrap();
     built(
@@ -154,18 +153,33 @@ fn a_build_prelinks_the_runtime_once_beside_it_and_removes_stale_ones() {
         std::fs::metadata(&object).unwrap().modified().unwrap(),
         made
     );
-    // Made again, it has the same bytes.
+}
+
+/// A prelinked object made again has the same bytes. A test of its own, in a directory of its
+/// own, so that it is a piece of tools/run_tests.sh apart from
+/// [`a_build_prelinks_the_runtime_once_beside_it_and_removes_stale_ones`]: as one test of three
+/// builds they took 6.7-12.0 s on a loaded hm VM (FAIL-link-pieces-at-20s-limit), over the 10 s
+/// a piece is held to.
+#[test]
+fn a_prelinked_object_made_again_has_the_same_bytes() {
+    let d = dir("prelink_again");
+    let lib = d.join("lib");
+    let tools = linked_from(&lib);
+    let object = prelinked_in(&lib, &tools);
     removed(&object);
-    built(
-        &d,
-        "third",
-        &format!("third {:?}", std::time::SystemTime::now()),
-        &tools,
-    );
-    assert!(
-        std::fs::read(&object).unwrap() == bytes,
-        "a prelink gives the same bytes"
-    );
+    let mut bytes = Vec::new();
+    for out in ["first", "again"] {
+        built(
+            &d,
+            out,
+            &format!("{out} {:?}", std::time::SystemTime::now()),
+            &tools,
+        );
+        assert!(object.is_file(), "{} made", object.display());
+        bytes.push(std::fs::read(&object).unwrap());
+        removed(&object);
+    }
+    assert!(bytes[0] == bytes[1], "a prelink gives the same bytes");
 }
 
 #[test]

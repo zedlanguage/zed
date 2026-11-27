@@ -315,8 +315,8 @@ impl Reader<'_> {
     /// (`codegen.rs` `finish`, `outs[m][p]`), when exactly nodes `0..=k` have outputs: a drop
     /// of a later node's output, which a plan with every index in range could hold, would
     /// index past them and panic. Test: `l01_36a_executables::plan_carried`
-    /// (`each_kind_of_damage_is_refused_and_makes_no_panic`, and the corpus plans read back,
-    /// which shows no plan the planner makes is refused by the bound).
+    /// (`each_kind_of_damage_is_refused_and_makes_no_panic_in_part_*`, and the corpus plans read
+    /// back, which shows no plan the planner makes is refused by the bound).
     fn srcs(&mut self, region: &Region, before: usize) -> Result<Vec<Src>, String> {
         let n = self.count(9)?;
         (0..n)

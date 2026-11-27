@@ -60,10 +60,45 @@ fn the_stored_plan_is_the_plan_worked_out_again_on_the_corpus() {
 /// panics. A change that leaves a plan the planner makes is no damage: byte 0 is `fuse`, and
 /// with it changed the bytes hold `plan(g, false)` exactly, which is kept and runs correctly,
 /// without fusing.
+///
+/// The corpus is dealt into [`DAMAGED_PARTS`] parts, graph `i` to part `i % DAMAGED_PARTS`, each
+/// a test and so a piece of tools/run_tests.sh. As one test it took 15.5-19.9 s on a loaded hm
+/// VM (FAIL-link-pieces-at-20s-limit), nearly all of it the re-check (which plans again) and
+/// `zed_native::ir` of each damaged plan the read accepts; planning the two reference plans once
+/// per graph instead of once per byte made no measured difference (15.9-17.7 s at load 2-15).
 #[test]
-fn a_damaged_plan_is_refused() {
-    let (mut read, mut rechecked, mut planned) = (0, 0, 0);
-    for g in &corpus() {
+fn a_damaged_plan_is_refused_in_part_0() {
+    damaged_plans_are_refused(0);
+}
+
+/// Part 1 of [`a_damaged_plan_is_refused_in_part_0`].
+#[test]
+fn a_damaged_plan_is_refused_in_part_1() {
+    damaged_plans_are_refused(1);
+}
+
+/// Part 2 of [`a_damaged_plan_is_refused_in_part_0`].
+#[test]
+fn a_damaged_plan_is_refused_in_part_2() {
+    damaged_plans_are_refused(2);
+}
+
+/// Part 3 of [`a_damaged_plan_is_refused_in_part_0`].
+#[test]
+fn a_damaged_plan_is_refused_in_part_3() {
+    damaged_plans_are_refused(3);
+}
+
+/// The number of parts [`a_damaged_plan_is_refused_in_part_0`] deals the corpus into: four
+/// parts of 28 or 29 graphs, about a quarter of the 15.5-19.9 s each.
+const DAMAGED_PARTS: usize = 4;
+
+/// [`a_damaged_plan_is_refused_in_part_0`] on the graphs `i` of the corpus with
+/// `i % DAMAGED_PARTS == part`.
+fn damaged_plans_are_refused(part: usize) {
+    let (mut read, mut rechecked, mut planned, mut graphs) = (0, 0, 0, 0);
+    for g in corpus().iter().skip(part).step_by(DAMAGED_PARTS) {
+        graphs += 1;
         let start = at_start(g);
         let bytes = plan(start.graph(), true).to_bytes();
         for at in 0..bytes.len() {
@@ -87,7 +122,7 @@ fn a_damaged_plan_is_refused() {
     // Both checks refuse some: the read the counts and indices, the re-check the rest. Only the
     // change of `fuse` leaves a plan the planner makes, one for each graph.
     assert!(read > 0 && rechecked > 0, "{read} {rechecked}");
-    assert!(planned <= 115, "{planned}");
+    assert!(planned <= graphs, "{planned} {graphs}");
 }
 
 /// The kinds of damage that keep every count and index of a plan in range, each made on the
@@ -204,11 +239,27 @@ fn damaged(g: &Region, p: &Plan) -> Vec<(&'static str, Plan)> {
 /// each plan of the corpus: the read refuses it or the re-check does, and making the tables and
 /// code from what was read gives code or an error, never a panic (risk named by b22-small12:
 /// `zed_native::ir` indexed past a node's outputs on a drop of a later node's output, and past
-/// a node's inputs on a callee of more parameters). Every kind is met somewhere in the corpus.
+/// a node's inputs on a callee of more parameters). Every kind is met somewhere in each part.
+///
+/// The corpus is two parts, the graphs of even and of odd index, each a test and so a piece of
+/// tools/run_tests.sh: as one test it took 6.1-10.7 s on a loaded hm VM
+/// (FAIL-link-pieces-at-20s-limit), over the 10 s a piece is held to.
 #[test]
-fn each_kind_of_damage_is_refused_and_makes_no_panic() {
+fn each_kind_of_damage_is_refused_and_makes_no_panic_in_part_0() {
+    each_kind_of_damage_is_refused(0);
+}
+
+/// Part 1 of [`each_kind_of_damage_is_refused_and_makes_no_panic_in_part_0`].
+#[test]
+fn each_kind_of_damage_is_refused_and_makes_no_panic_in_part_1() {
+    each_kind_of_damage_is_refused(1);
+}
+
+/// [`each_kind_of_damage_is_refused_and_makes_no_panic_in_part_0`] on the graphs `i` of the
+/// corpus with `i % 2 == part`.
+fn each_kind_of_damage_is_refused(part: usize) {
     let mut met = std::collections::BTreeMap::<&str, (usize, usize)>::new();
-    for g in &corpus() {
+    for g in corpus().iter().skip(part).step_by(2) {
         let start = at_start(g);
         let p = plan(start.graph(), true);
         for (name, d) in damaged(start.graph(), &p) {

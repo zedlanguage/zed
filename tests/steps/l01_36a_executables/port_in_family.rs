@@ -12,10 +12,46 @@ use super::{Ran, built, dir, executable, interpreter};
 /// The program of
 /// `l01_19_whole_file_ports::outside::a_function_reading_main_files_runs_under_every_higher_order_form`,
 /// each form and standard input read inside a `map`, built and run: the executable gives what
-/// `zedc run` gives, status, output and errors.
+/// `zedc run` gives, status, output and errors. The six forms are two tests of three, so that
+/// each is a piece of tools/run_tests.sh of its own: as one test of six builds the piece took
+/// 6.2-10.6 s on a loaded hm VM (FAIL-link-pieces-at-20s-limit), over the 10 s a piece is held to.
 #[test]
-fn every_higher_order_form_reading_a_port_runs_in_an_executable_as_in_zedc_run() {
-    let d = dir("port_in_family_forms");
+fn the_filtering_folding_and_nested_forms_reading_a_port_run_in_an_executable_as_in_zedc_run() {
+    forms_run_as_in_zedc_run(
+        "port_in_family_forms_a",
+        &[
+            ("where", "names.where(p -> text(p) != \"-\").map(text)"),
+            ("foldl", "names.foldl(\"\", (acc, p) -> acc ++ text(p))"),
+            ("nested_map", "[names, names].map(ns -> ns.map(text))"),
+        ],
+    );
+}
+
+/// The other three forms of
+/// [`the_filtering_folding_and_nested_forms_reading_a_port_run_in_an_executable_as_in_zedc_run`]:
+/// a lambda, a chain of calls, and standard input.
+#[test]
+fn the_lambda_chain_and_stdin_forms_reading_a_port_run_in_an_executable_as_in_zedc_run() {
+    forms_run_as_in_zedc_run(
+        "port_in_family_forms_b",
+        &[
+            (
+                "lambda",
+                "names.map(p -> main::files[p] else #ioError -> \"?\" else #notFound -> \"?\")",
+            ),
+            ("chain", "names.map(loud)"),
+            (
+                "stdin",
+                "[0, 1, 2].map(i -> m.stdin[i] else #ioError -> \"-\" else #notFound -> \"-\" else #outOfBounds -> \"-\")",
+            ),
+        ],
+    );
+}
+
+/// Each `(name, expr)` of `forms` as the program's output, built in the scratch directory
+/// `dir_name` and run: the executable gives what `zedc run` gives.
+fn forms_run_as_in_zedc_run(dir_name: &str, forms: &[(&str, &str)]) {
+    let d = dir(dir_name);
     let (a, b) = (d.join("a.txt"), d.join("b.txt"));
     std::fs::write(&a, "A").unwrap();
     std::fs::write(&b, "B").unwrap();
@@ -26,20 +62,7 @@ fn every_higher_order_form_reading_a_port_runs_in_an_executable_as_in_zedc_run()
         d.join("absent.txt").display()
     );
     let mut wrong = Vec::new();
-    for (name, expr) in [
-        ("where", "names.where(p -> text(p) != \"-\").map(text)"),
-        ("foldl", "names.foldl(\"\", (acc, p) -> acc ++ text(p))"),
-        ("nested_map", "[names, names].map(ns -> ns.map(text))"),
-        (
-            "lambda",
-            "names.map(p -> main::files[p] else #ioError -> \"?\" else #notFound -> \"?\")",
-        ),
-        ("chain", "names.map(loud)"),
-        (
-            "stdin",
-            "[0, 1, 2].map(i -> m.stdin[i] else #ioError -> \"-\" else #notFound -> \"-\" else #outOfBounds -> \"-\")",
-        ),
-    ] {
+    for &(name, expr) in forms {
         let src = d.join(format!("{name}.zed"));
         std::fs::write(
             &src,
