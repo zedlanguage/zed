@@ -36,7 +36,8 @@ fn a_doubled_tuple_reads_back_from_its_definitions() {
 
 /// Plan row TYPE-display-shared: the parity of the `c` overlapping one-tuples `(int \ i,)`, `i`
 /// in `0..c`, built a literal at a time as `f & !x | !f & x`, whose clauses are `2^(c-1)`,
-/// prints in at most `2c` definitions (`types::print::tests::the_parity_of_c_tuple_types_prints_in_o_c_definitions`),
+/// prints in at most `3c` definitions, one for each atom and two for each step
+/// (`types::print::tests::the_parity_of_c_tuple_types_prints_in_o_c_definitions`, with the proof),
 /// and the text, definitions included, reads back as the same type.
 #[test]
 fn the_parity_of_tuple_types_reads_back_from_its_definitions() {
@@ -48,7 +49,7 @@ fn the_parity_of_tuple_types_reads_back_from_its_definitions() {
         });
         let s = t.surface();
         assert!(s.exact, "{s}");
-        assert!(s.defs.len() <= 2 * c, "{c}: {s}");
+        assert!(s.defs.len() <= 3 * c, "{c}: {s}");
         let back = parse_type(&s.to_string()).unwrap_or_else(|e| panic!("{s}: {e}"));
         assert!(back.subtype(&Ty::set(t.clone())), "{s}");
         assert!(Ty::set(t.clone()).subtype(&back), "{s}");

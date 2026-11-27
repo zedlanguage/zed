@@ -637,8 +637,10 @@ time exponential in the tuple types written. The memory is one path and one
 split at a time. Running out of time or memory is a failed build, never a different
 answer. A diagram of `O(C)` nodes, such as the parity of `C` tuple types, has `2^(C-1)`
 paths, and a display that listed its clauses would be exponential in what was written; the
-display names the shared nodes instead, so the parity prints in at most `2C` definitions and
-`128C` bytes (plan row TYPE-display-shared:
+display names the shared nodes instead, so the parity prints in at most `3C` definitions and
+`C (64 + 12 L)` bytes, `L` the length of the longest name `PartK`, `4 + digits(3C)` (40
+definitions and 1,708 bytes at `C = 16`; plan row TYPE-display-shared,
+`types::print::tests::parity_text_bounds` with the proof:
 `types::print::tests::the_parity_of_c_tuple_types_prints_in_o_c_definitions`, the benchmark
 `the_parity_of_c_tuple_types_prints_in_linear_text` at 1,000 and 8,000 atoms, and the
 read-back `l01_29_diagnostics::shared_parts::the_parity_of_tuple_types_reads_back_from_its_definitions`).

@@ -223,30 +223,45 @@ pub(super) fn parity(c: u64) -> Type {
     })
 }
 
+/// The bounds on the text of [`parity`]`(c)`: at most `3c` definitions and `c (64 + 12 L)`
+/// bytes, `L = 4 + digits(3c)` the length of the longest name `PartK`. Proof: the diagram has
+/// at most `c` atoms `(i,)` and two nodes for each step of the fold, `(A | B) \ (A & C)` and
+/// `(A \ B) | (C \ A)`, at most `2c`, and the display writes each once, as a definition where it
+/// is used more than once and in place otherwise; so at most `3c` definitions. A step's
+/// definition `type P = (A | B) \ (A & C);` and its newline take `23 + 5L` bytes, an atom's
+/// `type P = (i,);` at most `13 + 2L` (`i < c` has fewer digits than `L`), and a node written in
+/// place takes no more than its definition (it drops `type P = ;` and the newline, `10 + L`
+/// bytes, and adds two parentheses). So the text is at most `c (2 (23 + 5L) + 13 + 2L) = c (59 +
+/// 12 L)` bytes. Measured (2026-11-27): 40 definitions and 1,708 bytes at `c = 16`, where a
+/// bound of `2c` definitions, written first, failed.
+/// The text is `O(c log c)` bytes because the names are `O(log c)` long, and it is linear in the
+/// nodes.
+pub(super) fn parity_text_bounds(c: usize) -> (usize, usize) {
+    let l = 4 + (3 * c).to_string().len();
+    (3 * c, c * (64 + 12 * l))
+}
+
 /// Plan row TYPE-display-shared: the parity of `c` tuple types, whose diagram has `2^(c-1)`
-/// paths, prints in at most `2c` definitions and in text of at most `128c` bytes, so it does not
-/// list its clauses: at `c = 16` they would be 32,768. It prints the counts for the record. The
+/// paths, prints within [`parity_text_bounds`], at most `3c` definitions, so it does not list
+/// its clauses: at `c = 16` they would be 32,768. It prints the counts for the record. The
 /// benchmark `the_parity_of_c_tuple_types_prints_in_linear_text` in `bench.rs` checks the
 /// work at 1,000 and 8,000 atoms, and `l01_29_diagnostics::shared_parts::
 /// the_parity_of_tuple_types_reads_back_from_its_definitions` that the text reads back as the
 /// same type.
 #[test]
 fn the_parity_of_c_tuple_types_prints_in_o_c_definitions() {
-    for c in [1u64, 2, 3, 4, 5, 8, 16, 64] {
-        let s = parity(c).surface();
+    for c in [1usize, 2, 3, 4, 5, 8, 16, 64] {
+        let s = parity(c as u64).surface();
         let text = s.to_string();
         println!(
             "parity of {c}: {} definitions, {} bytes",
             s.defs.len(),
             text.len()
         );
+        let (defs, bytes) = parity_text_bounds(c);
         assert!(s.exact, "{c}: {text}");
-        assert!(s.defs.len() as u64 <= 2 * c, "{c}: {text}");
-        assert!(
-            text.len() as u64 <= 128 * c,
-            "{c}: {} bytes: {text}",
-            text.len()
-        );
+        assert!(s.defs.len() <= defs, "{c}: {text}");
+        assert!(text.len() <= bytes, "{c}: {} bytes: {text}", text.len());
     }
 }
 

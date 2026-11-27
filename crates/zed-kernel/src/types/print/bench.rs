@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use super::super::Type;
-use super::tests::{decision_list, doubled, parity, part_ring, three_carriers};
+use super::tests::{decision_list, doubled, parity, parity_text_bounds, part_ring, three_carriers};
 use crate::scaling;
 
 /// Small instances: `the_text_of_a_decision_list_has_a_connective_between_each_two_literals`.
@@ -32,8 +32,9 @@ fn the_text_of_a_long_decision_list_scales() {
 
 /// Plan row TYPE-display-shared: the parity of `m` tuple types, built before the timing (its
 /// building is `parity_built_a_literal_at_a_time_scales` in `bdd/bench.rs`), prints in at most
-/// `2m` definitions and `128m` bytes, in work linear in `m` (the printer visits each node of the
-/// diagram once, `print.rs`), where its clauses are `2^(m-1)`. Small instances:
+/// `3m` definitions and `O(m log m)` bytes ([`parity_text_bounds`]; the names are `O(log m)`
+/// long), in work linear in its `O(m)` nodes (the printer visits each node of the diagram
+/// once, `print.rs`), where its clauses are `2^(m-1)`. Small instances:
 /// `the_parity_of_c_tuple_types_prints_in_o_c_definitions`.
 #[test]
 fn the_parity_of_c_tuple_types_prints_in_linear_text() {
@@ -44,8 +45,9 @@ fn the_parity_of_c_tuple_types_prints_in_linear_text() {
         .collect();
     scaling::check("the text of the parity of n tuple types", n, |m| {
         let s = built[&m].surface();
-        assert!(s.defs.len() <= 2 * m);
-        assert!(s.to_string().len() <= 128 * m);
+        let (defs, bytes) = parity_text_bounds(m);
+        assert!(s.defs.len() <= defs);
+        assert!(s.to_string().len() <= bytes);
     });
 }
 
