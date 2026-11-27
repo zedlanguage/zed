@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use imbl::ordmap::DiffItem;
 use zed_collections::priority::Priorities;
+use zed_collections::treap;
 use zedc_lattice::cell::Premises;
 use zedc_lattice::interval::IntervalSet;
 
@@ -79,29 +80,45 @@ impl Sum for Leaf {
 /// A treap of the inputs, ordered by name, each node with its leaf and the sum of its
 /// subtree's; a node's priority is drawn at random once per run from its name, so in a run the
 /// tree's shape depends on its names alone and an update copies the `O(log h)` nodes of one
-/// path, expected.
-pub type Tree<L = Leaf> = Option<Arc<Node<L>>>;
+/// path, expected. The generic treap of zed-collections ([`zed_collections::treap`]), whose
+/// item is an [`Input`] (DRY-persistent-trees-2026-11-26).
+pub type Tree<L = Leaf> = treap::Tree<Input<L>>;
 
-/// A node of a [`Tree`].
-pub struct Node<L = Leaf> {
+/// An item of a [`Tree`]: an input's name and its leaf.
+#[derive(Clone)]
+pub struct Input<L = Leaf> {
     key: Arc<str>,
-    prio: u64,
     leaf: L,
-    sum: L,
-    /// The inputs of the subtree.
-    size: usize,
-    left: Tree<L>,
-    right: Tree<L>,
+}
+
+impl<L: Sum> treap::Item for Input<L> {
+    type Key = Arc<str>;
+    type Sum = L;
+
+    fn key(&self) -> &Arc<str> {
+        &self.key
+    }
+
+    fn priority(&self) -> u64 {
+        prio(&self.key)
+    }
+
+    /// The sum of a subtree, `left + leaf + right` in key order, as the private treap this
+    /// replaced made it.
+    fn sum(&self, left: Option<&L>, right: Option<&L>) -> L {
+        (left.map_or_else(L::zero, L::clone).plus(&self.leaf))
+            .plus(&right.map_or_else(L::zero, L::clone))
+    }
 }
 
 /// The sum of every leaf of `t`.
 pub fn total<L: Sum>(t: &Tree<L>) -> L {
-    t.as_ref().map_or_else(L::zero, |n| n.sum.clone())
+    t.as_ref().map_or_else(L::zero, |n| n.sum().clone())
 }
 
 /// The inputs of `t`.
-pub fn len<L>(t: &Tree<L>) -> usize {
-    t.as_ref().map_or(0, |n| n.size)
+pub fn len<L: Sum>(t: &Tree<L>) -> usize {
+    treap::len(t)
 }
 
 /// Calls `f` on each input of `t` and its leaf in order of name, skipping each subtree whose
@@ -116,77 +133,27 @@ pub fn visit<L: Sum>(
     let Some(n) = t else {
         return true;
     };
-    if !want(&n.sum) {
+    if !want(n.sum()) {
         return true;
     }
-    visit(&n.left, want, f) && (!want(&n.leaf) || f(&n.key, &n.leaf)) && visit(&n.right, want, f)
+    let Input { key, leaf } = n.item();
+    visit(n.left(), want, f) && (!want(leaf) || f(key, leaf)) && visit(n.right(), want, f)
 }
 
-/// `t` with `key`'s leaf set to `leaf`, or taken out at `None`. `O(log h)` expected.
+/// `t` with `key`'s leaf set to `leaf`, or taken out at `None`. `O(log h)` expected: the
+/// insertion and removal of the generic treap, each one walk down the search path. The private
+/// treap this replaced split at the key, took the key out of the upper part and joined the
+/// three again, making the search path and both joined spines anew.
 fn set<L: Sum>(t: &Tree<L>, key: &Arc<str>, leaf: Option<L>) -> Tree<L> {
-    let (below, above) = split(t, key);
-    let above = without(above, key);
-    let one = leaf.map(|l| node(key.clone(), prio(key), l, None, None));
-    join(join(below, one), above)
-}
-
-fn node<L: Sum>(key: Arc<str>, prio: u64, leaf: L, left: Tree<L>, right: Tree<L>) -> Arc<Node<L>> {
-    let sum = total(&left).plus(&leaf).plus(&total(&right));
-    let size = len(&left) + 1 + len(&right);
-    Arc::new(Node {
-        key,
-        prio,
-        leaf,
-        sum,
-        size,
-        left,
-        right,
-    })
-}
-
-/// The keys of `t` below `key`, and the others.
-fn split<L: Sum>(t: &Tree<L>, key: &Arc<str>) -> (Tree<L>, Tree<L>) {
-    let Some(n) = t else {
-        return (None, None);
-    };
-    if n.key < *key {
-        let (l, r) = split(&n.right, key);
-        let left = node(n.key.clone(), n.prio, n.leaf.clone(), n.left.clone(), l);
-        (Some(left), r)
-    } else {
-        let (l, r) = split(&n.left, key);
-        let right = node(n.key.clone(), n.prio, n.leaf.clone(), r, n.right.clone());
-        (l, Some(right))
-    }
-}
-
-/// `t`, whose keys are `key` or above, without `key`, its least if it has it.
-fn without<L: Sum>(t: Tree<L>, key: &Arc<str>) -> Tree<L> {
-    let n = t?;
-    if n.key == *key {
-        return join(n.left.clone(), n.right.clone());
-    }
-    let left = without(n.left.clone(), key);
-    Some(node(
-        n.key.clone(),
-        n.prio,
-        n.leaf.clone(),
-        left,
-        n.right.clone(),
-    ))
-}
-
-/// The nodes of `a`, then those of `b`, whose keys all lie above.
-fn join<L: Sum>(a: Tree<L>, b: Tree<L>) -> Tree<L> {
-    match (a, b) {
-        (None, t) | (t, None) => t,
-        (Some(a), Some(b)) => Some(if a.prio >= b.prio {
-            let right = join(a.right.clone(), Some(b));
-            node(a.key.clone(), a.prio, a.leaf.clone(), a.left.clone(), right)
-        } else {
-            let left = join(Some(a), b.left.clone());
-            node(b.key.clone(), b.prio, b.leaf.clone(), left, b.right.clone())
-        }),
+    match leaf {
+        Some(leaf) => treap::insert(
+            t,
+            Input {
+                key: key.clone(),
+                leaf,
+            },
+        ),
+        None => treap::remove(t, key),
     }
 }
 
