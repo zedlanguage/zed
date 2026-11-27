@@ -93,6 +93,26 @@ pub const NEXT: char = '\u{FDDE}';
 /// ([`name_vars`]). No key holds it: a key is a number, or `b` and a number (zedc-types
 /// `Scope::mark`).
 pub const WRITTEN: char = ':';
+/// Opens a mention ([`mention`]): a variable of a type closed before it in the text, written
+/// by the name [`name_vars`] gives it there. Noncharacters, as the marks above are: U+FDD0 to
+/// U+FDDF are the marks of this module and zedc-check's `DECLARE`, U+FDE0 and U+FDE1 are
+/// zedc-check's placeholders (`HIDDEN`), and zedc-check swaps every noncharacter of U+FDD0 to
+/// U+FDEF out of the program's texts while a message is laid out (`ProgramTexts`).
+pub const MENTION: char = '\u{FDE2}';
+/// Closes what [`MENTION`] opens.
+pub const MENTION_END: char = '\u{FDE3}';
+
+/// The text of a mention of the variable `key`, written after the type that holds it: `back`
+/// is how many types ([`VARS`]) the text closes between the end of that type and the mention,
+/// `key` the variable's key as its mark writes it after [`VAR`] (`b3`, `b3:T`, or a number),
+/// and `fallback` the name written when that type names no variable of `key` (one printed `_`,
+/// or none written). [`name_vars`] writes the name the type gave the variable, so a clause of
+/// a message that names a variable of a type it quotes names it as the type prints it
+/// (PRINT-headline-note-same-name). Form: `MENTION back NEXT key NEXT fallback MENTION_END`;
+/// no key or name holds [`NEXT`].
+pub fn mention(back: usize, key: &str, fallback: &str) -> String {
+    format!("{MENTION}{back}{NEXT}{key}{NEXT}{fallback}{MENTION_END}")
+}
 
 /// The names declarations wrote for the variables marked in `text` up to the next [`VARS`] or
 /// [`VARS_END`], the marks after [`WRITTEN`], put in `into`: the names the other variables of
@@ -125,35 +145,56 @@ fn written_in<'t>(text: &'t str, into: &mut HashSet<&'t str>) {
 /// written name is given only when no variable before took it (`used`). (3) The key of a mark
 /// is one variable's, and `named` gives every place of the key the name it got first.
 ///
+/// A mention ([`mention`]) is written as the name its type gave the variable: each type's
+/// `named` is kept when the type closes, and the mention reads the one `back` types before it.
+/// So the mention and the type agree whatever the type was given, a written name or a fresh
+/// one (PRINT-headline-note-same-name).
+///
 /// Complexity tradeoff: linear in the text, with a hash lookup per mark, plus a sort of each
 /// union's k members, O(k log k); each type is read twice, once for its written names
 /// ([`written_in`]). Naming each variable
 /// where it is first written, and looking back over the text for a name in use, would be
-/// quadratic in a type with many variables (COMPLEXITY.md F169).
+/// quadratic in a type with many variables (COMPLEXITY.md F169). The names of the closed types
+/// are kept for the mentions, memory linear in the marks.
 pub fn name_vars(out: &mut String, from: usize, taken: &dyn Fn(&str) -> bool) {
     if !out[from..].contains(VARS) {
         return;
     }
     let text = out.split_off(from);
     let mut named: HashMap<&str, String> = HashMap::new();
+    let mut closed: Vec<HashMap<&str, String>> = Vec::new();
     let mut written: HashSet<&str> = HashSet::new();
     let mut used: HashSet<String> = HashSet::new();
     let mut n = 0;
     let mut members: Vec<String> = Vec::new();
     let mut rest = text.as_str();
     written_in(rest, &mut written);
-    while let Some(i) = rest.find([VARS, VARS_END, UNION]) {
+    while let Some(i) = rest.find([VARS, VARS_END, UNION, MENTION]) {
         out.push_str(&rest[..i]);
         let c = rest[i..].chars().next().expect("a mark was found");
         let tail = &rest[i + c.len_utf8()..];
         rest = match c {
             VARS | VARS_END => {
-                named.clear();
+                match c {
+                    VARS_END => closed.push(std::mem::take(&mut named)),
+                    _ => named.clear(),
+                }
                 written.clear();
                 used.clear();
                 written_in(tail, &mut written);
                 n = 0;
                 tail
+            }
+            MENTION => {
+                let end = tail.find(MENTION_END).expect("a mention is closed");
+                let mut parts = tail[..end].splitn(3, NEXT);
+                let (back, key, fallback) = (parts.next(), parts.next(), parts.next());
+                let back: Option<usize> = back.and_then(|b| b.parse().ok());
+                let name = back
+                    .and_then(|b| closed.len().checked_sub(b + 1))
+                    .and_then(|k| closed[k].get(key.unwrap_or_default()));
+                out.push_str(name.map_or(fallback.unwrap_or_default(), String::as_str));
+                &tail[end + MENTION_END.len_utf8()..]
             }
             _ => {
                 let end = tail.find(UNION_END).expect("a union of marks is closed");
@@ -246,13 +287,20 @@ fn standing(m: &str) -> String {
 
 /// Names the variables marked in `texts` ([`name_vars`]), skipping every word they write. The
 /// words hold the names declarations wrote for marked variables ([`WRITTEN`]), so a variable
-/// of no written name skips them in every text, as it skips a name written out.
+/// of no written name skips them in every text, as it skips a name written out. A mention
+/// ([`mention`]) is no word: it is written as the name its type gives, so a variable that
+/// skipped its fallback would print apart from the mention (PRINT-headline-note-same-name).
 fn name_all_vars(texts: &mut [&mut String], taken: &dyn Fn(&str) -> bool) {
     if !texts.iter().any(|t| t.contains(VARS)) {
         return;
     }
+    // The text outside the mentions: each piece after a `MENTION_END`, up to a `MENTION`.
+    fn outside(t: &str) -> impl Iterator<Item = &str> {
+        (t.split(MENTION_END)).map(|p| p.split_once(MENTION).map_or(p, |(before, _)| before))
+    }
     let words: HashSet<String> = texts
         .iter()
+        .flat_map(|t| outside(t))
         .flat_map(|t| t.split(|c: char| !(c.is_alphanumeric() || c == '_')))
         .filter(|w| !w.is_empty())
         .map(String::from)
@@ -1127,6 +1175,45 @@ mod tests {
         let mut text = format!("{VARS}{}{VARS_END}", marks(&["0", "b1:A"]));
         name_vars(&mut text, 0, &|_| false);
         assert_eq!(text, "A | T");
+    }
+
+    /// PRINT-headline-note-same-name: a mention names its variable as the type it refers back
+    /// to names it. Red before: the mention marks were left in the text, and a clause that
+    /// wrote the checker's name `T` as a plain word made the type skip `T` and print `U`.
+    #[test]
+    fn a_mention_names_its_variable_as_its_type_does() {
+        let b0 = marks(&["b0"]);
+        // The type names `b0` apart from the words of the message, and the mention follows.
+        let mut text = format!(
+            "{VARS}({b0}, {b0}){VARS_END} with {}",
+            mention(0, "b0", "T")
+        );
+        name_vars(&mut text, 0, &|w| w == "T");
+        assert_eq!(text, "(U, U) with U");
+        // A mention is no word of the message: the type keeps `T`.
+        let mut text = format!(
+            "{VARS}({b0}, {b0}){VARS_END} with {}",
+            mention(0, "b0", "T")
+        );
+        name_all_vars(&mut [&mut text], &|_| false);
+        assert_eq!(text, "(T, T) with T");
+        // A type between the one referred to and the mention: `back` 1 reads past it.
+        let (a, b) = (marks(&["0"]), marks(&["1"]));
+        let mut text = format!(
+            "{VARS}({a}, {b}, {b}){VARS_END} at {VARS}({a}, {a}){VARS_END}: {} and {}",
+            mention(1, "1", "X"),
+            mention(0, "0", "X")
+        );
+        name_vars(&mut text, 0, &|_| false);
+        assert_eq!(text, "(T, U, U) at (T, T): U and T");
+        // A key the type never named, and a `back` past the first type, write the fallback.
+        let mut text = format!(
+            "{VARS}({b0}){VARS_END}: {} {}",
+            mention(0, "b9", "X"),
+            mention(1, "b0", "Y")
+        );
+        name_vars(&mut text, 0, &|_| false);
+        assert_eq!(text, "(T): X Y");
     }
 
     #[test]
