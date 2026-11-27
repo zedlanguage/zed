@@ -1253,9 +1253,11 @@ fn u6_case(spec: &Spec, term: &Term, tag: &str) -> (bool, Verdict, Verdict) {
 /// `_xc284r`, is Empty by the fork stages (PORT-u6-structured-fork, COMPLEXITY.md K137), as the
 /// oracle says, and so is the other build, `_xc284`. `_r7rc_343f` and `_r7rc_343r`, in
 /// [`r7_random_carrier_plus_chains_both_orders_against_bruteforce`], are Inhabited by the fork
-/// stages, as the brute force there says. The other 15 are still refused, and never wrong: the
-/// twelve `_r6sat` are the selector reduction of 3-SAT, and the rest need the subset
-/// construction (row REFUSAL-front-u6-subset). The
+/// stages, as the brute force there says. The twelve `_r6sat`, the selector reduction of 3-SAT
+/// (whose selector atoms cross, so the laminar 2-SAT of the escape solve does not apply), are
+/// Inhabited by its crossing fallback (`escape/crossing.rs`, REFUSAL-front-u6-subset): their
+/// networks reduce by leaves and series steps to Boolean places. The other three (`_xc363`,
+/// `_xp43`, `_xp43r`) are still refused, and never wrong; they need the subset construction. The
 /// control: two cases of the same builds that every kernel answers, one inhabited and one
 /// empty.
 #[test]
@@ -1462,7 +1464,7 @@ fn the_u6_fork_cases_are_answered_or_refused_soundly() {
     for &(id, k, clauses) in &r6 {
         let clauses: Vec<Vec<(usize, bool)>> = clauses.iter().map(|c| c.to_vec()).collect();
         let (s, t) = selector_reduction(k, &clauses);
-        cases.push((format!("_r6sat{id}"), s, t, true, fork));
+        cases.push((format!("_r6sat{id}"), s, t, true, Inhabited));
     }
     // Every case is run before any pin is checked, so a failure names all the changed pins.
     let mut changed = Vec::new();
@@ -1608,13 +1610,16 @@ fn random_clauses(seed: u64, k: usize, m: usize) -> Vec<Vec<(usize, bool)>> {
 /// `_u6a167`, and t03 is `refusals::the_forked_difference_benches_at_16_and_their_controls`.
 /// Each case is checked by [`fork_case`] in both orders against the oracle (or, for t11, the
 /// formula), and pinned at its verdict now; t11 is the test after this one
-/// ([`the_prototype_random_3sat_case_is_refused_soundly`]). The prototype answers t04 and t05 by
-/// its Stage 3 (the prefix-chain CSP), which is not ported: t04 stays refused, as do the cases the
-/// prototype refuses (t06 to t09, t11), since the first element read already leaves two
-/// negative chains (a fork, for Stage 1) and the answer needs two negative states at once (no
-/// simulation, for Stage 2). t05, unsatisfiable, is Empty and t10 Inhabited, both by the
-/// kernel before the fork stages (the same with the stages switched off): the fork stages
-/// decide none of t04 to t11.
+/// ([`the_prototype_random_3sat_case_is_refused_soundly`]). The fork stages decide none of t04
+/// to t11: the first element read already leaves two negative chains (a fork, for Stage 1) and
+/// the answer needs two negative states at once (no simulation, for Stage 2). The prototype
+/// answers t04 and t05 by its Stage 3 (the prefix-chain CSP); its list half is ported as the
+/// crossing fallback of the escape solve (`escape/crossing.rs`, REFUSAL-front-u6-subset), which
+/// answers t04 Inhabited, and t06 too (each variable is in two clauses, so it leaves by a series
+/// step, which the prototype takes only between places of two values). t07 to t09 and t11 stay
+/// refused (t07 is unsatisfiable, and the fallback never answers `Empty`). t05, unsatisfiable,
+/// is Empty and t10 Inhabited, both by the kernel before the fork stages (the same with the
+/// stages switched off).
 #[test]
 fn the_prototype_fork_stage_cases_are_answered_or_refused_soundly() {
     use Verdict::Inhabited;
@@ -1639,18 +1644,18 @@ fn the_prototype_fork_stage_cases_are_answered_or_refused_soundly() {
             clauses.push(vec![(k - 1, false); 3]);
         }
         let (s, t) = selector_reduction(k, &clauses);
-        let want = if unsat { Verdict::Empty } else { fork };
+        let want = if unsat { Verdict::Empty } else { Inhabited };
         cases.push((format!("_pf2sat{}", u8::from(unsat)), s, t, !unsat, want));
     }
-    // t06 and t07: coupled 3-SAT, (x0 | x1 | x2) & (!x0 | !x1 | !x2), satisfiable, and all eight
-    // clauses over three variables, not.
+    // t06 and t07: coupled 3-SAT, (x0 | x1 | x2) & (!x0 | !x1 | !x2), satisfiable (Inhabited by
+    // the crossing fallback), and all eight clauses over three variables, not (refused).
     let signs = |m: usize| (0..3).map(|i| (i, m >> i & 1 == 1)).collect::<Vec<_>>();
-    for (tag, clauses) in [
-        ("_pf3sat", vec![signs(7), signs(0)]),
-        ("_pf3unsat", (0..8).map(signs).collect()),
+    for (tag, clauses, want) in [
+        ("_pf3sat", vec![signs(7), signs(0)], Inhabited),
+        ("_pf3unsat", (0..8).map(signs).collect(), fork),
     ] {
         let (s, t) = selector_reduction(3, &clauses);
-        cases.push((tag.into(), s, t, satisfiable(3, &clauses), fork));
+        cases.push((tag.into(), s, t, satisfiable(3, &clauses), want));
     }
     // t08: the lists over {other, 1} by the place of a 1 from the end, `n` 4, every place
     // taken out (Empty) and place 3 left (inhabited). 0 is R0, 1 to 4 R1 to R4, 5 to 8 G1 to G4,

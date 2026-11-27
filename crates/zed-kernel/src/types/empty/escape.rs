@@ -50,8 +50,11 @@
 //! lemma holds and (every taken length is missing, or a row has no atom and no kill, or the
 //! 2-SAT has no model with every row's atoms all kept). A row with three or more atoms keeps its
 //! first two (by place) and then the solve may answer only `Inhabited`. Atoms that are not
-//! laminar at some place: `None` (two atoms per row with crossing atoms is NP-hard, by a
-//! reduction from 3-colouring). `None` sends the type to the search, as before this module.
+//! laminar at some place (two atoms per row with crossing atoms is NP-hard, by a reduction
+//! from 3-colouring): a list from the binary network of the clauses ([`crossing`], arc
+//! consistency, leaf and series elimination, then 2-SAT on the places left with two values),
+//! checked as above, so only `Inhabited`; else `None` (REFUSAL-front-u6-subset). `None` sends
+//! the type to the search, as before this module.
 //!
 //! The cost. Recognizing the class and the positive chain: O(size) set operations. The cells
 //! are found from the nodes' side: a node `v` at height `ht(v)` (links to its terminal) is at
@@ -1163,89 +1166,98 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
             at_place.entry(*j).or_default().push(i);
         }
         let mut parent: Vec<Option<usize>> = vec![None; atom.len()];
-        for list in at_place.values() {
-            forest(list, &atom, &mut parent)?;
-        }
-
-        let mut sat = TwoSat {
-            vars: 0,
-            clauses: Vec::new(),
-            meets: HashMap::new(),
-        };
-        let z: Vec<usize> = atom.iter().map(|_| sat.fresh()).collect();
-        let mut kids: HashMap<(usize, Option<usize>), Vec<usize>> = HashMap::new();
-        for (i, (j, _)) in atom.iter().enumerate() {
-            if let Some(pa) = parent[i] {
-                sat.clauses.push((z[i] ^ 1, z[pa]));
-            }
-            kids.entry((*j, parent[i])).or_default().push(i);
-        }
-        let mut groups: Vec<Vec<usize>> = kids.into_values().collect();
-        groups.sort_unstable();
-        for g in groups {
-            // At most one: the ladder `s_i` = "one of the first i is true". The clauses are
-            // `z_a -> s_a`, `s_prev -> s_a` and `s_prev -> !z_a`. Two true, `z_a` before `z_b`:
-            // `z_a` gives `s_a`, the chain of `s_prev -> s` gives the `s` before `b`, and that
-            // gives `!z_b`, a contradiction. At most one true, at index `k` or none: `s_i` true
-            // exactly from `k` on meets every clause. Three clauses per atom, linear.
-            let mut prev: Option<usize> = None;
-            for &a in &g {
-                let s = sat.fresh();
-                sat.clauses.push((z[a] ^ 1, s));
-                if let Some(ps) = prev {
-                    sat.clauses.push((ps ^ 1, s));
-                    sat.clauses.push((ps ^ 1, z[a] ^ 1));
+        let laminar = at_place
+            .values()
+            .all(|list| forest(list, &atom, &mut parent).is_some());
+        // Crossing atoms at some place (REFUSAL-front-u6-subset): a list only, from the binary
+        // network of the clauses (`crossing`), checked below against every refused row written
+        // as the laminar list is; never an `Empty`, so `None` when it finds none.
+        let vals_picked: Vec<Value> = if !laminar {
+            crossing::crossing_witness(&pl, &atom, &clause)?
+        } else {
+            let mut sat = TwoSat {
+                vars: 0,
+                clauses: Vec::new(),
+                meets: HashMap::new(),
+            };
+            let z: Vec<usize> = atom.iter().map(|_| sat.fresh()).collect();
+            let mut kids: HashMap<(usize, Option<usize>), Vec<usize>> = HashMap::new();
+            for (i, (j, _)) in atom.iter().enumerate() {
+                if let Some(pa) = parent[i] {
+                    sat.clauses.push((z[i] ^ 1, z[pa]));
                 }
-                prev = Some(s);
+                kids.entry((*j, parent[i])).or_default().push(i);
             }
-        }
-        for c in &clause {
-            sat.clauses.push((z[c[0]], z[c[1]]));
-        }
-        // No model means no list of length `target_len` escapes every clause, the direction an
-        // `Empty` rests on: from such a list `x`, set `z_A` true exactly when `x_j` is in `A`
-        // (`A` at place `j`). A child atom lies in its parent (`forest`), so `z_A -> z_parent`
-        // holds; siblings, and the roots of one place, are disjoint, so `x_j` is in at most one
-        // of them and each ladder holds; and each clause holds, since `x` escapes its row at one
-        // of its two atoms. Each place's `p_j` is not empty (checked when `pl` is built). The
-        // other way (a model gives the list built below) is checked by `check_chain_witness`.
-        let Some(model) = sat.solve() else {
-            return (exact && !wide).then_some(ChainPlan::Empty);
-        };
-
-        // The list: at each place a value of the deepest true atom, else any value of `pl[j]`.
-        // Cost of `depth`: at most the number of atoms at the place for each atom, so k^2 for
-        // k atoms at one place, which is within their written size: the atoms are distinct
-        // (`ids`) and a chain of d nested distinct sets has finite sets of sizes at least
-        // 1, 2, .., d, or excluded sets of sizes at least 0, 1, .., d - 1, so d^2 / 2 values
-        // written in all, and the depth is at most such a chain's length.
-        let depth = |mut a: usize| {
-            let mut d = 0;
-            while let Some(pa) = parent[a] {
-                d += 1;
-                a = pa;
-            }
-            d
-        };
-        let mut deepest: HashMap<usize, (usize, usize)> = HashMap::new();
-        for (i, (j, _)) in atom.iter().enumerate() {
-            if model[z[i] / 2] {
-                let d = depth(i);
-                let e = deepest.entry(*j).or_insert((d, i));
-                if d >= e.0 {
-                    *e = (d, i);
+            let mut groups: Vec<Vec<usize>> = kids.into_values().collect();
+            groups.sort_unstable();
+            for g in groups {
+                // At most one: the ladder `s_i` = "one of the first i is true". The clauses are
+                // `z_a -> s_a`, `s_prev -> s_a` and `s_prev -> !z_a`. Two true, `z_a` before `z_b`:
+                // `z_a` gives `s_a`, the chain of `s_prev -> s` gives the `s` before `b`, and that
+                // gives `!z_b`, a contradiction. At most one true, at index `k` or none: `s_i` true
+                // exactly from `k` on meets every clause. Three clauses per atom, linear.
+                let mut prev: Option<usize> = None;
+                for &a in &g {
+                    let s = sat.fresh();
+                    sat.clauses.push((z[a] ^ 1, s));
+                    if let Some(ps) = prev {
+                        sat.clauses.push((ps ^ 1, s));
+                        sat.clauses.push((ps ^ 1, z[a] ^ 1));
+                    }
+                    prev = Some(s);
                 }
             }
-        }
-        let mut vals_picked = Vec::with_capacity(target_len + 1);
-        vals_picked.push(Value::Int(0)); // unused index 0
+            for c in &clause {
+                sat.clauses.push((z[c[0]], z[c[1]]));
+            }
+            // No model means no list of length `target_len` escapes every clause, the direction an
+            // `Empty` rests on: from such a list `x`, set `z_A` true exactly when `x_j` is in `A`
+            // (`A` at place `j`). A child atom lies in its parent (`forest`), so `z_A -> z_parent`
+            // holds; siblings, and the roots of one place, are disjoint, so `x_j` is in at most one
+            // of them and each ladder holds; and each clause holds, since `x` escapes its row at one
+            // of its two atoms. Each place's `p_j` is not empty (checked when `pl` is built). The
+            // other way (a model gives the list built below) is checked by `check_chain_witness`.
+            let Some(model) = sat.solve() else {
+                return (exact && !wide).then_some(ChainPlan::Empty);
+            };
+
+            // The list: at each place a value of the deepest true atom, else any value of `pl[j]`.
+            // Cost of `depth`: at most the number of atoms at the place for each atom, so k^2 for
+            // k atoms at one place, which is within their written size: the atoms are distinct
+            // (`ids`) and a chain of d nested distinct sets has finite sets of sizes at least
+            // 1, 2, .., d, or excluded sets of sizes at least 0, 1, .., d - 1, so d^2 / 2 values
+            // written in all, and the depth is at most such a chain's length.
+            let depth = |mut a: usize| {
+                let mut d = 0;
+                while let Some(pa) = parent[a] {
+                    d += 1;
+                    a = pa;
+                }
+                d
+            };
+            let mut deepest: HashMap<usize, (usize, usize)> = HashMap::new();
+            for (i, (j, _)) in atom.iter().enumerate() {
+                if model[z[i] / 2] {
+                    let d = depth(i);
+                    let e = deepest.entry(*j).or_insert((d, i));
+                    if d >= e.0 {
+                        *e = (d, i);
+                    }
+                }
+            }
+            let mut vals_picked = Vec::with_capacity(target_len + 1);
+            vals_picked.push(Value::Int(0)); // unused index 0
+            for (j, x) in pl.iter().enumerate().skip(1) {
+                let v = deepest
+                    .get(&j)
+                    .map_or_else(|| x.pick(), |&(_, i)| atom[i].1.pick_in(x));
+                vals_picked.push(v);
+            }
+            vals_picked
+        };
         let mut heads = Vec::with_capacity(target_len);
-        for (j, x) in pl.iter().enumerate().skip(1) {
-            let v = deepest
-                .get(&j)
-                .map_or_else(|| x.pick(), |&(_, i)| atom[i].1.pick_in(x));
-            heads.push(Type::lit(&v)?);
-            vals_picked.push(v);
+        for v in &vals_picked[1..] {
+            heads.push(Type::lit(v)?);
         }
         for (row, orig_atoms) in orig_live {
             let mut missed_at = None;
@@ -2315,6 +2327,8 @@ fn cells_windows(
     counts.0 += bl.reads;
     counts.1 += bl.empty;
 }
+
+mod crossing;
 
 #[cfg(test)]
 mod bench;
