@@ -13,6 +13,11 @@ publish.workspace = true
 crate-type = ["rlib", "dylib"]
 
 [dependencies]
+# The persistent maps of `hull`.
+imbl.workspace = true
+# The treap and its priorities of `hull`'s rows; zed-collections depends on zed-numtheory and
+# zed-hash alone, so this adds no cycle.
+zed-collections.workspace = true
 # The work list of `equalities`; zed-graph depends on no crate, so this adds no cycle.
 zed-graph.workspace = true
 zed-numtheory.workspace = true

@@ -13,19 +13,29 @@ use std::sync::Arc;
 use zed_collections::priority::Priorities;
 use zed_collections::treap::{self, Item, Node, Tree};
 
-use crate::presburger::{Atom, Lin};
+use super::Form;
 
 /// A row and its pivot: an item of the treap.
-#[derive(Clone)]
-struct Row {
-    key: Atom,
-    val: Arc<Lin>,
+struct Row<F: Form> {
+    key: F::Atom,
+    val: Arc<F>,
 }
 
-impl Item for Row {
-    type Key = Atom;
+// Derived, `Clone` would ask `F::Atom: Clone` through `F` alone; written out, it clones the key
+// and the shared row.
+impl<F: Form> Clone for Row<F> {
+    fn clone(&self) -> Self {
+        Row {
+            key: self.key.clone(),
+            val: self.val.clone(),
+        }
+    }
+}
+
+impl<F: Form> Item for Row<F> {
+    type Key = F::Atom;
     type Sum = ();
-    fn key(&self) -> &Atom {
+    fn key(&self) -> &F::Atom {
         &self.key
     }
     fn priority(&self) -> u64 {
@@ -34,7 +44,8 @@ impl Item for Row {
     fn sum(&self, _: Option<&()>, _: Option<&()>) {}
 }
 
-/// The priorities of the pivots, drawn once per run ([`zed_collections::priority`]).
+/// The priorities of the pivots, drawn once per run ([`zed_collections::priority`]). Tag 9, as
+/// when the rows were in zedc-presburger, so a run draws the same priorities as before.
 static PRIORITIES: Priorities = Priorities::new(9);
 
 /// The priority of a pivot: the run's random polynomial of degree 4 at a random polynomial hash
@@ -46,7 +57,7 @@ static PRIORITIES: Priorities = Priorities::new(9);
 /// comment and the proof are in module
 /// [`zed_collections::priority`]), where the fixed hash this replaces had no bound for chosen
 /// pivots (COMPLEXITY.md K123). The shape is never shown: [`Rows`] is read and printed in order.
-fn prio_of(key: &Atom) -> u64 {
+fn prio_of<K: std::hash::Hash>(key: &K) -> u64 {
     PRIORITIES.hash(key)
 }
 
@@ -67,35 +78,49 @@ fn prio_of(key: &Atom) -> u64 {
 // `l01_39_reduced_product::hull::a_join_costs_near_the_rows_that_differ` and
 // `a_join_costs_near_the_rows_that_differ_wherever_they_sort`; COMPLEXITY.md S26.
 /// The rows of a hull by their pivots.
-#[derive(Clone, Default)]
-pub(super) struct Rows {
-    root: Tree<Row>,
+pub(super) struct Rows<F: Form> {
+    root: Tree<Row<F>>,
 }
 
-impl Rows {
+// Written out for the reason given at `Row`'s `Clone`.
+impl<F: Form> Clone for Rows<F> {
+    fn clone(&self) -> Self {
+        Rows {
+            root: self.root.clone(),
+        }
+    }
+}
+
+impl<F: Form> Default for Rows<F> {
+    fn default() -> Self {
+        Rows { root: None }
+    }
+}
+
+impl<F: Form> Rows<F> {
     /// The row of `key`. O(depth).
-    pub(super) fn get(&self, key: &Atom) -> Option<&Arc<Lin>> {
+    pub(super) fn get(&self, key: &F::Atom) -> Option<&Arc<F>> {
         treap::get(&self.root, key).map(|r| &r.val)
     }
 
     /// The row of `key`, which the map holds, to change. The nodes on the path to it that the
     /// map shares with another are copied first, also when the key is absent. O(depth).
-    pub(super) fn get_mut(&mut self, key: &Atom) -> Option<&mut Arc<Lin>> {
+    pub(super) fn get_mut(&mut self, key: &F::Atom) -> Option<&mut Arc<F>> {
         treap::get_mut(&mut self.root, key).map(|r| &mut r.val)
     }
 
     /// Puts `val` at `key`, in place of any row there. O(depth) expected.
-    pub(super) fn insert(&mut self, key: Atom, val: Arc<Lin>) {
+    pub(super) fn insert(&mut self, key: F::Atom, val: Arc<F>) {
         treap::insert_mut(&mut self.root, Row { key, val });
     }
 
     /// Takes out the row of `key`, if there is one. O(depth) expected.
-    pub(super) fn remove(&mut self, key: &Atom) {
+    pub(super) fn remove(&mut self, key: &F::Atom) {
         treap::remove_mut(&mut self.root, key);
     }
 
     /// The rows, in pivot order.
-    pub(super) fn values(&self) -> impl Iterator<Item = &Arc<Lin>> {
+    pub(super) fn values(&self) -> impl Iterator<Item = &Arc<F>> {
         treap::iter(&self.root).map(|r| &r.val)
     }
 
@@ -105,11 +130,11 @@ impl Rows {
     /// differing rows, when the two maps share their other subtrees.
     pub(super) fn diff<'a>(
         &'a self,
-        other: &'a Rows,
-        mut f: impl FnMut(Option<(&'a Atom, &'a Arc<Lin>)>, Option<&'a Arc<Lin>>),
+        other: &'a Rows<F>,
+        mut f: impl FnMut(Option<(&'a F::Atom, &'a Arc<F>)>, Option<&'a Arc<F>>),
     ) {
-        let start = |t: &'a Tree<Row>| t.as_deref().map(Step::Tree).into_iter().collect();
-        let (mut a, mut b): (Vec<Step<'a>>, Vec<Step<'a>>) =
+        let start = |t: &'a Tree<Row<F>>| t.as_deref().map(Step::Tree).into_iter().collect();
+        let (mut a, mut b): (Vec<Step<'a, F>>, Vec<Step<'a, F>>) =
             (start(&self.root), start(&other.root));
         loop {
             match (a.last().copied(), b.last().copied()) {
@@ -164,7 +189,7 @@ impl Rows {
     }
 }
 
-impl fmt::Debug for Rows {
+impl<F: Form> fmt::Debug for Rows<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_map()
             .entries(treap::iter(&self.root).map(|r| (&r.key, &r.val)))
@@ -174,15 +199,23 @@ impl fmt::Debug for Rows {
 
 /// What a diff's walk of one map has still to visit, the next on top: a whole subtree, or one
 /// node's row alone (its left subtree visited, its right one below it on the stack).
-#[derive(Clone, Copy)]
-enum Step<'a> {
-    Tree(&'a Node<Row>),
-    Entry(&'a Row),
+enum Step<'a, F: Form> {
+    Tree(&'a Node<Row<F>>),
+    Entry(&'a Row<F>),
 }
+
+// Derived, `Clone` and `Copy` would ask them of `F`; a step holds only references.
+impl<F: Form> Clone for Step<'_, F> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<F: Form> Copy for Step<'_, F> {}
 
 /// Replaces the subtree on top of `stack` by its left subtree, its root's row and its right
 /// subtree, the left on top.
-fn open(stack: &mut Vec<Step<'_>>) {
+fn open<F: Form>(stack: &mut Vec<Step<'_, F>>) {
     let Some(Step::Tree(n)) = stack.pop() else {
         unreachable!("a subtree on top of the walk");
     };
@@ -195,11 +228,15 @@ fn open(stack: &mut Vec<Step<'_>>) {
 mod tests {
     use std::collections::BTreeMap;
 
+    use super::super::tests::Lin;
     use super::*;
     use zedc_int::int::Int;
 
+    type Atom = Arc<str>;
+    type Rows = super::Rows<Lin>;
+
     fn key(i: u64) -> Atom {
-        Atom::Sym(format!("p{i}").into())
+        format!("p{i}").into()
     }
 
     fn row(v: i64) -> Arc<Lin> {
@@ -212,7 +249,7 @@ mod tests {
     /// The map's rows, and checks that each node is above its children and its pivots are in
     /// order.
     fn model(r: &Rows) -> BTreeMap<Atom, Arc<Lin>> {
-        let mut stack: Vec<&Node<Row>> = r.root.as_deref().into_iter().collect();
+        let mut stack: Vec<&Node<Row<Lin>>> = r.root.as_deref().into_iter().collect();
         while let Some(n) = stack.pop() {
             for c in [n.left(), n.right()].into_iter().flatten() {
                 assert!(c.rank() < n.rank(), "a child above its parent");
@@ -274,7 +311,7 @@ mod tests {
             a.insert(key(i), row(i as i64));
             b.insert(key(199 - i), row((199 - i) as i64));
         }
-        fn shape(t: &Tree<Row>) -> String {
+        fn shape(t: &Tree<Row<Lin>>) -> String {
             match t {
                 None => ".".into(),
                 Some(n) => format!(

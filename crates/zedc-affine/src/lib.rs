@@ -11,9 +11,11 @@
 //! holds vectors in a fixed dimension over the rationals, the completion of a primitive integer
 //! vector to a unimodular matrix, LLL reduction under a quadratic form and Babai's nearest
 //! plane point. Module [`equalities`] solves a system's unit equalities and substitutes them
-//! out (the Gauss–Jordan step on unit pivots).
+//! out (the Gauss–Jordan step on unit pivots). Module [`hull`] holds the affine hull of a set
+//! of integer points as its equalities in echelon form, and their join (Karr's affine union).
 
 pub mod equalities;
+pub mod hull;
 pub mod lines;
 pub mod plane;
 pub mod shadow;

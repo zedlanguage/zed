@@ -70,7 +70,7 @@
 //! - Overmars and van Leeuwen, JCSS 23(2), 1981, doi:10.1016/0022-0000(81)90012-x: the lower
 //!   hull tree.
 //! - Karr, Acta Informatica 6(2), 1976, doi:10.1007/BF00268497 (cited in zedc-presburger's
-//!   `lib.rs`, "References"; the join is zedc-presburger `hull.rs`): `impl Scope`.
+//!   `lib.rs`, "References"; the join is `zedc_affine::hull`): `impl Scope`.
 //! - Freuder, J. ACM 29(1), 1982, doi:10.1145/322290.322292; Jeavons and Cooper, AI 79(2),
 //!   1995, doi:10.1016/0004-3702(95)00107-7; Cotton and Maler, SAT 2006,
 //!   doi:10.1007/11814948_19; Ramalingam, Song, Joskowicz and Miller, Algorithmica 23(3), 1999,
@@ -12289,7 +12289,7 @@ impl Scope {
             seeds.extend(conjuncts::names(g));
         }
         // Karr 1976, doi:10.1007/BF00268497; full citation in zedc-presburger `lib.rs`,
-        // "References", and the join itself is zedc-presburger `hull.rs`.
+        // "References", and the join itself is `zedc_affine::hull`.
         // The equalities of two or more atoms that hold on both sides (Karr's join), which the
         // disjunction of the relations holds but no projection of one of its parts finds. Each
         // side implies them, so each side's rest holds where they do as it holds with their
@@ -12309,7 +12309,7 @@ impl Scope {
         let (eqs, near) =
             conjuncts::reach_eqs(&[&self.relation, &other.relation], seeds.iter().cloned());
         let hull = self.hull(&eqs, &near).join(&other.hull(&eqs, &near));
-        let reduce = |c: &Con| hull.reduce(c);
+        let reduce = |c: &Con| zedc_presburger::hull::reduce(&hull, c);
         let kept: Vec<Formula> = hull
             .rows()
             .filter(|t| t.terms.len() > 1)
@@ -14149,7 +14149,7 @@ impl Scope {
         // So the test's relation replaces it, but for the equalities of two atoms or more the
         // join of the cases states at the top (Karr's join), which a projection of the test's
         // relation onto each name does not find. Karr 1976, doi:10.1007/BF00268497; full
-        // citation in zedc-presburger `lib.rs`, "References"; the join is its `hull.rs`.
+        // citation in zedc-presburger `lib.rs`, "References"; the join is `zedc_affine::hull`.
         if !self.bottom {
             let narrowed = std::mem::replace(&mut self.relation, before);
             let eqs: Vec<Formula> = self

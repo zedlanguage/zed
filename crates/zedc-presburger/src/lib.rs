@@ -196,7 +196,8 @@
 //!   it cannot catch a choice of disjunct that is valid but makes the cover ask more often.
 //! - M. Karr, "Affine relationships among variables of a program", Acta Informatica 6(2), 1976,
 //!   pp. 133-151, doi:10.1007/bf00268497: the affine equalities that hold on a set of points,
-//!   kept in echelon form, and the join of two such sets of equalities (`hull`). Read
+//!   kept in echelon form, and the join of two such sets of equalities (`hull`, over
+//!   `zedc_affine::hull`, where the hull and its join moved on 2026-11-26). Read
 //!   2026-11-21 in the publisher's PDF (LibGen; copy kept outside the repository). Sec. 2: an
 //!   affine space `ker(A, e)` is kept as the matrix-vector pair in reduced row-echelon form, a
 //!   form unique to the space (2.2). (4.11): the affine union of `U1`, `U2` is the smallest
@@ -204,9 +205,9 @@
 //!   intersection. (5.4), proved in the appendix: the affine union of `ker(A1, e1)` and
 //!   `ker(A2, e2)` is the linear sum computed on the matrices `(A_i, e_i)` with `e_i` as one
 //!   more column. Sec. 5.2 computes that sum in `n` steps, one per column, after step `s` the
-//!   two matrices agreeing in their first `s` columns. Departure: `hull.rs` picks as pivot the
-//!   atom the fewest rows mention, not the first column, so its form is not Karr's unique
-//!   one, and its join walks persistent treaps of rows (module `hull::rows`) rather than
+//!   two matrices agreeing in their first `s` columns. Departure: `zedc_affine::hull` picks as
+//!   pivot the atom the fewest rows mention, not the first column, so its form is not Karr's
+//!   unique one, and its join walks persistent treaps of rows (its module `rows`) rather than
 //!   columns; what it keeps from Karr is the definition of the join (the affine union).
 //! - H. W. Lenstra Jr., "Integer programming with a fixed number of variables", Mathematics of
 //!   Operations Research 8(4), 1983, pp. 538-548, doi:10.1287/moor.8.4.538: integer
@@ -518,7 +519,8 @@
 //!   persistent search trees", CACM 29(7), 1986, pp. 669-679, doi:10.1145/6138.6151. Both
 //!   read 2026-11-21 (Driscoll et al. in a PDF from LibGen, Sarnak and Tarjan in the
 //!   publisher's PDF from the Sci-Hub mirror; copies kept outside the repository). The crate's
-//!   persistent maps, sets and treaps (`imbl`, `hull::rows`, `extend::images::intervals`) use
+//!   persistent maps, sets and treaps (`imbl`, `zedc_affine::hull`'s rows,
+//!   `extend::images::intervals`) use
 //!   path copying: an update copies the nodes on the path from the root to what it changes and
 //!   shares the rest, O(log n) time and space per update in a balanced tree (expected, for a
 //!   treap). Neither paper's own method is that. Sarnak and Tarjan, sec. 2, name path copying

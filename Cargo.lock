@@ -1526,6 +1526,8 @@ dependencies = [
 name = "zedc-affine"
 version = "0.0.0"
 dependencies = [
+ "imbl",
+ "zed-collections",
  "zed-graph",
  "zed-numtheory",
  "zed-testkit",
