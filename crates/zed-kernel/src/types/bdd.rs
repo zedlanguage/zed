@@ -1863,12 +1863,46 @@ impl<A: Literal> Part<A> {
     /// pp. 75-84, doi:10.1007/978-3-319-09284-3_7, Theorem 1 and Corollary 1: "Failed literal
     /// existence cannot be solved on Horn-3-CNF formulas with N variables and M clauses in time
     /// O((N + M)^(2-ε)) for any ε > 0 unless SETH fails"; read 2026-11-27 in the text Gemini
-    /// fetched for the cross-review, verification only). The trials here are not that problem:
-    /// they carry values up only, from shared expressions only, three-valued with every atom
-    /// unknown. The bridge to `pins` is Gemini's reduction from orthogonal vectors (a part whose
-    /// round pins something exactly when two of the vectors are orthogonal), computed correct on
-    /// 200 random instances with a negative control and not proved, so no lower bound for this
-    /// code is claimed. Not used: a worklist that tries again only the expressions a pin could
+    /// fetched for the cross-review, verification only). That theorem is about CNF, not these
+    /// trials, which carry values up only, from shared expressions only, three-valued with every
+    /// atom unknown. For these trials the bound follows from orthogonal vectors (Gemini,
+    /// cross-review XR-lazy-and-kernel-batch-1 rounds 1 and 2, corrected by Codex in round 2;
+    /// test `tests::pins_exist_iff_the_two_vector_sets_have_an_orthogonal_pair`):
+    /// 1. Take lists `a_1..a_n` and `b_1..b_n` in `{0,1}^d`. A zero `b_j` is orthogonal to
+    ///    everything, so it is answered before the part is built. Each coordinate is written
+    ///    twice, at `k` and `k + d`.
+    /// 2. The part: a fresh opaque expression `s_i` for each `a_i`; for each of the `2d`
+    ///    coordinates `C_k = z_k & AND over {i : a_i[k] = 0} of s_i`; for each `b_j`,
+    ///    `B_j = OR over {k : b_j[k] = 1} of C_k`; and the root `u & AND_j B_j & AND_i ((s_i |
+    ///    d_i1) & (s_i | d_i2))`. `z_k`, `u` and `d_i1`, `d_i2` are fresh atoms, and every other
+    ///    operator is built on its own, so only the `s_i` and some `C_k` are shared. It has
+    ///    `O(n d)` nodes and arcs, built in `O(n d)`.
+    /// 3. Until the first pin, every value is unknown. There is no `Not`, so a trial `true`
+    ///    makes nothing `false`. A trial `C_k = false` leaves every `B_j` using it unknown, as
+    ///    `B_j` also uses the double of `k`, which the guard `z` of that double keeps unknown. A
+    ///    trial `s_i = false` leaves its two guard terms unknown and makes `C_k` false exactly
+    ///    when `a_i[k] = 0`, so it makes `B_j` false exactly when `a_i . b_j = 0`, and so the
+    ///    root false exactly when some `b_j` is orthogonal to `a_i`.
+    /// 4. So a round has a pin exactly when an orthogonal pair exists: with none, no trial
+    ///    succeeds and nothing changes; with one, either a pin comes first or the trial of that
+    ///    `s_i` comes with nothing pinned, and pins `s_i = true`. ([`Pins::Cut`] gives the pins
+    ///    of [`Pins::Carried`].)
+    /// 5. On a YES instance `settle` does not return the part: the first pin is some
+    ///    `s_i = true`, and at the value with `s_i` false, every other `s_l` true and every atom
+    ///    true, the part is `false` before the substitution and `true` after it; later pins only
+    ///    widen the part.
+    /// 6. For a k-CNF formula on `p` variables, take the assignments of each half of the
+    ///    variables, `2^(p/2)` of them, and a vector for each with a 1 for each clause that
+    ///    half's assignment does not satisfy. Two vectors are orthogonal exactly when the two
+    ///    halves together satisfy every clause, and `d` (the clauses) is `poly(p)` for a fixed
+    ///    k. So deciding whether `pins` is empty in `O(N^(2 - ε))` decides k-CNF in
+    ///    `O(2^((1 - ε/2) p) poly(p))` for every k, and the strong exponential time hypothesis
+    ///    fails. (`d` merely `ω(log n)` would not do: `(n d)^(2 - ε)` need not be below `n^2`
+    ///    then; Codex's correction.)
+    ///
+    /// So, unless that hypothesis fails, no algorithm finds a round's pins in `O(N^(2 - ε))`,
+    /// and the `Θ(S · N)` round with `S` up to `N` is within `N^ε` of the best possible. The
+    /// bound is conditional, not a bound proved for every algorithm. Not used: a worklist that tries again only the expressions a pin could
     /// affect (the request of SETTLE-rounds-worklist), rejected in that cross-review: `Θ(N^3)` on
     /// Gemini's family `tests::cubic_for_a_worklist`, and it changes which superset `settle`
     /// returns, which the callers in `empty.rs` read (Codex's witness,
@@ -2137,7 +2171,15 @@ impl<A: Literal> Part<A> {
                 while let Some(q) = stack.pop() {
                     settle_work(1);
                     let r = req[q].expect("pushed with a requirement");
-                    if shared_too(q) && !fixed[q] {
+                    // A fixed node passes no requirement to its operands, as a round carries no
+                    // value through it (cross-review XR-lazy-and-kernel-batch-1 round 2, Gemini
+                    // B.4; before, on the test
+                    // `the_and_path_certificate_stops_at_a_fixed_and_and_at_an_or`, it pinned `e`
+                    // through the pin of `f`).
+                    if fixed[q] {
+                        continue;
+                    }
+                    if shared_too(q) {
                         for n in pin(q, r, &mut known, &mut fixed, &mut reach, &mut live) {
                             for &p in &parents[n] {
                                 settle_work(1);
@@ -2146,6 +2188,7 @@ impl<A: Literal> Part<A> {
                                 }
                             }
                         }
+                        continue;
                     }
                     let value = |p: &Part<A>| match p {
                         Part::Expr(x) => known[ids[&x.id]],
