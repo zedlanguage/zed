@@ -3963,6 +3963,37 @@ fn a_known_probe_through_reconvergence_visits_each_arc_once() {
     assert!(over.is_empty(), "{over:?}");
 }
 
+/// A requirement holds of the known values, so a trial that overrides one reads none
+/// (cross-review XR-lazy-and-kernel-batch-1 round 3, Gemini's B-3). `s = !true`, known `false`;
+/// `t = (!s & x) | (!s & y)`, the two `!s` built apart, and `root = s | t`. Phase A of
+/// [`Pins::Required`] gives `t` the requirement `true` (the other operand of the root is
+/// `false`) and stops there, as both operands of `t` are unknown. The trial `s = true`
+/// overrides `false`: both `!s` turn `false`, so `t` does too, and the root is `true` through
+/// `s`. Read during that trial, `t`'s requirement cut it with the root `false` and pinned
+/// `s = false` (measured before the fix: `{s: false}`); carried, nothing is pinned.
+///
+/// Gemini's own witness, `root = !s | s`, does not reach that trial in this code: phase A
+/// requires `!s = true` (the other operand is `false`), so `s = false`, and pins the shared `s`
+/// to its known value before any trial. That pin changes no value, but `Pins::Carried` does not
+/// take it.
+#[test]
+fn an_overriding_trial_reads_no_requirement() {
+    let lit = |i| Part::literal(atom(i));
+    let s: Part<Row> = Part::not_expr(Part::Bdd(Bdd::Leaf(true)));
+    let arm = |x| Part::connect(Op::And, Part::not_expr(s.clone()), lit(x));
+    let t = Part::connect(Op::Or, arm(9700), arm(9701));
+    let root = Part::connect(Op::Or, s.clone(), t);
+    let carried = root.pins_by(Pins::Carried);
+    assert!(carried.is_empty(), "{carried:?}");
+    assert_eq!(root.pins_by(Pins::Cut), carried);
+    assert_eq!(root.pins_by(Pins::Required), carried);
+    let gemini = Part::connect(Op::Or, Part::not_expr(s.clone()), s.clone());
+    assert!(gemini.pins_by(Pins::Carried).is_empty());
+    let required = gemini.pins_by(Pins::Required);
+    assert_eq!(required.len(), 1, "{required:?}");
+    assert_eq!(required.get(&s.id()), Some(&false));
+}
+
 /// The first round's pins of [`gated_parities`] on `pair`: `E_0 = true` by its id, and none
 /// where `E_0` is built twice (Codex's B5 of round 2: the pin is checked by id, not counted).
 fn first_pin_is_e0(pair: &dyn Fn(usize) -> (Part<Row>, Part<Row>), last: u64, m: usize) {

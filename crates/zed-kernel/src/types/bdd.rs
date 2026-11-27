@@ -1836,10 +1836,14 @@ impl<A: Literal> Part<A> {
     /// the round before, so the end does too. Of a superset, what every value forces is forced
     /// on the part as well (`Part::forced`'s use in `narrow_tuples`).
     ///
-    /// Complexity tradeoff (COMPLEXITY.md K144): `O(rounds · S · N)` for a part of `N` nodes and
-    /// `S` shared expressions. A round is one walk, one evaluation with every atom unknown
-    /// (Kahn's order), `S` trials and one rebuild; a trial is carried up through the operators it
-    /// changes, up to `N` of them, so a round is `Θ(S · N)` at worst, not `O(N)` as this note
+    /// Complexity tradeoff (COMPLEXITY.md K144): `O(rounds · S · N log N)` for a part of `N`
+    /// nodes, `E = O(N)` arcs and `S` shared expressions. A round is one walk, one evaluation
+    /// with every atom unknown (Kahn's order), `S` trials and one rebuild; a trial is carried up
+    /// through the operators it changes, up to `N` of them, on a stack where it refines and from
+    /// a heap (`log N` a node) where it overrides a known value, so a round is
+    /// `O(N + E + S (N + E) + H (N + E) log N)` for `H <= S` overriding trials (Codex's B3.1 and
+    /// Gemini's B-4 of cross-review XR-lazy-and-kernel-batch-1 round 3): `Θ(S · N)` visits, the
+    /// work the tests count, at worst, and `O(S · N log N)` time. Not `O(N)` as this note
     /// said before cross-review XR-lazy-and-kernel-batch-1 (round 1, all three reviewers,
     /// computed: Codex's spine `Or(s_i, s_i)` under a chain of unions, 471 to 25,279 visits
     /// over three doublings; test `a_spine_of_unions_is_tried_in_linear_work`). The rounds are
@@ -1888,8 +1892,10 @@ impl<A: Literal> Part<A> {
     ///    `s_i` comes with nothing pinned, and pins `s_i = true`. ([`Pins::Cut`] gives the pins
     ///    of `Pins::Carried`.)
     /// 5. On a YES instance `settle` does not return the part: the first pin is some
-    ///    `s_i = true`, and at the value with `s_i` false, every other `s_l` true and every atom
-    ///    true, the part is `false` before the substitution and `true` after it; later pins only
+    ///    `s_i = true`, and at the value with `s_i` false, every other `s_l` true and every
+    ///    auxiliary atom outside the `s_l` true (Codex's B4 of round 3: the atoms of the `s_l`
+    ///    themselves are not all true there), the part is `false` before the substitution and
+    ///    `true` after it; later pins only
     ///    widen the part.
     /// 6. For a k-CNF formula on `p` variables, take the assignments of each half of the
     ///    variables, `2^(p/2)` of them, and a vector for each with a 1 for each clause that
@@ -1901,8 +1907,9 @@ impl<A: Literal> Part<A> {
     ///    then; Codex's correction.)
     ///
     /// So, unless that hypothesis fails, no algorithm finds a round's pins in `O(N^(2 - ε))`,
-    /// and the `Θ(S · N)` round with `S` up to `N` is within `N^ε` of the best possible. The
-    /// bound is conditional, not a bound proved for every algorithm. Not used: a worklist that tries again only the expressions a pin could
+    /// and the round of `Θ(S · N)` visits and `O(S · N log N)` time, with `S` up to `N`, is
+    /// within `N^ε` of the best possible. The bound is conditional, not a bound proved for every
+    /// algorithm. Not used: a worklist that tries again only the expressions a pin could
     /// affect (the request of SETTLE-rounds-worklist), rejected in that cross-review: `Θ(N^3)` on
     /// Gemini's family `tests::cubic_for_a_worklist`, and it changes which superset `settle`
     /// returns, which the callers in `empty.rs` read (Codex's witness,
@@ -2099,9 +2106,9 @@ impl<A: Literal> Part<A> {
             }
         };
         // The trial `i = v` carried up. With `need`, a node is carried no higher when its new
-        // value cannot make the root `false`; with `req` (only [`Pins::Required`]), the carry
-        // stops at a node given the value opposite the one `root = true` requires of it, and
-        // reports the root `false`.
+        // value cannot make the root `false`; with `req` (only [`Pins::Required`]), a trial that
+        // refines (`i` unknown) stops at a node given the value opposite the one `root = true`
+        // requires of it, and reports the root `false`.
         //
         // Where `i` is unknown the trial only refines: each node goes from unknown to known at
         // most once and then keeps its value (every operator is monotone in three-valued
@@ -2114,8 +2121,9 @@ impl<A: Literal> Part<A> {
         // at k = 12 and 3,145,829 at 16 before). So an override is carried in Kahn's order, the
         // nodes taken least place first from a heap: a node is pushed only by an operand, of a
         // lesser place, so the places taken rise, and each node is taken once, after every
-        // operand that changed has its last value; it is evaluated once and reads each of its
-        // parents once, `O((N + E) log N)`. The overlay is the same as the stack's: both end with
+        // operand that changed has its last value; it is evaluated once, reading each of its
+        // operands once, and pushes each of its parents at most once, `O((N + E) log N)`. The
+        // overlay is the same as the stack's: both end with
         // each node reached the value of `step` on its operands' final values, by induction in
         // Kahn's order.
         let carry = |i: usize,
@@ -2144,12 +2152,13 @@ impl<A: Literal> Part<A> {
                     let now = step(&exprs[q], &|c| changed.get(&c).copied().unwrap_or(known[c]));
                     if now != changed.get(&q).copied().unwrap_or(known[q]) {
                         changed.insert(q, now);
-                        if let (Some(x), Some(r)) = (now, req.get(q).copied().flatten())
-                            && x != r
-                        {
-                            changed.insert(root, Some(false));
-                            return changed;
-                        }
+                        // No `req` here: a requirement holds of the known values, and this trial
+                        // overrides one, so a node may take the value opposite its requirement
+                        // while the root stays `true` (Gemini's B-3 of cross-review
+                        // XR-lazy-and-kernel-batch-1 round 3; `root = s | t` with `s = !true`,
+                        // test `tests::an_overriding_trial_reads_no_requirement`). `need` is
+                        // `None` here in production: an override is carried only from a known
+                        // `i`, and `need` is passed only for an unknown `i` (`Pins::Cut`, below).
                         match (now, need) {
                             (Some(x), Some(need)) if need[q] & bit(x) == 0 => {}
                             _ => enqueue(q, &mut heap),

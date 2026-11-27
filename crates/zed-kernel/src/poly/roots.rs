@@ -683,9 +683,15 @@ pub(super) enum Horner {
 const HORNER_COST: f64 = 1.0;
 
 /// The units [`horner_bound`] charges for one test of [`positive_from`]: `D (D + 1) / 2`
-/// products and sums, in groups of `t`, each group under one pass of a unit.
+/// products and sums, in groups of `t`, each group under one pass of a unit. Computed in
+/// `u128`, where `D (D + 1) / 2 < 2^127` for every `D < 2^64`, and saturated to `u64::MAX`:
+/// in `u64` it overflowed from `D = 2^32` (Gemini's B-1 of cross-review
+/// XR-lazy-and-kernel-batch-1 round 3).
 fn horner_units(d: u64, t: usize) -> u64 {
-    (d * (d + 1) / 2).div_ceil(t as u64).max(1)
+    let (d, t) = (u128::from(d), t as u128);
+    u64::try_from((d * (d + 1) / 2).div_ceil(t))
+        .unwrap_or(u64::MAX)
+        .max(1)
 }
 
 /// Whether `p(x)` has the sign of its leading coefficient at every real `x >= u`, shown by the
@@ -749,7 +755,7 @@ fn horner_bound(p: &[(u64, BigInt)], hi: &BigInt, spent: &mut u64) -> Option<Big
     let units = horner_units(d, p.len());
     let under_cap = |u: &BigInt| d.checked_mul(u.bits()).is_some_and(|w| w <= 2 * b);
     let mut test = |u: &BigInt| {
-        *spent += units;
+        *spent = spent.saturating_add(units);
         positive_from(p, u)
     };
     let mut u = BigInt::from(2);
@@ -819,7 +825,8 @@ pub(super) fn positive_roots_by(
     let trigger = HORNER_COST * d * d / p.len() as f64;
     let mut bounded = horner == Horner::Off;
     while let Some((l, mut h)) = open.pop() {
-        spent += 1;
+        // Saturating: [`horner_bound`] may have saturated `spent`.
+        spent = spent.saturating_add(1);
         if spent > budget {
             #[cfg(test)]
             tests::CHAINED.with(|c| c.set(c.get() + 1));
@@ -908,10 +915,12 @@ pub(super) fn positive_roots_by(
 /// ([`sign_at`]) opposite, each step is a step of Sagraloff's NEWREFINE ([`refine`]): a
 /// boundary test, then the secant zeros of `p / p'` through the quarter points, each tested on
 /// a grid of `N` cells, `N` squared on a success and its square root on a bisection. A step
-/// leaves at most half the bracket, so a search takes at most the bits of `hi - lo` steps, and
-/// `O(log log)` of the bracket over the cluster's size near a cluster of roots, where the
-/// earlier step, Newton's from an end and a bisection after a weak one, took a step per bit
-/// (plan row ROOTS-fallback-worst-case). Before those steps, while `hi > 4 lo`, the
+/// leaves at most half the bracket, so a search takes at most `bits(hi - lo) + 2` steps (the
+/// proof at [`refine`]); no smaller bound is proved for this step on integers (plan row
+/// PROOF-newrefine-integer-step). Near a cluster of roots, where the earlier step, Newton's
+/// from an end and a bisection after a weak one, took a step per bit, it took at most 39 steps
+/// on brackets of 4,096 bits in the tests named at [`refine`] (plan row
+/// ROOTS-fallback-worst-case). Before those steps, while `hi > 4 lo`, the
 /// bracket is cut at the power of 2 whose exponent is the mean of its ends' bits, so a root
 /// far below the end Newton's method starts from is reached in O(log B) steps for ends of B
 /// bits. Once the cuts end, [`doubling`] gives a guess from the top bits of the bracket at
@@ -1097,7 +1106,7 @@ fn search(
         // / |Psi|) t (1 + |v| / x)` of `v`, under `2 t x / |Psi|` where `|v| <= x`, and so
         // within `1/2` once `|Psi| >= 4 t x`: `bits(x) + bits(t) + 3` bits. Near a cluster
         // `p'(x)` is far below `x^(D - 1)` and `Psi` at the scale `s` loses those bits: on
-        // family B of `newrefine_takes_log_log_steps_on_a_cluster` (a quintic, `x` about
+        // family B of `newrefine_steps_on_a_cluster_are_bounded` (a quintic, `x` about
         // `2^n`, `s = 2n`) `Psi` was 0 or a few bits, and [`refine`] took 18, 42 and 82 steps at
         // n = 256, 512 and 1,024, a step per bit of the bracket, where the exact values of
         // [`chain_search`] then took 7, 9 and 13 (measured 2026-11-27, local; with the step
@@ -1240,11 +1249,11 @@ enum Side {
 /// `g(l)` is the source's point and the step is the source's step; else each point is below
 /// the source's by less than 1. The bisection is at `xi_2 = g(2N)`, the source's `m^*`. With
 /// it, `4N` is cut to `2^max(4, bits(w))`, at most `2 w` where `w >= 8`: the grid's cells are
-/// then at least `1/2` wide, so `I_ij`, 3 cells, has two distinct integer ends, where on a grid of
-/// cells far under 1 the points fall on the same integers and the test fails. Measured
-/// 2026-11-27, local, the most steps on the tests named below (n = 256 to 8,192 on Codex's
-/// family of `a_cluster_at_an_end_of_a_chain_stretch_takes_log_log_steps`, 2^8 to 2^15 on
-/// the two families of `newrefine_takes_log_log_steps_on_a_cluster`):
+/// then at least `1/2` wide, so `I_ij`, 3 cells, has two distinct integer ends, where on a
+/// grid of cells far under 1 the points fall on the same integers and the test fails.
+/// Measured 2026-11-27, local, the most steps on the tests named below (n = 256 to 8,192 on
+/// Codex's family of `a_cluster_at_an_end_of_a_chain_stretch_takes_bounded_steps`, 2^8 to
+/// 2^15 on the two families of `newrefine_steps_on_a_cluster_are_bounded`):
 ///
 /// | `4N` cut to   | Codex's family     | the two families                  |
 /// |---------------|--------------------|-----------------------------------|
@@ -1264,21 +1273,20 @@ enum Side {
 /// is at most `max(4, bits(w))`, whatever `n` is (`n` grows by 1 a step, saturating, and a
 /// shift past 63 is taken as no bound before the cut).
 ///
-/// Not proved here: the source's iteration bound. Its Theorem 7 ("NEWREFINE needs
-/// `O(var(p, I_0) (log n + log(tau + L)))` many iterations", `var(p, I_0)` the sign changes of
-/// `p` on `I_0` after a Moebius transformation, at most `k - 1` for a `k`-nomial, `tau` the
-/// bits of the coefficients, `L` the bits of the width sought) rests on its Lemma 6, which it
-/// takes from Sagraloff and Mehlhorn (arXiv:1308.4088, Lemmas 20 and 23) for the exact points.
-/// Where `4N` divides `w` and is not cut the step is that step; that the rounding by less than
-/// 1 and the cut elsewhere keep the bound is not proved (Codex's B2 of round 2: from the exact
-/// signs alone the bound is the `bits(w) + 2` of (2)). The counts are measured: on
-/// `(x - R)^3 - S^3` on `R + 1..=R + H` (`R = 2^n + 2^(n/4)`, `H = 2^(n/8)`, `S = 2^(n/16)`) the old
-/// step, Newton's method from an end with a bisection after a weak step, took 32, 64 and 128
-/// steps at `n` = 256, 512 and 1,024 (Gemini's `verify_req3`, rerun by the orchestrator), and
-/// this step at most 10, 13, 17, 19, 27, 29, 34 and 39 at `n` = 2^8 to 2^15 on the two
-/// families of test `newrefine_takes_log_log_steps_on_a_cluster`: about 4 more a doubling of
-/// `n`, a line in `log2 n`, so `log log w` as Theorem 7's `log (tau + L)` gives (`tau` and `L`
-/// about `n`).
+/// Not proved: any bound on the steps below the `bits(w) + 2` of (2). The source's iteration
+/// bound is for its exact points, and none is proved for this step on integer points, which
+/// lie below the source's by less than 1, on a grid cut to `2^max(4, bits(w))` cells (Codex's
+/// B2 of round 2; Claude's and Codex's B1.1 of cross-review XR-lazy-and-kernel-batch-1 round
+/// 3; plan row PROOF-newrefine-integer-step). The counts are measured, not bounded: on
+/// `(x - R)^3 - S^3` on `R + 1..=R + H` (`R = 2^n + 2^(n/4)`, `H = 2^(n/8)`, `S = 2^(n/16)`)
+/// the old step, Newton's method from an end with a bisection after a weak step, took 32, 64
+/// and 128 steps at `n` = 256, 512 and 1,024 (Gemini's `verify_req3`, rerun by the
+/// orchestrator), and this step at most 10, 13, 17, 19, 27, 29, 34 and 39 at `n` = 2^8 to 2^15
+/// on the two families of test `newrefine_steps_on_a_cluster_are_bounded`, about 4 more a
+/// doubling of `n`, where (2) allows `n / 8 + 3`. On clusters of roots that are not integers
+/// Gemini measured 7 steps at `n` = 256 and 25 at 2,048 (its B-2 of round 3, its own copy of
+/// the step), the second over the line `4 log2 n - 21` (23 there) that the tests asserted
+/// before; so no such line is asserted.
 ///
 /// The cost of a step on `w > 4`: 3 signs and 3 ratios at the quarter points, 2 signs for each
 /// of the 3 pairs, 2 signs for the boundary test, so at most 11 signs and 3 ratios (each ratio
@@ -1834,10 +1842,12 @@ fn chain_cells(q: &[(u64, BigInt)], below: &[BigInt], a: &BigInt, hi: &BigInt) -
 
 /// A cell `c` in `lo..hi` at which `q`, monotone on `lo..=hi`, changes sign or is 0, given
 /// its values `flo` and `fhi`, of opposite signs, at the ends. Each step is a step of
-/// NEWREFINE ([`refine`]) on the exact values of `q` and `q'`, so a search takes at most the
-/// bits of `hi - lo` steps, and `O(log log)` of the bracket over the cluster's size at a
-/// cluster of roots at an end of a stretch (plan row ROOTS-fallback-worst-case; the proof at
-/// [`refine`]). Before those steps, while `hi > 4 max(lo, 1)`, the bracket is cut at the power
+/// NEWREFINE ([`refine`]) on the exact values of `q` and `q'`, so a search takes at most
+/// `bits(hi - lo) + 2` steps (the proof at [`refine`]); no smaller bound is proved, and at a
+/// cluster of roots at an end of a stretch the counts are measured (plan rows
+/// ROOTS-fallback-worst-case and PROOF-newrefine-integer-step; test
+/// `a_cluster_at_an_end_of_a_chain_stretch_takes_bounded_steps`). Before those steps, while
+/// `hi > 4 max(lo, 1)`, the bracket is cut at the power
 /// of 2 whose exponent is the mean of its ends' bits, so a root far below the end Newton's
 /// method starts from is reached in O(log B) steps for ends of B bits. Once the cuts end,
 /// [`doubling`] gives
@@ -2239,9 +2249,13 @@ mod tests {
     /// can certify a sign in the bracket, as `q` is about `S^3`, `3n/16` bits, there and its
     /// terms `3n` bits, and the truncation error of a level is `2^((D - 1) n + e)`
     /// (`chain_level`). NEWREFINE's secant on `q / q'`, about `(x - R - S) / 3` past the
-    /// cluster, needs no count of the cluster's roots and takes `O(log n)` steps: at most
-    /// `4 log2 n - 21` asserted here, the line of `newrefine_takes_log_log_steps_on_a_cluster`,
-    /// and the exact counts printed (the steps that cut by a test, the bisections). Measured
+    /// cluster, needs no count of the cluster's roots. Asserted here is only the proved bound
+    /// at [`refine`], `bits(w) + 2` steps a search, so at most `S (bits(2H) + 2)` for the `S`
+    /// searches counted (each bracket lies in `R - H..=R + H`); no smaller bound is proved
+    /// (plan row PROOF-newrefine-integer-step; the line `4 log2 n - 21` asserted before was
+    /// fitted, and Gemini's B-2 of cross-review XR-lazy-and-kernel-batch-1 round 3 measured 25
+    /// over its 23 at n = 2,048 on clusters of roots that are not integers). The exact counts
+    /// are printed (the steps that cut by a test, the bisections). Measured
     /// 2026-11-27, local, at n = 256, 1,024, 2,048, 4,096 and 8,192: Codex's family 6, 8, 8, 9
     /// and 10 (6, 7, 21, 20 and 26 without the cut of `4N` at [`refine`]), the variant 4, 9,
     /// 13, 16 and 17; the bound `log2 n + 3` of the step before the source's order (boundary
@@ -2250,7 +2264,7 @@ mod tests {
     /// after a weak one, `git show 06ed591d0:crates/zed-kernel/src/poly/roots.rs`) gives the
     /// `n/16 + 1` and `n/16` above.
     #[test]
-    fn a_cluster_at_an_end_of_a_chain_stretch_takes_log_log_steps() {
+    fn a_cluster_at_an_end_of_a_chain_stretch_takes_bounded_steps() {
         let one = BigInt::one();
         let mut over = Vec::new();
         for n in [256u64, 1024, 2048, 4096, 8192] {
@@ -2309,8 +2323,8 @@ mod tests {
                          {fe} evaluations at full precision, {fb} fallbacks, {se} searches, \
                          {ch} chained, {un} units"
                     );
-                    let bound = 4 * n.ilog2() as u64 - 21;
-                    if rf + bi > bound {
+                    let bound = se * ((&h * 2u32).bits() + 2);
+                    if se == 0 || rf + bi > bound {
                         over.push(format!(
                             "{name}({n}), {on}: {rf} + {bi} steps, over {bound}"
                         ));
@@ -2501,7 +2515,7 @@ mod tests {
     }
 
     /// Plan row ROOTS-fallback-worst-case, cross-review XR-lazy-and-kernel-batch-1 round 1:
-    /// NEWREFINE ([`refine`]) takes `O(log log)` steps of the bracket over the cluster's size,
+    /// NEWREFINE ([`refine`]) on a cluster of roots, within the proved `bits(hi - lo) + 2` steps,
     /// called directly in [`chain_search`] (exact values) and [`search`] (scaled values), with
     /// the guess of [`doubling`] on and off. `R = 2^n + 2^(n/4)`, `H = 2^(n/8)`, `S =
     /// 2^(n/16)`, n = 2^8 to 2^15. Family A, `(x - R)^3 - S^3` on `R + 1..=R + H`, root `R +
@@ -2515,10 +2529,14 @@ mod tests {
     /// 29, 34 and 39 (family A 5, 12, 13, 18, 24, 22, 32, 39; family B 10, 13, 17, 19, 27, 29,
     /// 34, 37). Claude's B-5 of round 2 asked for `c log2 n` with `c` fitted on the first three
     /// sizes: that `c`, 1.7, fails at 2,048 (19 over 18.7) and at every size past it; the
-    /// counts grow by 2 to 8, 4 on average, a doubling, with no rise in the step, so the bound asserted is the line `4 log2 n - 21` over all eight sizes, `O(log
-    /// log w)` (`w` has `n / 8` bits). Every count is printed before any is checked.
+    /// counts grow by 2 to 8, 4 on average, a doubling. The line `4 log2 n - 21` asserted after
+    /// that was fitted too, and fails on clusters of roots that are not integers (Gemini's B-2 of
+    /// round 3: 25 over 23 at n = 2,048). No bound below the proved one is known (plan row
+    /// PROOF-newrefine-integer-step), so only `bits(hi - lo) + 2` is asserted (`n / 8 + 2` on
+    /// family A, `n / 8 + 3` on B: 34 to 4,099), and the counts are recorded above. Every count is
+    /// printed before any is checked.
     #[test]
-    fn newrefine_takes_log_log_steps_on_a_cluster() {
+    fn newrefine_steps_on_a_cluster_are_bounded() {
         let one = BigInt::one();
         let mut over = Vec::new();
         let product = |a: &[(u64, BigInt)], b: &[(u64, BigInt)]| {
@@ -2541,7 +2559,6 @@ mod tests {
             ]
         };
         for n in (8..=15).map(|e| 1u64 << e) {
-            let most = 4 * n.ilog2() as u64 - 21;
             let r = (&one << n) + (&one << (n / 4));
             let h = &one << (n / 8);
             let s = &one << (n / 16);
@@ -2560,6 +2577,8 @@ mod tests {
                 ),
             ];
             for (name, q, lo, hi, root) in cases {
+                // The bound proved at [`refine`].
+                let most = (&hi - &lo).bits() + 2;
                 let times_x: Vec<(u64, BigInt)> = (q.iter())
                     .filter(|(e, _)| *e > 0)
                     .map(|(e, c)| (*e, c * BigInt::from(*e)))
@@ -2867,6 +2886,23 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The units of a test of degree `2^32` or more do not overflow: `horner_units` computed
+    /// `D (D + 1) / 2` in `u64`, which overflows from `D = 2^32`, before [`horner_bound`]'s cap
+    /// is checked (cross-review XR-lazy-and-kernel-batch-1 round 3, Gemini B-1). On `x^(2^32) -
+    /// 5` the cap refuses the first test, so the bound is `None` and nothing is charged.
+    #[test]
+    fn the_units_of_a_test_of_a_huge_degree_do_not_overflow() {
+        let d = 1u64 << 32;
+        assert_eq!(horner_units(d, 1), (1 << 63) + (1 << 31));
+        assert_eq!(horner_units(d, 2), (1 << 62) + (1 << 30));
+        assert_eq!(horner_units(u64::MAX, 1), u64::MAX);
+        assert_eq!(horner_units(u64::MAX, 3), u64::MAX);
+        let p = big(&[(0, BigInt::from(-5)), (d, BigInt::one())]);
+        let mut spent = 0;
+        assert_eq!(horner_bound(p.terms(), &BigInt::from(4), &mut spent), None);
+        assert_eq!(spent, 0);
     }
 
     /// The sparse inputs stay as they were: on `(x^n + 1)(x - 4)` (`t = 4`, `D = n + 1`) for
