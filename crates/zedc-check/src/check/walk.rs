@@ -14870,8 +14870,9 @@ impl<'a> Ck<'_, 'a> {
     /// shift may differ is listed ([`LetPa::changed_since`], zedc-preimage); with the two
     /// sums one `Rc` (`Rc::ptr_eq`) the summary lists none. So every leaf not reset is the
     /// leaf a fresh tree would make. The total is the in-order fold `left + leaf + right` in
-    /// key order (the `sum` of `images::Input`), and `Leaf::plus` is associative (a `Shift::plus` of the
-    /// shift group, zedc-preimage; `usize` addition; the union of premises), so any search
+    /// key order (the `sum` of `images::Input`), and `Leaf::plus` is associative (a
+    /// `Shift::plus` of the shift group, zedc-preimage; `usize` addition; the union of
+    /// premises), so any search
     /// tree of the same keys and leaves, whatever its shape, gives the same total. Tests:
     /// `l01_39a_bit_words::bench::scaling::a_chain_of_sums_under_a_test_of_each_input_reads_each_summary_from_the_one_before`
     /// (counts only), and
