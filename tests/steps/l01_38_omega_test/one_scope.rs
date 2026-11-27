@@ -3494,6 +3494,16 @@ fn answers_are_those_reading_bodies(src: &str) {
     let lets = lets(&unit);
     let fs = functions(&unit);
     let whole = |r: &Relation, f: Formula| decide(&Formula::and(vec![r.defined(), f]));
+    // The reference does not depend on the order, so each function's closed relation is read
+    // once, and its two whole decisions once each, when an answer first asks for them: they
+    // were most of the test's time read again for each order
+    // (PERF-one-scope-callee-chooses).
+    let references: Vec<Option<Relation>> = fs
+        .iter()
+        .map(|&(_, ps, body)| closed(&cones, ps, body))
+        .collect();
+    let decided: Vec<[std::cell::OnceCell<Result<bool, _>>; 2]> =
+        fs.iter().map(|_| Default::default()).collect();
     for order in [
         (0..fs.len()).collect::<Vec<_>>(),
         (0..fs.len()).rev().collect(),
@@ -3503,7 +3513,7 @@ fn answers_are_those_reading_bodies(src: &str) {
         for i in order {
             let (name, ps, body) = fs[i];
             let (expected, r, s) = match (
-                closed(&cones, ps, body),
+                references[i].as_ref(),
                 scoped.relation(body, ps, ps, true),
                 again.relation(body, ps, ps, true),
             ) {
@@ -3534,12 +3544,14 @@ fn answers_are_those_reading_bodies(src: &str) {
                     );
                 }
             }
-            for (got, f) in [
-                (&a.holds, expected.body.clone()),
-                (&a.fails, Formula::negate(expected.body.clone())),
-            ] {
-                if let (Ok(got), Ok(want)) = (got, whole(&expected, f)) {
-                    assert_eq!(*got, want, "`{name}` in\n{src}\n{w}");
+            for (k, got) in [&a.holds, &a.fails].into_iter().enumerate() {
+                let Ok(got) = got else { continue };
+                let want = decided[i][k].get_or_init(|| {
+                    let f = expected.body.clone();
+                    whole(expected, if k == 0 { f } else { Formula::negate(f) })
+                });
+                if let Ok(want) = want {
+                    assert_eq!(got, want, "`{name}` in\n{src}\n{w}");
                 }
             }
         }
