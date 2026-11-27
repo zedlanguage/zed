@@ -1266,6 +1266,14 @@ split="
 # --report-time, FAIL-s4-model-near-limit): the 565 tests of the other piece took 52.7 s together,
 # and the slowest, of random formulas with and without the plain shortcut, 5.8 s, the next 2.0 s.
 # That one test set the piece's wall time, so it is a piece; no other test's name holds its name.
+# zed_kernel's other piece took 20 to 33 s on the farm under load (2026-11-27). Each of its
+# tests alone on this machine (1 core, run_tests.sh --each-test, b31-kernel, 2026-11-27): 697
+# tests, 57.3 s together, the slowest the test of every f16 product pair, 9.0 s, the next 2.1 s.
+# That test is a piece, and the rest is three pieces by module (zed_kernel-* below):
+# types::empty:: (13.6 s together, slowest 2.1 s), the other types:: (18.2 s, slowest 0.8 s)
+# and the others (16.6 s, slowest 1.1 s). In the listing no name holds types:: or
+# types::empty:: other than at its start, and no other name holds every_f16_product_pair
+# (TEST-bdd-bench-split).
 alone="
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_1
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_2
@@ -1293,6 +1301,7 @@ alone="
   zed_kernel::types::bdd::tests::a_chain_joined_at_once_is_the_chain_joined_literal_by_literal
   zed_kernel::types::empty::tests::random_types_agree_with_membership_on_a_finite_set_of_values
   zed_kernel::num::tests::valuations_from_the_top_agree_with_the_tests_on_the_way_up
+  zed_kernel::num::tininess::tests::every_f16_product_pair
   zedc_presburger::presburger::row_sums::tests::the_polygons_of_the_route_are_never_more_than_the_join_spends
   zedc_presburger::presburger::sweep_against_pick_tests::the_unbounded_row_sweep_marks_the_arms_pick_by_finds
   zedc_presburger::presburger::exact::tests::random_formulas_at_seed_10413658062665981385
@@ -1496,7 +1505,11 @@ step_pieces() {
             echo "$t crates/zed-kernel $p --exact ${t#*::}"
             skips="$skips --skip ${t#*::}"
           done
-          echo "$n crates/zed-kernel $p$skips"
+          # The rest in three pieces by module (see alone): types::empty::, the other types::, and
+          # the others. Each filter matches only names that start with it.
+          echo "$n::types::empty crates/zed-kernel $p types::empty::$skips"
+          echo "$n::types crates/zed-kernel $p types::$skips --skip types::empty::"
+          echo "$n crates/zed-kernel $p$skips --skip types::"
           ;;
         zed_native-*) echo "$n crates/zed-native $p" ;;
         zed_rt-*) echo "$n crates/zed-rt $p" ;;
