@@ -21,7 +21,7 @@ use crate::front::Diagnostic;
 use crate::place::Place;
 
 pub use addresses::Severity;
-pub(crate) use addresses::addresses;
+pub(crate) use addresses::{addresses, declared};
 
 /// The part of a diagnostic's address that names its file, which does not depend on the
 /// directory `zedc` runs in (DESIGN.md sec:diagnostics): for a unit under a manifest, a hash of

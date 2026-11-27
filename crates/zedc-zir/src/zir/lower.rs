@@ -290,8 +290,9 @@ pub fn lower(t: &Term) -> Result<Region, String> {
 /// the innermost term with a site that the node was lowered for, or `None` when no term around
 /// it has one (plan row RT-sites). The graph is the same with sites and without them, so the
 /// ZIR text and the content addresses are too. A node merged with an equal one met before
-/// keeps the first one's site. O(n) more for the n nodes, one walk of the finished tree of
-/// sites; with no sites, nothing is kept.
+/// keeps the first one's site, which a run-time error is placed at; every site of the copies
+/// is kept in [`Sited::sources`] (step L1.33a). O(n) more for the n nodes, one walk of the
+/// finished tree of sites; with no sites, nothing is kept.
 // Complexity tradeoff: the sites are kept as a tree beside the regions being built and
 // numbered in one walk at the end, O(n) time and memory for n nodes, since a node's preorder
 // number is known only once every region before it is finished, and lowering finishes inner
@@ -327,6 +328,12 @@ pub struct Names {
 pub struct Sited {
     /// Each node's site, as [`lower_sited`] gives it.
     pub sites: Vec<Option<Span>>,
+    /// Each node's sources (DESIGN.md step L1.33a): the site of every term it was lowered for,
+    /// its own and those of the equal nodes merged into it (`(x + 1r) * (x + 1r)` lowers one
+    /// addition for two sums), each once, in source order, by first byte and then by last.
+    /// Its site in [`Sited::sites`] is one of them, the first lowered, not always the first
+    /// here; a node lowered for no term with a site has none.
+    pub sources: Vec<Vec<Span>>,
     /// Each node's [`Names`].
     pub names: Vec<Names>,
     /// The names bound in the root region.
@@ -383,12 +390,13 @@ pub fn lower_debug(t: &Term, sites: Option<&Sites>) -> Result<(Region, Sited), S
         root.kind = RegionKind::Port;
     }
     validate(&root).map_err(|e| bug(format_args!("the lowered graph is invalid: {e}")))?;
-    let (sites, names) = preorder(f.sites);
+    let (sites, sources, names) = preorder(f.sites);
     let root_names = f.names;
     Ok((
         root,
         Sited {
             sites,
+            sources,
             names,
             root: root_names,
         },
@@ -399,6 +407,9 @@ pub fn lower_debug(t: &Term, sites: Option<&Sites>) -> Result<(Region, Sited), S
 /// ([`Names::outs`]), and what is kept of each of its regions.
 struct NodeSite {
     at: Option<Span>,
+    /// The sites of the equal nodes merged into this one after it, in the order lowered
+    /// ([`Lower::add_in`], [`absorb`]): with `at`, its [`Sited::sources`].
+    more: Vec<Span>,
     outs: Vec<(usize, Arc<str>)>,
     regions: Vec<RegionSite>,
 }
@@ -410,12 +421,14 @@ struct RegionSite {
     nodes: Vec<NodeSite>,
 }
 
-/// The sites and the [`Names`] of `nodes`, a region's, and of the nodes of their regions, by
-/// node number in preorder: a region's nodes in order, each followed at once by the nodes of
-/// its regions. O(n + b) for n nodes and b names, with the nodes still to number on a heap
-/// stack, since regions nest as deep as the program.
-fn preorder(nodes: Vec<NodeSite>) -> (Vec<Option<Span>>, Vec<Names>) {
-    let (mut sites, mut names) = (Vec::new(), Vec::new());
+/// The sites, the sources ([`Sited::sources`]) and the [`Names`] of `nodes`, a region's, and
+/// of the nodes of their regions, by node number in preorder: a region's nodes in order, each
+/// followed at once by the nodes of its regions. O(n + b + s log s) for n nodes, b names and
+/// s sources, with the nodes still to number on a heap stack, since regions nest as deep as
+/// the program; the sort is of each node's sources alone, almost always one or two.
+#[allow(clippy::type_complexity)]
+fn preorder(nodes: Vec<NodeSite>) -> (Vec<Option<Span>>, Vec<Vec<Span>>, Vec<Names>) {
+    let (mut sites, mut sources, mut names) = (Vec::new(), Vec::new(), Vec::new());
     let mut todo: Vec<std::vec::IntoIter<NodeSite>> = vec![nodes.into_iter()];
     while let Some(top) = todo.last_mut() {
         let Some(n) = top.next() else {
@@ -423,6 +436,10 @@ fn preorder(nodes: Vec<NodeSite>) -> (Vec<Option<Span>>, Vec<Names>) {
             continue;
         };
         sites.push(n.at);
+        let mut all: Vec<Span> = n.at.into_iter().chain(n.more).collect();
+        all.sort_unstable_by_key(|s| (s.start, s.end));
+        all.dedup();
+        sources.push(all);
         let mut regions = Vec::with_capacity(n.regions.len());
         let mut subs = Vec::with_capacity(n.regions.len());
         for r in n.regions {
@@ -435,7 +452,26 @@ fn preorder(nodes: Vec<NodeSite>) -> (Vec<Option<Span>>, Vec<Names>) {
         });
         todo.extend(subs.into_iter().rev().map(Vec::into_iter));
     }
-    (sites, names)
+    (sites, sources, names)
+}
+
+/// Gives the node `into`, and each node of its regions, the sources of the node `from` and of
+/// the node at the same place in its regions: `from` was lowered equal to `into` and merged
+/// into it ([`Lower::add_in`]), so its regions are equal to `into`'s, node for node (a node's
+/// key holds its regions' keys, [`canon::Shape::key`]), and the copy's sources are kept where
+/// its nodes went (DESIGN.md step L1.33a). Its names are not: a debugger names a value by its
+/// first binding. Iterative, since regions nest as deep as the program; O(m) for the m nodes
+/// of `from`'s tree. The zip is exact by the equality; were it ever not, the nodes past the
+/// shorter list would keep only their own sources, never take another node's.
+fn absorb(into: &mut NodeSite, from: NodeSite) {
+    let mut todo = vec![(into, from)];
+    while let Some((into, from)) = todo.pop() {
+        into.more.extend(from.at);
+        into.more.extend(from.more);
+        for (ri, rf) in into.regions.iter_mut().zip(from.regions) {
+            todo.extend(ri.nodes.iter_mut().zip(rf.nodes));
+        }
+    }
 }
 
 /// The name a debugger shows for the kernel name `x` ([`Names`]), when the program wrote it:
@@ -836,6 +872,7 @@ impl<'t> Lower<'t> {
     ) -> usize {
         let site = self.sites.map(|_| NodeSite {
             at: self.site,
+            more: Vec::new(),
             outs: Vec::new(),
             regions,
         });
@@ -861,7 +898,15 @@ impl<'t> Lower<'t> {
         let key = shape.key(&keys);
         let f = &mut self.frames[k];
         match f.seen.entry(key).or_default().entry(shape) {
-            btree_map::Entry::Occupied(e) => *e.get(),
+            btree_map::Entry::Occupied(e) => {
+                let i = *e.get();
+                // The copy's sources join the node kept (step L1.33a); its site there stays
+                // the first one's, so no message and no run-time site changes.
+                if let Some(site) = site {
+                    absorb(&mut f.sites[i], site);
+                }
+                i
+            }
             btree_map::Entry::Vacant(e) => {
                 f.region.nodes.push(node);
                 f.keys.push(keys);
@@ -1305,7 +1350,15 @@ impl<'t> Lower<'t> {
                 if k < at
                     && let Some(v) = self.frames[k].hoisted.get(p)
                 {
-                    s.vals.push(Val::Src(v.clone(), k));
+                    let v = v.clone();
+                    // This read shares the first one's node, which so has its source too
+                    // (step L1.33a), as an equal node merged by `add_in` does.
+                    if let (Src::Out(n, _), Some(site)) = (&v, self.site)
+                        && let Some(kept) = self.frames[k].sites.get_mut(*n)
+                    {
+                        kept.more.push(site);
+                    }
+                    s.vals.push(Val::Src(v, k));
                     return Ok(());
                 }
                 let st = self.state(k, p)?;

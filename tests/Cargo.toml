@@ -133,6 +133,9 @@ path = "steps/l01_32_canonical_zir/mod.rs"
 name = "l01_33_lowering"
 path = "steps/l01_33_lowering/mod.rs"
 [[test]]
+name = "l01_33a_zir_sources"
+path = "steps/l01_33a_zir_sources/mod.rs"
+[[test]]
 name = "l01_34_memory"
 path = "steps/l01_34_memory/mod.rs"
 [[test]]

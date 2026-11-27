@@ -753,6 +753,22 @@ impl Program {
         &self.sites
     }
 
+    /// The map between the nodes of a graph lowered from the program's term and the nodes of
+    /// its parse tree (step L1.33a), for the nodes' `sources`
+    /// ([`crate::zir::lower::Sited::sources`]). O(n + p log p) for a text of n bytes and p
+    /// pairs of node and source.
+    // Complexity tradeoff: the text is parsed again here, where the program could keep the
+    // statements it was built from; that would hold a syntax tree of several times the text's
+    // size for every run, where only a reader of the map pays for this parse, O(n) like the
+    // first. The statements are those the elaborator's spans are of: building reads only
+    // replace a literal at its span.
+    pub fn source_map(
+        &self,
+        sources: &[Vec<zed_kernel::sites::Span>],
+    ) -> crate::source_map::SourceMap {
+        crate::source_map::SourceMap::new(&crate::front::parsed(&self.text), sources)
+    }
+
     /// Checks that `record` is a record of this program: it names a content address, and the
     /// address is this program's.
     pub fn check_record(&self, record: &Record) -> Result<(), String> {
