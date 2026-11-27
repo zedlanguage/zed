@@ -162,3 +162,62 @@ fn pins_match_the_recursive_walk_on_random_formulas() {
         assert_eq!(w.used, v.used, "seed {seed}, round {round}: work");
     }
 }
+
+/// `two_pins::on_line` row by row (PERF-cover-union-of-classes-listed): two opposite rows
+/// `E·u + D·w + C >= 0`, some with a common factor `g` of `E` and `D`, met with a third row or
+/// none. Where the two are one equation (`⌊C1 / g⌋ + ⌊C2 / g⌋ <= 0`) it answers, and each
+/// answer `(k, base, runs of t)` holds exactly the values `base + k·t` of `u` at the points,
+/// checked for `u` in `-60..=60` against every `w` in `-400..=400`, which holds the `w` of each
+/// such point (`|w| <= |C| + |E|·60 <= 367` on the line where `D != 0`; where `D == 0` every
+/// row here holds for some `w` in `40..=400`); elsewhere it gives `None`.
+#[test]
+fn on_line_gives_the_values_of_u_at_the_points() {
+    let dirs = [
+        (1, 0),
+        (0, 1),
+        (2, 3),
+        (-3, 5),
+        (4, -6),
+        (6, 9),
+        (5, 0),
+        (0, -4),
+    ];
+    let (mut solved, mut cases) = (0, 0);
+    for (e, d) in dirs {
+        let g = zed_numtheory::gcd_u128(e.unsigned_abs(), d.unsigned_abs()) as i128;
+        for (c1, c2) in [(0, 0), (3, -3), (7, -5), (2, -3), (-4, 4), (5, -6)] {
+            for cut in [None, Some((1, 1, 6)), Some((-1, 2, 9)), Some((0, 1, -40))] {
+                cases += 1;
+                let mut rows: Vec<(i128, i128, i128)> = vec![(e, d, c1), (-e, -d, c2)];
+                rows.extend(cut);
+                let case = format!("{rows:?}");
+                let got = two_pins::on_line(&rows);
+                let one = c1.div_euclid(g) + c2.div_euclid(g) <= 0;
+                // Where the two are not, the cut may be one with either (`(0, 1, -40)` beside
+                // `(0, -1, 5)`), so an answer then is checked as well.
+                let Some((k, base, runs)) = got else {
+                    assert!(!one, "{case}: the two rows are one equation");
+                    continue;
+                };
+                solved += 1;
+                assert!(k >= 1 && runs.len() <= 1, "{case}: ({k}, {base}, {runs:?})");
+                let holds =
+                    |u: i128, w: i128| (rows.iter()).all(|&(re, rd, rc)| re * u + rd * w + rc >= 0);
+                let want: Vec<i128> = (-60..=60i128)
+                    .filter(|&u| (-400..=400i128).any(|w| holds(u, w)))
+                    .collect();
+                let mut have = Vec::new();
+                for (lo, hi) in runs {
+                    // `|base| <= 35` here (`|C|·|s|`, `|s| <= 5`) and `k >= 1`, so `t` in
+                    // `-200..=200` covers `u` in `-60..=60`.
+                    let (lo, hi) = (lo.unwrap_or(-200).max(-200), hi.unwrap_or(200).min(200));
+                    let values = (lo..=hi).map(|t| base + k * t);
+                    have.extend(values.filter(|u| (-60..=60).contains(u)));
+                }
+                assert_eq!(have, want, "{case}: ({k}, {base})");
+            }
+        }
+    }
+    println!("{solved} of {cases} read on a line");
+    assert_eq!(cases, 192);
+}

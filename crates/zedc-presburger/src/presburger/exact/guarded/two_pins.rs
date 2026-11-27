@@ -31,7 +31,11 @@
 //! them; full citations in the crate root's References. The comment had "CACM, sec. 3", which
 //! is the section on nonlinear subscripts). The values of the real shadow outside the dark
 //! one are tried one by one, each with the integer bounds of `w` (the splinters, decided here
-//! value by value rather than by Pugh's equalities). So the set is exact; where it is unbounded
+//! value by value rather than by Pugh's equalities). Where two of the rows are one equation
+//! `E·u + D·w + C == 0`, as on a flat region, every point is on its line and none is tried
+//! alone: the line's integer points are `u = u0 + D·k`, `w = w0 - E·k` for integer `k`, so the
+//! values are one class modulo `|D|` with one run of `k`, read in O(h) ([`on_line`];
+//! PERF-cover-union-of-classes-listed). So the set is exact; where it is unbounded
 //! and its values may be periodic (the stretch of `w` stays below 1 long toward an open end, as
 //! on a flat ray), or a number passes `i128`, the reading declines and the per-name certificate
 //! or the cover answers.
@@ -50,13 +54,14 @@ use std::collections::HashMap;
 
 use zed_collections::search::{try_first_true, try_last_true};
 use zed_kernel::bits::BitLen;
+use zed_numtheory::{bezout_i128, gcd_u128 as gcd};
 use zedc_affine::plane::{self, Basis};
 use zedc_affine::shadow::{i128_meet, i128_pair};
 use zedc_int::int::{Int, Num, i128_div_ceil, i128_div_floor};
 use zedc_lattice::interval::{End, IntervalSet};
 use zedc_lattice::lattice::Congruence;
 
-use super::super::super::meter::{PIECE, TWO_PIN_READINGS, Work};
+use super::super::super::meter::{PIECE, TWO_PIN_LINE_OFF, TWO_PIN_READINGS, Work};
 use super::super::super::{Atom, Classed, Con, Formula, Lin, Refusal, Rel};
 use super::super::projection::each_constraint;
 use super::{Def, Prep};
@@ -534,7 +539,9 @@ impl TwoPins<'_, '_> {
     // and S do not grow. An open region with a corner is the same, its edges cut by a lid
     // ([`open`], [`open_values`]; PRES-two-pin-prune, part a). Otherwise (a half-plane or a
     // strip, read from its one or two edges; flat, or past `i128`, from all h) O(h²) a name
-    // for the pairs of the shadows plus O(h) a value tried ([`u_values`]). With choices, that
+    // for the pairs of the shadows plus O(h) a value tried ([`u_values`]), but O(h) a name
+    // where two of the half-planes are one equation, the region on a line ([`on_line`]; it was
+    // O(h·r) for the r values of the line, PERF-cover-union-of-classes-listed). With choices, that
     // for each cell, and for a leaf choice's head two queries a cell, each over the region cut
     // by its guard, read in place in O(log V) ([`cut_values`]); the per-name path it replaces
     // reads the whole part, O(r·t) ≥ O(V).
@@ -546,8 +553,9 @@ impl TwoPins<'_, '_> {
         let Some(&j) = self.prep.index.get(s) else {
             return Ok(None);
         };
-        // `(g, γ, runs of u)` for each query with a point: the values `γ + g·u`.
-        let mut found: Vec<(i128, i128, Vec<Run>)> = Vec::new();
+        // `(s, g, o, runs of t)` for each query with a point: the values `o + s·t`, `g` the
+        // step of the form ([`form_values`]).
+        let mut found: Vec<(i128, i128, i128, Vec<Run>)> = Vec::new();
         for cell in &self.cells {
             let queries = match cell.leaves.get(&j) {
                 None => vec![(cell.forms[j], None)],
@@ -559,42 +567,64 @@ impl TwoPins<'_, '_> {
                 }
             };
             for (f, cut) in queries {
-                let Some((g, us)) = form_values(f, cell, cut, work)? else {
+                let Some((s, g, o, ts)) = form_values(f, cell, cut, work)? else {
                     return Ok(None);
                 };
-                if !us.is_empty() {
-                    found.push((g, f.2, us));
+                if !ts.is_empty() {
+                    found.push((s, g, o, ts));
                 }
             }
         }
-        // The union is one class only where every query with a step has the same step `m`
-        // and every query the same residue modulo `m`; otherwise the per-name path answers.
-        let Some(m) = found.iter().map(|q| q.0).max() else {
-            return Ok(None);
+        // The union is one class where every query with a step has the same step and every
+        // query the same residue modulo it: first by the steps `s` of the queries; else by the
+        // steps `g` of their forms, the rule before PERF-cover-union-of-classes-listed, each
+        // value of a query on a line of a step the others do not share then listed alone (as
+        // every value of a line was tried alone before, so no name answered then declines
+        // now); otherwise the per-name path answers.
+        let (m, residue, listed) = match shared_class(found.iter().map(|q| (q.0, q.2))) {
+            Some((m, r)) => (m, r, false),
+            None => match shared_class(found.iter().map(|q| (q.1, q.2))) {
+                Some((m, r)) => (m, r, true),
+                None => return Ok(None),
+            },
         };
-        if found.iter().any(|q| q.0 > 0 && q.0 != m)
-            || (m > 1 && found.iter().any(|q| (q.1 - found[0].1).rem_euclid(m) != 0))
-        {
-            return Ok(None);
-        }
-        let residue = found[0].1.rem_euclid(m.max(1));
         let mut pieces = Vec::new();
-        for (g, ga, us) in found {
-            if g == 0 {
+        for (s, g, o, ts) in found {
+            if s == 0 {
                 // A name fixed in this query: its one value.
-                pieces.push((End::Fin(Num::from(ga)), End::Fin(Num::from(ga))));
+                pieces.push((End::Fin(Num::from(o)), End::Fin(Num::from(o))));
                 continue;
             }
             // A class other than every integer takes finite ranges (`Classed::new`); an open
             // end there declines to the per-name path.
-            if g > 1 && us.iter().any(|(lo, hi)| lo.is_none() || hi.is_none()) {
+            if s > 1 && ts.iter().any(|(lo, hi)| lo.is_none() || hi.is_none()) {
                 return Ok(None);
             }
-            for (lo, hi) in us {
-                // `g > 0`, so an open end stays on its side.
-                let at = |u: Option<i128>, open: End| match u {
+            if listed && s != g {
+                // `s > g >= 1`, so the runs are finite (above): each value alone, a unit each.
+                for &(lo, hi) in &ts {
+                    let (Some(lo), Some(hi)) = (lo, hi) else {
+                        return Ok(None);
+                    };
+                    let n = hi.checked_sub(lo).and_then(|n| n.checked_add(1));
+                    let Some(n) = n.and_then(|n| u64::try_from(n).ok()) else {
+                        return Ok(None);
+                    };
+                    work.charge(n)?;
+                    for t in lo..=hi {
+                        let Some(v) = s.checked_mul(t).and_then(|v| v.checked_add(o)) else {
+                            return Ok(None);
+                        };
+                        pieces.push((End::Fin(Num::from(v)), End::Fin(Num::from(v))));
+                    }
+                }
+                continue;
+            }
+            for (lo, hi) in ts {
+                // `s > 0`, so an open end stays on its side.
+                let at = |t: Option<i128>, open: End| match t {
                     None => Some(open),
-                    Some(u) => Some(End::Fin(Num::from(g.checked_mul(u)?.checked_add(ga)?))),
+                    Some(t) => Some(End::Fin(Num::from(s.checked_mul(t)?.checked_add(o)?))),
                 };
                 let (Some(lo), Some(hi)) = (at(lo, End::NegInf), at(hi, End::PosInf)) else {
                     return Ok(None);
@@ -611,16 +641,31 @@ impl TwoPins<'_, '_> {
     }
 }
 
-/// The values of the form `f` over the integer points of `cell`, cut by `cut` where given: its
-/// step `g` (`gcd(α, β)`, 0 for a form with no pin) and the runs of `u` with `f = γ + g·u`;
-/// `None` where it declines ([module note](self)).
+/// The step `m` every query with a step has, and the residue modulo `m` every query's value
+/// has, of `qs` as `(step, value)` pairs (step 0 for a name fixed in its query): `(m, residue)`,
+/// `m` 0 where no query has a step; `None` where two steps or two residues differ, a difference
+/// passes `i128`, or there is no query. O(q) for q queries.
+fn shared_class(qs: impl Iterator<Item = (i128, i128)> + Clone) -> Option<(i128, i128)> {
+    let m = qs.clone().map(|q| q.0).max()?;
+    let first = qs.clone().next()?.1;
+    let apart = |v: i128| v.checked_sub(first).is_none_or(|d| d.rem_euclid(m) != 0);
+    if qs.clone().any(|q| q.0 > 0 && q.0 != m) || (m > 1 && qs.clone().any(|q| apart(q.1))) {
+        return None;
+    }
+    Some((m, first.rem_euclid(m.max(1))))
+}
+
+/// The values of the form `f` over the integer points of `cell`, cut by `cut` where given:
+/// `(s, g, o, runs of t)`, the values `o + s·t`, with `g` the form's step (`gcd(α, β)`, 0 for a
+/// form with no pin; `f = γ + g·u`) and `s = g·k` for `u = base + k·t` ([`Steps`]); `None`
+/// where it declines ([module note](self)).
 fn form_values(
     f: Form,
     cell: &Cell,
     cut: Option<Form>,
     work: &mut Work,
-) -> Result<Option<(i128, Vec<Run>)>, Refusal> {
-    let (al, be, _) = f;
+) -> Result<Option<(i128, i128, i128, Vec<Run>)>, Refusal> {
+    let (al, be, ga) = f;
     let (g, a, b) = if al == 0 && be == 0 {
         (0, 1, 0)
     } else {
@@ -634,7 +679,7 @@ fn form_values(
         // A guard with no pin: true on the whole cell, or false on it.
         Some(c) if c.0 == 0 && c.1 == 0 => {
             if c.2 < 0 {
-                return Ok(Some((g, Vec::new())));
+                return Ok(Some((g, g, ga, Vec::new())));
             }
             None
         }
@@ -644,18 +689,35 @@ fn form_values(
         None => shape_values(&cell.shape, (a, b), work)?,
         Some(c) => cut_values(&cell.shape, c, (a, b), work)?,
     };
-    Ok(us.map(|us| (g, us)))
+    let Some((k, base, ts)) = us else {
+        return Ok(None);
+    };
+    // `f = γ + g·u = (γ + g·base) + g·k·t`.
+    let o = g.checked_mul(base).and_then(|v| v.checked_add(ga));
+    let (Some(s), Some(o)) = (g.checked_mul(k), o) else {
+        return Ok(None);
+    };
+    Ok(Some((s, g, o, ts)))
 }
 
-/// The runs of `u = a·p + b·q` over the integer points of `shape`.
+/// The values of `u` a reader gives, `(k, base, runs of t)`: `u = base + k·t` for each `t` of
+/// the runs, `k >= 1`; `(1, 0, runs of u)` but where [`on_line`] solved an equation.
+type Steps = (i128, i128, Vec<Run>);
+
+/// The runs of `u` itself as [`Steps`].
+fn plain(runs: Option<Vec<Run>>) -> Option<Steps> {
+    runs.map(|r| (1, 0, r))
+}
+
+/// The values of `u = a·p + b·q` over the integer points of `shape`.
 fn shape_values(
     shape: &Shape,
     (a, b): (i128, i128),
     work: &mut Work,
-) -> Result<Option<Vec<Run>>, Refusal> {
+) -> Result<Option<Steps>, Refusal> {
     match shape {
-        Shape::Bounded(poly) => poly_values(poly, (a, b), work),
-        Shape::Open(o) => open_values(&o.k, &o.rays, (a, b), work),
+        Shape::Bounded(poly) => poly_values(poly, (a, b), work).map(plain),
+        Shape::Open(o) => open_values(&o.k, &o.rays, (a, b), work).map(plain),
         Shape::Rows(halves) => u_values(a, b, halves, work),
     }
 }
@@ -690,8 +752,8 @@ fn cut_values(
     c: Form,
     (a, b): (i128, i128),
     work: &mut Work,
-) -> Result<Option<Vec<Run>>, Refusal> {
-    let rebuild = |work: &mut Work| -> Result<Option<Vec<Run>>, Refusal> {
+) -> Result<Option<Steps>, Refusal> {
+    let rebuild = |work: &mut Work| -> Result<Option<Steps>, Refusal> {
         let mut halves: Vec<Form> = match shape {
             Shape::Bounded(p) => (0..p.n()).map(|i| p.row(i)).collect(),
             Shape::Open(o) => (0..o.k.n())
@@ -726,8 +788,8 @@ fn cut_values(
                 // cut region is the polygon cut with the same rays past the lid, which `c`
                 // keeps (it holds at both its ends).
                 Some(cut) if signs.iter().all(|&x| x >= 0) => match cut {
-                    Cut::Whole => open_values(&o.k, r, (a, b), work),
-                    Cut::Part(k) => open_values(&k, r, (a, b), work),
+                    Cut::Whole => open_values(&o.k, r, (a, b), work).map(plain),
+                    Cut::Part(k) => open_values(&k, r, (a, b), work).map(plain),
                     Cut::Empty | Cut::Face(_) => rebuild(work),
                 },
                 // `c` is at most 0 on the lid and does not rise along either ray, falling along
@@ -737,7 +799,7 @@ fn cut_values(
                 // `c` holds on one ray and fails on the other: the polygon cut, with rays the
                 // one kept and `c`'s line from where it crosses the lid ([`split`]).
                 Some(Cut::Part(k)) => match split(r, c, signs) {
-                    Some(rays) => open_values(&k, &rays, (a, b), work),
+                    Some(rays) => open_values(&k, &rays, (a, b), work).map(plain),
                     None => rebuild(work),
                 },
                 _ => rebuild(work),
@@ -815,24 +877,22 @@ fn cut_poly_values<P: Convex>(
     cut: Cut<'_, P>,
     (a, b): (i128, i128),
     work: &mut Work,
-) -> Result<Option<Vec<Run>>, Refusal> {
+) -> Result<Option<Steps>, Refusal> {
     match cut {
-        Cut::Empty => Ok(Some(Vec::new())),
-        Cut::Whole => poly_values(p, (a, b), work),
+        Cut::Empty => Ok(Some((1, 0, Vec::new()))),
+        Cut::Whole => poly_values(p, (a, b), work).map(plain),
+        // A face is on `g == 0`, which its rows hold both ways ([`clip`]), so [`on_line`] reads
+        // it.
         Cut::Face(rows) => u_values(a, b, &rows, work),
-        Cut::Part(k) => poly_values(&k, (a, b), work),
+        Cut::Part(k) => poly_values(&k, (a, b), work).map(plain),
     }
 }
 
-/// The values of `u = a·p + b·q` (`a`, `b` coprime) over the integer points of `halves`, as
-/// sorted runs; `Ok(None)` where it declines (an open end the dark shadow does not share, or
-/// past `i128`) ([module note](self)).
-fn u_values(
-    a: i128,
-    b: i128,
-    halves: &[Form],
-    work: &mut Work,
-) -> Result<Option<Vec<Run>>, Refusal> {
+/// The values of `u = a·p + b·q` (`a`, `b` coprime) over the integer points of `halves`: one
+/// class and run where two of them are one equation ([`on_line`]), else sorted runs;
+/// `Ok(None)` where it declines (an open end the dark shadow does not share, or past `i128`)
+/// ([module note](self)).
+fn u_values(a: i128, b: i128, halves: &[Form], work: &mut Work) -> Result<Option<Steps>, Refusal> {
     let Some(basis) = Basis::new(a, b) else {
         return Ok(None);
     };
@@ -845,8 +905,17 @@ fn u_values(
         };
         uw.push(row);
     }
-    let wu: Vec<Row> = uw.iter().map(|&(e, d, c)| (d, e, c)).collect();
     let h = halves.len() as u64;
+    if !TWO_PIN_LINE_OFF.get()
+        && let Some(line) = on_line(&uw)
+    {
+        // A unit a row, as [`u_runs`] charges for each value it tries: [`on_line`] makes four
+        // passes over the rows, where that made one for each value of the line. Its time a
+        // unit is measured by `exact::tests::bench`, `sides on a line`.
+        work.charge(h)?;
+        return Ok(Some(line));
+    }
+    let wu: Vec<Row> = uw.iter().map(|&(e, d, c)| (d, e, c)).collect();
     // A unit for each 16 pairs of half-planes the three shadows meet, not `PIECE` (16) a pair:
     // a pair costs about 2 ns, and `PIECE` is fit to the 0.6 to 0.8 µs pieces of
     // `exact::residues` (PRES-two-pin-charge-fit; measured at the site's own benchmark case,
@@ -859,7 +928,7 @@ fn u_values(
     };
     let (Some(real), Some((wl, wh))) = (real, across) else {
         // No integer point: the real shadow of one coordinate or the other is empty.
-        return Ok(Some(Vec::new()));
+        return Ok(Some((1, 0, Vec::new())));
     };
     // An end of the real shadow that is open: every value past it has a point exactly where the
     // dark shadow is open at the same end (each of its values has an integer `w`), and then
@@ -872,7 +941,7 @@ fn u_values(
         if open_lo || open_hi {
             return Ok(None);
         }
-        return u_runs(real, None, (wl, wh), &uw, &wu, h, work);
+        return u_runs(real, None, (wl, wh), &uw, &wu, h, work).map(plain);
     };
     if (open_lo && dl.is_some()) || (open_hi && dh.is_some()) {
         return Ok(None);
@@ -899,7 +968,94 @@ fn u_values(
     if open_hi && let Some(last) = runs.last_mut() {
         last.1 = None;
     }
-    Ok(Some(runs))
+    Ok(Some((1, 0, runs)))
+}
+
+/// The values of `u` over the integer points of `rows` (`E·u + D·w + C >= 0`) where two of the
+/// rows are one equation: `(k, base, one run of t)` ([`Steps`]), or no run where there is no
+/// point; `None` where no two rows are one equation, or past `i128` (then [`u_values`] reads
+/// the rows by their shadows).
+// Exact. A row keeps its integer points when its `(E, D)` is divided by `g = gcd(E, D)` and
+// its `C` by `g` rounded down: `g·(e·u + d·w) >= -C` is `e·u + d·w >= ⌈-C / g⌉ = -⌊C / g⌋`, as
+// the left side is an integer. Two rows `(e, d, c)` and `(-e, -d, c')` made so hold
+// `-c <= e·u + d·w <= c'`: no point where `c + c' < 0`, and where `c + c' == 0` the points are
+// those of the line `e·u + d·w + c == 0`, `gcd(e, d) == 1`. With `s·e + t·d == 1` (Bezout,
+// `zed_numtheory::bezout_i128`), `(u0, w0) = (-c·s, -c·t)` is on it, and its integer points
+// are exactly `(u0 + d·k, w0 - e·k)` for integer `k`, one for each `k`: each is on it
+// (`e·d·k - d·e·k == 0`), distinct `k` give distinct points (`(d, -e) != 0`); and for a point
+// `(u, w)` on it, `e·(u - u0) == -d·(w - w0)`, so `d` divides `e·(u - u0)` and, coprime to
+// `e`, divides `u - u0`, which is then `d·k`, and `e·d·k == -d·(w - w0)` gives `w - w0 == -e·k`
+// where `d != 0`; where `d == 0`, `e == ±1`, `u == u0`, and `k = -e·(w - w0)` gives the point.
+// So each row `(E, D, C)` reads `(E·d - D·e)·k + (E·u0 + D·w0 + C) >= 0` on the line, one
+// bound on `k` or none ([`i128_meet`]), their meet one run of `k`, and `u = u0 + d·k` there,
+// a class modulo `|d|` (`k` negated where `d < 0`), or the one value `u0` where `d == 0`.
+// Complexity tradeoff: O(h) for h rows, four passes over them (each made coprime, the map from
+// each direction to its least constant, the search for an opposite, the meet), where the
+// values tried one by one cost O(h) each, O(h·r) for r values ([`u_runs`];
+// PERF-cover-union-of-classes-listed: 88% of the instructions of
+// `l01_39_scope_relations::lazy::three_cases_whose_classes_join_wide_past_the_old_listing_limit`
+// on a1c20cb68 were that loop, the strip a case's `x == 3·q` cuts out read value by value).
+// The first row in order with an opposite row is solved, so the answer does not hang on the
+// map's order; two equations of two directions meet in one point, which `Classed::new` keeps
+// in one form whichever is solved, and the one value is given as a run of `u` (`k` 1).
+pub(super) fn on_line(rows: &[Row]) -> Option<Steps> {
+    // A row with `E == D == 0` bounds neither coordinate; the meet below reads it.
+    let mut tight: Vec<Row> = Vec::with_capacity(rows.len());
+    for &(e, d, c) in rows.iter().filter(|r| (r.0, r.1) != (0, 0)) {
+        let g = i128::try_from(gcd(e.unsigned_abs(), d.unsigned_abs())).ok()?;
+        tight.push((e / g, d / g, i128_div_floor(c, g)?));
+    }
+    let mut least: HashMap<(i128, i128), i128> = HashMap::with_capacity(tight.len());
+    for &(e, d, c) in &tight {
+        least
+            .entry((e, d))
+            .and_modify(|v| *v = (*v).min(c))
+            .or_insert(c);
+    }
+    let (e, d, c, sum) = tight.iter().find_map(|&(e, d, _)| {
+        let c = least[&(e, d)];
+        let other = *least.get(&(e.checked_neg()?, d.checked_neg()?))?;
+        let sum = c.checked_add(other)?;
+        (sum <= 0).then_some((e, d, c, sum))
+    })?;
+    let none = (1, 0, Vec::new());
+    if sum < 0 {
+        return Some(none);
+    }
+    let (_, s, t) = bezout_i128(e, d)?;
+    let (u0, w0) = (
+        c.checked_neg()?.checked_mul(s)?,
+        c.checked_neg()?.checked_mul(t)?,
+    );
+    let (mut lo, mut hi) = (None, None);
+    for &(re, rd, rc) in rows {
+        let step = re.checked_mul(d)?.checked_sub(rd.checked_mul(e)?)?;
+        let at = re
+            .checked_mul(u0)?
+            .checked_add(rd.checked_mul(w0)?)?
+            .checked_add(rc)?;
+        if !i128_meet(step, at, &mut lo, &mut hi)? {
+            return Some(none);
+        }
+    }
+    if matches!((lo, hi), (Some(l), Some(h)) if l > h) {
+        return Some(none);
+    }
+    let one = |u: i128| Some((1, 0, vec![(Some(u), Some(u))]));
+    if d == 0 {
+        return one(u0);
+    }
+    if let (Some(l), Some(h)) = (lo, hi)
+        && l == h
+    {
+        return one(u0.checked_add(d.checked_mul(l)?)?);
+    }
+    if d > 0 {
+        return Some((d, u0, vec![(lo, hi)]));
+    }
+    // `u = u0 + |d|·(-k)`, the run of `-k`.
+    let neg = |x: Option<i128>| x.map_or(Some(None), |v| v.checked_neg().map(Some));
+    Some((d.checked_neg()?, u0, vec![(neg(hi)?, neg(lo)?)]))
 }
 
 /// The runs of [`u_values`] within the finite real shadow `real`, with the dark shadow `dark`

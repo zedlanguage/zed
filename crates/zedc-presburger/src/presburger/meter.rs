@@ -67,6 +67,11 @@ thread_local! {
     /// PRES-cover-moduli-two-disjunctions (`exact::two_distributed`), for the tests that show
     /// what it answers.
     pub static TWO_DISTRIBUTED_OFF: Cell<bool> = const { Cell::new(false) };
+    /// Test control: the two-pin reading does not solve an equation among a region's
+    /// half-planes, and tries the values of a line one by one as before
+    /// PERF-cover-union-of-classes-listed (`guarded::two_pins::on_line`), for the benchmark of
+    /// the time a unit of that site costs and the tests that compare the two.
+    pub static TWO_PIN_LINE_OFF: Cell<bool> = const { Cell::new(false) };
     /// Test control: `exact::shared_cells` lists every class of a symbol's cell, with no room
     /// of `size` values (the first cut of PERF-exact-strided-unlisted), for the tests that show
     /// the room bounds its work.

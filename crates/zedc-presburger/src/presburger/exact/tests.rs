@@ -5091,9 +5091,10 @@ fn a_choice_shared_only_through_the_head_the_reading_gives_it_stops_the_search()
 /// whole (`u_values`), under the reading's own allowance (`EXACT_LIMIT`, as `exact::tried`
 /// gives it). Before PRES-two-pin-charge-fit their shadows were charged 16 units a pair of
 /// half-planes, 2,000,832 units a name for 0.1 to 0.3 ns each, so the second name passed the
-/// allowance and the reading was refused; now each name costs 7,816 units and all three are
-/// read. The reading is called directly, as its benchmark calls it: `exact_each` solves the
-/// equality first, and the part it reads then has one pin.
+/// allowance and the reading was refused; then each name cost 7,816 units, and since
+/// PERF-cover-union-of-classes-listed the line's equation is solved (`on_line`), 204 units a
+/// name; all three are read. The reading is called directly, as its benchmark calls it:
+/// `exact_each` solves the equality first, and the part it reads then has one pin.
 #[test]
 fn many_sides_are_read_with_two_pins_within_the_allowance() {
     let mut rows = vec![
@@ -5121,6 +5122,165 @@ fn many_sides_are_read_with_two_pins_within_the_allowance() {
             let has = set.ranges.contains(v) && set.class.contains(&Num::from(v));
             assert_eq!(has, want.contains(&v), "{s} at {v}: {set:?}");
         }
+    }
+}
+
+/// The values of `p`, `q` and `y` at the points of `f` with `p` in `-12..=12` and `q` in
+/// `-80..=80` (`y == p + 2·q` there, the formulas below tying `y` so where they do), by trying
+/// every point.
+fn brute_pqy(f: &Formula) -> [IntervalSet; 3] {
+    let mut sets = [
+        IntervalSet::empty(),
+        IntervalSet::empty(),
+        IntervalSet::empty(),
+    ];
+    for p in -12..=12i64 {
+        for q in -80..=80i64 {
+            for y in [p + 2 * q, 2 * p + q] {
+                let m: Model = [("p", p), ("q", q), ("y", y)]
+                    .iter()
+                    .map(|&(n, v)| (a(n), Int::from(v)))
+                    .collect();
+                if f.holds(&m) {
+                    for (set, v) in sets.iter_mut().zip([p, q, y]) {
+                        *set = set.join(&IntervalSet::single(v));
+                    }
+                }
+            }
+        }
+    }
+    sets
+}
+
+/// The two-pin reading of `p`, `q` and `y` in `f`, with the units it charged; `None` where the
+/// part is not read with two pins.
+fn two_pin_sets(f: &Formula) -> Option<(Vec<Option<Classed>>, u64)> {
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    let prep = guarded::prepare(f, &mut work).unwrap()?;
+    let two = prep.two_pins(3, &mut work).unwrap()?;
+    let sets = (["p", "q", "y"].iter())
+        .map(|s| two.values(&a(s), &mut work).unwrap())
+        .collect();
+    Some((sets, work.used))
+}
+
+/// `f` read with two pins as it is and with [`TWO_PIN_LINE_OFF`] (each value of a line tried
+/// alone, as before PERF-cover-union-of-classes-listed): each name's set is the one every
+/// point gives ([`brute_pqy`]), and where the reading before gave a set, the same set; no name
+/// declines that was read before. The units of both, `None` where the part is not read with
+/// two pins.
+fn line_read_alike(f: &Formula, case: &str) -> Option<(u64, u64)> {
+    let want = brute_pqy(f);
+    let (on, on_units) = two_pin_sets(f)?;
+    TWO_PIN_LINE_OFF.set(true);
+    let off = two_pin_sets(f);
+    TWO_PIN_LINE_OFF.set(false);
+    let (off, off_units) = off.unwrap_or_else(|| panic!("{case}: read with two pins as before"));
+    for (j, s) in ["p", "q", "y"].iter().enumerate() {
+        match (&on[j], &off[j]) {
+            (Some(got), old) => {
+                assert_eq!(*got, Classed::plain(want[j].clone()), "{case}: {s}");
+                if let Some(old) = old {
+                    assert_eq!(old, got, "{case}: {s} before");
+                }
+            }
+            (None, Some(old)) => panic!("{case}: {s} declines, read before as {old:?}"),
+            (None, None) => {}
+        }
+    }
+    Some((on_units, off_units))
+}
+
+/// PERF-cover-union-of-classes-listed: a region on a line `qa·q == pb·p + c` (two of its
+/// half-planes one equation) is read by solving the equation (`two_pins::on_line`), not value
+/// by value. For each line, range of `p` and cut `p + q <= k`, the sets are those of the
+/// points and of the reading before ([`line_read_alike`]), for no more units; and fewer on the
+/// line of the benchmark, `7·q == 5·p` (`bench::line`), where the values were tried.
+#[test]
+fn a_two_pin_region_on_a_line_is_read_by_its_equation() {
+    let lines = [
+        (7, 5, 0),
+        (1, 3, 2),
+        (3, 1, -1),
+        (2, -3, 1),
+        (-5, 2, 4),
+        (4, 6, 2),
+        (3, 3, 1),
+        (1, -1, 0),
+        (6, 4, 0),
+    ];
+    let (mut read, mut fewer) = (0, 0);
+    for (qa, pb, c) in lines {
+        for (lo, hi) in [(-12, 12), (0, 0), (3, 9)] {
+            for cut in [None, Some(5), Some(-30)] {
+                let mut rows = vec![
+                    eq(&[("q", qa), ("p", -pb)], -c),
+                    ge(&[("p", 1)], -lo),
+                    ge(&[("p", -1)], hi),
+                    eq(&[("y", 1), ("p", -1), ("q", -2)], 0),
+                ];
+                if let Some(k) = cut {
+                    rows.push(ge(&[("p", -1), ("q", -1)], k));
+                }
+                let f = Formula::And(Shared::new(rows));
+                let case = format!("{qa}·q == {pb}·p + {c}, p in {lo}..={hi}, cut {cut:?}");
+                let Some((on, off)) = line_read_alike(&f, &case) else {
+                    continue;
+                };
+                read += 1;
+                assert!(on <= off, "{case}: {on} units, {off} before");
+                if on < off {
+                    fewer += 1;
+                }
+                if (qa, pb, c, lo, hi, cut) == (7, 5, 0, -12, 12, None) {
+                    assert!(on < off, "{case}: {on} units, {off} before");
+                }
+            }
+        }
+    }
+    println!("{read} of 81 cases read with two pins, {fewer} for fewer units");
+    assert!(
+        read > 0 && fewer > 0,
+        "{read} read, {fewer} for fewer units"
+    );
+}
+
+/// The square `0 <= p, q <= n` with `y == p + 2·q` where `q >= n`, else `y == 2·p + q`: the
+/// first arm's guard cuts the square to its edge `q == n` (`Cut::Face`, whose rows hold the
+/// guard both ways), the values of `y` there tried one by one before
+/// PERF-cover-union-of-classes-listed.
+fn face(n: i64) -> Formula {
+    Formula::And(Shared::new(vec![
+        ge(&[("p", 1)], 0),
+        ge(&[("p", -1)], n),
+        ge(&[("q", 1)], 0),
+        ge(&[("q", -1)], n),
+        Formula::or(vec![
+            Formula::And(Shared::new(vec![
+                eq(&[("y", 1), ("p", -1), ("q", -2)], 0),
+                ge(&[("q", 1)], -n),
+            ])),
+            Formula::And(Shared::new(vec![
+                eq(&[("y", 1), ("p", -2), ("q", -1)], 0),
+                ge(&[("q", -1)], n - 1),
+            ])),
+        ]),
+    ]))
+}
+
+/// The face a leaf choice's guard cuts out ([`face`]) is read by its equation too: the sets of
+/// the points and of the reading before, for fewer units.
+#[test]
+fn a_face_a_guard_cuts_out_is_read_by_its_equation() {
+    for n in [1, 2, 6, 12] {
+        let case = format!("face n={n}");
+        let (on, off) = line_read_alike(&face(n), &case)
+            .unwrap_or_else(|| panic!("{case}: the part is read with two pins"));
+        assert!(on < off, "{case}: {on} units, {off} before");
     }
 }
 

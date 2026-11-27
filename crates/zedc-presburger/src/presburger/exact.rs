@@ -75,7 +75,7 @@ use super::formula::{Ends, Id};
 pub use super::meter::{
     CLASS_ROOM_OFF, DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS,
     EXACT_WORK, FAST_WORK, GUARDED_OFF, PART_CACHE_OFF, QUESTION_WORK, SHARED_OFF, SOLVER_UNIT,
-    SPARE_OFF, TWO_DISTRIBUTED_OFF,
+    SPARE_OFF, TWO_DISTRIBUTED_OFF, TWO_PIN_LINE_OFF,
 };
 use super::meter::{PIECE, Solver, Work};
 use super::{Atom, Classed, Con, Each, EachClassed, Factor, Formula, Lin, Model, Refusal, Rel};

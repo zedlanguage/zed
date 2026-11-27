@@ -9,32 +9,36 @@ use super::*;
 /// the units it charged, the same in each run.
 fn timed(f: &Formula, names: &[&str]) -> (u128, u64) {
     let syms: Vec<Atom> = names.iter().map(|s| a(s)).collect();
-    crate::scaling::least_cpu_ns(5, || {
-        let mut work = Work {
-            used: 0,
-            limit: u64::MAX,
-            solver: SOLVER,
-        };
-        let prep = guarded::prepare(f, &mut work)
-            .expect("no refusal")
-            .expect("prepared");
-        let two = prep
-            .two_pins(syms.len(), &mut work)
-            .expect("no refusal")
-            .expect("the part is read with two pins");
-        for s in &syms {
-            let set = two.values(s, &mut work).expect("no refusal");
-            assert!(set.is_some(), "{s:?} declined");
-            std::hint::black_box(set);
-        }
-        work.used
-    })
+    crate::scaling::least_cpu_ns(5, || read(f, &syms))
+}
+
+/// The units of the whole two-pin reading of `f` for each of `syms`, as [`timed`] times it.
+fn read(f: &Formula, syms: &[Atom]) -> u64 {
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    let prep = guarded::prepare(f, &mut work)
+        .expect("no refusal")
+        .expect("prepared");
+    let two = prep
+        .two_pins(syms.len(), &mut work)
+        .expect("no refusal")
+        .expect("the part is read with two pins");
+    for s in syms {
+        let set = two.values(s, &mut work).expect("no refusal");
+        assert!(set.is_some(), "{s:?} declined");
+        std::hint::black_box(set);
+    }
+    work.used
 }
 
 /// `p` in `0..=n` on the line `7·q == 5·p`, read with two pins `p` and `q` and the name
 /// `y == p + 2·q`. The polygon is flat, so each name reads the half-planes whole
-/// (`u_values`), and its dark shadow is empty: the values are tried one by one, each
-/// charged a unit for each half-plane.
+/// (`u_values`). Two of them are one equation, which is solved (`on_line`, a unit a half-plane);
+/// with [`TWO_PIN_LINE_OFF`] the dark shadow is empty and the values are tried one by one,
+/// each charged a unit for each half-plane.
 fn line(n: i64) -> Formula {
     Formula::and(vec![
         eq(&[("q", 7), ("p", -5)], 0),
@@ -90,21 +94,65 @@ fn strip(n: i64) -> Formula {
 /// `sides` grew to keep 10^5 units. Measured (2026-11-22, VM, one run, before the sides charge
 /// went from 4 to 16 pairs a unit): `line n=16000` 137,747 units at 52.3 ns a unit, `sides
 /// h=240` 183,115 at 5.6 ns, `strip n=4000` 140,000 at 37.3 ns; at most 162 ms at the limit.
+/// Since PERF-cover-union-of-classes-listed the line's equation is solved (`on_line`), a few
+/// units a name, so `line` and `sides` run with [`TWO_PIN_LINE_OFF`], which keeps the two
+/// sites they measure, and `sides on a line` measures the site that replaces them, a unit a
+/// half-plane, at 3·(h + 4) units for its three names; it is O(h), checked at n and 8n below
+/// ([`the_two_pin_reading_of_a_line_costs_the_same_at_8n`]).
 #[test]
 fn the_two_pin_reading_takes_a_bounded_time_per_unit_of_work() {
     let names = ["p", "q", "y"];
-    let cases: Vec<(String, Formula)> = vec![
-        ("line n=16000".into(), line(16000)),
-        ("sides h=480".into(), sides(480)),
-        ("strip n=4000".into(), strip(4000)),
+    let cases: Vec<(String, Formula, bool)> = vec![
+        ("line n=16000".into(), line(16000), true),
+        ("sides h=480".into(), sides(480), true),
+        ("strip n=4000".into(), strip(4000), false),
+        ("sides on a line h=34000".into(), sides(34_000), false),
     ];
     let measured: Vec<(String, u128, u64)> = (cases.into_iter())
-        .map(|(name, f)| {
+        .map(|(name, f, off)| {
+            TWO_PIN_LINE_OFF.set(off);
             let (ns, units) = timed(&f, &names);
+            TWO_PIN_LINE_OFF.set(false);
             (name, ns, units)
         })
         .collect();
     crate::scaling::per_unit_bound("two pins", &measured, 100_000, EXACT_LIMIT);
+}
+
+/// PERF-cover-union-of-classes-listed: a line ([`line`], `7·q == 5·p` with `p` in `0..=n`) and
+/// the face a leaf choice's guard cuts out of a square ([`super::face`], `q == n` with `p` in
+/// `0..=n`) are read by their equation (`two_pins::on_line`), O(h) a name for h half-planes,
+/// so they cost the same at 8n, in units and in instructions. The red control,
+/// [`TWO_PIN_LINE_OFF`] (each value tried alone, as before), grows with n: over the limit of
+/// a constant.
+#[test]
+fn the_two_pin_reading_of_a_line_costs_the_same_at_8n() {
+    let syms: Vec<Atom> = ["p", "q", "y"].iter().map(|s| a(s)).collect();
+    let cases: [(&str, fn(i64) -> Formula); 2] = [("line", line), ("face", super::face)];
+    for (what, f) in cases {
+        let units = |n: i64| read(&f(n), &syms);
+        TWO_PIN_LINE_OFF.set(true);
+        let (small, large) = (units(2_000), units(16_000));
+        TWO_PIN_LINE_OFF.set(false);
+        let red = large as f64 / small.max(1) as f64;
+        println!("{what}, line off: {small} and {large} units, {red:.2} times at 8n");
+        assert!(
+            red > crate::scaling::limit(0),
+            "the control must fail the limit: {red:.2}"
+        );
+        let (small, large) = (units(2_000), units(16_000));
+        println!("{what}: {small} and {large} units");
+        crate::scaling::hold(
+            &format!("two pins on a {what} at n 2000 and 16000"),
+            "units",
+            small,
+            large,
+            0,
+        );
+        crate::scaling::check_order(&format!("two pins on a {what}"), 2_000, 0, |n| {
+            std::hint::black_box(units(n as i64));
+        });
+    }
 }
 
 // The scaling checks below were in `exact::tests`, where a correctness piece runs them 8 at a
