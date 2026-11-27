@@ -415,13 +415,17 @@ pub(super) fn crossing_witness(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::super::forest_tests::{cofinite, finite};
     use super::*;
 
     fn int(k: i64) -> Value {
         Value::Int(k)
     }
+
+    /// What [`selector`] gives: the places, the atoms (a place and its values) and the clauses
+    /// (two atoms each).
+    pub(in super::super) type Selector = (Vec<Ints>, Vec<(usize, Ints)>, Vec<[usize; 2]>);
 
     /// Whether `x` holds every clause.
     fn holds(x: &[Value], atom: &[(usize, Ints)], clause: &[[usize; 2]]) -> bool {
@@ -431,10 +435,8 @@ mod tests {
     /// The selector reduction of 3-SAT as the escape solve sees it: variables at places 1 to `k`
     /// (values 1 false, 2 true), a selector place per clause after them (values 1 to 3), and per
     /// literal `l` of clause `c` the clause "selector `c` is not `l`, or the literal holds".
-    fn selector(
-        k: usize,
-        clauses: &[[(usize, bool); 3]],
-    ) -> (Vec<Ints>, Vec<(usize, Ints)>, Vec<[usize; 2]>) {
+    /// `bench.rs` builds its inputs with it.
+    pub(in super::super) fn selector(k: usize, clauses: &[[(usize, bool); 3]]) -> Selector {
         let mut pl = vec![finite([]); 1];
         pl.extend((0..k).map(|_| finite([int(1), int(2)])));
         pl.extend(clauses.iter().map(|_| finite([int(1), int(2), int(3)])));
