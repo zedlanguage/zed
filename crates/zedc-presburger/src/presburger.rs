@@ -25669,7 +25669,7 @@ fn point_of(rows: &[Con], greatest: bool) -> Option<Model> {
 }
 
 /// The hulls of the symbols `syms` over the conjunction `rows`, which holds at the point `m`:
-/// each by [`hull_from`] over the projection of `rows` onto the symbol ([`projected_each`]), all
+/// each by [`hull_from_known`] over the projection of `rows` onto the symbol ([`projected_each`]), all
 /// projections made together. [`shadow`] eliminates exactly over the integers, so the
 /// projection has the integer points of `rows` read on the atoms it keeps, and the symbol's
 /// hull over it is its hull over `rows`; where every other atom is gone, the rows over the
@@ -26048,7 +26048,8 @@ fn projected_each(rows: &[Con], syms: &[&Atom]) -> Vec<Option<Vec<Con>>> {
 }
 
 /// The least and greatest values of a symbol over a formula, given a point `m` of it: the two
-/// sides [`hull_side`] finds.
+/// sides [`hull_side`] finds. The code asks [`hull_from_known`]; the tests ask this.
+#[cfg(test)]
 fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Refusal> {
     hull_from_known(c, sym, m, None)
 }

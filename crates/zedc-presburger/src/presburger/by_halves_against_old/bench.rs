@@ -29,7 +29,7 @@ fn hulls_of_linked_copies_are_projected_in_linear_work() {
     scaling::check_order("hulls of linked copies, projected together", 40, 1, |n| {
         let (rows, syms, model) = &inputs[&n];
         let ks: Vec<&Atom> = syms.iter().collect();
-        let hulls = projected_hulls(rows.clone(), &ks, model);
+        let hulls = projected_hulls(rows.clone(), &ks, model, &KnownSides::new());
         assert_eq!(hulls.len(), 9 * n);
         assert!(hulls.values().all(|h| h.is_ok()));
     });
