@@ -194,9 +194,9 @@ thread_local! {
 // then at most `DEEPEST` frames of `free` (each holding one `Node<T>`) and one of
 // `free_in_a_loop`, whatever the set's height; a tall set, a path of keys whose priorities fall
 // as the keys rise (`a_path_of_keys_chosen_against_the_fixed_draw_is_dropped_on_a_small_stack`),
-// reaches the vector. A key whose own drop frees another set starts a new count, as each `Node::drop` does,
-// so a set of sets needs `DEEPEST` frames per level of nesting; the nesting is that of the key
-// types, a constant.
+// reaches the vector. A key whose own drop frees another set starts a new count, as each
+// `Node::drop` does, so a set of sets needs `DEEPEST` frames per level of nesting; the nesting is
+// that of the key types, a constant.
 //
 // Complexity tradeoff: freeing every node through the vector (the drop this replaced) made a
 // vector for each drop of a node with a child to free, and pushed and popped each node freed.
@@ -208,12 +208,21 @@ thread_local! {
 // both children, measured the same (39,825,269 / 318,781,956) but needs a stack as deep as the
 // set.
 
-/// The levels of calls [`free`] makes before it hands a subtree to [`free_in_a_loop`]. A treap of
-/// random priorities has the shape of a random binary search tree, whose height is
-/// `4.311... ln n` asymptotically (L. Devroye, "A note on the height of binary search trees",
-/// J. ACM 33(3), 1986, doi:10.1145/5925.5930): about 96 at `n = 2^32`, and `free` counts only the
-/// left edges of a path. So a set of random keys is freed with no vector, and only a tall set (keys
-/// tied at one point, or chosen against the draw) reaches it.
+/// The levels of calls [`free`] makes before it hands a subtree to [`free_in_a_loop`].
+///
+/// L. Devroye, "A note on the height of binary search trees", J. ACM 33(3):489-498, 1986,
+/// doi:10.1145/5925.5930, for the tree built "by standard insertions from a random permutation of
+/// 1, ..., n" (abstract), Theorem 5.1 (p. 494): "Let c = 4.31107 ... be the unique solution of the
+/// equation c log(2e/c) = 1, c ≥ 2. Then: A. H_n/log n → c in probability as n → ∞." The log is
+/// natural (`4.31107 · ln(2e / 4.31107) = 1.000`). A treap's shape is that of the binary search
+/// tree built by inserting its keys in order of falling priority, and priorities drawn
+/// independently put the keys in that order as a random permutation, so a treap has the height of
+/// that tree: about `4.31107 · ln 2^32 = 95.6` at `n = 2^32`, below 128, and `free` counts only the
+/// left edges of a path. So a set of keys of random priorities is freed with no vector, and only a
+/// tall set (keys tied at one point, or chosen against the draw) reaches it. The theorem is a limit
+/// in probability, not a bound; the stack is bounded by the vector whatever the height, and the
+/// test `a_path_of_keys_chosen_against_the_fixed_draw_is_dropped_on_a_small_stack` drops a path of
+/// 2048 nodes, past the vector's start, on 64 KiB.
 const DEEPEST: u32 = 128;
 
 impl<T> Drop for Node<T> {
