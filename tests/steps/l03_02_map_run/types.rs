@@ -51,19 +51,22 @@ fn a_fold_of_rows_that_are_all_empty_needs_else() {
     // `max` has no identity at `int` (DESIGN sec:reduction, "Identity as data"), so a row that
     // is always empty folds to `#empty` alone, and `+` on a value that can only be an atom is
     // an error (author's standing rule, 2026-11-09). `(+)` folds it to its identity `0` (case
-    // `sum_of_an_empty_row_is_zero`). Both forms are refused, rightly, but by `map`, and the
-    // headline does not name the fold that always fails (plan row
-    // MSG-map-display-row-fold-headline, which makes these assert "`r >< max` here always
-    // fails with `#empty`").
+    // `sum_of_an_empty_row_is_zero`). The lambda is checked with its parameter bound to the
+    // rows, `[]`, so the headline names the fold that always fails (DESIGN sec:type_language,
+    // the `m >< op` row: "`[] >< max` is rejected"), not `map` (plan row
+    // MSG-map-display-row-fold-headline; before it, "the function given to `map` does not
+    // take (Never -> Never)").
     for (name, body) in [
         ("empty_row", "${{0 -> []}.map(r -> (r >< max) + 1)}"),
         ("empty_rows", "${[[], []].map(r -> (r >< max) + 1)}"),
     ] {
         let e = refused(name, body);
+        let headline = e.lines().next().unwrap_or("");
         assert!(
-            e.contains("the function given to `map` does not take"),
+            headline.contains("`r >< max` here always fails with `#empty`"),
             "{e}"
         );
+        assert!(!e.contains("the function given to `map`"), "{e}");
     }
 }
 
