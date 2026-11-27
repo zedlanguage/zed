@@ -56,7 +56,9 @@ pub(crate) fn tree(n: usize) -> String {
             (true, false) => format!("d{a}(x) + 1"),
             _ => "x + 1".to_string(),
         };
-        out.push_str(&format!("d{i}(positional x: int) = {body}\n"));
+        // A declaration with no table after it ends with `;`; `d0`'s table ends it.
+        let end = if i == 0 { "" } else { ";" };
+        out.push_str(&format!("d{i}(positional x: int) = {body}{end}\n"));
     }
     out.push_str(&format!("test {{ 0 -> {} }}\n", tree_value(n, 0)));
     out
