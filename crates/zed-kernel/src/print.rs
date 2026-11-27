@@ -111,7 +111,7 @@ pub fn pretty_in(t: &Term, width: usize, resolves: Resolves<'_>) -> String {
 /// `!c || a`, which mean the same; and an operator's operands are parenthesized only where
 /// the grammar's precedence needs it (P191, module [`level`]): `x - y >= 1 || x >= 0`,
 /// `a - (b - c)`, `- -x`, `(-x)^2`. A binder whose name, so written, would capture a read of
-/// another binder is written with a new spelling ([`respelled`]): `x -> { x2 = 5; x }`.
+/// another binder is written with a new spelling (`respelled`): `x -> { x2 = 5; x }`.
 /// Otherwise the text is that of [`pretty_in`] on one line, and costs the same.
 pub fn written(t: &Term, name: fn(&str) -> &str, resolves: Resolves<'_>) -> String {
     let local = defs::local();
