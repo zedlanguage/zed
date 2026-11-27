@@ -564,7 +564,9 @@ impl<M: Module> Gen<'_, M> {
                 // since no code reads it (plan row FAIL-dwarf-staged-let-nonscalar).
                 Src::Const(v) => match Word::scalar(v) {
                     Some(w) => Some(Held::Loc(Loc::Const(w))),
-                    // Past `u32::MAX` constants in one function a name is left unshown.
+                    // Past `u32::MAX` constants in one function a name is left unshown, and so
+                    // is a string whose tree reaches a node twice ([`held_once`]).
+                    None if matches!(v, Value::Str(s) if !held_once(s)) => None,
                     None => u32::try_from(self.shown.len()).ok().map(|i| {
                         self.shown.push(match v {
                             Value::Str(s) => Shown {
@@ -1648,6 +1650,28 @@ fn kept(looped: bool, vars: Vec<Var>) -> Vec<Var> {
     if looped { Vec::new() } else { vars }
 }
 
+/// Whether no node of `s`'s tree is reached twice from its root, so that its bytes are as many
+/// as the blocks it holds: the bytes a debugger is given for a name bound to `s` ([`Shown`]).
+/// A string joined with itself is held in shared nodes, `s1 = s0 ++ s0` and on, and doubled 62
+/// times it is 2^63 bytes in a few nodes per doubling (`tests/steps/l01_36a_executables/
+/// doubling.rs`); writing those bytes out did not end in time (merge_check dv120: the build of
+/// `doubled62` stopped by its `timeout 60`), so such a name is left unshown. The walk reads
+/// each node once and stops at the first one reached again, so it costs at most the nodes the
+/// constant holds. A node of no bytes adds none, so it is not counted.
+fn held_once(s: &zed_kernel::text::Text) -> bool {
+    let mut seen = HashSet::new();
+    let mut todo = vec![s];
+    while let Some(t) = todo.pop() {
+        if !t.is_empty() && !seen.insert(t.node_id()) {
+            return false;
+        }
+        if let zed_kernel::text::Piece::Parts(parts) = t.piece() {
+            todo.extend(parts);
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use cranelift_codegen::Context;
@@ -1710,5 +1734,31 @@ mod tests {
         let straight = has_loop(&mut counter(false));
         assert!(!straight);
         assert_eq!(kept(straight, vec![var.clone()]), vec![var]);
+    }
+
+    /// A string of distinct blocks is shown; one that reaches a node twice is not, however
+    /// long, and the check of a string doubled 62 times reads a few nodes, not its 2^63 bytes
+    /// (the build of `tests/steps/l01_36a_executables/doubling.rs`'s `doubled62` never ended).
+    #[test]
+    fn a_string_that_reaches_a_node_twice_is_not_shown() {
+        use zed_kernel::text::{LEAF, Text};
+        let join = |a: &Text, b: &Text| Text::join(a, b).unwrap();
+        let (a, b) = (
+            Text::from("a".repeat(LEAF + 1)),
+            Text::from("b".repeat(LEAF + 1)),
+        );
+        assert!(held_once(&Text::from("hi")));
+        assert!(held_once(&join(&a, &b)));
+        assert!(held_once(&join(
+            &join(&a, &b),
+            &Text::from("a".repeat(LEAF + 1))
+        )));
+        assert!(!held_once(&join(&a, &a)));
+        let mut s = Text::from("ab");
+        for _ in 0..62 {
+            s = join(&s, &s);
+        }
+        assert_eq!(s.len(), 1 << 63);
+        assert!(!held_once(&s));
     }
 }
