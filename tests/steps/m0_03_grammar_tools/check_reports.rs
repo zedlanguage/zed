@@ -1,6 +1,7 @@
 //! Each report of the `check` and `ring` tools, on a small spec whose grammars are the real ones
 //! with one change: an alternative that needs a rule empty at its layer (LAYER), a `~` mark
-//! above its rule's lowest layer (MARK), a desugaring rule for no production or two for one
+//! above its rule's lowest layer (MARK), a bracket pair that leaves the head flag set (NEST),
+//! a desugaring rule for no production or two for one
 //! (DESUGAR), a fence whose tree changes between rings (TREE CHANGES), a fence that does not
 //! lex (LEX), a fence that is documentation notation (DOC), and a hole of a string that does not
 //! parse. The lexer's token kinds, and the way a report writes a token (Python's `repr`).
@@ -80,6 +81,30 @@ fn a_mark_above_its_rules_lowest_layer_is_reported() {
         out.contains("MARK Wrap alternative 1 (L3) marks Name, whose lowest layer is L1\n"),
         "{out}"
     );
+}
+
+/// DESIGN.md sec:grammar: "every bracket pair clears" the head flag (PEG-nest-brackets). A
+/// bare pair whose contents reach `HEAD`, here through `Expr`, is reported; a bare pair whose
+/// contents never read the flag, and a pair cleared by `nest(…)`, are not.
+#[test]
+fn a_bracket_pair_that_leaves_the_head_flag_set_is_reported() {
+    let extra = concat!(
+        "Bare          = 'bare' '(' Expr ')'    L1\n",
+        "Plain         = 'plain' '(' Name ')'    L1\n",
+        "Kept          = 'kept' '[' nest(Expr) ']'    L1\n",
+    );
+    let desugar = "Bare : x\nPlain : x\nKept : x\n";
+    let dir = changed("check_nest", "", "", extra, desugar, &fence(DOUBLE));
+    let (outcome, out) = check_in(&dir);
+    assert_eq!(outcome, Ok(false), "{out}");
+    assert!(
+        out.contains(
+            "NEST Bare alternative 1 (L1) holds `(` … `)` without nest(…), and what it holds \
+             reaches HEAD\n"
+        ),
+        "{out}"
+    );
+    assert_eq!(out.matches("NEST ").count(), 1, "{out}");
 }
 
 #[test]

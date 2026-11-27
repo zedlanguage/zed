@@ -47,6 +47,14 @@ pub const HEAD_CASES: &[(&str, &str)] = &[
         "if [{ y = 1; y }] == z { 1 } else { 2 }",
         "(if (([ ({ (y = 1 ;) y }) ]) == z) ({ 1 }) else ({ 2 }))",
     ),
+    // A lambda is an `Expr` and a head is an `Expr12`, so a lambda stands in a head only inside
+    // brackets, which clear the flag before its parameter brackets do (PEG-nest-brackets): its
+    // default may then be a block.
+    ("if (y = { 1 }) -> y == 1 { 2 } else { 3 }", "ERROR"),
+    (
+        "if ((y = { 1 }) -> y)() == 1 { 2 } else { 3 }",
+        "(if (((( (( (y = ({ 1 })) ) -> y) )) ( )) == 1) ({ 2 }) else ({ 3 }))",
+    ),
     // A display needs no guard: a brace-led operand in a head that is not a block is a display.
     (
         "if { a } { 1 } else { 2 }",

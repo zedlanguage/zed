@@ -1,7 +1,8 @@
 //! The grammar checker. `check SPEC_DIR [FILE:LINE [any]]` checks that every reference of the
 //! grammars resolves, that no alternative of layer k requires a rule empty at ring k, that a
-//! `~` alternative's layer is not above its rule's lowest, and that the `desugar` fence has one
-//! rule per production. It then lexes and parses every ```` ```zed ```` fence of `DESIGN.md` and
+//! `~` alternative's layer is not above its rule's lowest, that every bracket pair whose
+//! contents reach a `HEAD` test clears the head flag with `nest(…)`, and that the `desugar`
+//! fence has one rule per production. It then lexes and parses every ```` ```zed ```` fence of `DESIGN.md` and
 //! `EXAMPLES.md`, finds each fence's lowest ring, and checks that the parse tree is the same at
 //! every higher ring. FILE:LINE checks that fence only; a third argument lists every fence's
 //! ring.
@@ -135,6 +136,116 @@ fn marks(g: &Grammar, out: &mut String) -> usize {
                     lowest[r]
                 );
                 n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// The expressions directly inside `e` that read the head flag `e` reads: all but those inside
+/// `nest(…)` and `head(…)`, each of which sets the flag for what it holds.
+fn flag_readers(e: &Expr) -> Vec<&Expr> {
+    match e {
+        Expr::SetHead(_) | Expr::ClearHead(_) => Vec::new(),
+        e => inner(e),
+    }
+}
+
+/// For each rule of `g`, whether it can reach a `HEAD` test that reads the flag it was entered
+/// with: a `HEAD` of its own outside every `nest(…)` and `head(…)`, or such a rule reached the
+/// same way. Linear in `g`: each rule's own tests and references are listed once, and the
+/// rules that test are spread backward along the references, each rule entered once.
+fn head_readers(g: &Grammar) -> Vec<bool> {
+    let mut reads = vec![false; g.rules.len()];
+    let mut callers: Vec<Vec<usize>> = vec![Vec::new(); g.rules.len()];
+    let mut todo = Vec::new();
+    for (r, rule) in g.rules.iter().enumerate() {
+        for alt in &rule.alts {
+            each(&alt.expr, flag_readers, |e| match *e {
+                Expr::Head if !reads[r] => {
+                    reads[r] = true;
+                    todo.push(r);
+                }
+                Expr::Rule(s) => callers[s].push(r),
+                _ => {}
+            });
+        }
+    }
+    while let Some(r) = todo.pop() {
+        for &c in &callers[r] {
+            if !reads[c] {
+                reads[c] = true;
+                todo.push(c);
+            }
+        }
+    }
+    reads
+}
+
+/// Whether `e` reaches a `HEAD` test that reads the flag `e` is parsed with ([`head_readers`]).
+fn reads_head(e: &Expr, readers: &[bool]) -> bool {
+    let mut found = false;
+    each(e, flag_readers, |x| match *x {
+        Expr::Head => found = true,
+        Expr::Rule(r) => found |= readers[r],
+        _ => {}
+    });
+    found
+}
+
+/// Reports every bracket pair whose contents reach a `HEAD` test with no `nest(…)` around them,
+/// and how many there are (PEG-nest-brackets). DESIGN.md sec:grammar: "`nest(e)` parses it
+/// with the flag cleared, and every bracket pair clears it, which is why parentheses restore a
+/// block in a head." A pair whose contents never read the flag parses the same either way, so
+/// only a pair that reaches a test is reported, and only where the flag may be set: outside
+/// every `nest(…)` of the alternative, or inside a `head(…)`. A pair is a literal `(`, `[` or
+/// `{` and the next literal that closes it among the items of one sequence.
+fn nests(g: &Grammar, out: &mut String) -> usize {
+    let readers = head_readers(g);
+    let mut n = 0;
+    for rule in &g.rules {
+        for (i, alt) in rule.alts.iter().enumerate() {
+            // Each expression with whether the flag may be set where it is parsed.
+            let mut stack = vec![(&alt.expr, true)];
+            while let Some((e, live)) = stack.pop() {
+                let below = match e {
+                    Expr::ClearHead(_) => false,
+                    Expr::SetHead(_) => true,
+                    _ => live,
+                };
+                stack.extend(inner(e).into_iter().map(|x| (x, below)));
+                let (Expr::Seq(items), true) = (e, live) else {
+                    continue;
+                };
+                let mut open: Vec<(usize, &str)> = Vec::new();
+                for (j, item) in items.iter().enumerate() {
+                    let Expr::Lit(t) = item else { continue };
+                    let close = match t.as_str() {
+                        "(" | "[" | "{" => {
+                            open.push((j, t));
+                            continue;
+                        }
+                        ")" => "(",
+                        "]" => "[",
+                        "}" => "{",
+                        _ => continue,
+                    };
+                    let Some(&(from, opener)) = open.last().filter(|(_, o)| *o == close) else {
+                        continue;
+                    };
+                    open.pop();
+                    if items[from + 1..j].iter().any(|x| reads_head(x, &readers)) {
+                        say!(
+                            out,
+                            "NEST {} alternative {} (L{}) holds `{opener}` … `{t}` without \
+                             nest(…), and what it holds reaches HEAD",
+                            rule.name,
+                            i + 1,
+                            alt.layer
+                        );
+                        n += 1;
+                    }
+                }
             }
         }
     }
@@ -275,7 +386,8 @@ pub fn report(spec: &Spec, only: &str, list: bool, out: &mut String) -> Outcome 
     let lint = containment(&spec.lexical, out)
         + containment(&spec.all, out)
         + marks(&spec.lexical, out)
-        + marks(&spec.all, out);
+        + marks(&spec.all, out)
+        + nests(&spec.all, out);
     undef += desugar(&spec.design, &spec.syntactic, out)?;
     let mut bad = lint + undef;
     let before_fences = bad;
