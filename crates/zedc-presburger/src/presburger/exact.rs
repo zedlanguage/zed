@@ -3709,46 +3709,98 @@ fn nothing(rows: &[Con]) -> HashMap<Atom, IntervalSet> {
         .collect()
 }
 
-/// The values of `y` for which some `x` in `d` has `a·x + b·y + k >= 0`, for `a` and `b` not
-/// zero: every `y` where `a·x` is unbounded above on `d`, else `b·y >= -(k + max a·x)`.
-fn ends_sent(d: &Ends, a: &Int, b: &Int, k: &Int) -> Ends {
-    if range_is_empty(d) {
-        return (Some(Int::ONE), Some(Int::ZERO));
-    }
-    let end = if a.is_positive() { &d.1 } else { &d.0 };
-    let Some(x) = end else {
-        return (None, None);
+/// For the row `Σ_j c_j·x_j + k >= 0` (`terms` the pairs of an atom's place and `c_j`, none
+/// zero) and an interval `doms[j]` of integers for each `x_j`, the values of each `x_j` for
+/// which the other atoms have values in their intervals that meet the row, in the order of
+/// `terms`. Proof: the other atoms are chosen independently, so `v` is sent to `x_j` exactly
+/// when `c_j·v + k + Σ_{i ≠ j} max_{doms[i]} c_i·x_i >= 0`; an interval of integers attains
+/// the largest value of `c_i·x_i` at its upper end for `c_i > 0` and at its lower end for
+/// `c_i < 0`, both integers, or the term is unbounded above and every `v` is sent; an empty
+/// interval of another atom sends nothing. The set of `v` is then `c_j·v + r >= 0`, an integer
+/// half-line ([`row_range`], exact rounding). Each sum is taken once and each atom's own term
+/// taken back out, with counts of the unbounded and empty intervals, so the call is O(m) for m
+/// terms, as in [`star`].
+fn row_sends(terms: &[(usize, &Int)], k: &Int, doms: &[Ends]) -> Vec<Ends> {
+    // `None` for an empty interval; `Some(None)` where the term is unbounded above.
+    let top = |&(i, c): &(usize, &Int)| -> Option<Option<Int>> {
+        let d = &doms[i];
+        if range_is_empty(d) {
+            return None;
+        }
+        let end = if c.is_positive() { &d.1 } else { &d.0 };
+        Some(end.as_ref().map(|e| c * e))
     };
-    let t = -&(k + &(a * x));
-    if b.is_positive() {
-        (Some(t.div_ceil(b)), None)
-    } else {
-        (None, Some(t.div_floor(b)))
+    let tops: Vec<Option<Option<Int>>> = terms.iter().map(top).collect();
+    let empty = tops.iter().filter(|t| t.is_none()).count();
+    let open = tops.iter().filter(|t| matches!(t, Some(None))).count();
+    let mut sum = k.clone();
+    for v in tops.iter().flatten().flatten() {
+        sum = &sum + v;
     }
+    (terms.iter().zip(&tops))
+        .map(|(&(_, c), t)| {
+            if empty > usize::from(t.is_none()) {
+                return (Some(Int::ONE), Some(Int::ZERO));
+            }
+            if open > usize::from(matches!(t, Some(None))) {
+                return (None, None);
+            }
+            let r = match t {
+                Some(Some(own)) => &sum - own,
+                _ => sum.clone(),
+            };
+            row_range(c, &r, false).0
+        })
+        .collect()
 }
 
 /// The exact projection of the conjunction `rows` onto each atom it reads, where each row is
-/// `>=` over one atom, or over two atoms and the rows over two atoms join the atoms as a forest
-/// (no two rows over the same two atoms, no cycle); `None` for other rows. Each atom's values
-/// are an interval: its own rows' interval met with, from each neighbor, the values for which
-/// some value of the neighbor in its interval, met with those from its other neighbors, meets
-/// their row. Exact over the integers, as a forest of constraints made arc consistent has a
-/// point with each atom at each of its values: each neighbor's subtree takes a value that meets
-/// the row, and so on outward, with no cycle to close (Freuder, "A sufficient condition for
-/// backtrack-free search", JACM 29, 1982, sec. 4, Theorem 3 with Theorem 1, read 2026-11-21:
-/// strong 2-consistency makes a forest backtrack-free; each message an interval, by the rounding
-/// above). Where some atom has no value, the conjunction has no point and every atom gets none.
+/// over one atom, or `>=` over two or more, and the rows over two or more atoms join the atoms
+/// as a forest: in the graph with a node for each atom and each such row and an edge from a
+/// row to each of its atoms, no cycle (so no two rows share two atoms; such a hypergraph is
+/// called Berge-acyclic); `None` for other rows. Each atom's values are an interval: its own
+/// rows' interval met with, from each row it is in, the values for which the row's other atoms,
+/// each in its interval met with the sets from its other rows, meet the row ([`row_sends`]).
+/// Proof that the sets are exact over the integers. Root a tree of the graph at an atom. For an
+/// atom `x`, let `T_x` be the rows of its subtree; for a row `e` with parent atom `p`, `T_e` is
+/// `e` with the subtrees of its other atoms. (i) The set sent up from `e` to `p` is the
+/// projection of `T_e` onto `p`, and the set of `x` from below is that of `T_x` with its own
+/// bounds, each an interval: by induction from the leaves. The subtrees of `e`'s other atoms
+/// share no atom (no cycle), so points of each join into a point of all of them; so `v` has a
+/// point of `T_e` with `p = v` exactly when the row holds at `p = v` for some values of the other
+/// atoms each in the projection of its own subtree, an interval by induction, which is what
+/// [`row_sends`] gives, exactly. For an atom, its rows' subtrees again share no atom but `x`, so
+/// a value has a point in each and in `x`'s own bounds exactly when it is in the meet of their
+/// sets, an interval. (ii) The set sent down to `x` is, by the same argument rooted at `x`, the
+/// projection of the rows outside `x`'s subtree; and `x`'s values at the points of its whole
+/// tree are the meet of (i) and (ii), as the two parts share only `x`. Components share no atom,
+/// so the conjunction has a point exactly when each has one; where some atom has no value, it
+/// has none and every atom gets none. For rows over two atoms this is Freuder's result (Freuder,
+/// "A sufficient condition for backtrack-free search", JACM 29, 1982, sec. 4, Theorem 3 with
+/// Theorem 1, read 2026-11-21: strong 2-consistency makes a forest backtrack-free); the proof
+/// above is this file's own for rows over more atoms (PRES-sum-chain-cost, 2026-11-27). An
+/// equation over two or more atoms is declined: its projection can have holes (`y == 2·x`).
+/// Tests: `exact::tests::berge_forests_project_to_the_values_of_their_points` (brute force on
+/// random trees of rows over up to four atoms, and the cycles declined) and
+/// `decomposable_formulas_project_to_the_values_of_their_points`; neither can catch a fault
+/// that shows only past their box of values.
 // Complexity tradeoff: [`projected`] for each atom eliminates the others, O(r) each and O(r²)
-// for the r rows of a path of `wide_pairs`. Used: two passes over each tree, a message each way
-// on each row, prefix and suffix intersections at each atom, O(r) in all; rows of other forms
-// fall back to [`projected`].
+// for the r rows of a path of `wide_pairs`, and O(r·a) for the `a` atoms of the chain
+// `y[i + 1] <= y[i] + x[i]` of `l01_38_presburger::disj_groups::sum_chain` (18.6 times the
+// instructions at 8 times its length in `exact_each_checked`, b22-presburger15). Used: two
+// passes over each tree, a message each way on each row, prefix and suffix meets at each atom,
+// O(t) in all for t terms; rows of other forms fall back to [`star`] and [`projected`].
 fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, IntervalSet>>, Refusal> {
     let mut index: HashMap<&Atom, usize> = HashMap::new();
     let mut atoms: Vec<&Atom> = Vec::new();
+    // Each term past the second of a row, charged with the row's own reading below, so a row
+    // over two atoms costs what it did.
+    let mut extra = 0u64;
     for c in rows {
-        if c.lin.terms.len() > 2 || (c.lin.terms.len() == 2 && c.rel == Rel::Eq) {
+        if c.lin.terms.is_empty() || (c.lin.terms.len() >= 2 && c.rel == Rel::Eq) {
             return Ok(None);
         }
+        extra += c.lin.terms.len().saturating_sub(2) as u64;
         for a in c.lin.terms.keys() {
             index.entry(a).or_insert_with(|| {
                 atoms.push(a);
@@ -3756,51 +3808,49 @@ fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, Interval
             });
         }
     }
-    work.read(rows.len() as u64)?;
+    work.read(rows.len() as u64 + extra)?;
     let n = atoms.len();
     let mut own: Vec<Ends> = vec![(None, None); n];
-    // The rows over two atoms: (u, v, coefficient of u, of v, constant).
-    let mut edges: Vec<(usize, usize, &Int, &Int, &Int)> = Vec::new();
+    // The rows over two or more atoms: each atom's place with its coefficient, and the constant.
+    let mut edges: Vec<(Vec<(usize, &Int)>, &Int)> = Vec::new();
+    // The rows each atom is in.
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
-    // The trees joined so far.
+    // The trees joined so far, over the atoms (0..n) and the rows (n + e for row e): a union of
+    // two nodes already joined closes a cycle.
     // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
     // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
-    let mut trees = UnionFind::new(n, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
+    let wide = rows.iter().filter(|c| c.lin.terms.len() >= 2).count();
+    let mut trees = UnionFind::new(
+        n + wide,
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     for c in rows {
         if let Some((a, lo, hi)) = super::formula::one_bound(c) {
             let i = index[a];
             own[i] = range_meet(&own[i], &(lo, hi));
             continue;
         }
-        let mut ts = c.lin.terms.iter();
-        let (Some((x, a)), Some((y, b))) = (ts.next(), ts.next()) else {
-            return Ok(None);
-        };
-        let (u, v) = (index[x], index[y]);
-        if !trees.union(u, v) {
-            return Ok(None);
+        let e = edges.len();
+        let mut ts = Vec::with_capacity(c.lin.terms.len());
+        for (x, k) in &c.lin.terms {
+            let u = index[x];
+            if !trees.union(u, n + e) {
+                return Ok(None);
+            }
+            adj[u].push(e);
+            ts.push((u, k));
         }
-        adj[u].push(edges.len());
-        adj[v].push(edges.len());
-        edges.push((u, v, a, b, &c.lin.constant));
+        edges.push((ts, &c.lin.constant));
     }
-    // The message along edge `e` from its end `from` to its other end, given `from`'s values.
-    let sent = |e: usize, from: usize, d: &Ends| {
-        let (u, _, a, b, k) = edges[e];
-        if from == u {
-            ends_sent(d, a, b, k)
-        } else {
-            ends_sent(d, b, a, k)
-        }
-    };
-    let other = |e: usize, from: usize| {
-        let (u, v, ..) = edges[e];
-        if from == u { v } else { u }
-    };
-    // Each tree walked from a root: the atoms in walk order, each with the edge to its parent.
+    // Each tree walked from an atom: the atoms in walk order, each with the row to its parent
+    // (`up_row`), and each row with its parent atom (`up_atom`). A row is reached from one of
+    // its atoms and is pushed with its other atoms, so it comes after its parent and before its
+    // children in `walk`.
     let mut seen = vec![false; n];
     let mut walk: Vec<usize> = Vec::with_capacity(n);
-    let mut up_edge: Vec<Option<usize>> = vec![None; n];
+    let mut up_row: Vec<Option<usize>> = vec![None; n];
+    let mut up_atom: Vec<usize> = vec![0; edges.len()];
     for r in 0..n {
         if seen[r] {
             continue;
@@ -3810,47 +3860,89 @@ fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, Interval
         while let Some(i) = stack.pop() {
             walk.push(i);
             for &e in &adj[i] {
-                let j = other(e, i);
-                if !seen[j] {
-                    seen[j] = true;
-                    up_edge[j] = Some(e);
-                    stack.push(j);
+                if up_row[i] == Some(e) {
+                    continue;
+                }
+                up_atom[e] = i;
+                for &(j, _) in &edges[e].0 {
+                    if j != i {
+                        seen[j] = true;
+                        up_row[j] = Some(e);
+                        stack.push(j);
+                    }
                 }
             }
         }
     }
-    // From the leaves up: each atom's values over its subtree, and the message to its parent.
+    // The sets row `e` sends to its atoms, given each atom's interval (`dom`). [`row_sends`]
+    // does not read an atom's own interval for the set it sends that atom, so on the way up the
+    // parent atom's interval, not yet known, is given as every value.
+    let sends = |e: usize, dom: &dyn Fn(usize) -> Ends| -> Vec<Ends> {
+        let (ts, k) = &edges[e];
+        let doms: Vec<Ends> = ts.iter().map(|&(j, _)| dom(j)).collect();
+        let places: Vec<(usize, &Int)> =
+            (ts.iter().enumerate()).map(|(t, &(_, c))| (t, c)).collect();
+        row_sends(&places, k, &doms)
+    };
+    // From the leaves up: each atom's values over its subtree (`below`), and the set each row
+    // sends its parent atom (`row_up`). `walk` reversed reads each atom after its subtree, so
+    // `below[i]` is final when `i` is read; a row is sent when the last of its children is read
+    // (`left` counts those not yet read), before its parent is read.
     let mut below: Vec<Ends> = own.clone();
-    let mut to_parent: Vec<Ends> = vec![(None, None); n];
+    let mut row_up: Vec<Ends> = vec![(None, None); edges.len()];
+    let mut left: Vec<usize> = edges.iter().map(|(ts, _)| ts.len() - 1).collect();
     for &i in walk.iter().rev() {
-        if let Some(e) = up_edge[i] {
-            to_parent[i] = sent(e, i, &below[i]);
-            let p = other(e, i);
-            below[p] = range_meet(&below[p], &to_parent[i]);
+        if let Some(e) = up_row[i] {
+            left[e] -= 1;
+            if left[e] > 0 {
+                continue;
+            }
+            let p = up_atom[e];
+            let ts = &edges[e].0;
+            let sent = sends(e, &|j| {
+                if j == p {
+                    (None, None)
+                } else {
+                    below[j].clone()
+                }
+            });
+            let at = ts.iter().position(|&(j, _)| j == p).expect("the parent");
+            row_up[e] = sent[at].clone();
+            below[p] = range_meet(&below[p], &row_up[e]);
         }
     }
-    // From the roots down: the message from each atom's parent, from the parent's values over
-    // all but that atom's subtree, met from the other children's messages on each side.
-    let mut from_parent: Vec<Ends> = vec![(None, None); n];
+    // From the roots down: the set each atom gets from its parent row (`down`), from the row's
+    // parent's values over all but the row's subtree, met from the other rows' sets on each
+    // side, and the parent's children's values from below.
+    let mut down: Vec<Ends> = vec![(None, None); n];
     for &i in &walk {
-        let kids: Vec<(usize, usize)> = (adj[i].iter())
-            .map(|&e| (e, other(e, i)))
-            .filter(|&(e, j)| up_edge[j] == Some(e))
+        let kids: Vec<usize> = (adj[i].iter().copied())
+            .filter(|&e| up_row[i] != Some(e))
             .collect();
-        let base = range_meet(&own[i], &from_parent[i]);
+        let base = range_meet(&own[i], &down[i]);
         let mut suffix: Vec<Ends> = vec![(None, None); kids.len() + 1];
         for t in (0..kids.len()).rev() {
-            suffix[t] = range_meet(&suffix[t + 1], &to_parent[kids[t].1]);
+            suffix[t] = range_meet(&suffix[t + 1], &row_up[kids[t]]);
         }
         let mut prefix = base;
-        for (t, &(e, j)) in kids.iter().enumerate() {
-            from_parent[j] = sent(e, i, &range_meet(&prefix, &suffix[t + 1]));
-            prefix = range_meet(&prefix, &to_parent[j]);
+        for (t, &e) in kids.iter().enumerate() {
+            let mine = range_meet(&prefix, &suffix[t + 1]);
+            let sent = sends(e, &|j| {
+                if j == i {
+                    mine.clone()
+                } else {
+                    below[j].clone()
+                }
+            });
+            for (&(j, _), s) in edges[e].0.iter().zip(sent) {
+                if j != i {
+                    down[j] = s;
+                }
+            }
+            prefix = range_meet(&prefix, &row_up[e]);
         }
     }
-    let ends: Vec<Ends> = (0..n)
-        .map(|i| range_meet(&below[i], &from_parent[i]))
-        .collect();
+    let ends: Vec<Ends> = (0..n).map(|i| range_meet(&below[i], &down[i])).collect();
     let none = ends.iter().any(range_is_empty);
     let fin = |e: &Option<Int>, inf: End| e.as_ref().map_or(inf, |v| End::Fin(Num::from(v)));
     Ok(Some(
