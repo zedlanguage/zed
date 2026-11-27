@@ -9554,12 +9554,18 @@ pub mod rec {
         let size = v + places.len();
         let mut color = vec![0; size];
         let mut sorted: Vec<usize> = (0..v).collect();
+        // Each vertex's head and number of children, read once and not at each of the sort's
+        // O(V log V) comparisons (PERF-parity-cold-verdict: `Fresh::new` of the parity verdict
+        // bench 452.2 M to 374.4 M instructions at k = 4096, 3,798.8 M to 3,086.4 M at 32768);
+        // only a tie of two types calls `Type::cmp`.
+        let keys: Vec<((u8, usize, &str), usize)> = of
+            .iter()
+            .map(|n| (n.e.head(), n.e.kids().count()))
+            .collect();
         let head = |a: usize, b: usize| {
-            let (x, y) = (&of[a].e, &of[b].e);
-            x.head()
-                .cmp(&y.head())
-                .then_with(|| x.kids().count().cmp(&y.kids().count()))
-                .then_with(|| match (x, y) {
+            keys[a]
+                .cmp(&keys[b])
+                .then_with(|| match (&of[a].e, &of[b].e) {
                     (Shape::Type(s), Shape::Type(t)) => s.cmp(t),
                     _ => std::cmp::Ordering::Equal,
                 })
