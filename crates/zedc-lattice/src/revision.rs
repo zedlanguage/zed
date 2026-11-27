@@ -522,7 +522,11 @@ pub fn backward(
                         .map(|&(a, b)| quotient(a, b, Dir::Up))
                         .max()
                         .unwrap();
-                    vec![(lo, hi)]
+                    // Rounded inward (`quotient`), the ends cross where no integer is a
+                    // quotient (`z` in `-2..=-1`, `y` in `-7..=-5`: `1` and `0`); no pair then,
+                    // since a crossed pair would still take one of the pieces `map2` caps the
+                    // image to, and so coarsen the rest (TEST-back-product-precision).
+                    if lo > hi { vec![] } else { vec![(lo, hi)] }
                 })
             }
         }
@@ -987,6 +991,17 @@ mod tests {
         assert_eq!(
             backward(&Op::Mul, 1, &two, &x, &IntervalSet::of(7, 9)),
             IntervalSet::of(4, 4)
+        );
+        // No integer times `-7..=-5` lies in `-2..=-1`: the ends cross (1 and 0), and no
+        // piece is kept. Beside a second piece of `z` the crossed pair coarsened the image
+        // (seed 9220505866642457837 of the zedc-preimage comparison of products).
+        let o = IntervalSet::of(-7, -5);
+        assert!(backward(&Op::Mul, 0, &x, &o, &IntervalSet::of(-2, -1)).is_empty());
+        let z = IntervalSet::of(-16, -13).join(&IntervalSet::of(-2, -1));
+        let w = o.join(&IntervalSet::of(2, 6));
+        assert_eq!(
+            backward(&Op::Mul, 0, &IntervalSet::of(-4, 0), &w, &z),
+            IntervalSet::of(-4, -3).join(&IntervalSet::of(-1, -1))
         );
     }
 

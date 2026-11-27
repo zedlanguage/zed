@@ -439,6 +439,11 @@ fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer_3() {
 /// and 2 made coarser at first: main's answer or a finer one. Call 45 is
 /// `(if (x < 3) { x * 5 } else { x * y }) div 3` over x in [10, 21], y in (-inf, 18], demand
 /// (-inf, -7]: main answers y in (-inf, 0], not exact (the exact answer is y <= -1).
+/// Since TEST-back-product-precision (the quotient of `revision::backward` rounded inward,
+/// `back_product` narrowing the other factor first), two of the three are narrower and none
+/// exact: call 45 keeps `y` in (-inf, -1], and call 86 (`abs` of a product, demand [4, 11])
+/// keeps `x` in [-6, -1] or [1, 5] and `y` in {-1} or [1, 11], not main's [-6, 5] and
+/// [-1, 11], since a factor 0 gives 0; the points checked meet the demand in the boxes only.
 #[test]
 fn calls_22_45_and_86_keep_main_s_answer_or_a_finer_one() {
     let kept = {
@@ -449,8 +454,8 @@ fn calls_22_45_and_86_keep_main_s_answer_or_a_finer_one() {
     assert_eq!(
         kept,
         Kept {
-            same: 3,
-            narrower: 0,
+            same: 1,
+            narrower: 2,
             made_exact: 0
         }
     );
@@ -1085,7 +1090,13 @@ fn answer_table() -> String {
 }
 
 /// REF-boundaries-gate: the cuts that only `tree_round` reads are computed when it reads them,
-/// and every answer of [`answer_table`] stays the one main gave (`ref_memo_answers.txt`). With
+/// and every answer of [`answer_table`] stays the one main gave (`ref_memo_answers.txt`). One
+/// family changed since, made narrower by TEST-back-product-precision (the quotient of
+/// `revision::backward` rounded inward, `back_product` narrowing the other factor first):
+/// `normal_mul_base` at every size, whose first link is
+/// `(if i <= 1 { i * m } else { 1 - i * m }) != 0` under true, keeps `i` in [-1000, -1] or
+/// [1, 1000], not all of [-1000, 1000], since `i * m` is 0 at `i` = 0 (3 pieces, was 2;
+/// still inexact, as `m` = 0 fails too); the other 491 lines are unchanged. With
 /// `REF_MEMO_ANSWERS_OUT` set to a path, the table this build gives is also written there, which
 /// is how the file was made, on main.
 #[test]

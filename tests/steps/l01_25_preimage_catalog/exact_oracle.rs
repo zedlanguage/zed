@@ -326,6 +326,13 @@ fn mixed(seed: u64, cases: usize) -> Run {
 // holds every value they take as exact where both are defined (every `a`, and `b` not 0),
 // EXACT_OF_TWO_RUNS rose 916 -> 936 (20 boxes), as b22-misc4 measured with the same
 // transfer, with no disagreement with the interpreter.
+//
+// Since TEST-back-product-precision, whose `revision::backward` of `*` rounds the quotient's
+// ends inward and whose `back_product` narrows the other factor first, EXACT_OF_TWO_RUNS rose 936 -> 937, one box of the transfer and no other answer
+// (every case's boxes compared with e123cbce7): `(x * y != -6) and (x ^ 0 > y)` under false,
+// `x` in [-4, inf), `y` in [0, 10], keeps `y` in [1, 10], exact, not all of `y`, inexact. At
+// `y` = 0 the product is 0, not -6, and `1 > 0` holds, so the term is true there; the
+// interpreter refutes no box.
 
 /// The first two runs of `s22.rs` (500 mixed terms, the second with tests), with their count
 /// of exact preimages pinned, so that a change in precision shows.
@@ -335,7 +342,7 @@ fn s22_random_terms_match_the_interpreter() {
 }
 
 /// The count of exact preimages of [`s22_random_terms_match_the_interpreter`].
-const EXACT_OF_TWO_RUNS: usize = 936;
+const EXACT_OF_TWO_RUNS: usize = 937;
 
 /// Mixed terms from a new seed each run, every other case a test and every third term reading
 /// through calls.

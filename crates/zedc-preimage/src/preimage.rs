@@ -9754,7 +9754,7 @@ impl<'m, 't> Walk<'m, 't> {
     // operand reading (proof at
     // `a_product_read_by_its_factors_is_within_its_reading_by_operand`); with three or more it
     // is not always, since that reading meets each partial product's own set, which this one
-    // never makes (TEST-back-product-precision: 18 of 3,000 random products of two to five
+    // never makes (TEST-back-product-precision: 16 of 3,000 random products of two to five
     // factors read looser, 514 tighter). Test:
     // `l01_25_preimage_catalog::bench::powers::reading_a_product_as_a_power_is_linear_in_its_factors`.
     async fn back_product(&'m self, t: Tid, env: Eid, z: &IntervalSet) -> Res {
@@ -9799,9 +9799,19 @@ impl<'m, 't> Walk<'m, 't> {
             // `y * w` in `[15/7, 15/6]`, no integer, so the product is empty), at one more
             // set quotient per factor (TEST-back-product-precision, the measured counts at
             // `a_product_read_by_its_factors_is_within_its_reading_by_operand`).
+            //
+            // The demand read against the whole `others` is met in too: `revision::backward`
+            // caps its image to as many pieces in each sign region as its operands have
+            // (`map2`), so an `others_in` of more pieces than `others` can give a coarser
+            // quotient, not a finer one (`x * w` in `[-16, -13]` or `[-2, -1]`, `x` in
+            // `[-4, 0]`, `w` in `[-7, -5]` or `[2, 6]`: against `others_in` = `{2}` or
+            // `[4, 5]`, three pieces merged to `[-4, -1]`; against `w`, `[-4, -3]` or
+            // `{-1}`). With the meet, a factor's demand is within the one the reading operand
+            // by operand gives it, at one more set quotient per factor.
             let others_in =
                 (others.set()).meet(&revision::backward(&mul, 1, sets[i].set(), others.set(), z));
-            let zi = revision::backward(&mul, 0, sets[i].set(), &others_in, z);
+            let zi = revision::backward(&mul, 0, sets[i].set(), &others_in, z)
+                .meet(&revision::backward(&mul, 0, sets[i].set(), others.set(), z));
             let r = match k.is_several() {
                 true => self.back_unary(&Op::Pow(k.exponent()), f, fe, &zi).await,
                 false => self.back(f, fe, Demand::Ints(zi)).await,
@@ -19848,20 +19858,27 @@ mod tests {
     /// (TEST-back-product-precision). Of two factors, each name's set by factors is within its
     /// set operand by operand, on every case. Proof: for `a * b`, the reading operand by
     /// operand gives `a` the demand `backward(*, 0, A, B, z)` over the forward sets `A`, `B`,
-    /// and `back_product` gives it `backward(*, 0, A, B', z)` with `B'` = `B` met with
-    /// `backward(*, 1, A, B, z)`, within `B`; `backward` at operand 0 is the union over the
-    /// pieces of `B'` of quotients of `z`, so a smaller `B'` gives a smaller set; the same for
-    /// `b`. Of three to five factors the claim is false: the reading operand by operand meets
+    /// and `back_product` gives it `backward(*, 0, A, B', z)` met with that same demand
+    /// `backward(*, 0, A, B, z)` (`B'` = `B` met with `backward(*, 1, A, B, z)`), which is
+    /// within it; the same for `b`. Each factor is then read with a demand within the one the
+    /// reading operand by operand gives it, and a factor here (a name, or a name plus a
+    /// constant) reads a smaller demand as a smaller set. The meet is needed: without it the
+    /// proof took `backward` to be smaller for a smaller `B'`, which is false, since `map2`
+    /// caps the image to as many pieces as its operands have, and a `B'` of more pieces than
+    /// `B` merged pieces the reading against `B` kept apart (seed 9220505866642457837: 2 of
+    /// 3000 not within). Of three to five factors the claim is false: the reading operand by operand meets
     /// each partial product of the written tree with whole numbers (`x * (y * w)` in `-15`
     /// with `x` in `[-7, -6]` needs `y * w` in `[15/7, 15/6]`, which holds no integer), which
     /// one projection per factor against the product of the others does not see. Measured
     /// on one run (2026-11-27, seed 15410409318329950335): of two factors, 0 of 3000 not
-    /// within and 174 strictly within; of two to five, 18 not within, 7 of them with the other
+    /// within and 174 strictly within; of two to five, 16 not within, 7 of them with the other
     /// reading not within this one either, and 514 strictly within. Before the quotient's
     /// rounding was fixed (zedc-lattice revision.rs `quotient`, which rounded a finite bound
     /// outward) and before the others' product was narrowed first (`others_in` in
-    /// [`Walk::back_product`]), 94 of 3000 of two to five were not within, and with the
-    /// rounding fixed alone, 29. Making it never less precise needs every
+    /// [`Walk::back_product`]), 94 of 3000 of two to five were not within, with the rounding
+    /// fixed alone 29, and before the demand against the whole product of the others was met
+    /// in, 18. Three more runs with fresh seeds, 2026-11-27: of two factors 0 not within each
+    /// time; of two to five, 8, 13 and 12 not within. Making it never less precise needs every
     /// partial product's set, the O(n²) bits the factor reading removed; the measured loss is
     /// kept. Negative control: with the other factors read as every integer
     /// (`PRODUCT_OTHERS_TOP`), the two-factor comparison finds sets that are not within.
