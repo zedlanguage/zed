@@ -223,8 +223,12 @@ enum Frame<'a> {
     /// `split`, `lines` or `concat`, its prim, once its operands are elaborated: the term of
     /// the receiver of `x.w(…)`, which comes first (plan row FP-ops-strings); and
     /// `round(x, ties: …)`, its one operand (plan row CAST-round-whole); and `int(s, base: b)`,
-    /// its two (plan row PARSE-int-base).
+    /// its two (plan row PARSE-int-base); and `allocate(total, weights)`, its two or three
+    /// (plan row SPEC-round-places-wire).
     Strings(Option<Term>, Prim),
+    /// A rounding word with `places: k` once `x` and `k` are elaborated: the word's primitive
+    /// (plan row SPEC-round-places-wire, [`Elab::places_term`]).
+    Places(Prim),
     /// `x.zip(y)` once `y` is elaborated: `x`'s term (step L5.2).
     Zip(Term),
     /// A remap once its source and its levels' expressions are elaborated, in that order.
@@ -1597,6 +1601,46 @@ impl<'a> Elab<'a> {
         if let Some(id) = self.declared(callee) {
             let f = self.t.funcs[&id];
             self.call_with(m, Callee::Declared(id, f), None, call);
+            return;
+        }
+        // A rounding word with `places: k`, `round(x, places: k, ties: #away)` included
+        // (DESIGN.md sec:corner_cases, "Rounding to a number of decimal places"; plan row
+        // SPEC-round-places-wire): [`Elab::places_term`] of the word's primitive. The checker
+        // accepted only an int or a rat `x` and the named arguments `places` and, for
+        // `round`, `ties` with one of its two atoms.
+        if let ExprKind::Name(n) = &callee.kind
+            && let Some(p) = fp_ops::rounding_prim(n)
+            && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_)))
+            && let [x] = call.positional
+            && !call.curry
+            && let Some((_, k)) = call.named.iter().find(|(name, _)| name == "places")
+        {
+            let away = (call.named.iter()).any(|(name, rule)| {
+                name == "ties" && matches!(&rule.kind, ExprKind::Atom(a) if a == "away")
+            });
+            let p = if away { Prim::RoundTiesAway } else { p };
+            m.k(Frame::Places(p));
+            m.seq(vec![x, k], false);
+            return;
+        }
+        // `allocate(total, weights)` and `allocate(total, weights, places: k)` are the
+        // primitive `Allocate`, `k` 0 when it is not given (plan row SPEC-round-places-wire);
+        // the checker rejected every other shape.
+        if let ExprKind::Name(n) = &callee.kind
+            && n == "allocate"
+            && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_)))
+        {
+            match (call.positional, call.named, call.curry) {
+                ([total, weights], [], false) => {
+                    m.k(Frame::Strings(None, Prim::Allocate));
+                    m.seq(vec![total, weights], false);
+                }
+                ([total, weights], [(name, k)], false) if name == "places" => {
+                    m.k(Frame::Strings(None, Prim::Allocate));
+                    m.seq(vec![total, weights, k], false);
+                }
+                _ => m.give(None),
+            }
             return;
         }
         // `round(x, ties: #away)` is the primitive `RoundTiesAway` and `round(x, ties: #even)`
@@ -3116,6 +3160,13 @@ impl<'a> Elab<'a> {
                 let t = all(m.got()).map(|ts| {
                     let args = receiver.into_iter().chain(ts).collect();
                     fp_ops::strings_term(p, args)
+                });
+                m.give(t);
+            }
+            Frame::Places(p) => {
+                let t = all(m.got()).map(|ts| {
+                    let [x, k]: [Term; 2] = ts.try_into().expect("two arguments");
+                    self.places_term(p, x, k)
                 });
                 m.give(t);
             }

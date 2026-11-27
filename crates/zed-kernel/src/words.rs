@@ -459,6 +459,86 @@ pub(crate) fn join(pieces: &Family, sep: &Text) -> Result<Option<Value>, KernelE
     Ok(Some(Value::Str(out.unwrap_or_else(|| "".into()))))
 }
 
+/// `allocate(total, weights, places: k)` (DESIGN.md sec:corner_cases, "Splitting an amount
+/// without losing a part"; plan row SPEC-round-places-wire): `total` split into one part per
+/// weight, in key order, each a multiple of `10^-k`, summing exactly to `total`. An int total
+/// keeps whole parts, as `round(x, places: k)` keeps an int whole: its grid is 1 when `k >= 0`
+/// and `10^-k` when `k < 0`; a rat total's grid is `10^-k`. The total is `u` units of the grid
+/// and the parts are the units `zed_bignum::round::allocate` gives (largest remainder, ties to
+/// the earlier part, a negative total split as its negation), each times the grid. `#invalid`
+/// when a weight is negative, when all are 0, and when the total is not a whole number of
+/// units, since no parts on the grid sum to it. `Ok(None)` when an operand is not of the
+/// kinds the checker proved (a total that is no int or rat, a weight that is no int, a `k`
+/// that is no int).
+///
+/// Complexity tradeoff: none given up. The grid `10^g` is kept as the powers `2^g 5^g`
+/// ([`Rat::from_kept`]), so scaling the total and each part adds exponents and builds nothing
+/// until the units are read; the split is `zed_bignum::round::allocate`'s, O(n M(b) + n log n)
+/// for n weights. Scaling test:
+/// `l01_18_scalar_interpreter::bench::round_places::allocate_scales`.
+pub(crate) fn allocate(
+    total: &Value,
+    weights: &Family,
+    k: &Value,
+) -> Result<Option<Value>, KernelError> {
+    let too_large = |need| KernelError::NumberTooLarge {
+        op: Prim::Allocate.written(),
+        need,
+    };
+    let whole = matches!(total, Value::Int(_) | Value::Big(_));
+    let (Some(t), Some(k)) = (total.as_rat(), k.as_integer()) else {
+        return Ok(None);
+    };
+    let k = k.to_integer().map_err(too_large)?;
+    let mut ws = Vec::with_capacity(weights.len());
+    for (_, w) in weights.iter() {
+        let Some(w) = w.as_integer() else {
+            return Ok(None);
+        };
+        match BigUint::try_from(w.to_integer().map_err(too_large)?) {
+            Ok(w) => ws.push(w),
+            Err(_) => return Ok(Some(Value::atom("invalid"))),
+        }
+    }
+    // The grid is `10^-g`: an int total's `g` is at most 0, so its parts stay whole.
+    let g = match whole && k.sign() != Sign::Minus {
+        true => BigInt::zero(),
+        false => k,
+    };
+    let ten_to = |s: BigInt| {
+        Rat::from_kept(
+            BigInt::from(1),
+            BigInt::from(1),
+            vec![(2, s.clone()), (5, s)],
+        )
+        .expect("2^s 5^s with s nonzero is in the kept form")
+    };
+    let units = match g.is_zero() {
+        true => t.into_owned(),
+        false => t.mul(&ten_to(g.clone())).map_err(too_large)?,
+    };
+    if !units.is_integer() {
+        return Ok(Some(Value::atom("invalid")));
+    }
+    let units = units.to_integer().map_err(too_large)?;
+    let Some(parts) = crate::num::bignum::round::allocate(&units, &ws) else {
+        return Ok(Some(Value::atom("invalid")));
+    };
+    let grid = (!g.is_zero()).then(|| ten_to(-g));
+    let mut out = Vec::with_capacity(parts.len());
+    for p in parts {
+        let p = match &grid {
+            None => Rat::int(p),
+            Some(grid) => Rat::int(p).mul(grid).map_err(too_large)?,
+        };
+        out.push(match whole {
+            true => Value::integer(p),
+            false => Value::rat(p),
+        });
+    }
+    Ok(Some(Value::Family(rank(out.into_iter()))))
+}
+
 /// The string the values of `f`, read in key order, encode as UTF-8, or `#badUtf8` when they
 /// are not well-formed: an overlong form, a surrogate, a scalar past `0x10FFFF`, or a truncated
 /// or stray continuation byte (the Unicode Standard, table 3-7, as [`std::str::from_utf8`] checks

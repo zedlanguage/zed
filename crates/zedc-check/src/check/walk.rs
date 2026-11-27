@@ -375,6 +375,9 @@ pub(super) enum Frame<'a> {
     Const(Ty),
     /// Reports the error, if any, with its repairs, and gives nothing.
     Fail(Option<(Span, String, Vec<String>)>),
+    /// The type of a call of a rounding word with `places: k`, refused with the message where
+    /// it holds a float ([`Ck::places_end`]).
+    Places(Span, String),
     Str(Box<StrF<'a>>),
     Unary(UnaryOp, Span),
     Tuple(Box<TupleF<'a>>),
@@ -1321,6 +1324,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.error_offering(span, message, menu);
                 }
                 m.ty(Ty::empty());
+            }
+            Frame::Places(span, message) => {
+                let t = m.take_ty();
+                let t = self.places_end(t, span, message);
+                m.ty(t);
             }
             Frame::Str(s) => self.str_step(m, s),
             Frame::Unary(op, span) => {
@@ -9550,6 +9558,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             return self.strings_call(m, w, None, positional, named, curry, span);
         }
+        // `allocate(total, weights)` where the name is the prelude's (plan row
+        // SPEC-round-places-wire): its callee is not checked as a name, which refuses the word
+        // as a function value.
+        if let ExprKind::Name(w) = &callee.kind
+            && w == "allocate"
+            && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_)))
+        {
+            return self.allocate(m, positional, named, curry, span);
+        }
         // A bit word called by the prelude's name: its callee is not checked as a name, which
         // would give the word as a function value ([`Ck::bit_word_value`]).
         if let ExprKind::Name(w) = &callee.kind
@@ -9729,6 +9746,46 @@ impl<'t, 'a> Ck<'t, 'a> {
         let k = word_arity(c.w);
         let n = c.positional.len() + usize::from(c.receiver.is_some());
         let (receiver, of) = c.receiver.unzip();
+        // `w(x, places: k)` for a rounding word `w`, and `round(x, places: k, ties: r)`
+        // (DESIGN.md sec:corner_cases, "Rounding to a number of decimal places"; plan row
+        // SPEC-round-places-wire): a call of [`places_sig`], an int giving an int and a rat a
+        // rat, and a float refused once its type is known ([`Self::places_end`]). `ties:` is
+        // checked as below. Written with the value before the dot, `x.round(places: 2)`, the
+        // call is reported as any word's named argument is.
+        let is_named = |n: &str| (c.named.iter()).filter(|(name, _)| name == n).count();
+        if matches!(c.w, "round" | "floor" | "ceil" | "trunc" | "awayFromZero")
+            && !c.curry
+            && of.is_none()
+            && let [x] = c.positional
+            && let Some((_, k)) = c.named.iter().find(|(name, _)| name == "places")
+            && is_named("places") == 1
+            && is_named("ties") <= usize::from(c.w == "round")
+            && c.named.len() == 1 + is_named("ties")
+        {
+            let ties = (c.named.iter()).find(|(name, _)| name == "ties");
+            let text = |e: &Expr, or: &'static str| {
+                let t = self.code(Some(e.span)).unwrap_or(or);
+                if t.contains('\n') { or } else { t }.to_string()
+            };
+            let (x, k) = (text(x, "x"), text(k, "k"));
+            let rule = ties.map(|(_, r)| format!(", ties: {}", text(r, "r")));
+            if let Some((_, r)) = ties
+                && !matches!(&r.kind, ExprKind::Atom(a) if a == "even" || a == "away")
+            {
+                let call = |a: &str| format!("round({x}, places: {k}, ties: {a})");
+                return self.ties_rejected(m, (c.positional, c.named), r, call);
+            }
+            let rule = rule.unwrap_or_default();
+            let message = format!(
+                "`{w}({x}, places: {k}{rule})` rounds a float to decimal places, which a float \
+                 cannot hold exactly: write `{w}(rat({x}), places: {k}{rule})`.",
+                w = c.w
+            );
+            m.k(Frame::Places(c.span, message));
+            let f = Ty::func(places_sig(c.w, ties.is_some()));
+            let args = Args::of(c.positional, c.named);
+            return self.call_value(m, &f, c.w.into(), None, args, false, None, None, c.span);
+        }
         // `round(x, ties: #away)` and `round(x, ties: #even)`: `ties:` takes one of the two
         // atoms written in place, and anything else is a type error (DESIGN.md sec:facets,
         // "Rounding to a whole number"). The rule changes no arrow of `round`, so the call is
@@ -9745,32 +9802,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             if matches!(&rule.kind, ExprKind::Atom(a) if a == "even" || a == "away") {
                 return self.word(m, c.w, c.positional, receiver, c.span);
             }
-            let written = self
-                .code(Some(rule.span))
-                .unwrap_or("this argument")
+            let x = (c.positional.first())
+                .and_then(|e| self.code(Some(e.span)))
+                .unwrap_or("x")
                 .to_string();
-            let message = format!(
-                "`ties:` takes the constant `#even` or `#away`, and `{written}` is not one of them."
-            );
-            let call = |a: &str| {
-                let x = (c.positional.first())
-                    .and_then(|e| self.code(Some(e.span)))
-                    .unwrap_or("x");
-                format!("round({x}, ties: {a})")
-            };
-            let menu = vec![
-                format!("repair: `{}`, ties to even", call("#even")),
-                format!("repair: `{}`, ties away from zero", call("#away")),
-            ];
-            let mut notes = self.derive(&[rule.span]);
-            notes.extend(menu.into_iter().map(|text| Note {
-                span: rule.span,
-                text: text.into(),
-            }));
-            self.rejects_with(Row::WrongForm, rule.span, message, notes);
-            m.k(Frame::Fail(None));
-            m.each(Args::of(c.positional, c.named).exprs());
-            return;
+            let call = |a: &str| format!("round({x}, ties: {a})");
+            return self.ties_rejected(m, (c.positional, c.named), rule, call);
         }
         // `int(s, base: b)` (plan row PARSE-int-base): the cast of a text in base `b`, a call of
         // the signature of its own ([`int_base_sig`]), whose parameter names `s` and `base`
@@ -9864,6 +9901,52 @@ impl<'t, 'a> Ck<'t, 'a> {
             .then(|| self.word_count(c.w, of, c.positional, c.span));
         m.k(Frame::Fail(err));
         m.each(Args::of(c.positional, c.named).exprs());
+    }
+
+    /// The rejection of `ties: rule` in a call of `round` with the arguments `positional` and
+    /// `named`, `rule` not `#even` or `#away`, with `call` the call rewritten with a given
+    /// rule, for the repairs.
+    fn ties_rejected(
+        &mut self,
+        m: &mut M<'a>,
+        (positional, named): (&'a [Expr], &'a [(String, Expr)]),
+        rule: &'a Expr,
+        call: impl Fn(&str) -> String,
+    ) {
+        let written = self
+            .code(Some(rule.span))
+            .unwrap_or("this argument")
+            .to_string();
+        let message = format!(
+            "`ties:` takes the constant `#even` or `#away`, and `{written}` is not one of them."
+        );
+        let menu = vec![
+            format!("repair: `{}`, ties to even", call("#even")),
+            format!("repair: `{}`, ties away from zero", call("#away")),
+        ];
+        let mut notes = self.derive(&[rule.span]);
+        notes.extend(menu.into_iter().map(|text| Note {
+            span: rule.span,
+            text: text.into(),
+        }));
+        self.rejects_with(Row::WrongForm, rule.span, message, notes);
+        m.k(Frame::Fail(None));
+        m.each(Args::of(positional, named).exprs());
+    }
+
+    /// The type `t` of a call of a rounding word with `places: k` ([`places_sig`]), or, where
+    /// `t` holds a float, the error `message` at `span` and no type: a float cannot hold a
+    /// multiple of `10^-k` exactly (DESIGN.md sec:corner_cases, "Rounding to a number of
+    /// decimal places").
+    fn places_end(&mut self, t: Ty, span: Span, message: String) -> Ty {
+        let float = [Carrier::F64, Carrier::F32]
+            .iter()
+            .any(|c| !(&t.set & &c.ty()).is_empty());
+        if !float {
+            return t;
+        }
+        self.error_offering(span, message, []);
+        Ty::empty()
     }
 
     /// The error of the call at `span` of the prelude word `w` with the arguments `of`, the
@@ -11950,6 +12033,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(1) if let Some(p) = bit_prim(name) => {
                     self.bits(m, name, p, Some((x, of)), positional, named, curry, span)
                 }
+                // `total.allocate(weights)`: this zedc builds `allocate` only as
+                // `allocate(total, weights)` (plan row SPEC-round-places-wire).
+                Some(1) if name == "allocate" => {
+                    let s = self.subject_text(Some(of.span));
+                    let ws = match positional {
+                        [w] => self.code(Some(w.span)).unwrap_or("weights").to_string(),
+                        _ => "weights".to_string(),
+                    };
+                    self.error_offering(
+                        span,
+                        "`allocate` is called here with its total before the dot; this version \
+                         of zedc builds `allocate` only with every argument in the parentheses"
+                            .to_string(),
+                        [format!("repair: write `allocate({s}, {ws})`")],
+                    );
+                    m.ty(Ty::empty());
+                }
                 Some(1) => {
                     let f = Ty::func(word_sig(name));
                     let call = PreludeCall {
@@ -12281,6 +12381,52 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => m.ty(Ty::empty()),
             },
         }
+    }
+
+    /// `allocate(total, weights)` and `allocate(total, weights, places: k)` (DESIGN.md
+    /// sec:corner_cases, "Splitting an amount without losing a part"; plan row
+    /// SPEC-round-places-wire): a call of [`allocate_sig`], which places the arguments by its
+    /// parameter names. Any other shape is rejected with the two forms as the repairs.
+    fn allocate(
+        &mut self,
+        m: &mut M<'a>,
+        positional: &'a [Expr],
+        named: &'a [(String, Expr)],
+        curry: bool,
+        span: Span,
+    ) {
+        let places = match named {
+            [] => Some(false),
+            [(n, _)] if n == "places" => Some(true),
+            _ => None,
+        };
+        let (Some(places), [_, _], false) = (places, positional, curry) else {
+            self.error_offering(
+                span,
+                "`allocate` takes a total and a list of weights, passed by position, and an \
+                 optional `places:` by name",
+                [
+                    "repair: write `allocate(total, weights)`".to_string(),
+                    "repair: write `allocate(total, weights, places: 2)`".to_string(),
+                ],
+            );
+            m.k(Frame::Fail(None));
+            m.each(Args::of(positional, named).exprs());
+            return;
+        };
+        let f = Ty::func(allocate_sig(places));
+        let args = Args::of(positional, named);
+        self.call_value(
+            m,
+            &f,
+            "allocate".into(),
+            None,
+            args,
+            false,
+            None,
+            None,
+            span,
+        );
     }
 
     /// `split`, `lines` or `concat` (plan row FP-ops-strings, step L3.2), as `w(…)` or, with

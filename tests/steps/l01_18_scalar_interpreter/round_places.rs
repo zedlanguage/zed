@@ -3,8 +3,11 @@
 //! amount without losing a part"). Every expected value is DESIGN's or written out by hand,
 //! not computed by the code under test.
 
+use num_bigint::BigInt;
+use zed_kernel::{Family, Prim, Rat, Term, Value};
 use zed_tests::step_helpers::l01_16_elaboration::term;
 use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
+use zed_tests::step_helpers::l01_29_diagnostics::rejected_with_main;
 
 use super::x;
 
@@ -20,11 +23,23 @@ fn columns(a: &str) -> [String; 6] {
     ]
 }
 
-/// DESIGN's table at `places: 1`.
+/// DESIGN's table at `places: 1`, each value as the printer writes a rat, in lowest terms:
+/// DESIGN's `0.2` is `1r/5r`, `0.3` is `3r/10r` and `0.4` is `2r/5r`.
 const TABLE: [(&str, [&str; 6]); 3] = [
-    ("0.25r", ["0.2r", "0.3r", "0.2r", "0.3r", "0.2r", "0.3r"]),
-    ("-0.25r", ["-0.2r", "-0.3r", "-0.3r", "-0.2r", "-0.2r", "-0.3r"]),
-    ("0.35r", ["0.4r", "0.4r", "0.3r", "0.4r", "0.3r", "0.4r"]),
+    (
+        "0.25r",
+        ["1r/5r", "3r/10r", "1r/5r", "3r/10r", "1r/5r", "3r/10r"],
+    ),
+    (
+        "-0.25r",
+        [
+            "-1r/5r", "-3r/10r", "-3r/10r", "-1r/5r", "-1r/5r", "-3r/10r",
+        ],
+    ),
+    (
+        "0.35r",
+        ["2r/5r", "2r/5r", "3r/10r", "2r/5r", "3r/10r", "2r/5r"],
+    ),
 ];
 
 #[test]
@@ -38,16 +53,18 @@ fn every_value_of_the_design_table_at_one_place() {
 
 #[test]
 fn ties_away_may_come_before_places() {
-    assert_eq!(x("round(0.25r, ties: #away, places: 1)"), "0.3r");
-    assert_eq!(x("round(0.25r, places: 1, ties: #even)"), "0.2r");
+    // 0.3 and 0.2.
+    assert_eq!(x("round(0.25r, ties: #away, places: 1)"), "3r/10r");
+    assert_eq!(x("round(0.25r, places: 1, ties: #even)"), "1r/5r");
 }
 
 #[test]
 fn two_places_round_to_hundredths() {
-    assert_eq!(x("round(2.675r, places: 2)"), "2.68r");
-    assert_eq!(x("round(2.665r, places: 2)"), "2.66r");
-    assert_eq!(x("floor(-2.671r, places: 2)"), "-2.68r");
-    assert_eq!(x("round(1r/3r, places: 2)"), "0.33r");
+    // 2.68 = 268/100 = 67/25; 2.66 = 266/100 = 133/50; 0.33 = 33/100.
+    assert_eq!(x("round(2.675r, places: 2)"), "67r/25r");
+    assert_eq!(x("round(2.665r, places: 2)"), "133r/50r");
+    assert_eq!(x("floor(-2.671r, places: 2)"), "-67r/25r");
+    assert_eq!(x("round(1r/3r, places: 2)"), "33r/100r");
 }
 
 #[test]
@@ -127,21 +144,23 @@ fn ties_with_places_still_takes_only_even_or_away() {
 
 #[test]
 fn allocate_splits_an_int_by_largest_remainder() {
-    assert_eq!(x("allocate(2, [2, 1, 1])"), "[1, 1, 0]");
-    assert_eq!(x("allocate(10, [1, 1, 1])"), "[4, 3, 3]");
+    // The value printer writes a list with its keys, as `{0 -> 1, ...}`.
+    assert_eq!(x("allocate(2, [2, 1, 1])"), "{0 -> 1, 1 -> 1, 2 -> 0}");
+    assert_eq!(x("allocate(10, [1, 1, 1])"), "{0 -> 4, 1 -> 3, 2 -> 3}");
 }
 
 #[test]
 fn allocate_splits_a_rat_into_hundredths() {
     assert_eq!(
         x("allocate(10r, [1, 1, 1], places: 2)"),
-        "[3.34r, 3.33r, 3.33r]"
+        // 3.34 = 334/100 = 167/50 and 3.33 = 333/100.
+        "{0 -> 167r/50r, 1 -> 333r/100r, 2 -> 333r/100r}"
     );
 }
 
 #[test]
 fn allocate_of_a_negative_total_negates_the_split() {
-    assert_eq!(x("allocate(-10, [1, 1, 1])"), "[-4, -3, -3]");
+    assert_eq!(x("allocate(-10, [1, 1, 1])"), "{0 -> -4, 1 -> -3, 2 -> -3}");
 }
 
 #[test]
@@ -162,8 +181,12 @@ fn allocate_of_a_rat_off_the_grid_is_invalid() {
 #[test]
 fn allocate_gives_a_list_or_invalid_as_a_whole() {
     assert_eq!(
-        sig("f(positional t: rat) = allocate(t, [1, 2], places: 2);", "f"),
-        "rat -> (int ->? rat) | #invalid"
+        sig(
+            "f(positional t: rat) = allocate(t, [1, 2], places: 2);",
+            "f"
+        ),
+        // `[rat]` is the rank `int ->? rat` of rats, as the checker prints it.
+        "rat -> [rat] | #invalid"
     );
 }
 
@@ -171,17 +194,55 @@ fn allocate_gives_a_list_or_invalid_as_a_whole() {
 fn allocate_elaborates_to_its_primitive_with_zero_places_by_default() {
     assert_eq!(
         term("x = allocate(2, [2, 1, 1]);\n", "x"),
-        "allocate(2, [2, 1, 1], 0)"
+        // The term printer writes a family literal as its keys and values in turn.
+        "allocate(2, entries(0, 2, 1, 1, 2, 1), 0)"
     );
+}
+
+/// The total `1000000.01r` of the benchmark, as an exact rational.
+pub(super) fn bench_total() -> Rat {
+    Rat::new(BigInt::from(100_000_001), BigInt::from(100)).expect("a nonzero denominator")
+}
+
+/// `allocate(1000000.01r, ws, places: 2)` for the `n` weights `ws[i] = i % 7 + 1`, built as a
+/// kernel term with its operands as literals.
+pub(super) fn allocate_input(n: usize) -> Term {
+    let leaves = (0..n).map(|i| (vec![Value::Int(i as i64)], Value::Int((i % 7 + 1) as i64)));
+    let weights = Family::from_leaves(leaves).expect("distinct keys");
+    let args = vec![
+        Term::Lit(Value::rat(bench_total())),
+        Term::Lit(Value::Family(weights)),
+        Term::Lit(Value::Int(2)),
+    ];
+    Term::Prim(Prim::Allocate, args)
+}
+
+/// The benchmark's input at a small size: one part per weight, each a rat, summing to the
+/// total exactly.
+#[test]
+fn allocate_of_the_benchmark_input_keeps_the_total() {
+    let Value::Family(parts) = zed_kernel::eval(&allocate_input(50)).expect("a value") else {
+        panic!("not a list");
+    };
+    assert_eq!(parts.len(), 50);
+    let mut sum = Rat::int(BigInt::from(0));
+    for (_, p) in parts.iter() {
+        let Value::Rat(p) = p else {
+            panic!("not a rat: {p:?}");
+        };
+        sum = sum.add(p).expect("a small sum");
+    }
+    assert_eq!(sum, bench_total());
 }
 
 #[test]
 fn allocate_is_refused_as_a_function_value_with_the_lambda_as_repair() {
-    let errs = type_errors("g = allocate;\n");
+    let out = rejected_with_main("g = allocate;\n");
     assert!(
-        errs.len() == 1
-            && errs[0].starts_with("`allocate` is given here as a function value")
-            && errs[0].contains("repair: write `(total, weights) -> allocate(total, weights)`"),
-        "{errs:?}"
+        out.contains(
+            "`allocate` is given here as a function value; this version of zedc checks \
+             `allocate` only where it is called"
+        ) && out.contains("repair: write `(total, weights) -> allocate(total, weights)`"),
+        "{out}"
     );
 }

@@ -7,6 +7,7 @@ mod f32;
 mod float_mod;
 mod literals;
 mod prim_names;
+mod round_places;
 mod rounding;
 mod scaling;
 mod sqrt_fma;

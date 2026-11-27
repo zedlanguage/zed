@@ -15,7 +15,7 @@ use zedc_syntax::ast::{BinaryOp, Expr, ExprKind};
 use zedc_syntax::lex::Span;
 
 use super::super::state::Elab;
-use zedc_check::check::ty::Reducer;
+use zedc_check::check::ty::{Carrier, Reducer};
 
 /// A quantifier of step L3.15a.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,6 +164,77 @@ impl<'a> Elab<'a> {
                 (KPattern::Wild, fold),
             ],
         );
+        Term::Let(xs, Shared::new(x), Shared::new(body))
+    }
+
+    /// `w(x, places: k)` for the rounding word whose primitive is `p` (DESIGN.md
+    /// sec:corner_cases, "Rounding to a number of decimal places"; plan row
+    /// SPEC-round-places-wire), from the primitives every backend has. A rat `x` is
+    /// `rat(p(x 10^k)) 10^-k`; an int `x` is `p(rat(x) 10^j) 10^-j` with `j = min(k, 0)`, so
+    /// `x` itself for `k >= 0` and an int for every `k`. The checker accepted only an int or
+    /// a rat `x`; a loose atom passes through every primitive here, as through any.
+    ///
+    /// Proof that it rounds by the rule of `p`: multiplying by `10^k` maps the multiples of
+    /// `10^-k` one to one and in order onto the integers, and a tie onto a tie, so the
+    /// multiple `p` picks among the images is the image of the multiple the rule picks; the
+    /// last kept digit of `m 10^-k` is even exactly when `m` is, which is the "even" of
+    /// `TiesEven` (zed-kernel `Rat::round_to_scale`, which states the same method). For an int
+    /// and `k >= 0`, `x 10^0 = x` is whole, and `p` of a whole number is itself.
+    ///
+    /// Complexity tradeoff: `Rat::round_to_scale` keeps `10^k` as the powers `2^k 5^k` and
+    /// builds nothing for the two products; here `10r ^ k` is one `Pow`, which a backend may
+    /// build as a number of about `3.3 k` bits. Naive, and used: a primitive of its own would
+    /// take a code in DESIGN.md's table and a case in every backend; these primitives are
+    /// already in each. The cost is the same order as the answer's own digits, which hold
+    /// `k` places.
+    pub(super) fn places_term(&mut self, p: Prim, x: Term, k: Term) -> Term {
+        let (xs, ks, j) = (self.temp(), self.temp(), self.temp());
+        let prim = |q: Prim, args: Vec<Term>| Term::Prim(q, args);
+        let ten = |rat: bool| match rat {
+            true => prim(Prim::CastRat, vec![Term::Lit(Value::Int(10))]),
+            false => Term::Lit(Value::Int(10)),
+        };
+        let pow = |rat: bool, e: Term| prim(Prim::Pow, vec![ten(rat), e]);
+        let neg = |e: Term| prim(Prim::Neg, vec![e]);
+        let whole = prim(
+            Prim::Mul,
+            vec![
+                prim(
+                    p,
+                    vec![prim(
+                        Prim::Mul,
+                        vec![prim(Prim::CastRat, vec![var(&xs)]), pow(true, var(&j))],
+                    )],
+                ),
+                pow(false, neg(var(&j))),
+            ],
+        );
+        let whole = Term::Let(
+            j,
+            Shared::new(prim(Prim::Min, vec![var(&ks), Term::Lit(Value::Int(0))])),
+            Shared::new(whole),
+        );
+        let rat = prim(
+            Prim::Mul,
+            vec![
+                prim(
+                    Prim::CastRat,
+                    vec![prim(
+                        p,
+                        vec![prim(Prim::Mul, vec![var(&xs), pow(true, var(&ks))])],
+                    )],
+                ),
+                pow(true, neg(var(&ks))),
+            ],
+        );
+        let body = Term::Match(
+            Shared::new(var(&xs)),
+            vec![
+                (KPattern::Is(Carrier::Int.ty()), whole),
+                (KPattern::Wild, rat),
+            ],
+        );
+        let body = Term::Let(ks, Shared::new(k), Shared::new(body));
         Term::Let(xs, Shared::new(x), Shared::new(body))
     }
 
@@ -819,5 +890,21 @@ pub(super) fn strings_term(p: Prim, mut args: Vec<Term>) -> Term {
     if p == Prim::Join && args.len() == 1 {
         args.push(Term::Lit(Value::str("")));
     }
+    // `allocate(total, weights)` is `allocate(total, weights, places: 0)`.
+    if p == Prim::Allocate && args.len() == 2 {
+        args.push(Term::Lit(Value::Int(0)));
+    }
     Term::Prim(p, args)
+}
+
+/// The primitive of a rounding word, by its prelude word: `round` rounds ties to even.
+pub(super) fn rounding_prim(word: &str) -> Option<Prim> {
+    match word {
+        "round" => Some(Prim::Round),
+        "floor" => Some(Prim::Floor),
+        "ceil" => Some(Prim::Ceil),
+        "trunc" => Some(Prim::Trunc),
+        "awayFromZero" => Some(Prim::AwayFromZero),
+        _ => None,
+    }
 }

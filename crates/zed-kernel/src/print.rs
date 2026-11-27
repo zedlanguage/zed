@@ -233,6 +233,7 @@ fn name(p: Prim) -> &'static str {
         Ceil => "ceil",
         Trunc => "trunc",
         AwayFromZero => "awayFromZero",
+        Allocate => "allocate",
         _ => infix(p)
             .expect("every primitive has a name or an infix spelling")
             .trim(),

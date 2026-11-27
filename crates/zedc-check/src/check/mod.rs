@@ -10919,6 +10919,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let w = w.clone();
                 self.bit_word_value(&w, p, span)
             }
+            // `allocate` is typed only where it is called ([`Ck::allocate`]): its `places:`
+            // is named and its result's carrier is its total's.
+            Some(Ref::Prelude(w)) if w == "allocate" => {
+                self.error_offering(
+                    span,
+                    "`allocate` is given here as a function value; this version of zedc checks \
+                     `allocate` only where it is called",
+                    ["repair: write `(total, weights) -> allocate(total, weights)`".to_string()],
+                );
+                Ty::empty()
+            }
             Some(Ref::Prelude(w)) if w != "sum" => Ty::func(word_sig(w)),
             // `main::files` read outside `main`: the type of `main`'s parameter of that name,
             // `Files`.
@@ -17303,12 +17314,115 @@ fn bytes() -> Ty {
 /// and a read outside it misses with `#outOfBounds` ([`Sig::dense`]), as a `Lines` input of
 /// [`port`] does.
 fn strings_rank() -> Ty {
-    let value = Ty::carrier(Carrier::Str);
+    rank_of(Carrier::Str)
+}
+
+/// The rank `0 ..< n` of values of the carrier `c`, `n` not known to the type: the partial
+/// arrow `int ->? c`, read outside it a miss with `#outOfBounds` ([`Sig::dense`]).
+fn rank_of(c: Carrier) -> Ty {
+    let value = Ty::carrier(c);
     let mut sig = Sig::one_partial(positional(1), vec![Ty::carrier(Carrier::Int)], value);
     sig.data = true;
     sig.dense = Dense::Ranks;
     sig.note_held();
     Ty::func(Arc::new(sig))
+}
+
+/// A named parameter of a prelude word's own signature, with no default and no range.
+fn named_param(name: &str) -> SParam {
+    SParam {
+        name: name.into(),
+        positional: false,
+        default: None,
+        range: None,
+    }
+}
+
+/// The signature of a rounding word with `places: k` (DESIGN.md sec:corner_cases, "Rounding to
+/// a number of decimal places"; plan row SPEC-round-places-wire): the positional `x`, the named
+/// `places`, and with `ties` the named `ties`, which the caller showed is `#even` or `#away`.
+/// An int stays an int and a rat a rat; a float keeps its arrow here, `f64` to `f64`, so the
+/// call is typed and its float is then refused with its own message ([`Ck::places_end`]).
+fn places_sig(w: &str, ties: bool) -> Arc<Sig> {
+    let mut params = vec![
+        SParam {
+            name: "x".into(),
+            positional: true,
+            default: None,
+            range: None,
+        },
+        named_param("places"),
+    ];
+    let rule = Ty::set(KType::atom("even")).union(&Ty::set(KType::atom("away")));
+    if ties {
+        params.push(named_param("ties"));
+    }
+    let int = Ty::carrier(Carrier::Int);
+    let arrows: Vec<Arrow> = [Carrier::Int, Carrier::Rat, Carrier::F64, Carrier::F32]
+        .into_iter()
+        .map(|c| {
+            let mut tys = vec![Ty::carrier(c), int.clone()];
+            if ties {
+                tys.push(rule.clone());
+            }
+            Arrow {
+                params: tys,
+                result: Ty::carrier(c),
+                partial: false,
+                stores_not_found: false,
+            }
+        })
+        .collect();
+    let mut sig = Sig::of_arrow(params, arrows[0].clone());
+    sig.arrows = arrows;
+    sig.word = Some(w.into());
+    Arc::new(sig)
+}
+
+/// The signature of `allocate(total, weights)`, with `places` the named `places: k` too
+/// (DESIGN.md sec:corner_cases, "Splitting an amount without losing a part"; plan row
+/// SPEC-round-places-wire): an `int` total split into a list of ints and a `rat` total into a
+/// list of rats, one part per weight, or `#invalid` where the weights are not all at least 0
+/// with one above 0, or the rat total is not a multiple of `10^-k`. The weights are a family
+/// of ints keyed by ints.
+fn allocate_sig(places: bool) -> Arc<Sig> {
+    let pos = |name: &str| SParam {
+        name: name.into(),
+        positional: true,
+        default: None,
+        range: None,
+    };
+    let mut params = vec![pos("total"), pos("weights")];
+    if places {
+        params.push(named_param("places"));
+    }
+    let invalid = Ty::set(KType::atom("invalid"));
+    // The weights as a parameter declared `int ->? int` is: a family of ints keyed by ints,
+    // which a list literal `[2, 1, 1]`, of type `(0 | 1 | 2) -> 1 | 2`, is passed to.
+    let int = Ty::carrier(Carrier::Int);
+    let mut family = Sig::one_partial(positional(1), vec![int.clone()], int);
+    family.data = true;
+    family.note_held();
+    let weights = Ty::func(Arc::new(family));
+    let arrows: Vec<Arrow> = [Carrier::Int, Carrier::Rat]
+        .into_iter()
+        .map(|c| {
+            let mut tys = vec![Ty::carrier(c), weights.clone()];
+            if places {
+                tys.push(Ty::carrier(Carrier::Int));
+            }
+            Arrow {
+                params: tys,
+                result: rank_of(c).union(&invalid),
+                partial: false,
+                stores_not_found: false,
+            }
+        })
+        .collect();
+    let mut sig = Sig::of_arrow(params, arrows[0].clone());
+    sig.arrows = arrows;
+    sig.word = Some("allocate".into());
+    Arc::new(sig)
 }
 
 /// The word `w` in code quotes, where it is a method built in to the checker

@@ -278,6 +278,13 @@ pub enum Prim {
     /// at `k`, or `#notFound`. Where `Get` passes an atom key through, as every primitive
     /// passes its atoms, this reads it as data; an atom family still passes through.
     GetAtomKey,
+    /// `allocate(total, weights, places: k)`: `total`, an int or a rat, split into one part
+    /// per weight, each a multiple of `10^-k`, summing exactly to `total`, by the
+    /// largest-remainder method; `#invalid` when a weight is negative, all are 0, or a rat
+    /// `total` is not a multiple of `10^-k` (DESIGN.md sec:corner_cases, "Splitting an amount
+    /// without losing a part"; plan row SPEC-round-places-wire). Elaboration writes `k` as 0
+    /// when the call gives no `places:`.
+    Allocate,
 }
 
 impl Prim {
@@ -289,7 +296,7 @@ impl Prim {
             | Len | Lower | Upper | Trim | Sum | PopCount | F64Bits | CodePoint | Scalar | Utf8
             | FromUtf8 | Sqrt | FirstEntry | LastEntry | First | Last | Lines | RangeFrom
             | Round | RoundTiesAway | Floor | Ceil | Trunc | AwayFromZero => Some(1),
-            Rotl | Rotr | MulHi | Fma => Some(3),
+            Rotl | Rotr | MulHi | Fma | Allocate => Some(3),
             FunnelShl | FunnelShr => Some(4),
             Path | Tuple | Atom | Entries | Place | CallNamed => None,
             _ => Some(2),
@@ -300,7 +307,7 @@ impl Prim {
     /// (test `every_primitive_is_listed_once_in_code_order`). The one list of them (row
     /// DRY-ast-walkers, REPORT-dryA5 row 11): the ZIR binary form numbers primitives by it
     /// (`zedc::zir::text::PRIMS` is this list), and the kernel's arrow tests walk it.
-    pub const ALL: [Prim; 91] = {
+    pub const ALL: [Prim; 92] = {
         use Prim::*;
         [
             Add,
@@ -394,6 +401,7 @@ impl Prim {
             FloatMod,
             CastIntBase,
             GetAtomKey,
+            Allocate,
         ]
     };
 
@@ -496,6 +504,7 @@ impl Prim {
             FloatMod => 88,
             CastIntBase => 89,
             GetAtomKey => 90,
+            Allocate => 91,
         }
     }
 
@@ -720,7 +729,9 @@ impl Prim {
             | TrailingZeros | Rotl | Rotr | F64Bits | Utf8 | FromUtf8 | MulHi | BitReverse
             | ByteSwap | Pdep | Pext | FunnelShl | FunnelShr | At | Entries | Has | Range
             | FirstEntry | LastEntry | EntryAfter | EntryBefore | First | Last | Split | Lines
-            | Join | RangeFrom | ListConcat | Place | CallNamed | GetAtomKey => return None,
+            | Join | RangeFrom | ListConcat | Place | CallNamed | GetAtomKey | Allocate => {
+                return None;
+            }
         })
     }
 }

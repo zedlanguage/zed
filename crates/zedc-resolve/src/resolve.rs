@@ -533,6 +533,7 @@ pub const WORDS: &[(&str, u32)] = &[
     ("sqrt", 1),
     ("fma", 1),
     ("floatMod", 1),
+    ("allocate", 1),
     ("build", 2),
     ("count", 3),
     ("map", 3),

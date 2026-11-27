@@ -4680,6 +4680,12 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
             Some(v) => v,
             None => return ty(vals),
         },
+        (Prim::Allocate, [total, Value::Family(w), k]) => {
+            match crate::words::allocate(total, w, k)? {
+                Some(v) => v,
+                None => return ty(vals),
+            }
+        }
         _ if crate::bits::is_bit_word(p) => crate::bits::word(p, vals)?,
         (Prim::Sum, [Value::Tuple(items)]) => {
             if items.iter().any(|v| matches!(v, Value::Atom(_))) {

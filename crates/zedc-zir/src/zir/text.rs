@@ -50,7 +50,7 @@ pub const VERSION: u32 = 1;
 
 /// Every primitive, in the order the binary form numbers them: [`Prim::ALL`], the order of
 /// [`Prim::code`] (row DRY-ast-walkers; this was a second copy of the list).
-pub const PRIMS: [Prim; 91] = Prim::ALL;
+pub const PRIMS: [Prim; 92] = Prim::ALL;
 
 const GRADES: [(Grade, &str); 6] = [
     (Grade::Axiom, "axiom"),

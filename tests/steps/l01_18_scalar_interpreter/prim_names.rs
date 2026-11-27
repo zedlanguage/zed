@@ -17,9 +17,11 @@ use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 /// strings by the operands' types (plan row PERF-list-concat-shared), or as a function value
 /// or a call through one that the function called places (DESIGN.md sec:values_morphisms,
 /// "The function called places the arguments"), or as `round(x, ties: #away)` and
-/// `int(s, base: b)`, calls of the words `round` and `int` with a named argument. A refusal
-/// names them by the form DESIGN.md writes, or else as the kernel's printer writes them.
-const UNNAMED: [Prim; 27] = [
+/// `int(s, base: b)`, calls of the words `round` and `int` with a named argument, or as
+/// `allocate(total, weights)`, which the checker types only where it is called (plan row
+/// SPEC-round-places-wire). A refusal names them by the form DESIGN.md writes, or else as the
+/// kernel's printer writes them.
+const UNNAMED: [Prim; 28] = [
     Prim::Entries,
     Prim::Tuple,
     Prim::TupleGet,
@@ -47,6 +49,7 @@ const UNNAMED: [Prim; 27] = [
     Prim::RoundTiesAway,
     Prim::CastIntBase,
     Prim::GetAtomKey,
+    Prim::Allocate,
 ];
 
 /// `f` applied to `n` functions where data is needed: the one refusal every primitive has.
