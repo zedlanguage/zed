@@ -34605,6 +34605,70 @@ mod probe_order {
         );
     }
 
+    /// The parts [`probe`] leaves in the written order, reversed and shuffled are the same parts
+    /// written in the same order: the probe reads its parts in the order of their content
+    /// ([`content_order`]), so nothing it does, and nothing read from its answer, follows the
+    /// order its parts were written in (PROOF-probe-order-independent). The disjunctions inside
+    /// a disjunct are not moved by the shuffles, so their order is part of the content here.
+    #[test]
+    fn probe_answers_the_same_parts_in_the_same_order_in_every_order() {
+        let (mut rng, seed) =
+            Rng::fresh("probe_answers_the_same_parts_in_the_same_order_in_every_order");
+        let written = |p: &Parts| -> String {
+            let ors: Vec<Vec<String>> = (p.ors.iter())
+                .map(|o| o.iter().map(|d| format!("{:?} {:?}", d.cons, key(d))).collect())
+                .collect();
+            format!("{:?} {ors:?}", p.cons)
+        };
+        let mut diffs = Vec::new();
+        let mut asked = 0;
+        for case in 0..600 {
+            let f = match case % 3 {
+                0 => rows(&mut rng),
+                1 => slack(&mut rng),
+                _ => chain(&mut rng),
+            };
+            let p = Parts::of(nnf(&f, true));
+            if p.ors.len() < 2 {
+                continue;
+            }
+            asked += 1;
+            let mut run = |mut q: Parts, how: u8| {
+                if how == 1 {
+                    q.cons.reverse();
+                    q.ors.reverse();
+                    for o in &mut q.ors {
+                        o.reverse();
+                    }
+                } else if how == 2 {
+                    rng.shuffle(&mut q.cons);
+                    rng.shuffle(&mut q.ors);
+                    for o in &mut q.ors {
+                        rng.shuffle(o);
+                    }
+                }
+                match probe(q, &HashSet::new()) {
+                    Ok(Some(q)) => written(&q),
+                    other => format!("{:?}", other.map(|o| o.is_some())),
+                }
+            };
+            let first = run(p.clone(), 0);
+            let back = run(p.clone(), 1);
+            let mixed = run(p.clone(), 2);
+            if first != back || first != mixed {
+                diffs.push(format!(
+                    "case {case}:\n  in order {first}\n  reversed {back}\n  shuffled {mixed}"
+                ));
+            }
+        }
+        assert!(
+            diffs.is_empty(),
+            "seed {seed:#x}, {} of {asked}:\n{}",
+            diffs.len(),
+            diffs.first().map_or("", String::as_str)
+        );
+    }
+
     /// Every point with the atoms `v0` to `v(n-1)` each in `0..=b`.
     fn box_points(n: usize, b: i128) -> Vec<Model> {
         let mut out = vec![Model::new()];
