@@ -67,7 +67,8 @@ fn every_l1_fence_passes_but_for_its_free_names() {
     assert_eq!(
         alternatives,
         [
-            "DESIGN.md [sec:ports] 4",
+            // 5 since the fence of removing a file (SPEC-file-remove) is the 4th of sec:ports.
+            "DESIGN.md [sec:ports] 5",
             "DESIGN.md [sec:checking_in_zed] 1"
         ]
     );

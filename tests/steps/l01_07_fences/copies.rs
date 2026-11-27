@@ -64,7 +64,9 @@ fn every_fence_key_is_its_own() {
 #[test]
 fn every_fence_has_a_layer_no_lower_than_its_label() {
     let all = fences::all();
-    assert_eq!(all.len(), 122 + 112);
+    // 123 zed fences in DESIGN.md (the 123rd, sec:ports "Removing a file", from row
+    // SPEC-file-remove), 112 in EXAMPLES.md.
+    assert_eq!(all.len(), 123 + 112);
     for f in &all {
         // DESIGN.md's table of defined words runs to layer L34 (L33, the automatic
         // differentiation of sec:symbolic, gives the first fence above L29).

@@ -26,9 +26,11 @@ fn every_expression_in_the_fences_builds_or_names_its_step() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     // 1505 and 309 at step L1.10; later steps build more. The sec:ports fence of creating and
-    // removing directories (STUDY-dir-edit) brings 3496.
+    // removing directories (STUDY-dir-edit) brings 3496; the sec:ports fence of removing a file
+    // (SPEC-file-remove) and EXAMPLES 25.1 inside `main` (SPEC-top-level-statement-fences)
+    // bring 3502.
     assert!(
-        built >= 1505 && built + later == 3496,
+        built >= 1505 && built + later == 3502,
         "built {built}, later {later}"
     );
 }

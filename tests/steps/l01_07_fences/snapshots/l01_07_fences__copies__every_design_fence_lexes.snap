@@ -59,6 +59,12 @@ expression: "tokens_by_key(&fences::design())"
   5 | gone = fs :: dir [ str["tmp/cache"] ] <- #removeTree ;
   6 | }
 == DESIGN.md [sec:ports] 3 L7
+  1 | main ( m : MainArgs ) {
+  2 | fs = main :: files ;
+  3 | gone = fs [ str["tmp/a.txt"] ] <- #delete ;
+  4 | @after ( gone ) fs :: dir [ str["tmp"] ] <- #remove ;
+  5 | }
+== DESIGN.md [sec:ports] 4 L7
   2 | main ( m : MainArgs ) -> int {
   3 | fs = main :: files ;
   4 | «match» fs [ str["in.txt"] ] {
@@ -81,7 +87,7 @@ expression: "tokens_by_key(&fences::design())"
  21 | } ,
  22 | }
  23 | }
-== DESIGN.md [sec:ports] 4 L1
+== DESIGN.md [sec:ports] 5 L1
   2 | main ( m : MainArgs ) {
   3 | m . stdout <- str["Hello, world!"] ;
   4 | }
@@ -89,7 +95,7 @@ expression: "tokens_by_key(&fences::design())"
   8 | m . stdout <- str["checked"] ;
   9 | «if» ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) == str["fail"] { 1₍10₎ } «else» { 0₍10₎ }
  10 | }
-== DESIGN.md [sec:ports] 5 L12
+== DESIGN.md [sec:ports] 6 L12
   4 | @limits ( memory : 1₍10₎ «with» units ( str["GiB"] ) , cpu : 60₍10₎ «with» units ( str["s"] ) )
   5 | @timeout ( 5₍10₎ «with» units ( str["min"] ) )
   6 | main ( m : MainArgs ) {
@@ -101,12 +107,12 @@ expression: "tokens_by_key(&fences::design())"
  15 | b = 2₍10₎ ^ 64₍10₎ + 13₍10₎ ;
  16 | m . stdout <- String ( b ^ ( 2₍10₎ ^ 20₍10₎ ) ) ;
  17 | }
-== DESIGN.md [sec:ports] 6 L7
+== DESIGN.md [sec:ports] 7 L7
   3 | main ( m : MainArgs ) -> int «with» handles ( #sigint ) {
   4 | stopped = m . signals [ 0₍10₎ ] == #sigint ;
   5 | m . stdout <- «if» stopped { str["stopping"] } «else» { str[] } ;
   6 | }
-== DESIGN.md [sec:ports] 7 L7
+== DESIGN.md [sec:ports] 8 L7
   2 | main ( m : MainArgs ) -> int {
   3 | r = run ( [ str["git"] , str["status"] , str["--short"] ] ) ;
   4 | «match» r {
@@ -123,24 +129,24 @@ expression: "tokens_by_key(&fences::design())"
  18 | p . stdin <- m . stdin . map ( l -> l «else» ( #badEncoding | #ioError ) -> str[] ) ;
  19 | m . stdout <- p . stdout . map ( l -> l «else» ( #badEncoding | #ioError ) -> str[] ) ;
  20 | }
-== DESIGN.md [sec:ports] 8 L7
+== DESIGN.md [sec:ports] 9 L7
   2 | main ( m : MainArgs ) {
   3 | runs = m . args . map ( f -> run ( [ str["gzip"] , str["--keep"] , str["--"] , f ] , unconsumedStderr : #suppress ) . status ) ;
   4 | m . stdout <- runs . map ( s -> «match» s { #ok -> str["compressed"] , _ -> str["gzip failed"] } ) ;
   5 | }
-== DESIGN.md [sec:ports] 9 L3
+== DESIGN.md [sec:ports] 10 L3
   2 | main ( m : MainArgs ) -> int {
   3 | r = seededRandom ( seed : 42₍10₎ ) ;
   4 | m . stdout <- ( 0₍10₎ ..< 4₍10₎ ) . map ( i -> str[${r . below ( 6₍10₎ ) + 1₍10₎}] ) ;
   5 | 0₍10₎
   6 | }
-== DESIGN.md [sec:ports] 10 L7
+== DESIGN.md [sec:ports] 11 L7
   1 | @foreign ( str["c"] , str["random"] ) cRandom : ( ) -> i64 «with» commutes ( #interchangeable ) ;
   6 | main ( m : MainArgs ) -> int {
   7 | m . stdout <- ( 0₍10₎ ..< 4₍10₎ ) . map ( i -> str[${cRandom ( )}] ) ;
   8 | 0₍10₎
   9 | }
-== DESIGN.md [sec:ports] 11 L21
+== DESIGN.md [sec:ports] 12 L21
   1 | orders : Utf8String ->? { total : rat , note : Utf8String | #none }
   2 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
   3 | owed ( «positional» id : Utf8String ) -> rat = orders [ id ] ?. total «else» ( #ioError | #notFound ) -> 0r

@@ -3,7 +3,7 @@
 //! top level"): each of the eight kinds the grammar's `Decl` takes is rejected with the row,
 //! the statement quoted, why the top level holds declarations, and the statement moved into
 //! `main` as code; a push also names its port, and an expression statement offers to keep its
-//! value or delete it.
+//! value or delete it, unless it pushes or emits inside.
 
 use zedc::rejection::Row;
 
@@ -185,6 +185,21 @@ fn an_expression_statement_at_the_top_level_is_rejected() {
             ]
         )
     );
+}
+
+/// An expression statement that pushes or emits inside, as a `for` whose body pushes
+/// (EXAMPLES.md "25. Algorithms" once wrote one at the top level), has an effect, so neither
+/// value repair holds: deleting it drops its pushes, and binding its value keeps nothing they
+/// do. Its one repair is the move into `main`.
+#[test]
+fn an_expression_statement_that_pushes_offers_only_the_move() {
+    for stmt in [
+        "for s in [\"ab\"] { hist[s.len] <- 1; };",
+        "for s in [\"ab\"] { if true { log <- s; }; };",
+        "for s in [\"ab\"] { emit s; };",
+    ] {
+        rejected_with(stmt, stmt, &[]);
+    }
 }
 
 /// `x with f(…);` at the top level attaches a facet to a collection, which is declaration

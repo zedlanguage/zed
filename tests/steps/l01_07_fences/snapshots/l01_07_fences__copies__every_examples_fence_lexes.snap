@@ -683,12 +683,14 @@ expression: "tokens_by_key(&fences::examples())"
  10 | m . stdout <- run :: frames . map ( f -> str[${f . todos :: card} " items"] ) ;
  11 | }
 == EXAMPLES.md [25. Algorithms] 1 L7
-  2 | hist : int ->? int «with» reducer ( ( + ) ) ;
-  3 | «for» s «in» words { hist [ s . len ] <- 1₍10₎ ; } ;
-  4 | histB = words . group ( s -> s . len ) . count ;
-  5 | cdf [ i «in» 0₍10₎ ..= maxLen ] = cdf [ i - 1₍10₎ ] + ( hist [ i ] «else» #notFound -> 0₍10₎ ) «with» cdf [ - 1₍10₎ ] = 0₍10₎ ;
-  6 | d [ i ] [ j ] = «if» a [ i ] == b [ j ] { d [ i - 1₍10₎ ] [ j - 1₍10₎ ] } «else» { 1₍10₎ + min ( d [ i - 1₍10₎ ] [ j ] , d [ i ] [ j - 1₍10₎ ] , d [ i - 1₍10₎ ] [ j - 1₍10₎ ] ) }
-  7 | «with» d [ - 1₍10₎ ] [ j «in» - 1₍10₎ ..< b :: len ] = j + 1₍10₎ , d [ i «in» 0₍10₎ .. ] [ - 1₍10₎ ] = i + 1₍10₎ ;
+  2 | main ( m : MainArgs ) {
+  3 | hist : int ->? int «with» reducer ( ( + ) ) ;
+  4 | «for» s «in» words { hist [ s . len ] <- 1₍10₎ ; } ;
+  5 | histB = words . group ( s -> s . len ) . count ;
+  6 | cdf [ i «in» 0₍10₎ ..= maxLen ] = cdf [ i - 1₍10₎ ] + ( hist [ i ] «else» #notFound -> 0₍10₎ ) «with» cdf [ - 1₍10₎ ] = 0₍10₎ ;
+  7 | d [ i ] [ j ] = «if» a [ i ] == b [ j ] { d [ i - 1₍10₎ ] [ j - 1₍10₎ ] } «else» { 1₍10₎ + min ( d [ i - 1₍10₎ ] [ j ] , d [ i ] [ j - 1₍10₎ ] , d [ i - 1₍10₎ ] [ j - 1₍10₎ ] ) }
+  8 | «with» d [ - 1₍10₎ ] [ j «in» - 1₍10₎ ..< b :: len ] = j + 1₍10₎ , d [ i «in» 0₍10₎ .. ] [ - 1₍10₎ ] = i + 1₍10₎ ;
+  9 | }
 == EXAMPLES.md [25. Algorithms] 2 L8
   2 | byVal = xs «as» ( i -> v ) «into» ( v -> i -> _ ) ;
   3 | pairs = «for» i -> v «in» xs where ( target - v ) «in» byVal :: domain { ( i , byVal [ target - v ] . where ( j -> j != i ) ) } ;

@@ -1,4 +1,4 @@
-// variant: // p*.bump(3);                   // ✗ `*.` call on a receiver that is not a state variable: p is a value binding — no next generation to write
+// variant: // w3      = p*.bump(3);         // ✗ `*.` call on a receiver that is not a state variable: p is a value binding — no next generation to write
 struct Counter { n: int, hi: int }
 
 Counter.tick() {                 // no declared return ⇒ the next receiver is the whole result
@@ -16,7 +16,7 @@ p       = Counter(n: 0, hi: 9);  // `.` is pure, so every spelling below is pure
 p2      = p.tick().tick();       //   T -> T chains by composition
 p3, was = p.bump(2);             //   two results, two targets — the non-OO spelling
 p4, w2  = bump(p, 2);            //   ≡ the same call, written without UFCS
-p*.bump(3);                   // ✗ `*.` call on a receiver that is not a state variable: p is a value binding — no next generation to write
+w3      = p*.bump(3);         // ✗ `*.` call on a receiver that is not a state variable: p is a value binding — no next generation to write
 
 run = loop {
   initial c = Counter(n: 0, hi: 9); // state receiver: updated every step, boundary at t = -1

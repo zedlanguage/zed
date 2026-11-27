@@ -24,9 +24,10 @@ fn every_unit_builds_or_names_its_layer() {
     // random numbers and of a foreign generator (SPEC-a108-interchangeable-ops) bring 216; the
     // sec:units fence of `buildFile` (SPEC-build-read-layers) and the two sec:ffi fences of a
     // packed struct and of integer handles (SPEC-packed-align, SPEC-ffi-int-handles) bring 219;
-    // the sec:ports fence of creating and removing directories (STUDY-dir-edit) brings 220.
+    // the sec:ports fence of creating and removing directories (STUDY-dir-edit) brings 220; the
+    // sec:ports fence of removing a file (SPEC-file-remove) brings 221.
     assert!(
-        built >= 23 && built + later == 220,
+        built >= 23 && built + later == 221,
         "built {built}, later {later}"
     );
 }

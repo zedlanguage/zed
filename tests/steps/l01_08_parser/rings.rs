@@ -9,7 +9,8 @@ use zedc::parse::{TOP, parse};
 #[test]
 fn every_fence_parses_first_at_its_recorded_ring() {
     let all = fences::all();
-    assert_eq!(all.len(), 234);
+    // 235 since the sec:ports fence of removing a file (SPEC-file-remove).
+    assert_eq!(all.len(), 235);
     let mut wrong = Vec::new();
     for f in &all {
         let tokens = lex_fence(&f.text).unwrap();

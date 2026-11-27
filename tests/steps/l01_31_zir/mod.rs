@@ -4,6 +4,9 @@
 
 mod bench;
 mod binary_forms;
+// The examples of the text form in DESIGN.md sec:ir, read from the spec in place.
+#[cfg(feature = "spec")]
+mod design_examples;
 mod fail_reader_messages;
 mod graphs;
 mod items;

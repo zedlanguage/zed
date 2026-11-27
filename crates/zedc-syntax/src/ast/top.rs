@@ -131,7 +131,10 @@ impl Builder<'_, '_> {
         if quotable {
             notes.push(note(format!("repair: `{moved}`")));
         }
-        if rule == "ExprStmt" {
+        // A statement with a push or `emit` anywhere inside, as a `for` whose body pushes, has
+        // an effect: deleting it drops the pushes, and binding its value keeps none of them, so
+        // its one repair is the move.
+        if rule == "ExprStmt" && !self.holds_push(d) {
             let e = self.span(self.kids(d)[0]);
             let value = &self.text[e.start..e.end];
             if quotable {
@@ -150,6 +153,23 @@ impl Builder<'_, '_> {
             message,
             notes,
         })
+    }
+
+    /// Whether node `n`'s subtree holds a push or an `emit`. A work list, not recursion, since
+    /// blocks nest as deep as the source does; O(nodes of the subtree), each visited once, as
+    /// a tree has no shared children.
+    fn holds_push(&self, n: usize) -> bool {
+        let mut work = vec![n];
+        while let Some(t) = work.pop() {
+            if matches!(
+                self.tree.name(t),
+                "WholePush" | "KeyedPush" | "AckPush" | "Emit"
+            ) {
+                return true;
+            }
+            work.extend_from_slice(self.kids(t));
+        }
+        false
     }
 
     /// The header of the unit's `main` as written, `main(m: MainArgs)` where it has none, and

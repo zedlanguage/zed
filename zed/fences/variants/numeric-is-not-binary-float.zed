@@ -49,5 +49,5 @@ d = v * t;                         // d::units == "m"
 // e = v + t;                      // ✗ Units that differ where an operation requires equal ones: m/s + s
 
 exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type
-// exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #untrusted taint reaches a #clean sink
+// bad = exec(db, userInput);      // ✗ Taint at a sink whose parameter does not take it: #untrusted taint reaches a #clean sink
 rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers
