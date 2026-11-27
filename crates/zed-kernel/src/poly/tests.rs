@@ -831,13 +831,17 @@ fn the_square_of_a_wide_index_is_exact() {
 
 #[test]
 fn the_product_takes_the_support_product_where_it_is_cheaper() {
-    // The shape of `(x + y) ^ k + x` at k = 640 with coefficients of about 256 bits, like its
+    // The shape of `(x + y) ^ k + x` at k = 1024 with coefficients of about 256 bits, like its
     // binomial ones, squared: the sparse product pays (k + 2) (k + 3) / 2 pairs of 4-word
     // coefficients, the dense one a span of about 2k^2 slots, and the support product about 3k
-    // sums. At k = 256 the sparse square was the faster (6.4 ms to 10.1 ms; the support
-    // product beat only the product of all (k + 2)^2 pairs, 14.5 ms); at k = 512 the support
-    // product, 26 ms to 45 ms (POLY-square-sparse-half, 2026-11-14).
-    let k = 640u128;
+    // sums. Measured by instructions (`crossover poly-support 4 2048 --exact`, 2026-11-27,
+    // POLY-support-cost-ranking), the support product does 1.719 times the fallback's work at
+    // k = 256, 2.038 at k = 512 and 1.102 at k = 724, and 0.613 at k = 1024; with
+    // SUPPORT_COST = 7.5 the product takes it from k = 724 (measured crossover 740). So k = 1024
+    // is a shape where it is both cheaper and taken, with a margin of 1.38 in k over the
+    // crossover. (k = 640 of the earlier test was below the crossover: the fallback is right
+    // there.)
+    let k = 1024u128;
     let r = 2 * k + 1;
     let wide = |i: u128| (BigInt::one() << 250u32) + BigInt::from(i);
     let mut terms: std::collections::BTreeMap<u128, BigInt> =

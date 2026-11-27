@@ -1077,9 +1077,16 @@ to 0.94 at width 16 and 0.69 to 1.40 at width 1, against 0.29 to 1.20 and 0.44 t
 `4`, `16` and `poly-support-gaps 256` the windows meet from 6.369 to 8.962, 41% wide (before 0.4%),
 worst 1.0818 (width 16, whose best alone is 1.0438); at 5.43 the worst was 2.34 (width 1) and
 2.04 (width 4). Up to `k` = 512 at widths 1 and 4 the support product never did less work than
-the sparse square. Not done: the expected number of rounds in `cost` in place of two. Test:
+the sparse square. Past 512 (`poly-support <w> 2048`, the `to` argument added for this): the
+support product does less work from `k` = 1024 at widths 1 and 4 (0.665, 0.613 of the
+instructions) and at 16 from 724 (0.587); at 7.5 it is taken from 724, 724 and 512 (measured
+crossovers 880, 740, 517), worst 1.237, 1.290 and 1.082. The per-width windows over 8 to 2048 no
+longer meet (10.318 to 10.426, 5.740 to 7.937, 5.266 to 6.166), so no one constant is best at all
+widths; a cost that grows with the coefficient width would close it (not done). Not done: the
+expected number of rounds in `cost` in place of two. Tests:
 `poly::tests::the_support_estimate_is_near_the_support_of_the_bench_squares` (fails on the mean
-of 32 at `k` = 350 and 450).
+of 32 at `k` = 350 and 450); `poly::tests::the_product_takes_the_support_product_where_it_is_cheaper`
+moved from `k` = 640, now below the 4-word crossover, to 1024.
 
 ### PRINT-below-whole, `zed-kernel/src/num/fast.rs` `PRINT_WHOLE` and `PRINT_HANDOFF`, measured 2026-11-12
 

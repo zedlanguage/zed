@@ -165,7 +165,13 @@ const SUPPORT: f64 = CHOICE_UNIT * SUPPORT_COST;
 /// 5.43 it was taken at 2.34 and 2.04 times the sparse square's instructions; the windows are
 /// 6.369 up (width 1), 5.740 up (4), 5.266 to 6.166 at 1.0438 and 6.166 to 8.962 at 1.0818
 /// (16), 3.669 up (gaps). They meet from 6.369 to 8.962, 41% wide, worst 1.0818 (width 16,
-/// where no value is below 1.0438); set inside it. Not done: the expected number of rounds in
+/// where no value is below 1.0438); set inside it. Past 512 (`k` to 2048, same run, the same
+/// day): the support product does less work from `k` 1024 at width 1 (0.665), 1024 at 4
+/// (0.613), and at 16 at 362 (0.924) and from 724 (0.587; 1.044 at 512); at 7.5 it is taken from 724 at widths 1 and 4 and from 512 at
+/// 16, worst 1.237, 1.290 and 1.082. The per-width windows no longer meet (10.318 to 10.426 at
+/// width 1, 5.740 to 7.937 at 4, 5.266 to 6.166 at 16), so no one constant is best at all
+/// three; 7.5 is inside the 4-word window and its worst is 1.290. A cost that grows with the
+/// coefficient width would close this. Not done: the expected number of rounds in
 /// `cost` in place of two, the row's second step.
 const SUPPORT_COST: f64 = 7.5;
 
