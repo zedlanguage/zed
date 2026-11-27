@@ -27003,26 +27003,39 @@ mod tests {
                 .remove(0)
         };
         let v = |n: &str| Ty::var(n.into());
-        // A variable that stands in one place prints `_`, which absorbs its union (DESIGN.md
-        // sec:diagnostics, "Types in a message"), so each variable here stands twice; the
-        // printed names are given in order of first place, `T` then `U`.
-        let named = Ty::tuple(vec![
-            Ty::set(list("Z")).union(&v("A")).union(&v("B")),
-            v("A"),
-            v("B"),
-        ]);
-        assert_eq!(named.to_string(), "(T | U | Z(int), T, U)");
+        // Variables printed by names a function around the text binds (`Scope::around`); a
+        // variable no signature binds would print `_` (DESIGN.md sec:diagnostics, "Types in a
+        // message").
+        let plain = |_: &Value| zed_kernel::types::Spelled {
+            text: None,
+            everywhere: true,
+        };
+        let names: [(Arc<str>, Arc<str>); 3] = [
+            ("A".into(), "A".into()),
+            ("Z".into(), "Z".into()),
+            ("L'".into(), "L'".into()),
+        ];
+        let named = Ty::set(list("L")).union(&v("A")).union(&v("Z"));
+        assert_eq!(named.text_named(false, &plain, &names), "A | L(int) | Z");
         // By its name `L`, which comes before `L'`; by its text it would not, `(` being
-        // above `'` (SPEC-union-order-recursive).
-        let primed = Ty::set(&list("L") | &list("L'"));
-        assert_eq!(primed.to_string(), "L(int) | L'(int)");
-        // Beside two marks, named between them.
-        let rec = Ty::set(list("Ta"));
-        let marked = Ty::tuple(vec![rec.union(&v("$1")).union(&v("$2")), v("$1"), v("$2")]);
-        assert_eq!(marked.to_string(), "(T | Ta(int) | U, T, U)");
+        // below `'` (SPEC-union-order-recursive).
+        let primed = Ty::set(list("L")).union(&v("L'"));
+        assert_eq!(primed.text_named(false, &plain, &names), "L(int) | L'");
+        // Beside two marks, the own variables of a signature that stand twice each, named
+        // between them in order of first place.
+        let mut marked = one_of(
+            v("A"),
+            Ty::tuple(vec![
+                Ty::set(list("Ta")).union(&v("A")).union(&v("B")),
+                v("B"),
+            ]),
+        );
+        marked.own = ["A".into(), "B".into()].into_iter().collect();
+        assert_eq!(marked.to_string(), "T -> (T | Ta(int) | U, U)");
         // Named before `T`, before the marks.
-        let early = Ty::tuple(vec![Ty::set(list("L")).union(&v("$1")), v("$1")]);
-        assert_eq!(early.to_string(), "(L(int) | T, T)");
+        let mut early = one_of(v("A"), Ty::set(list("L")).union(&v("A")));
+        early.own = ["A".into()].into_iter().collect();
+        assert_eq!(early.to_string(), "T -> L(int) | T");
         let rest = Ty::set(&KType::top() - &KType::atom("x")).union(&v("A"));
         assert!(rest.to_string().starts_with("(_ \\ #x)"), "{rest}");
     }
