@@ -310,6 +310,23 @@ mod tests {
         assert_eq!(tree.first_at_most(1, i64::MAX - 1), Some(2));
     }
 
+    /// The same tree as above, items [0, i64::MAX, -1, -1]: the range search keeps the bound
+    /// exact too, so item 1 at i64::MAX is reported at bound i64::MAX and left out below it.
+    #[test]
+    fn opposite_additions_keep_an_extreme_range_bound_exact() {
+        let mut tree = MinAdd::new(4);
+        tree.add(0, 3, -1);
+        tree.add(1, 1, i64::MAX);
+        tree.add(0, 1, 1);
+
+        let mut got = Vec::new();
+        tree.for_each_at_most(0, 3, i64::MAX, |i| got.push(i));
+        assert_eq!(got, [0, 1, 2, 3]);
+        got.clear();
+        tree.for_each_at_most(0, 3, i64::MAX - 1, |i| got.push(i));
+        assert_eq!(got, [0, 2, 3]);
+    }
+
     /// An empty range adds nothing, and a range past the end is refused with its message.
     #[test]
     fn an_empty_range_adds_nothing_and_one_past_the_end_panics() {
