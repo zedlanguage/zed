@@ -25821,7 +25821,7 @@ fn symbols_by_structure<'a>(rows: &'a [Con], syms: &[&'a Atom]) -> Vec<&'a Atom>
 /// from it, and holds only atoms inside `c`, which the step keeps. So at every step
 /// `(∃E. R1) ∧ R2` is `∃E. (R1 ∧ R2)`, and by induction over the steps a leaf's rows are
 /// `rows` with every atom but those it holds bound, kept atoms among the ones it holds. Read on
-/// its symbol (as [`linked_to`] and [`hull_from`] read them), they have the points of `rows`,
+/// its symbol (as [`linked_to`] and [`hull_from_known`] read them), they have the points of `rows`,
 /// as a leaf of [`by_halves`] has, by the same argument; so where both questions answer, the
 /// hulls are equal. A refusal may differ, since the rows asked about differ. Test:
 /// `a_kept_atom_passed_between_halves_gives_the_hulls_of_by_halves` (one kept atom over four
@@ -26047,15 +26047,15 @@ fn projected_each(rows: &[Con], syms: &[&Atom]) -> Vec<Option<Vec<Con>>> {
     out
 }
 
-/// The least and greatest values of a symbol over a formula, given a point `m` of it: the two
-/// sides [`hull_side`] finds. The code asks [`hull_from_known`]; the tests ask this.
+/// [`hull_from_known`] with no known side; the code asks [`hull_from_known`], the tests ask this.
 #[cfg(test)]
 fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Refusal> {
     hull_from_known(c, sym, m, None)
 }
 
-/// [`hull_from`], with the sides `known` gives taken without [`hull_side`] where the point `m`
-/// lies within them ([`KnownSide`]).
+/// The least and greatest values of a symbol over a formula, given a point `m` of it: the two
+/// sides [`hull_side`] finds, with the sides `known` gives taken without [`hull_side`] where
+/// the point `m` lies within them ([`KnownSide`]).
 fn hull_from_known(
     c: &Formula,
     sym: &Atom,
@@ -26621,8 +26621,8 @@ fn exact_at(c: &Formula, sym: &Atom, v: &Int) -> Option<bool> {
 /// The point gives a potential under which no edge has a negative reduced weight, so each
 /// side is one Dijkstra search (Dijkstra 1959, Problem 2, read 2026-11-21; his scan for the
 /// least node is replaced by a heap; see `lib.rs`): O(m log n) for m constraints over n
-/// atoms, against [`hull_from`]'s O(log d) questions of the whole group for each atom. The
-/// bounds are those [`hull_from`] finds, exact at any magnitude.
+/// atoms, against [`hull_from_known`]'s O(log d) questions of the whole group for each atom. The
+/// bounds are those [`hull_from_known`] finds, exact at any magnitude.
 fn difference_hulls(cons: &[&Con], m: &Model) -> Option<HashMap<Atom, IntervalSet>> {
     let end = |e: Option<Int>, inf: End| e.map_or(inf, |v| End::Fin(Num::from(&v)));
     Some(
@@ -26754,7 +26754,7 @@ fn substituted_difference_hulls(
 /// inequality has two atoms. The sum `z0 + … + z(k-1) >= 0`, alone or with bounds on its
 /// atoms, is one such forest.
 ///
-/// The hulls are exact, those [`hull_from`] finds. Each atom's bounds alone give it an
+/// The hulls are exact, those [`hull_from_known`] finds. Each atom's bounds alone give it an
 /// interval of integers, its box. For an inequality `Σ a_u·x_u + k >= 0` whose atoms other
 /// than `v` take any integers in intervals, the values of `v` it allows are those with
 /// `a_v·x_v + k + M >= 0`, where `M` is the sum of each other term's greatest value, `a_u`
@@ -28631,7 +28631,7 @@ struct PartBounds {
 /// ([`clusters`]), for [`products`] to ask the solver over. The cost is the elimination,
 /// which adds no terms, four shortest-path passes, and passes linear in the other rows and in
 /// each disjunction's disjuncts, O(m log n) for m rows over n atoms. Where every row is a
-/// difference constraint or a bound the bounds are the hulls [`hull_from`] finds.
+/// difference constraint or a bound the bounds are the hulls [`hull_from_known`] finds.
 ///
 /// Complexity tradeoff: with any other row a bound may be wider than the hull, or missing:
 /// one that needs two general rows at once on atoms that are both kept (from
@@ -28642,7 +28642,7 @@ struct PartBounds {
 /// conjunction or disjunction.
 /// Why: the hull of one atom of a general integer system is an integer program, and integer
 /// programming is NP-hard, so no method finds every hull in O(m log n) unless P = NP; each
-/// side by [`hull_from`] costs O(part). These bounds are a first try: where the goal is then
+/// side by [`hull_from_known`] costs O(part). These bounds are a first try: where the goal is then
 /// not proved, [`products`] asks the solver for each side of a factor not known to be the
 /// hull's, and its own tradeoff comment says what that costs. Test:
 /// `l01_38_presburger::ladder::a_bound_that_needs_two_general_rows_is_found_by_the_solver`.
