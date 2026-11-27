@@ -76,14 +76,30 @@
 //!
 //! Complexity tradeoff: the naive way keeps the values in an array: an addition to a range of
 //! `k` items costs O(k), and a search O(n). Used: the tree, O(log n) each, and O(n) space (4n
-//! nodes of two `i64` each), built in O(n).
+//! nodes of two `i128` each), built in O(n).
+//!
+//! Why `i128` at the nodes (FAIL-min-add-inner-node-overflow): the items are `i64`, but a
+//! node's `add` and `min` are sums of the additions kept at it and below it, without those
+//! kept above it, and so can leave `i64` while every item stays in it: `add(1, 1, i64::MAX)`,
+//! `add(0, 3, -1)`, `add(1, 1, 1)` on 4 items keeps the -1 at the root and puts `i64::MAX + 1`
+//! at the leaf of item 1, whose value is `i64::MAX` (test
+//! `tests::a_node_sum_past_i64_keeps_the_items_that_fit`). Bound: an addition is kept at the
+//! nodes of its range's canonical covering, whose ranges are disjoint, so it is kept at most
+//! once on any path from the root to a leaf. After `m` additions, each of size at most 2^63,
+//! the sum of `add` over any part of a path is at most `m·2^63` in size, so `|add[v]|` and
+//! the sum `A` of `add` over `v`'s strict ancestors are, and `|min[v]| <= 2^63 + m·2^63` (an
+//! item's start, at most 2^63, and the additions on one path below `v`). A search compares
+//! `min[v]` with `bound - A`, at most `2^63 + m·2^63` in size. All are below 2^127 while
+//! `m < 2^64 - 1`, more additions than a `u64` counts. Naive version: `i64` nodes, half the
+//! space, which overflowed on that case; the users (module note) keep small counts, so the
+//! cost is the space and a few instructions a node (bench `bench::min_add_takes_log_n`).
 
 /// The tree: `n` items, node 1 the root, node `v`'s children `2v` and `2v + 1`.
 #[derive(Clone, Debug)]
 pub struct MinAdd {
     n: usize,
-    min: Vec<i64>,
-    add: Vec<i64>,
+    min: Vec<i128>,
+    add: Vec<i128>,
 }
 
 impl MinAdd {
@@ -108,7 +124,7 @@ impl MinAdd {
 
     fn build(&mut self, v: usize, nl: usize, nr: usize, values: &[i64]) {
         if nl == nr {
-            self.min[v] = values[nl];
+            self.min[v] = i128::from(values[nl]);
             return;
         }
         let mid = nl + (nr - nl) / 2;
@@ -119,8 +135,18 @@ impl MinAdd {
 
     /// The least value of all the items, `None` when there are none. O(1): the root has no
     /// ancestors, so its `min` is the least value over its range, the whole.
+    ///
+    /// # Panics
+    ///
+    /// When the least item has left `i64` (the additions are the caller's to keep the items in
+    /// it), with the message "MinAdd::min: the least item, {v}, is not an i64".
+    #[track_caller]
     pub fn min(&self) -> Option<i64> {
-        (self.n > 0).then(|| self.min[1])
+        (self.n > 0).then(|| {
+            let v = self.min[1];
+            i64::try_from(v)
+                .unwrap_or_else(|_| panic!("MinAdd::min: the least item, {v}, is not an i64"))
+        })
     }
 
     /// The number of items.
@@ -157,8 +183,8 @@ impl MinAdd {
             return;
         }
         if lo <= nl && nr <= hi {
-            self.min[v] += d;
-            self.add[v] += d;
+            self.min[v] += i128::from(d);
+            self.add[v] += i128::from(d);
             return;
         }
         let mid = nl + (nr - nl) / 2;
@@ -176,14 +202,14 @@ impl MinAdd {
     }
 
     fn first_at(&self, v: usize, nl: usize, nr: usize, from: usize, bound: i128) -> Option<usize> {
-        if nr < from || i128::from(self.min[v]) > bound {
+        if nr < from || self.min[v] > bound {
             return None;
         }
         if nl == nr {
             return Some(nl);
         }
         // A later addition can bring a bound outside the i64 range back into it.
-        let below = bound - i128::from(self.add[v]);
+        let below = bound - self.add[v];
         let mid = nl + (nr - nl) / 2;
         self.first_at(2 * v, nl, mid, from, below)
             .or_else(|| self.first_at(2 * v + 1, mid + 1, nr, from, below))
@@ -229,7 +255,7 @@ impl MinAdd {
         bound: i128,
         f: &mut impl FnMut(usize),
     ) {
-        if hi < nl || nr < lo || i128::from(self.min[v]) > bound {
+        if hi < nl || nr < lo || self.min[v] > bound {
             return;
         }
         if nl == nr {
@@ -237,9 +263,10 @@ impl MinAdd {
             return;
         }
         // Exact, as in `first_at`: a later addition can bring a bound outside the i64 range
-        // back into it. No overflow in either search: a path has at most 64 nodes (4n nodes,
-        // n a usize), each subtracting one i64, so |bound| stays below 65 * 2^63 < 2^127.
-        let below = bound - i128::from(self.add[v]);
+        // back into it. No overflow in either search: the bound carried to `v` is the bound
+        // less the sum of `add` over `v`'s strict ancestors, below 2^127 in size (module note,
+        // "Why `i128` at the nodes").
+        let below = bound - self.add[v];
         let mid = nl + (nr - nl) / 2;
         self.each_at(2 * v, nl, mid, lo, hi, below, f);
         self.each_at(2 * v + 1, mid + 1, nr, lo, hi, below, f);

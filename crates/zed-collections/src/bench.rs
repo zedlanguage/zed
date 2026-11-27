@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use crate::fenwick::Fenwick;
 use crate::held::Held;
 use crate::intern::Interner;
+use crate::min_add::MinAdd;
 use crate::scaling;
 use crate::search::{first_true, gallop};
 use crate::{cartesian, intervals, period, sorted, spelling};
@@ -210,6 +211,33 @@ fn n_fenwick_changes_and_prefixes_take_n_log_n() {
             .map(|target| t.descend(0u64, |a, s| (a + s <= target).then_some(a + s)).0)
             .sum();
         assert_eq!(total, m * (m - 1) / 2);
+    });
+}
+
+/// n additions of 1 and -1 in turn to ranges spread over the items, each followed by a search
+/// for the first item at most 0 from a spread place, and the items at most 0 in the last
+/// range: O(log n) each (`min_add` module note), so n log n, with the nodes' sums in `i128`
+/// (FAIL-min-add-inner-node-overflow). Small instances:
+/// `min_add::tests::additions_and_searches_match_an_array` and
+/// `min_add::tests::large_additions_match_an_array`.
+#[test]
+fn min_add_takes_log_n() {
+    scaling::check("n range additions and searches of a MinAdd of n", N, |m| {
+        let mut t = MinAdd::new(m);
+        let (mut found, mut last) = (0usize, (0, 0));
+        for i in 0..m {
+            let a = (spread(i) % m as u64) as usize;
+            let b = (spread(i + m) % m as u64) as usize;
+            last = (a.min(b), a.max(b));
+            t.add(last.0, last.1, if i % 2 == 0 { 1 } else { -1 });
+            found += usize::from(
+                t.first_at_most((spread(i + 2 * m) % m as u64) as usize, 0)
+                    .is_some(),
+            );
+        }
+        let mut low = 0usize;
+        t.for_each_at_most(last.0, last.1, 0, |_| low += 1);
+        assert!(found > 0 && low <= m, "{found} found, {low} low");
     });
 }
 
