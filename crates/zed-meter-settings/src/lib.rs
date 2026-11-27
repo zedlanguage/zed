@@ -888,12 +888,12 @@ mod imp {
             return;
         }
         // `drrun -c <client> <dir> -- <this binary> <its arguments>`. The binary is named by the
-        // file `/proc/self/exe` links to, read here, since the new process is drrun's. The environment
-        // is this one, which holds the settings (the caller checks `in_effect` first), with the
-        // marker of a start again, so that the new image's `start` sets the name back and does
-        // not start again, and [`super::ZED_METER_UNDER_DRRUN`], so that it does not come here
-        // again. Each argument and variable came from a NUL-ended string, so `CString::new`
-        // drops none of them (`filter_map` above, `flat_map` below).
+        // file `/proc/self/exe` links to, read here, since the new process is drrun's. The
+        // environment is this one, which holds the settings (the caller checks `in_effect`
+        // first), with the marker of a start again, so that the new image's `start` sets the
+        // name back and does not start again, and [`super::ZED_METER_UNDER_DRRUN`], so that it
+        // does not come here again. Each argument and variable came from a NUL-ended string, so
+        // `CString::new` drops none of them (`filter_map` above, `flat_map` below).
         let Some(exe) = std::fs::read_link("/proc/self/exe")
             .ok()
             .and_then(|p| CString::new(p.into_os_string().into_encoded_bytes()).ok())
