@@ -1487,3 +1487,85 @@ pub(super) fn one_sum_of_atoms_in_no_product(k: usize) -> (Relation, Relation) {
     let g = rs.pop().expect("two relations");
     (rs.pop().expect("two relations"), g)
 }
+
+/// The products rung 2 takes of the factor premises (C2-chain: `difference_ends`'s bounds
+/// multiplied in pairs) give no wrong answer: on random premises over `a`, `b`, `c`, each
+/// boxed in `-h..=h` for an `h` from 1 to 3, with 0 to 4 more difference rows or bounds, and a
+/// goal `s·X·Y + t·Z >= k` with a product of two of the names (or a square), the answer is
+/// "proved" only when every point of the premises meets the goal and "refuted" only when one
+/// does not, both found by listing the points of the box (TESTS-audit-battery-gaps: the C2-chain
+/// oracle checked `difference_ends` and not the products). "Not proved" and "refused" are
+/// always allowed: rung 2 is sound, not complete, on products.
+#[test]
+fn the_products_of_chain_bounds_give_no_wrong_answer_on_random_premises() {
+    const NAMES: [&str; 3] = ["a", "b", "c"];
+    let (mut rng, seed) = zed_tests::instances::Rng::fresh(
+        "the_products_of_chain_bounds_give_no_wrong_answer_on_random_premises",
+    );
+    let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for case in 0..150 {
+        let h = [0; 3].map(|_| rng.int(1, 3));
+        let mut written: Vec<String> = (0..3)
+            .map(|i| format!("{} <= {n} && {n} <= {}", -h[i], h[i], n = NAMES[i]))
+            .collect();
+        // Each row as (x, y, k): `x - y >= k`, or `x >= k` when `y` is `None`.
+        let mut rows: Vec<(usize, Option<usize>, i64)> = Vec::new();
+        for _ in 0..rng.below(5) {
+            let x = rng.below(3);
+            let k = rng.int(-4, 4);
+            let y = match rng.below(3) {
+                0 => None,
+                d => Some((x + d) % 3),
+            };
+            written.push(match y {
+                None => format!("{} >= {k}", NAMES[x]),
+                Some(y) => format!("{} - {} >= {k}", NAMES[x], NAMES[y]),
+            });
+            rows.push((x, y, k));
+        }
+        let (x, y, z) = (rng.below(3), rng.below(3), rng.below(3));
+        let s = if rng.below(2) == 0 { 1 } else { -1 };
+        let t = rng.int(-2, 2);
+        let k = rng.int(-9, 9);
+        let premise = format!("ok(a, b, c) = {};", written.join(" && "));
+        let (op, abs_t) = if t < 0 { ('-', -t) } else { ('+', t) };
+        let goal = format!(
+            "ok(a, b, c) = {s} * {} * {} {op} {abs_t} * {} >= {k};",
+            NAMES[x], NAMES[y], NAMES[z]
+        );
+        // Whether a point of the premises misses the goal.
+        let mut misses = false;
+        for a in -h[0]..=h[0] {
+            for b in -h[1]..=h[1] {
+                for c in -h[2]..=h[2] {
+                    let v = [a, b, c];
+                    let holds = rows.iter().all(|&(x, y, k)| match y {
+                        None => v[x] >= k,
+                        Some(y) => v[x] - v[y] >= k,
+                    });
+                    if holds {
+                        misses |= s * v[x] * v[y] + t * v[z] < k;
+                    }
+                }
+            }
+        }
+        let got = kind(&rung2(&premise, &goal));
+        let wrong = match got {
+            "proved" => misses,
+            "refuted" => !misses,
+            _ => false,
+        };
+        assert!(
+            !wrong,
+            "case {case} (seed {seed}): {premise} to {goal}: {got}, a point of the premises {}",
+            if misses {
+                "misses the goal"
+            } else {
+                "meets it every time"
+            }
+        );
+        *counts.entry(got).or_default() += 1;
+    }
+    println!("{counts:?}");
+    assert!(counts.get("proved").copied().unwrap_or(0) > 0, "{counts:?}");
+}
