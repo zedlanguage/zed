@@ -28041,12 +28041,19 @@ mod tests {
                 .remove(0)
         };
         let v = |n: &str| Ty::var(n.into());
-        let named = Ty::set(list("L")).union(&v("A")).union(&v("Z"));
-        assert_eq!(named.to_string(), "A | L(int) | Z");
+        // A variable that stands in one place prints `_`, which absorbs its union (DESIGN.md
+        // sec:diagnostics, "Types in a message"), so each variable here stands twice; the
+        // printed names are given in order of first place, `T` then `U`.
+        let named = Ty::tuple(vec![
+            Ty::set(list("Z")).union(&v("A")).union(&v("B")),
+            v("A"),
+            v("B"),
+        ]);
+        assert_eq!(named.to_string(), "(T | U | Z(int), T, U)");
         // By its name `L`, which comes before `L'`; by its text it would not, `(` being
-        // below `'` (SPEC-union-order-recursive).
-        let primed = Ty::set(list("L")).union(&v("L'"));
-        assert_eq!(primed.to_string(), "L(int) | L'");
+        // above `'` (SPEC-union-order-recursive).
+        let primed = Ty::set(&list("L") | &list("L'"));
+        assert_eq!(primed.to_string(), "L(int) | L'(int)");
         // Beside two marks, named between them.
         let rec = Ty::set(list("Ta"));
         let marked = Ty::tuple(vec![rec.union(&v("$1")).union(&v("$2")), v("$1"), v("$2")]);
@@ -28079,10 +28086,10 @@ mod tests {
             one.union(&pair(int(), atom("a"))).to_string(),
             long.to_string()
         );
-        // The first component decides, by the order of a union: `int` before a variable,
-        // whose row has no kernel type.
+        // The first component decides, by the order of a union: `int` before `_`, which comes
+        // last; a variable standing in one place prints `_` (DESIGN.md sec:diagnostics).
         let var = pair(Ty::var("A".into()), atom("a")).union(&pair(int(), atom("b")));
-        assert_eq!(var.to_string(), "(int, #b) | (A, #a)");
+        assert_eq!(var.to_string(), "(int, #b) | (_, #a)");
         // Two payloads of one atom, by their components.
         let p = |x: Ty| Ty::atom_of("p", vec![x], BTreeMap::new());
         let pb = p(atom("b")).union(&p(atom("a")));
