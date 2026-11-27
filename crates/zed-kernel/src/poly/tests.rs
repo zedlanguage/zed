@@ -862,6 +862,31 @@ fn the_product_takes_the_support_product_where_it_is_cheaper() {
     assert_eq!(b.support_mul(&b, &plan, budget, &mut 0.0), None);
 }
 
+#[test]
+fn the_support_estimate_is_near_the_support_of_the_bench_squares() {
+    // The squares of `(x + y)^k + x` at radix `2k + 1` of `crossover poly-support-units`
+    // (POLY-support-cost-ranking): `3k + 3` indices, a third of them on the `2 (k + 1)` pairs
+    // of `x` with the other side, two pairs each. The draws are seeded by the indices alone
+    // (`SupportSetup::seed`), so coefficients of 1 draw what the bench's binomial ones draw.
+    // A mean of 32 draws gave 3 to 4 times the units spent at k = 350 and 450 (b22-kernel14,
+    // 2026-11-24); the median of group means estimates the bulk, which is at least
+    // `2k + 1` indices of `3k + 3`, and the floor `terms - 1` is `2k + 3`. So the estimate
+    // must lie within a factor of 1.5 of the support either way.
+    for k in [256u128, 304, 332, 350, 354, 362, 412, 450, 512] {
+        let r = 2 * k + 1;
+        let a = sum_at((0..=k).map(|i| (i + (k - i) * r, 1)).chain([(1, 1)]));
+        let s = a.sparse_mul(&a, true).len() as f64;
+        assert_eq!(s, (3 * k + 3) as f64, "k = {k}");
+        let plan = a.plan(&a).expect("packed keys");
+        let setup = a.support_setup(&a, &plan).expect("a setup");
+        let estimate = setup.estimate(&mut setup.seed());
+        assert!(
+            (s / 1.5..=s * 1.5).contains(&estimate),
+            "k = {k}: estimated {estimate} for a support of {s}"
+        );
+    }
+}
+
 /// The work the expansion of `term == 0` counts with no limit, and that identity's size.
 fn work_of(term: &Term, binders: &[&str]) -> (f64, u64) {
     let zero = lit(0);
