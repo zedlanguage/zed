@@ -2066,7 +2066,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if param || self.lines_out.contains(port) {
                     let bubbles = self.main_pushes.contains(&s.span);
                     self.push_carried(port, value.span, bubbles);
-                    self.pushed(&t, port, value.span, bubbles);
+                    self.pushed(&t, port, value.span, bubbles, None);
                 }
             }
             Frame::InferGiven(s) => self.infer_given(m, s),
@@ -16392,7 +16392,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 match other {
                     Some(v) => n.on = Ty::var(v.clone()),
                     None => {
-                        self.pushed(&value, &port, site, bubbles);
+                        self.pushed(&value, &port, site, bubbles, None);
                         continue;
                     }
                 }
@@ -17792,7 +17792,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     })
                     .map(|v| (v, on.clone()))
                     .collect();
-                self.pushed(&value.replace(&b), port, *site, *bubbles);
+                self.pushed(&value.replace(&b), port, *site, *bubbles, Some(&*binds));
                 Ty::empty()
             }
             NeedKind::InDomain { .. } => Ty::empty(),
@@ -21303,7 +21303,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// made `mod.rs` import `walk.rs`, which imports `mod.rs`, closing an import cycle of seven
     /// files (step S.1f, `tests/steps/s_01f_import_graph`; row
     /// FAIL-check-import-cycle-d493d34a3).
-    fn pushed(&mut self, t: &Ty, port: &str, span: Span, bubbles: bool) {
+    ///
+    /// `call` is the binds of the call whose arguments a waiting push is checked with
+    /// ([`NeedKind::Push`]); the note on a failing value reads a parameter no declaration
+    /// named through it, as the headline's type does.
+    fn pushed(&mut self, t: &Ty, port: &str, span: Span, bubbles: bool, call: Option<&Binds>) {
         // Only `#ioError`, with or without its fields, is lost; every other atom, loose or of a
         // named family, stays an error below.
         let io = any_payload("ioError");
@@ -21464,20 +21468,45 @@ impl<'t, 'a> Ck<'t, 'a> {
             // [z, w]; }` called as `k(5, 6, out: m.stdout)`, the note reads `this expression is
             // (0 | 1) -> T`" (the same paragraph; tests `fresh_names::the_declared_step_and_the_
             // note_print_the_written_name` and `…_a_function_around_binds_is_printed_apart`).
-            // A value holding both a written variable and one no declaration named keeps the
-            // body's type, `_` and all, as before this row (plan row
-            // MSG-push-note-mixed-written-unwritten binds the unnamed one alone).
-            // Cost: two lookups of one span, and one [`Ck::around`] of the recorded type,
-            // O(c log N) for its c class variables, which a message pays once.
-            let written = (self.seen.get(&span))
-                .and_then(|s| s.0.as_ref())
-                .is_some_and(|o| {
-                    let a = self.around(&o.var_facts());
-                    !a.named.is_empty() || !a.kept.is_empty()
-                });
-            let kept = (self.seen.get_mut(&span))
-                .filter(|_| !written)
-                .map(|s| s.0.replace(bound));
+            // A value holding both, as `[x, z, w]` in `h(positional z: T, positional w: T, x,
+            // out: Lines)` called as `h(5, 6, x: 7, out: m.stdout)`, takes both halves of the
+            // paragraph: each class no declaration named is read as the call reads it (its
+            // bind in `call`, else [`Ck::push_class`], as the headline's type is) and each
+            // named one is kept, so
+            // the note reads `(0 | 1 | 2) -> 7 | T`; before, the body's type was kept whole and
+            // the unnamed class printed `_`, which absorbs the union, `(0 | 1 | 2) -> _` (plan
+            // row MSG-push-note-mixed-written-unwritten). An unnamed class still open at the
+            // call is left as it is, the type the uses decide.
+            // Cost: two lookups of one span, one [`Ck::around`] of the recorded type, O(c log N)
+            // for its c class variables, and one find and one rebuild of the type for the
+            // unnamed ones, O(c log N + |t|), which a message pays once.
+            let recorded = (self.seen.get(&span)).and_then(|s| s.0.clone());
+            let shown_body = match recorded {
+                Some(o) => {
+                    let facts = o.var_facts();
+                    let a = self.around(&facts);
+                    let named: HashSet<&Arc<str>> =
+                        (a.named.iter().chain(&a.kept)).map(|(v, _)| v).collect();
+                    match named.is_empty() {
+                        true => Some(bound),
+                        false => {
+                            let mut binds = Binds::new();
+                            for v in facts.classes.iter().filter(|v| !named.contains(v)) {
+                                let k = match call.and_then(|c| c.get(v)) {
+                                    Some(k) => Some(k.clone()),
+                                    None => self.push_class(v).and_then(Result::ok),
+                                };
+                                if let Some(k) = k {
+                                    binds.insert(v.clone(), k);
+                                }
+                            }
+                            (!binds.is_empty()).then(|| o.replace(&binds))
+                        }
+                    }
+                }
+                None => Some(bound),
+            };
+            let kept = shown_body.and_then(|b| (self.seen.get_mut(&span)).map(|s| s.0.replace(b)));
             let mut notes = self.derive(&[span]);
             if let (Some(old), Some(s)) = (kept, self.seen.get_mut(&span)) {
                 s.0 = old;
@@ -21638,47 +21667,28 @@ impl<'t, 'a> Ck<'t, 'a> {
         if vars.is_empty() {
             return PushVars::Known(t.clone());
         }
-        let strings_or_other = Carrier::Str.bit() | OTHER;
         let mut known = Binds::new();
         let mut cut = Binds::new();
         let mut open = None;
         for &v in &vars {
-            let r = class_id(v)
-                .filter(|_| self.is_class(v))
-                .map(|k| self.find(k));
-            let Some(r) = r else {
-                // (a2): the unknown, which waits on no class. Read as no value, as an open
-                // class is, so that a value whose rest fails is still refused.
-                #[cfg(feature = "push-vars-sweep")]
-                panic!("PUSH-VARS-SWEEP: a push reached (a2) with the variable {v}");
-                #[allow(unreachable_code)]
-                {
-                    cut.insert(v.clone(), Ty::empty());
-                    continue;
+            match self.push_class(v) {
+                Some(Ok(k)) => {
+                    known.insert(v.clone(), k);
                 }
-            };
-            let c = &self.classes[r];
-            let own = c
-                .resolved
-                .as_ref()
-                .and_then(Ty::as_var)
-                .and_then(|w| class_id(w));
-            match &c.resolved {
-                // (a1), and a class with no type yet.
-                _ if c.resolved.is_none() || own.map(|k| self.find(k)) == Some(r) => {
-                    if c.mask & strings_or_other == 0 {
-                        known.insert(v.clone(), Ty::of_mask(c.mask));
-                    } else {
-                        open.get_or_insert(r);
+                Some(Err(r)) => {
+                    open.get_or_insert(r);
+                    cut.insert(v.clone(), Ty::empty());
+                }
+                None => {
+                    // (a2): the unknown, which waits on no class. Read as no value, as an open
+                    // class is, so that a value whose rest fails is still refused.
+                    #[cfg(feature = "push-vars-sweep")]
+                    panic!("PUSH-VARS-SWEEP: a push reached (a2) with the variable {v}");
+                    #[allow(unreachable_code)]
+                    {
                         cut.insert(v.clone(), Ty::empty());
                     }
                 }
-                // (b) cannot be: this type holds no variable.
-                Some(k) => {
-                    debug_assert!(k.vars.is_empty(), "the invariant at `Class::resolved`");
-                    known.insert(v.clone(), k.clone());
-                }
-                None => unreachable!("matched by the first arm"),
             }
         }
         let shown = t.replace(&known);
@@ -21691,6 +21701,36 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(r) => PushVars::Later(r, shown),
             None => PushVars::Unfollowed,
         }
+    }
+
+    /// How [`Self::push_vars`] reads the variable `v` of a pushed value: `None` for a variable
+    /// of no class (its case (a2)); `Ok` of the type the class has by now, or of its numbers'
+    /// carriers when it holds no string and no other value (case (a1) and a class with no type
+    /// yet); `Err` of the class's root when the class is open, so the push waits on it. O(log N)
+    /// in a union of N classes, one find.
+    fn push_class(&self, v: &Arc<str>) -> Option<Result<Ty, usize>> {
+        let r = class_id(v)
+            .filter(|_| self.is_class(v))
+            .map(|k| self.find(k))?;
+        let c = &self.classes[r];
+        let own = (c.resolved.as_ref())
+            .and_then(Ty::as_var)
+            .and_then(|w| class_id(w));
+        Some(match &c.resolved {
+            // (a1), and a class with no type yet.
+            _ if c.resolved.is_none() || own.map(|k| self.find(k)) == Some(r) => {
+                match c.mask & (Carrier::Str.bit() | OTHER) {
+                    0 => Ok(Ty::of_mask(c.mask)),
+                    _ => Err(r),
+                }
+            }
+            // (b) cannot be: this type holds no variable.
+            Some(k) => {
+                debug_assert!(k.vars.is_empty(), "the invariant at `Class::resolved`");
+                Ok(k.clone())
+            }
+            None => unreachable!("matched by the first arm"),
+        })
     }
 
     /// `sig` with the [`NeedKind::InDomain`] needs recorded on its parameters, whose
