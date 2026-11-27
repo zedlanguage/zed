@@ -47,6 +47,10 @@
 //! [`spelling`]: the spelling index of step L1.29e, the name near in spelling to each written
 //! name of a unit and visible at its site, for all of them together in `O(n log n)`.
 
+// A `#[thread_local]` static for the level count of the treap's drop (`treap.rs`, DROPPING),
+// which this nightly-pinned workspace (rust-toolchain.toml) can enable; the only feature here.
+#![feature(thread_local)]
+
 // Loaded for its num-bigint only (see Cargo.toml): nothing here names it, and a crate never named
 // is never loaded, so this dylib would carry its own copy of num-bigint beside zed-numtheory's.
 extern crate zed_numtheory as _;

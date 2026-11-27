@@ -46,8 +46,9 @@
 //! Seidel and Aragon's bound on the expected depth, `O(log n)` for every set of keys, holds for
 //! keys at distinct points of the draw (module [`crate::priority`]).
 //!
-//! The walks of the persistent operations keep stacks of their own; the in-place operations and
-//! the drop of a tree recurse, as deep as the tree and no deeper, so `O(log n)` expected.
+//! The walks of the persistent operations keep stacks of their own; the in-place operations
+//! recurse to [`DEEP`] calls and the drop of a tree to `DEEPEST` levels, each going on in a loop
+//! past that, so the stack needed does not depend on a tree's height.
 //!
 //! Module [`lazy`] splits and joins trees whose items hold maps still to apply below them, a
 //! lazy tag passed by argument, so that a whole tree moves by a map in `O(1)`.
@@ -91,17 +92,77 @@ pub type Tree<I> = Option<Arc<Node<I>>>;
 pub type Split<'a, I> = (Tree<I>, Option<&'a Arc<Node<I>>>, Tree<I>);
 
 // A tree is freed by the drop the compiler makes, which frees a node's children before the
-// node and so recurses as deep as the tree, `O(log n)` expected (`crate::priority`), as the
-// in-place operations below do. Complexity tradeoff: a `Drop` that freed the nodes in a loop,
-// the children whose last handle a node held kept on a vector, dropped a tree of any height
-// on a small stack; but it ran again for each node taken from the vector, and the loop of
-// the hull benchmark "the join of hulls, a row among the others" (zedc-presburger
-// `hull/rows.rs`, 16,384 joins of a hull of 16,384 rows, each freeing the path a change
-// copied) took 537,530,703 instructions under callgrind with it, about 47 M of them in
-// dropping nodes, against 522,945,510 with the drop the compiler makes, about 11 M in
-// dropping nodes, as the recursive treap that file had before spent (l41 and l42,
-// 2026-11-26, the profiling build, glibc's allocator). Tested by
-// `treap::tests::a_large_treap_is_dropped_on_a_small_stack`.
+// node, in place, with one count added: [`DROPPING`], the levels of `Node::drop` on this
+// thread's stack. Below [`DEEPEST`] levels a node frees its children by the compiler's drop of
+// their handles, a recursion; at `DEEPEST` it hands them to [`free_in_a_loop`], which frees the
+// rest with a vector of handles. So the stack holds at most `DEEPEST` levels of the drop,
+// whatever the tree's height (STACK-treap-drop-depth), and a tree in an item of a tree counts on
+// from the levels of the tree it is in, so nesting does not add levels. A panic out of a drop
+// leaves the count high, and later drops on that thread go to the loop sooner: slower, still
+// right.
+//
+// Complexity tradeoff: freeing every node by `Arc::into_inner` moves the node out of its
+// allocation before freeing it, and the hull benchmark "the join of hulls, a row among the
+// others" (zedc-presburger `hull/rows.rs`, 16,384 joins of a hull of 16,384 rows, each freeing
+// the path a change copied) took, under callgrind, 537,530,703 instructions with a `Drop` that
+// freed every node in a loop that way (l41 and l42, 2026-11-26) and 556,824,893 to 566,141,379
+// with a recursion of 51 levels on such moves (hm1, 2026-11-27, base aaceb2e10), against
+// 522,673,364 with the drop the compiler makes (STACK-treap-drop-depth). The count moves
+// nothing: it reads and writes a thread-local word twice for each node freed.
+
+/// The levels of `Node::drop` on this thread's stack (comment above). A `#[thread_local]`
+/// static, not `thread_local!`: the macro's `LocalKey` was reached through its accessor, three
+/// calls a node freed that were not inlined (objdump, 3a821478d), and cost the hull joins
+/// +5.99% to +7.56% in instructions; this static is read and written by one instruction each,
+/// `%fs`-relative on x86_64 Linux (objdump of a probe built by the pinned nightly-2026-11-18,
+/// 2026-11-27). It holds no value to drop, which the feature does not run.
+#[thread_local]
+static DROPPING: std::cell::Cell<u32> = std::cell::Cell::new(0);
+
+/// The levels of `Node::drop` past which a node's children are freed by [`free_in_a_loop`].
+///
+/// L. Devroye, "A note on the height of binary search trees", J. ACM 33(3):489-498, 1986,
+/// doi:10.1145/5925.5930, for the tree built "by standard insertions from a random permutation of
+/// 1, ..., n" (abstract), Theorem 5.1 (p. 494): "Let c = 4.31107 ... be the unique solution of the
+/// equation c log(2e/c) = 1, c ≥ 2. Then: A. H_n/log n → c in probability as n → ∞." The log is
+/// natural (`4.31107 · ln(2e / 4.31107) = 1.000`). A treap's shape is that of the binary search
+/// tree built by inserting its keys in order of falling priority, and priorities drawn
+/// independently put the keys in that order as a random permutation, so a treap has the height of
+/// that tree: about `4.31107 · ln 2^32 = 95.6` at `n = 2^32`, below 128. So a tree of keys of
+/// random priorities is freed with no vector, and only a tall tree (keys tied at one point of the
+/// draw, or chosen against it) reaches the loop. The theorem is a limit in probability, not a
+/// bound; the stack is bounded by the loop whatever the height, and the test
+/// `a_path_is_dropped_on_a_small_stack` drops paths of 100,000 nodes on 64 KiB.
+const DEEPEST: u32 = 128;
+
+impl<I: Item> Drop for Node<I> {
+    #[inline]
+    fn drop(&mut self) {
+        let depth = DROPPING.get();
+        if depth < DEEPEST {
+            DROPPING.set(depth + 1);
+            drop(self.left.take());
+            drop(self.right.take());
+            DROPPING.set(depth);
+        } else if self.left.is_some() || self.right.is_some() {
+            free_in_a_loop(self.left.take(), self.right.take());
+        }
+    }
+}
+
+/// Frees `left` and `right` with a vector of the handles still to free, a node at a time: the
+/// nodes freed here run `Node::drop` at `DEEPEST` levels or more, with no children left.
+#[cold]
+#[inline(never)]
+fn free_in_a_loop<I: Item>(left: Tree<I>, right: Tree<I>) {
+    let mut stack: Vec<Arc<Node<I>>> = left.into_iter().chain(right).collect();
+    while let Some(a) = stack.pop() {
+        if let Some(mut n) = Arc::into_inner(a) {
+            stack.extend(n.left.take());
+            stack.extend(n.right.take());
+        }
+    }
+}
 
 // Every function of this module is `#[inline]`. The release profile builds a crate as 16 codegen
 // units, with no inlining across them but local ThinLTO's of small functions, and a generic
