@@ -159,6 +159,38 @@ fn a_field_of_main_that_is_no_input_is_rejected() {
     assert!(got.contains("repair: `main::files = …`"), "{got}");
 }
 
+/// A clause's `main::stdin` or `main::args` that is no String is refused when the unit is
+/// checked, as the same input in a row's key is (plan row ROWS-unreachable-refusals). Before,
+/// the checker passed it, and its rows failed when they ran, with "the `CommandLine` port
+/// `m.args` is given as a String, one argument per line, not 3". Negative control: a String
+/// given there runs its row.
+#[test]
+fn a_clause_stdin_or_args_that_is_no_string_is_refused() {
+    // The key leaves out the input the clause gives: `{ args: "" }` gives no standard input,
+    // and the String key `""` gives no arguments.
+    for (port, read, key) in [
+        (
+            "stdin",
+            "m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\"",
+            "{ args: \"\" }",
+        ),
+        ("args", "m.args[0] else #outOfBounds -> \"\"", "\"\""),
+    ] {
+        let body = format!("main(m: MainArgs) {{\n  m.stdout <- {read};\n}}\n");
+        let got = rejected(&format!(
+            "{body}test with main::{port} = 3 {{ {key} -> \"3\\n\" }}\n"
+        ));
+        assert!(
+            got.contains(&format!("`main::{port}` does not take 3")),
+            "{got}"
+        );
+        let got = checks(&format!(
+            "{body}test with main::{port} = \"q\" {{ {key} -> \"q\\n\" }}\n"
+        ));
+        assert!(got.len() == 1 && got[0].ends_with(": ok"), "{got:?}");
+    }
+}
+
 #[test]
 fn a_port_given_twice_is_rejected() {
     let got = rejected(
