@@ -21458,8 +21458,26 @@ impl<'t, 'a> Ck<'t, 'a> {
             // the function's body found, which holds the parameter's class, so for the
             // derivation alone it is replaced by `bound` and then put back: the steps under it
             // (each name's own note) and every later message read the body's type as before.
-            // Cost: two lookups of one span.
-            let kept = (self.seen.get_mut(&span)).map(|s| s.0.replace(bound));
+            // A body type that holds a variable its declaration wrote a name for is kept
+            // whole: "A note on a value read after its function ended prints that function's
+            // written name too: with `k(positional z: T, positional w: T, out: Lines) { out <-
+            // [z, w]; }` called as `k(5, 6, out: m.stdout)`, the note reads `this expression is
+            // (0 | 1) -> T`" (the same paragraph; tests `fresh_names::the_declared_step_and_the_
+            // note_print_the_written_name` and `…_a_function_around_binds_is_printed_apart`).
+            // A value holding both a written variable and one no declaration named keeps the
+            // body's type, `_` and all, as before this row (plan row
+            // MSG-push-note-mixed-written-unwritten binds the unnamed one alone).
+            // Cost: two lookups of one span, and one [`Ck::around`] of the recorded type,
+            // O(c log N) for its c class variables, which a message pays once.
+            let written = (self.seen.get(&span))
+                .and_then(|s| s.0.as_ref())
+                .is_some_and(|o| {
+                    let a = self.around(&o.var_facts());
+                    !a.named.is_empty() || !a.kept.is_empty()
+                });
+            let kept = (self.seen.get_mut(&span))
+                .filter(|_| !written)
+                .map(|s| s.0.replace(bound));
             let mut notes = self.derive(&[span]);
             if let (Some(old), Some(s)) = (kept, self.seen.get_mut(&span)) {
                 s.0 = old;
