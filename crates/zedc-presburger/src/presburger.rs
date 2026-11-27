@@ -12392,7 +12392,8 @@ fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
 /// disjunct that its tests refute. So where its tests refute every disjunct without a point,
 /// in every order, the parts it leaves, and the hulls read from them, are the same in every
 /// order. Not proved by this argument: that a disjunct without a point that some order's tests
-/// refute is refuted in every order (proved another way below, by [`content_order`]). `learn`'s implied bounds and the points found, and so which
+/// refute is refuted in every order (proved another way below, by [`content_order`]).
+/// `learn`'s implied bounds and the points found, and so which
 /// disjuncts reach `settle`, depend on the order of the disjunctions, and `settle` does not
 /// refute every disjunct without a point (a disjunct `point_with` finds no point for and
 /// `settle` leaves is kept, `live_held` false). Measured: the s22 reverse-order tests, 0 boxes
@@ -13340,7 +13341,8 @@ impl<'a> Unit<'a> {
 /// round ([`drop_by_bounds`], `implied`, [`refuted_by_links`], [`SlackIndex`], [`learn`],
 /// [`point_with`], [`search_by_halves`], `settle`) reads their constraints and disjunctions,
 /// and the ids they are named by ([`Parts::id`]) are only looked up in sets and memos, never
-/// compared or iterated (every `.id()` read, 2026-11-27). So swapping two of them leaves the round's work the same up to that swap, and
+/// compared or iterated (every `.id()` read, 2026-11-27). So swapping two of them leaves the
+/// round's work the same up to that swap, and
 /// both orders give the same answer, written in the same order. `settle` gives the next
 /// round's parts, which this function orders again, so by induction on the rounds the probe's
 /// answer, `None`, or its refusal is the same in every written order. Each of the four sources
