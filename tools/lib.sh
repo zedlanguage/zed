@@ -108,32 +108,104 @@ piece_tests() {
 # benchmarks becomes a piece of its own, <its name before the first ::>::<test> running
 # `--exact <test>`, and the rest of it, if any test is left, a correctness piece that skips them:
 # by `--skip bench::`, which libtest matches anywhere in a name, or, in a piece that runs with
-# --exact, where a skip must be a whole name, by a `--skip` of each.
+# --exact, where a skip must be a whole name, by a `--skip` of each. A benchmark two pieces of
+# one binary hold becomes one bench piece, at the first.
+#
+# The work is one awk for the whole table, and one listing of each binary: the shell loop writes
+# each binary's listing once, before the first piece that runs it, as a line `\001B <binary>` and
+# the binary's own `--list --format terse` output, then each piece as `\001P <piece>`; the awk
+# keeps each binary's tests and splits each piece as it comes. Until TOOL-split-benchmarks-forks
+# (2026-11-27) each piece of a binary with benchmarks started piece_tests' awk and two to four
+# greps, seds and trs, about 3.4 ms a piece: `run_tests.sh --list` took 48 s at load 61 with
+# about 2,000 such pieces (nolock1, 2026-11-19). A listing line never starts with \001, so a
+# marker cannot be taken for a test, and the `echo` after each listing ends a last line that has
+# no newline, so the next marker starts a line of its own.
+# Complexity tradeoff: a piece with --exact finds its tests by name in a hash table of its binary's
+# tests, O(k log k) for its k names; any other piece scans its binary's T tests, O(T) per piece, as
+# piece_tests does and as libtest itself does when it runs the piece (it applies its filters to its
+# whole list), so the split costs no more than the runs it plans. A substring index would make
+# the scan sublinear, but the filters are a few per piece and T is at most about 2,000, so the
+# scan is below a millisecond a piece in awk, against 3.4 ms a piece of forks before.
+# Test: tools/test_run_tests.sh warm (each kind of piece, one listing a binary, and as many
+# processes for 301 pieces as for 6).
 split_benchmarks() {
-  local group step name dir bin args tests t skips
-  local -A seen
+  local group step name dir bin args
+  local -A listed
   while read -r group step name dir bin args; do
-    list_binary "$bin"
-    tests=
-    [[ ${test_list[$bin]} != *bench::* ]] || tests=$(piece_tests "$bin" $args)
-    if [[ $tests != *bench::* ]]; then
-      echo "test $group $step $name $dir $bin${args:+ $args}"
-      continue
+    if [ -z "${listed[$bin]}" ]; then
+      listed[$bin]=1
+      printf '\001B %s\n' "$bin"
+      "$bin" --list --format terse </dev/null 2>/dev/null
+      echo
     fi
-    if printf '%s\n' "$tests" | grep -qv 'bench::'; then
-      if [[ " $args " == *" --exact "* ]]; then
-        skips=$(printf '%s\n' "$tests" | grep 'bench::' | sed 's/^/ --skip /' | tr -d '\n')
-        echo "test $group $step $name $dir $bin${args:+ $args}$skips"
-      else
-        echo "test $group $step $name $dir $bin${args:+ $args} --skip bench::"
-      fi
-    fi
-    for t in $(printf '%s\n' "$tests" | grep 'bench::'); do
-      [ -z "${seen[$bin $t]}" ] || continue
-      seen[$bin $t]=1
-      echo "bench $group $step ${name%%::*}::$t $dir $bin --exact $t"
-    done
-  done
+    printf '\001P %s\n' "$group $step $name $dir $bin${args:+ $args}"
+  done | awk '
+    # The tests of each binary: tests[bin, i] for i = 1 .. count[bin], in the order listed, and
+    # at[bin, name] = i.
+    # The markers are compared as strings, not as a regular expression with an octal escape, which
+    # not every awk reads (Colab'"'"'s default awk is mawk).
+    BEGIN { MB = "\001B "; MP = "\001P " }
+    substr($0, 1, 3) == MB { cur = substr($0, 4); count[cur] = 0; next }
+    substr($0, 1, 3) == MP { split_piece(substr($0, 4)); next }
+    /: test$/ && cur != "" {
+      name = substr($0, 1, length($0) - 6)
+      tests[cur, ++count[cur]] = name
+      at[cur, name] = count[cur]
+      next
+    }
+    function has(t, s) { return exact ? t == s : index(t, s) > 0 }
+    function split_piece(line,    f, nf_, i, j, k, t, nfil, nskip, filter, skip, m, mt, idx, sel, bin, bench, plain, out, pre) {
+      nf_ = split(line, f, " ")
+      bin = f[5]
+      exact = 0; nfil = 0; nskip = 0
+      for (i = 6; i <= nf_; i++) {
+        if (f[i] == "--exact") exact = 1
+        else if (f[i] == "--skip") skip[++nskip] = f[++i]
+        else filter[++nfil] = f[i]
+      }
+      # The tests the piece runs, in the binary'"'"'s order, as libtest selects them.
+      m = 0
+      if (exact && nfil) {
+        for (i = 1; i <= nfil; i++)
+          if ((bin, filter[i]) in at && !((bin, filter[i]) in idx)) idx[bin, filter[i]] = at[bin, filter[i]]
+        k = 0
+        for (t in idx) mt[++k] = idx[t]
+        # Insertion sort of the k indices: k is the number of names the piece gives.
+        for (i = 2; i <= k; i++) { t = mt[i]; for (j = i - 1; j >= 1 && mt[j] > t; j--) mt[j + 1] = mt[j]; mt[j + 1] = t }
+        for (i = 1; i <= k; i++) {
+          t = tests[bin, mt[i]]
+          for (j = 1; j <= nskip; j++) if (has(t, skip[j])) break
+          if (j > nskip) sel[++m] = t
+        }
+      } else {
+        for (i = 1; i <= count[bin]; i++) {
+          t = tests[bin, i]
+          for (j = 1; j <= nfil; j++) if (has(t, filter[j])) break
+          if (nfil && j > nfil) continue
+          for (j = 1; j <= nskip; j++) if (has(t, skip[j])) break
+          if (j <= nskip) continue
+          sel[++m] = t
+        }
+      }
+      bench = 0; plain = 0
+      for (i = 1; i <= m; i++) if (index(sel[i], "bench::")) bench++; else plain++
+      if (!bench) { print "test " line; return }
+      if (plain) {
+        if (exact) {
+          out = "test " line
+          for (i = 1; i <= m; i++) if (index(sel[i], "bench::")) out = out " --skip " sel[i]
+          print out
+        } else print "test " line " --skip bench::"
+      }
+      pre = f[3]
+      if ((i = index(pre, "::"))) pre = substr(pre, 1, i - 1)
+      for (i = 1; i <= m; i++) {
+        t = sel[i]
+        if (!index(t, "bench::") || (bin, t) in seen) continue
+        seen[bin, t] = 1
+        print "bench " f[1] " " f[2] " " pre "::" t " " f[4] " " bin " --exact " t
+      }
+    }'
 }
 
 # features_of <cargo tree options>: each package of the selection as `<package> [<features>]`, one
