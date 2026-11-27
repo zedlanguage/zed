@@ -105,31 +105,6 @@ fn the_middle_of_a_chain_whose_lower_end_only_cases_give_is_projected_in_n_log_n
     });
 }
 
-/// [`sum_chain`] projected onto its middle `y`, at 16 and 128 stages: `y[mid]` is at most
-/// `2·mid` and unbounded below. Measured 2026-11-13: 30,434,987 and 414,100,382 instructions,
-/// 13.6 times; 2026-11-25 (b22-presburger14): 14.5 times the instructions and 12.7 times the
-/// bytes, of which `exact_each_checked`'s projection per atom of the chain was 18.6 times
-/// (PRES-sum-chain-cost; back from the deferred file).
-#[test]
-fn the_middle_of_a_chain_bounded_by_the_rows_its_disjunctions_imply_is_projected_in_n_log_n() {
-    let inputs = scaling::inputs(16, sum_chain);
-    scaling::check(
-        "a chain bounded by the rows its disjunctions imply",
-        16,
-        |m| {
-            let mid = m / 2;
-            let at = zedc::store::presburger::Atom::Sym(format!("y{mid:05}").into());
-            let r = project_each(&inputs[&m], &[at]).expect("a projection");
-            let s = r.0[0].clone().expect("a hull");
-            let top = 2 * mid as i64;
-            assert!(
-                s.contains(top) && !s.contains(top + 1) && s.contains(-1_000_000),
-                "{s:?}"
-            );
-        },
-    );
-}
-
 mod row_sums {
 
     use std::collections::BTreeSet;

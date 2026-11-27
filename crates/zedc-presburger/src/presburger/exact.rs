@@ -3786,8 +3786,9 @@ fn row_sends(terms: &[(usize, &Int)], k: &Int, doms: &[Ends]) -> Vec<Ends> {
 /// that shows only past their box of values.
 // Complexity tradeoff: [`projected`] for each atom eliminates the others, O(r) each and O(r²)
 // for the r rows of a path of `wide_pairs`, and O(r·a) for the `a` atoms of the chain
-// `y[i + 1] <= y[i] + x[i]` of `l01_38_presburger::disj_groups::sum_chain` (18.6 times the
-// instructions at 8 times its length in `exact_each_checked`, b22-presburger15). Used: two
+// `y[i + 1] <= y[i] + x[i]` of `sum_chain` (18.6 times the instructions at 8 times its length
+// in `exact_each_checked`, b22-presburger15; the builder and its bench are deferred until the
+// solver's part of PRES-sum-chain-cost is fixed, in the file that row names). Used: two
 // passes over each tree, a message each way on each row, prefix and suffix meets at each atom,
 // O(t) in all for t terms; rows of other forms fall back to [`star`] and [`projected`].
 fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, IntervalSet>>, Refusal> {
