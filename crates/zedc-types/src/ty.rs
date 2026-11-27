@@ -20190,6 +20190,12 @@ async fn refused_cover<'m>(
             true => v,
             false => Arc::from(v.rsplit_once('\'').map_or(v.as_ref(), |(w, _)| w)),
         };
+        // `v` as the arrow prints it ([`arrow_text_naming`]): right after the arrow, and after
+        // the types `bound` writes.
+        let (arrow, named) = arrow_text_naming(written, &written.arrows[i], &names, &v);
+        let bound = text_at(&t, q, &c.cx.borrow());
+        let first = named.text(0);
+        let v = named.text(bound.matches(defs::VARS).count());
         let place = match places {
             Places { taken: 1.., .. } => format!(
                 "`{v}` stands where the arrow takes values of it inside a function type, which \
@@ -20205,10 +20211,8 @@ async fn refused_cover<'m>(
             ),
         };
         format!(
-            "the arrow `{}` takes it only with `{v}` bound to `{}`, values of more than one \
-             carrier, but a call fixes `{v}` to one carrier, and {place}",
-            arrow_text(written, &written.arrows[i], &names),
-            text_at(&t, q, &c.cx.borrow())
+            "the arrow `{arrow}` takes it only with `{first}` bound to `{bound}`, values of more \
+             than one carrier, but a call fixes `{v}` to one carrier, and {place}"
         )
     } else if let Some((i, j)) = free {
         format!(
@@ -20282,6 +20286,109 @@ fn text_at(t: &Ty, q: &Sig, cx: &Cx) -> String {
 /// arrow of an overload of `n`). Each variable of `names` ([`Cx::names`]) is printed by the
 /// name given with it.
 fn arrow_text(s: &Sig, a: &Arrow, names: &[(Arc<str>, Arc<str>)]) -> String {
+    let one = arrow_sig(s, a);
+    match names.is_empty() {
+        true => Ty::func(Arc::new(one)).to_string(),
+        false => one.text_named(names),
+    }
+}
+
+/// How a clause after a quoted type names a variable of it ([`arrow_text_naming`]): by the
+/// mark the type wrote for it, which [`defs::name_vars`] names as the type names it
+/// ([`defs::mention`]), or, where the type is finished already or wrote no mark for it, by
+/// `name`.
+struct Mention {
+    key: Option<Arc<str>>,
+    name: Arc<str>,
+}
+
+impl Mention {
+    /// The mention's text in a clause that writes `back` types ([`defs::VARS`]) between the
+    /// quoted type and itself.
+    fn text(&self, back: usize) -> String {
+        match &self.key {
+            Some(key) => defs::mention(back, key, &self.name),
+            None => self.name.to_string(),
+        }
+    }
+}
+
+/// [`arrow_text`], with how a clause after it names the variable `v` of `s`, which the arrow
+/// holds (PRINT-headline-note-same-name). Before, the clause wrote the program's name for `v`
+/// as a plain word, and inside a message the arrow's variable, named apart from every word of
+/// the message ([`defs::name_vars`]), skipped it: "the arrow `(x: U, y: U) -> U for U in …`
+/// takes it only with `T` bound to …". Now, inside a message, the clause writes a mention of
+/// the mark the arrow's text wrote for `v` ([`Scope::capture`]), named as the arrow names it.
+/// Outside a message the arrow is finished here as [`write_parts`] finishes a text alone, with
+/// the mention after it in the same text, so that it is named in the same pass, and the two
+/// are split again at the last line break, the one put before the mention, since the name the
+/// mention is written as holds none. `v`'s
+/// program name stands where `v` has no mark: printed `_`, by a name given outside the text
+/// (`names`), or not printed at all. Cost: that of [`arrow_text`], plus one lookup per
+/// signature opened.
+fn arrow_text_naming(
+    s: &Sig,
+    a: &Arrow,
+    names: &[(Arc<str>, Arc<str>)],
+    v: &Arc<str>,
+) -> (String, Mention) {
+    let one = arrow_sig(s, a);
+    let local = defs::local();
+    let mut scope = Scope::around(Around {
+        named: names,
+        ..Around::default()
+    });
+    scope.capture = Some((v.clone(), None));
+    let mut text = String::new();
+    match names.is_empty() {
+        true => Ty::func(Arc::new(one)).write(&mut text, &mut scope),
+        false => one.write(&mut text, &mut scope),
+    }
+    let mut mention = Mention {
+        key: None,
+        name: v.clone(),
+    };
+    match scope.capture.take().and_then(|(_, slot)| slot) {
+        Some(VarSlot::Name(n)) => match n.strip_prefix(defs::VAR) {
+            Some(key) => mention.key = Some(key.into()),
+            None => mention.name = n,
+        },
+        Some(VarSlot::Free(_)) => {}
+        // Bound outside the text, by the name given with it.
+        None => {
+            if let Some((_, n)) = names.iter().find(|(w, _)| w == v) {
+                mention.name = n.clone();
+            }
+        }
+    }
+    if local.is_some() {
+        // Alone: finished as [`write_parts`] finishes a text, the mention named with it. A
+        // mention of no mark is left out, so it is no word the arrow's names skip.
+        let marked = mention.key.is_some();
+        if marked {
+            text.push('\n');
+            text.push_str(&mention.text(0));
+        }
+        let lifted = defs::lift(&mut [&mut text], &|w| scope.bound.contains(w));
+        if marked {
+            let at = text.rfind('\n').expect("the line break is kept");
+            mention.name = text[at + 1..].into();
+            mention.key = None;
+            text.truncate(at);
+        }
+        let mut out = String::new();
+        for (name, body) in &lifted {
+            defs::declare(&mut out, name, body).expect("a String takes any text");
+        }
+        out.push_str(&text);
+        text = out;
+    }
+    (text, mention)
+}
+
+/// The signature of the arrow `a` of `s` alone, with the bounds and own variables of `s` that
+/// it holds ([`arrow_text`]).
+fn arrow_sig(s: &Sig, a: &Arrow) -> Sig {
     let mut vs = Vars::default();
     a.params.iter().for_each(|p| p.vars_in(&mut vs));
     a.result.vars_in(&mut vs);
@@ -20308,10 +20415,7 @@ fn arrow_text(s: &Sig, a: &Arrow, names: &[(Arc<str>, Arc<str>)]) -> String {
         facts: Facts::default(),
     };
     one.note_held();
-    match names.is_empty() {
-        true => Ty::func(Arc::new(one)).to_string(),
-        false => one.text_named(names),
-    }
+    one
 }
 
 /// Whether arrows of `sas` together cover `qa`, as rule 6 of sec:type_resolution types a call:
@@ -24491,6 +24595,13 @@ struct Scope {
     marks: HashMap<Arc<str>, usize>,
     /// The number of the next mark [`Scope::mark`] makes.
     next_mark: usize,
+    /// A variable whose slot the text's first signature to bind it gives it ([`Scope::open`]),
+    /// once that signature has opened, so that a clause after the text can name the variable as
+    /// the text prints it ([`arrow_text_naming`]). The first opening is kept: the second walk
+    /// of [`write_text`] opens the signature again with the same marks, since it starts from
+    /// the same count, and a signature inside it that binds the name again binds another
+    /// variable.
+    capture: Option<(Arc<str>, Option<VarSlot>)>,
 }
 
 /// What a message knows of the type variables around a text it prints (DESIGN.md
@@ -24568,6 +24679,7 @@ impl Default for Scope {
             marked: HashSet::new(),
             marks: HashMap::new(),
             next_mark: 0,
+            capture: None,
         }
     }
 }
@@ -24858,6 +24970,12 @@ impl Scope {
             opened.push(left.clone());
         }
         self.left_opened.push(opened);
+        if let Some((v, None)) = &self.capture
+            && (sig.bounds.contains_key(v) || sig.own.contains(v))
+        {
+            let slot = self.slot(v).cloned();
+            self.capture.as_mut().expect("matched above").1 = slot;
+        }
         out
     }
 
