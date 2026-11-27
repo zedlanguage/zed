@@ -637,12 +637,140 @@ fn scaled(q: &[(u64, BigInt)], x: &BigInt, s: u64) -> BigInt {
 /// is not done; charging each unit its proved count of passes, 12, would also remove most of
 /// it, at the price of sending to the chain, O(t^3) evaluations, inputs the branch and bound
 /// finishes between `chain_ends(t) / 12` and `chain_ends(t)` units.
+///
+/// The bound from above (plan row ROOTS-dense-cluster-constant, cross-review
+/// XR-lazy-and-kernel-batch-1 round 1). On `(x - 2) … (x - 65)` 1,152 of the 1,293 intervals
+/// popped (89%) lay above the largest root, between 66 and Cauchy's bound `1 + max |c|` of 306
+/// bits, where the monomial form's interval test fails by the cancellation of the alternating
+/// coefficients (Gemini's `verify_req2`, rerun by the orchestrator): the cluster bound never
+/// counted that work. So once the units spent reach [`HORNER_COST`]` D^2 / t`, the cost of one
+/// test of [`positive_from`] in units, the least power of 2 past every root and then the least
+/// integer `u` past them are found by that test ([`horner_bound`]), and the intervals are cut to
+/// `u - 1`. Ski rental: the test is bought once the branch and bound has spent what one test
+/// costs, so the whole is at most about twice the cheaper of the two on every input whose
+/// bound search runs a few tests. Sparse inputs of high degree are left as they were: the
+/// trigger needs `spent t >= HORNER_COST D^2` and the cap of [`horner_bound`] `D <= B`, and
+/// `roots_are_linear_in_the_number_of_terms` (`t = D = 8192`) finishes in 34 units (test
+/// `the_bound_from_above_leaves_sparse_inputs_as_they_were`).
 fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigInt> {
+    positive_roots_by(p, a, b, Horner::Built).0
+}
+
+/// When [`positive_roots_by`] runs [`horner_bound`]: never, at its first interval, or as built,
+/// once `spent t >= HORNER_COST D^2`. The first two are for `crossover roots-horner`, which
+/// measures [`HORNER_COST`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Horner {
+    Off,
+    AtStart,
+    Built,
+}
+
+/// The cost of one test of [`positive_from`] on a polynomial of degree `D`, `D (D + 1) / 2`
+/// products of a coefficient by `u` and sums, in units of the branch and bound of
+/// [`positive_roots`] per term (a unit is at most 12 passes of `t` products): the constant `C`
+/// of the trigger `spent t >= C D^2`. Measured by `crossover roots-horner` (zed-benches), on
+/// the clusters `(x - 2) … (x - k - 1)`, `k` from 8 to 128: every `C` from 0 to 6.56 gives a
+/// worst ratio of 1.00 to the cheaper of the two, and the worst ratio rises past it (2.08 at
+/// 6.6, 9.9 past 33.6; local, load 12.5 to 14.7, 2026-11-27). 1, the value of the ski-rental
+/// argument at [`positive_roots`], is inside that range.
+const HORNER_COST: f64 = 1.0;
+
+/// The units [`horner_bound`] charges for one test of [`positive_from`]: `D (D + 1) / 2`
+/// products and sums, in groups of `t`, each group under one pass of a unit.
+fn horner_units(d: u64, t: usize) -> u64 {
+    (d * (d + 1) / 2).div_ceil(t as u64).max(1)
+}
+
+/// Whether `p(x)` has the sign of its leading coefficient at every real `x >= u`, shown by the
+/// coefficients of `p(u + y)` in `y`: each of that sign or 0, and the constant term not 0
+/// (Budan's test of the shift by `u`; with them so, `p(u + y)` for `y >= 0` is a sum of terms of
+/// one sign, the constant term among them, so not 0). Ruffini's scheme: pass `i` adds `u` times
+/// each coefficient into the one below it, from the top down to `i`, and leaves the `i`-th
+/// coefficient of `p(u + y)` final, so the test stops at the first of the wrong sign.
+/// `D (D + 1) / 2` products of a coefficient by `u` at most; every number is a partial sum of
+/// `sum |c_k| (1 + u)^k`, of at most `B + D bits(u + 1) + bits(t)` bits for coefficients of `B`
+/// bits.
+fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
+    #[cfg(test)]
+    tests::HORNER_TESTS.with(|n| n.set(n.get() + 1));
+    let (d, lead) = p.last().expect("terms");
+    let d = usize::try_from(*d).expect("a degree under the cap");
+    let flip = lead.is_negative();
+    let mut c = vec![BigInt::zero(); d + 1];
+    for (e, v) in p {
+        c[*e as usize] = if flip { -v } else { v.clone() };
+    }
+    for i in 0..=d {
+        for j in (i..d).rev() {
+            let add = u * &c[j + 1];
+            c[j] += add;
+        }
+        if c[i].is_negative() || (i == 0 && c[i].is_zero()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// The least integer `u >= 2` with [`positive_from`]`(p, u)`, if it is found below `hi` under
+/// the cap: the powers of 2 from 2 up to the first that passes, then the bisection between it
+/// and the one before (the test passes at every point above one where it passes: `p(u' + y) =
+/// p(u + ((u' - u) + y))`, a polynomial of coefficients of one sign taken at a shift `u' - u >=
+/// 0`, keeps them so). Each root of `p` above 1 is then at most `u - 1`. At most `2 bits(u)`
+/// tests, each charged [`horner_units`] to `spent`.
+///
+/// The cap: a test at `u` is run only where `D bits(u) <= 2 B`, `B` the most bits of a
+/// coefficient, so that each number of a test has at most `B + D bits(u + 1) + bits(t) <= 4 B +
+/// bits(t)` bits (as `D <= B` from the cap at `u = 2`): a test is then `D (D + 1) / 2` products
+/// of numbers of O(B) bits, `horner_units` groups of `t`, each within the cost of a unit, and the
+/// proof of [`positive_roots`]'s bound holds with these units in its count. Without the cap a
+/// root near `2^B` (as in `(x - 2^B)(x^(D - 1) + 1)`) would make the shifted coefficients of `D
+/// B` bits. The decision's cap read `D bits(u) <= B`; on `(x - 2) … (x - 65)` that refuses the
+/// test at 66 (`64 * 7 = 448 > 306`), so the factor is 2, the least power of 2 that admits it.
+fn horner_bound(p: &[(u64, BigInt)], hi: &BigInt, spent: &mut u64) -> Option<BigInt> {
+    let d = p.last().map_or(0, |(d, _)| *d);
+    let b = p.iter().map(|(_, c)| c.bits()).max().unwrap_or(0);
+    let units = horner_units(d, p.len());
+    let under_cap = |u: &BigInt| d.checked_mul(u.bits()).is_some_and(|w| w <= 2 * b);
+    let mut test = |u: &BigInt| {
+        *spent += units;
+        positive_from(p, u)
+    };
+    let mut u = BigInt::from(2);
+    let mut below = BigInt::one();
+    loop {
+        if &u >= hi || !under_cap(&u) {
+            return None;
+        }
+        if test(&u) {
+            break;
+        }
+        below = u.clone();
+        u <<= 1u32;
+    }
+    while &u - &below > BigInt::one() {
+        let mid: BigInt = (&u + &below) >> 1u32;
+        match test(&mid) {
+            true => u = mid,
+            false => below = mid,
+        }
+    }
+    Some(u)
+}
+
+/// [`positive_roots`] with [`horner_bound`] run as `horner` says, and the units spent.
+pub(super) fn positive_roots_by(
+    p: &[(u64, BigInt)],
+    a: BigInt,
+    b: Option<BigInt>,
+    horner: Horner,
+) -> (Vec<BigInt>, u64) {
     if p.len() < 2 {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
     let bound = BigInt::one() + p.iter().map(|(_, c)| c.abs()).max().expect("terms");
-    let hi = b.map_or(bound.clone(), |b| b.min(bound));
+    let mut hi = b.map_or(bound.clone(), |b| b.min(bound));
     if let [(_, c0), (g, c1)] = p {
         // A binomial `c0 + c1 x^g` (the piece a gap leaves, as in `(x^n + 1)(x - 4)`) has at
         // most one root above 1: the `g`-th root of `-c0 / c1` where that is an integer, and
@@ -660,7 +788,7 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
             .filter(|(_, rem)| rem.is_zero())
             .map(|(x, _)| BigInt::from(x))
             .filter(|x| &a <= x && x <= &hi);
-        return x.into_iter().collect();
+        return (x.into_iter().collect(), 0);
     }
     // `x p'(x)`, of the sign of `p'` for `x > 0`, on the exponents of `p` above 0.
     let slope: Vec<(u64, BigInt)> = (p[1..].iter())
@@ -671,18 +799,47 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
     let mut spent: u64 = 0;
     let mut out = Vec::new();
     let mut open = vec![(a.clone(), hi.clone())];
-    while let Some((l, h)) = open.pop() {
+    // The trigger of the bound from above, `spent t >= HORNER_COST D^2`; tried once.
+    let d = p.last().map_or(0, |(d, _)| *d) as f64;
+    let trigger = HORNER_COST * d * d / p.len() as f64;
+    let mut bounded = horner == Horner::Off;
+    while let Some((l, mut h)) = open.pop() {
         spent += 1;
         if spent > budget {
             #[cfg(test)]
             tests::CHAINED.with(|c| c.set(c.get() + 1));
             #[cfg(test)]
             tests::UNITS.with(|u| u.set(u.get() + budget));
-            return chain_roots(p, a, Some(hi));
+            let roots = match a <= hi {
+                true => chain_roots(p, a, Some(hi)),
+                false => Vec::new(),
+            };
+            return (roots, budget);
+        }
+        if !bounded && (horner == Horner::AtStart || spent as f64 >= trigger) {
+            bounded = true;
+            if let Some(u) = horner_bound(p, &hi, &mut spent) {
+                hi = u - 1;
+                open.retain_mut(|(ol, oh)| {
+                    if *oh > hi {
+                        *oh = hi.clone();
+                    }
+                    *ol <= hi
+                });
+                if h > hi {
+                    h = hi.clone();
+                }
+            }
         }
         if l > h {
             continue;
         }
+        #[cfg(test)]
+        tests::BOXES.with(|v| {
+            if let Some(v) = v.borrow_mut().as_mut() {
+                v.push((l.clone(), h.clone()));
+            }
+        });
         let at = words.as_ref().and_then(|w| w.at(&l, &h));
         let may_hold = match &at {
             Some((w, l, h)) => small::may_hold_a_root(&w.p, l, h),
@@ -726,19 +883,18 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
     #[cfg(test)]
     tests::UNITS.with(|u| u.set(u.get() + spent));
     out.sort();
-    out
+    (out, spent)
 }
 
 /// The integer root of `p` in `lo..=hi`, `2 <= lo < hi`, on which `p` is strictly monotone
 /// (`slope`, `x p'(x)`, has one sign there), if it has one. With the signs of `p` at the ends
-/// ([`sign_at`]) opposite, each step takes Newton's guess from the end of the smaller value
-/// and the integers beside it, so that a guess within 1 of the root closes the bracket; a
-/// Newton step that does not halve the bracket is followed by one bisection, which leaves at
-/// most `ceil(w / 2)` of a width `w`, so a search takes at most twice the bits of `hi - lo`
-/// steps. A bisection is not followed by another: on an odd width `2k + 1` its right half has
-/// `k + 1 > (2k + 1) / 2`, and before plan row ROOTS-bisect-flag that kept the flag set for
-/// runs of bisections in place of Newton steps (test
-/// `a_bisection_is_followed_by_a_newton_step`). Before those steps, while `hi > 4 lo`, the
+/// ([`sign_at`]) opposite, each step is a step of Sagraloff's NEWREFINE ([`refine`]): a
+/// boundary test, then the secant zeros of `p / p'` through the quarter points, each tested on
+/// a grid of `N` cells, `N` squared on a success and its square root on a bisection. A step
+/// leaves at most half the bracket, so a search takes at most the bits of `hi - lo` steps, and
+/// `O(log log)` of the bracket over the cluster's size near a cluster of roots, where the
+/// earlier step, Newton's from an end and a bisection after a weak one, took a step per bit
+/// (plan row ROOTS-fallback-worst-case). Before those steps, while `hi > 4 lo`, the
 /// bracket is cut at the power of 2 whose exponent is the mean of its ends' bits, so a root
 /// far below the end Newton's method starts from is reached in O(log B) steps for ends of B
 /// bits. Once the cuts end, [`doubling`] gives a guess from the top bits of the bracket at
@@ -746,13 +902,13 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
 /// the bracket; the steps above go on from the bracket left where they do not (plan row
 /// ROOTS-doubling-newton; test `a_search_evaluates_at_full_precision_at_most_three_times`).
 ///
-/// Complexity tradeoff. Naive: Newton's step from `p(x)` and `p'(x)` written out, numbers of
-/// up to `D bits(x)` bits for degree `D`, and O(t) products of them per step. Here the step
-/// `x - x Phi / Psi` is read from `Phi = floor(2^s p(x) / x^D)` and `Psi = floor(2^s x p'(x) /
-/// x^D)` ([`scaled`]), with `s` twice the bits of `hi`: O(t) divisions of numbers of O(B + s)
-/// bits. The floors make the guess exact to within 1 where `|p'|` near the root is at least
+/// Complexity tradeoff. Naive: `p(x)` and `p'(x)` written out for the ratio `v = p / p'`,
+/// numbers of up to `D bits(x)` bits for degree `D`, and O(t) products of them per point.
+/// Here `v = x Phi / Psi` is read from `Phi = floor(2^s p(x) / x^D)` and `Psi = floor(2^s x
+/// p'(x) / x^D)` ([`scaled`]), with `s` twice the bits of `hi`: O(t) divisions of numbers of
+/// O(B + s) bits. The floors make `v` exact to within 1 where `|p'|` near the root is at least
 /// about `x^(D - 1)`, as at a simple root of a polynomial whose leading term rules there; where
-/// it is not, the guess is poor and the bisection bounds the steps. The signs are exact.
+/// it is not, the guesses are poor and the bisection bounds the steps. The signs are exact.
 fn search(
     p: &[(u64, BigInt)],
     slope: &[(u64, BigInt)],
@@ -776,10 +932,9 @@ fn search(
         _ => {}
     }
     let s = 2 * hi.bits();
-    let mut bisect = false;
-    #[cfg(test)]
-    tests::RUN.with(|n| n.set(0));
-    let mut tried = false;
+    // `n` of [`refine`]'s `N = 2^(2^n)`, from `N = 4`.
+    let mut level = 1u32;
+    let (mut tried, mut newton) = (false, false);
     #[cfg(test)]
     let mut wide = false;
     while &hi - &lo > BigInt::one() {
@@ -820,6 +975,9 @@ fn search(
                 .flatten();
             *steps += calls;
             if let Some((e, y)) = guess {
+                // The guess of [`doubling`] is a Newton step at full precision: the one below
+                // is not taken again.
+                newton = true;
                 // Newton's step from `x0 = 2^e y` at full precision, `Phi` of `x0` exact to the
                 // floor as in the loop below and `Psi` from the level of `e`, `2^(s - s_e + f)
                 // Psi_e(y)` (`s_e` the scale of that level and `f` its [`lead_shift`], as the
@@ -866,74 +1024,317 @@ fn search(
                 tests::FALLBACKS.with(|n| n.set(n.get() + 1));
             }
         }
-        let width = &hi - &lo;
-        let newton = match bisect {
-            true => {
-                #[cfg(test)]
-                tests::BISECTIONS.with(|n| n.set(n.get() + 1));
-                None
+        // Once, where [`doubling`] gave no guess (an upper end of at most `DOUBLING_BASE`
+        // bits, or no certified sign): Newton's step from the end where `|p|` is less, and the
+        // integers beside its guess, 1 unit, the step before plan row
+        // ROOTS-fallback-worst-case. Where the guess lands within 1 of a simple root near an
+        // end, this closes the bracket, where NEWREFINE, starting from `N = 4`, takes `O(log
+        // log w)` steps of 2 units: on the far roots of
+        // `the_count_of_units_on_far_roots_is_proved` (`w` about `2^37`) [`positive_roots`]
+        // spent 23 units at `tau = 3` without it, against the 14 proved there (measured
+        // 2026-11-27, local). It adds one step to NEWREFINE's bound.
+        if !newton {
+            newton = true;
+            #[cfg(test)]
+            (0..3).for_each(|_| full_eval(wide));
+            let (fl, fh) = (scaled(p, &lo, s), scaled(p, &hi, s));
+            let (x, fx) = match fl.abs() <= fh.abs() {
+                true => (&lo, fl),
+                false => (&hi, fh),
+            };
+            let d = scaled(slope, x, s);
+            if !d.is_zero() {
+                let g = (x - div_floor_int(&mul_int(x, &fx), &d)).clamp(lo.clone(), hi.clone());
+                for x in [g.clone(), &g + 1, &g - 1] {
+                    if !(lo < x && x < hi) {
+                        continue;
+                    }
+                    #[cfg(test)]
+                    full_eval(wide);
+                    match sign_at(p, &x) {
+                        Ordering::Equal => return Some(x),
+                        o if o == below => lo = x,
+                        _ => hi = x,
+                    }
+                }
             }
-            false => {
-                #[cfg(test)]
-                tests::NEWTON_STEPS.with(|n| n.set(n.get() + 1));
-                #[cfg(test)]
-                (0..3).for_each(|_| full_eval(wide));
-                let (fl, fh) = (scaled(p, &lo, s), scaled(p, &hi, s));
-                let (x, fx) = if fl.abs() <= fh.abs() {
-                    (&lo, fl)
-                } else {
-                    (&hi, fh)
-                };
-                let d = scaled(slope, x, s);
-                (!d.is_zero()).then(|| x - div_floor_int(&mul_int(x, &fx), &d))
-            }
-        };
-        for x in probes(newton, &lo, &hi) {
-            if !(lo < x && x < hi) {
-                continue;
-            }
+            continue;
+        }
+        // A step of NEWREFINE, 2 units ([`refine`]). `v = p / p'` is `x Phi / Psi`, `Phi`
+        // and `Psi` [`scaled`] at a scale of at least `s`.
+        *steps += 1;
+        let mut side = |x: &BigInt| {
             #[cfg(test)]
             full_eval(wide);
-            match sign_at(p, &x) {
-                Ordering::Equal => return Some(x),
-                o if o == below => lo = x,
-                _ => hi = x,
+            match sign_at(p, x) {
+                Ordering::Equal => Side::Root,
+                o if o == below => Side::Below,
+                _ => Side::Above,
             }
+        };
+        // The scale of `v`. Each of `Phi` and `Psi` is below its value `2^s p(x) / x^D` (and
+        // `2^s x p'(x) / x^D`) by under `t`, one floor a term, so `x Phi / Psi` is within `(x
+        // / |Psi|) t (1 + |v| / x)` of `v`, under `2 t x / |Psi|` where `|v| <= x`, and so
+        // within `1/2` once `|Psi| >= 4 t x`: `bits(x) + bits(t) + 3` bits. Near a cluster
+        // `p'(x)` is far below `x^(D - 1)` and `Psi` at the scale `s` loses those bits: on
+        // family B of `newrefine_takes_log_log_steps_on_a_cluster` (a quintic, `x` about
+        // `2^n`, `s = 2n`) `Psi` was 0 or a few bits, and [`refine`] took 18, 42 and 82 steps at
+        // n = 256, 512 and 1,024, a step per bit of the bracket, where the exact values of
+        // [`chain_search`] take 7, 9 and 13 (measured 2026-11-27, local). So the scale is raised
+        // by the bits `Psi` lacks, or doubled where it is 0, until `Psi` has them; at `s >= D
+        // bits(x) + need` it has them, as `x p'(x)` is a nonzero integer (`p` is monotone on
+        // the bracket), so the scale stays under `2 (D bits(x) + need)`, the bits of the exact
+        // values. Each scale past `s` is charged `ceil(s' / s)` units more, as the numbers have
+        // about `s'` bits more than the 1-norm in place of `s`.
+        let mut extra = 0u64;
+        let need = |x: &BigInt| x.bits() + (p.len() as u64).ilog2() as u64 + 4;
+        let mut ratio = |x: &BigInt| {
+            let need = need(x);
+            let top = p.last().map_or(0, |(d, _)| *d) * x.bits() + need;
+            let mut at = s;
+            loop {
+                #[cfg(test)]
+                (0..2).for_each(|_| full_eval(wide));
+                let d = scaled(slope, x, at);
+                if d.bits() >= need || at >= top {
+                    return (!d.is_zero()).then(|| (mul_int(x, &scaled(p, x, at)), d));
+                }
+                at = match d.is_zero() {
+                    true => 2 * at,
+                    false => at + (need - d.bits()),
+                }
+                .min(top);
+                extra += at.div_ceil(s);
+            }
+        };
+        let found = refine(&mut lo, &mut hi, &mut level, &mut side, &mut ratio);
+        *steps += extra;
+        if let Some(x) = found {
+            return Some(x);
         }
-        #[cfg(test)]
-        tests::note_step(bisect, &width, &(&hi - &lo));
-        bisect = !bisect && (&hi - &lo) * 2 > width;
     }
     None
 }
 
-/// The points a step of [`search`] or [`chain_search`] tests on the bracket `lo..=hi`, with
-/// `hi - lo > 1`: Newton's guess `g`, if any, taken into `lo..=hi`, and `g + 1` and `g - 1`,
-/// those strictly inside; else the middle. A guess within 1 of a root then has the integer on
-/// the root's far side among the points, so a root in `g..g + 1` closes the bracket in one
-/// step, also where `g` is `lo` (or `hi`) itself; before plan row ROOTS-interval-bound a guess
-/// equal to an end was dropped with its neighbors and the step bisected, so a root in
-/// `lo..lo + 1` took a bisection per bit of `hi - lo`: on `q = p''` of four roots at
-/// `c..=c + 3`, 275 steps at `c = 2^256` and 2,073 at `2^2048`. The middle is strictly inside
-/// as `hi - lo > 1`, so a step always tests some point and the bisection that follows a weak
-/// step still halves the bracket. Tests: `the_search_is_bounded_on_families_that_defeat_the_cuts`
-/// and the bench `roots_of_families_that_defeat_the_cuts_scale_in_the_bits`.
-fn probes(newton: Option<BigInt>, lo: &BigInt, hi: &BigInt) -> Vec<BigInt> {
-    let inside = |x: &BigInt| lo < x && x < hi;
-    let near: Vec<BigInt> = match newton {
-        Some(g) => {
-            let g = g.clamp(lo.clone(), hi.clone());
-            [g.clone(), &g + 1, &g - 1]
-                .into_iter()
-                .filter(|x| inside(x))
-                .collect()
-        }
-        None => Vec::new(),
+/// Where a point of a bracket lies by the sign of the polynomial there: on a root, or on the
+/// side of the root of the bracket's lower end (its sign), or of its upper end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    Root,
+    Below,
+    Above,
+}
+
+/// One step of Sagraloff's NEWREFINE (arXiv:1401.6011, "A near-optimal algorithm for computing
+/// real roots of sparse polynomials", Section 3, Algorithm 1 and Theorem 7; plan row
+/// ROOTS-fallback-worst-case, cross-review XR-lazy-and-kernel-batch-1 round 1) on the bracket
+/// `lo..hi`, `hi - lo > 1`, of one root, with `N = 2^(2^n)` its guess of the factor the step
+/// shrinks the bracket by. `side` gives the side of a point by an exact sign, and `ratio(x)`
+/// the value of `v = q / q'` at `x` as a quotient `a / b`, `None` where `b` is 0; it may be
+/// rounded, as it only places the cells the exact signs then test. The step:
+///
+/// 1. Where `w = hi - lo > 4`, the boundary test: with `step = max(1, floor(w / N))`, the
+///    signs at `lo + step` and `hi - step`; a root in `lo..lo + step` (or in `hi - step..hi`)
+///    is the new bracket.
+/// 2. The Newton test: at the quarter points `xi_1, xi_2, xi_3` (`lo + w/4`, `lo + w/2`, `hi -
+///    w/4`), the secant zero of `v` through each pair, `lambda_ij = xi_i - v_i (xi_j - xi_i) /
+///    (v_j - v_i)`, then Newton's guess at `xi_2`, `xi_2 - v_2`: the first whose cell of width
+///    `step` on the grid from `lo`, or the cell beside it toward the root, holds the root by
+///    the signs at its ends is the new bracket. The secant on `v` needs no count of the
+///    cluster's roots: near a cluster of `k` roots, `v(x)` is about `(x - z) / k`, a line whose
+///    zero the secant finds, where Newton's step on `q` would need the `k` the bracket has no
+///    exact count of (the chain's count of derivative orders is not that number, the finding of
+///    the round). Eq. (3.5) of the source prints `lambda_ij = xi_i - v_i (xi_j - xi_i) / (v_i -
+///    v_j)`, the sign of the denominator turned (Gemini's finding, round 1); the zero of the
+///    line through `(xi_i, v_i)` and `(xi_j, v_j)` is the form used here.
+/// 3. Where the tests found the new bracket, `N` is squared (`n + 1`); else the bracket is
+///    halved at `xi_2`, whose sign step 2 has, and `N` is its square root, at least 4.
+///
+/// Every step keeps the root in the bracket by the exact signs at its new ends, so the answer
+/// does not depend on `ratio`; a step leaves at most half of `w` (a cell of the grid has
+/// `step <= w / 4` at `N >= 4`, two cells at most `w / 2`), so a search takes at most `bits(w)`
+/// steps. With `w` the bracket's width and `S` the distance from the root to the cluster's
+/// other roots, Theorem 7 bounds the steps by `O(log log (w / S))` past the first, where the
+/// old step, Newton's method from an end with the bisection after a weak step, took `Theta(log
+/// (w / S))`: on `(x - R)^3 - S^3` on `R + 1..=R + H` (`R = 2^n + 2^(n/4)`, `H = 2^(n/8)`, `S =
+/// 2^(n/16)`) the old step took 32, 64 and 128 steps at `n` = 256, 512 and 1,024, NEWREFINE 4,
+/// 5 and 6 (Gemini's `verify_req3`, rerun by the orchestrator; test
+/// `newrefine_takes_log_log_steps_on_a_cluster`). `n` only grows on a step that found a cell of
+/// width `step`, and at `step = 1` that cell ends the search, so `n` stays under
+/// `log2 bits(w) + 2`, and `2^n` under 64.
+///
+/// The cost of a step: at most 2 signs for step 1, 3 signs and 3 ratios for the quarter
+/// points, and up to 3 signs for each of the 4 guesses, 23 evaluations in all, about twice the
+/// old step's 6 (three values, a slope, up to three signs); the caller charges 2 units.
+fn refine(
+    lo: &mut BigInt,
+    hi: &mut BigInt,
+    n: &mut u32,
+    side: &mut dyn FnMut(&BigInt) -> Side,
+    ratio: &mut dyn FnMut(&BigInt) -> Option<(BigInt, BigInt)>,
+) -> Option<BigInt> {
+    let w = &*hi - &*lo;
+    let shift = 1u64 << *n;
+    let step = match w.bits() <= shift {
+        true => BigInt::one(),
+        false => (&w >> shift).max(BigInt::one()),
     };
-    match near.is_empty() {
-        true => vec![(lo + hi).div_floor(&BigInt::from(2))],
-        false => near,
+    if w <= BigInt::from(4) {
+        let mid: BigInt = (&*lo + &*hi) >> 1u32;
+        match side(&mid) {
+            Side::Root => return Some(mid),
+            Side::Below => *lo = mid,
+            Side::Above => *hi = mid,
+        }
+        #[cfg(test)]
+        tests::BISECTIONS.with(|c| c.set(c.get() + 1));
+        *n = n.saturating_sub(1).max(1);
+        return None;
     }
+    let narrowed = 'tests: {
+        let x = &*lo + &step;
+        if x < *hi {
+            match side(&x) {
+                Side::Root => return Some(x),
+                Side::Above => {
+                    *hi = x;
+                    break 'tests true;
+                }
+                Side::Below => {}
+            }
+        }
+        let x = &*hi - &step;
+        if x > *lo {
+            match side(&x) {
+                Side::Root => return Some(x),
+                Side::Below => {
+                    *lo = x;
+                    break 'tests true;
+                }
+                Side::Above => {}
+            }
+        }
+        let quarter: BigInt = &w >> 2u32;
+        let xs = [&*lo + &quarter, &*lo + (&w >> 1u32), &*hi - &quarter];
+        let mut at = Vec::with_capacity(3);
+        for x in &xs {
+            let s = side(x);
+            if s == Side::Root {
+                return Some(x.clone());
+            }
+            at.push((s, ratio(x)));
+        }
+        let mut guesses = Vec::with_capacity(4);
+        for (i, j) in [(0, 2), (0, 1), (1, 2)] {
+            if let (Some((ai, bi)), Some((aj, bj))) = (&at[i].1, &at[j].1) {
+                // `v_i / (v_j - v_i) = a_i b_j / (a_j b_i - a_i b_j)`.
+                let den = mul_int(aj, bi) - mul_int(ai, bj);
+                if !den.is_zero() {
+                    let num = mul_int(&mul_int(ai, bj), &(&xs[j] - &xs[i]));
+                    guesses.push(&xs[i] - div_floor_int(&num, &den));
+                }
+            }
+        }
+        if let Some((a, b)) = &at[1].1 {
+            guesses.push(&xs[1] - div_floor_int(a, b));
+        }
+        for g in guesses {
+            match cell(lo, hi, &step, &g, side) {
+                Cell::Root(x) => return Some(x),
+                Cell::Narrowed => break 'tests true,
+                Cell::Missed => {}
+            }
+        }
+        match at[1].0 {
+            Side::Below => *lo = xs[1].clone(),
+            _ => *hi = xs[1].clone(),
+        }
+        false
+    };
+    match narrowed {
+        true => {
+            #[cfg(test)]
+            tests::REFINED.with(|c| c.set(c.get() + 1));
+            *n += 1;
+        }
+        false => {
+            #[cfg(test)]
+            tests::BISECTIONS.with(|c| c.set(c.get() + 1));
+            *n = n.saturating_sub(1).max(1);
+        }
+    }
+    None
+}
+
+/// What [`cell`] found: a root at a point it tested, the bracket cut to a cell, or neither.
+enum Cell {
+    Root(BigInt),
+    Narrowed,
+    Missed,
+}
+
+/// The side of `x` in `lo..=hi`, by `side` but at the ends, whose sides the bracket has.
+fn side_in(x: &BigInt, lo: &BigInt, hi: &BigInt, side: &mut dyn FnMut(&BigInt) -> Side) -> Side {
+    match () {
+        _ if x == lo => Side::Below,
+        _ if x == hi => Side::Above,
+        _ => side(x),
+    }
+}
+
+/// The Newton test of [`refine`] at the guess `g`: the cell `a..=b` of width `step` on the grid
+/// from `lo` that holds `g`, cut at `hi`, becomes the bracket where the signs at its ends show
+/// the root in it; else the cell beside it toward the root, `b..=b + step` where `a` and `b`
+/// are both below the root or `a - step..=a` where both are above (Abbott's and Sagraloff's
+/// grid of `N` cells, read with the neighbor so that a guess just past a grid point still
+/// counts, as in Gemini's `verify_req3`). A guess outside `lo..=hi` misses.
+fn cell(
+    lo: &mut BigInt,
+    hi: &mut BigInt,
+    step: &BigInt,
+    g: &BigInt,
+    side: &mut dyn FnMut(&BigInt) -> Side,
+) -> Cell {
+    if g < &*lo || g > &*hi {
+        return Cell::Missed;
+    }
+    let a = &*lo + (g - &*lo).div_floor(step) * step;
+    let b = (&a + step).min(hi.clone());
+    let sa = side_in(&a, lo, hi, side);
+    if sa == Side::Root {
+        return Cell::Root(a);
+    }
+    let sb = side_in(&b, lo, hi, side);
+    if sb == Side::Root {
+        return Cell::Root(b);
+    }
+    let (from, to) = match (sa, sb) {
+        (Side::Below, Side::Above) => (a, b),
+        (Side::Below, _) => {
+            let c = (&b + step).min(hi.clone());
+            if c <= b {
+                return Cell::Missed;
+            }
+            match side_in(&c, lo, hi, side) {
+                Side::Root => return Cell::Root(c),
+                Side::Above => (b, c),
+                Side::Below => return Cell::Missed,
+            }
+        }
+        _ => {
+            let c = (&a - step).max(lo.clone());
+            if c >= a {
+                return Cell::Missed;
+            }
+            match side_in(&c, lo, hi, side) {
+                Side::Root => return Cell::Root(c),
+                Side::Below => (c, a),
+                Side::Above => return Cell::Missed,
+            }
+        }
+    };
+    (*lo, *hi) = (from, to);
+    Cell::Narrowed
 }
 
 /// The bits of the first level of [`doubling`]: 64, one machine word. A bracket whose upper
@@ -1337,12 +1738,11 @@ fn chain_cells(q: &[(u64, BigInt)], below: &[BigInt], a: &BigInt, hi: &BigInt) -
 }
 
 /// A cell `c` in `lo..hi` at which `q`, monotone on `lo..=hi`, changes sign or is 0, given
-/// its values `flo` and `fhi`, of opposite signs, at the ends. Each step takes Newton's guess
-/// from the end of the smaller value and the integer beside it toward the root, so that a
-/// guess within 1 of a simple root closes the bracket; a Newton step that does not halve the
-/// bracket is followed by one bisection, so a search takes at most twice the bits of `hi - lo`
-/// steps (the proof, and why a bisection is not followed by another, at [`search`]).
-/// Before those steps, while `hi > 4 max(lo, 1)`, the bracket is cut at the power of 2 whose
+/// its values `flo` and `fhi`, of opposite signs, at the ends. Each step is a step of
+/// NEWREFINE ([`refine`]) on the exact values of `q` and `q'`, so a search takes at most the
+/// bits of `hi - lo` steps, and `O(log log)` of the bracket over the cluster's size at a
+/// cluster of roots at an end of a stretch (plan row ROOTS-fallback-worst-case; the proof at
+/// [`refine`]). Before those steps, while `hi > 4 max(lo, 1)`, the bracket is cut at the power of 2 whose
 /// exponent is the mean of its ends' bits, so a root far below the end Newton's method starts
 /// from is reached in O(log B) steps for ends of B bits. Once the cuts end, [`doubling`] gives
 /// a guess from the top bits of the bracket at doubling precision, and an exact evaluation
@@ -1362,9 +1762,8 @@ fn chain_search(
         .filter(|(e, _)| *e > 0)
         .map(|(e, c)| (e - 1, c * BigInt::from(*e)))
         .collect();
-    let mut bisect = false;
-    #[cfg(test)]
-    tests::RUN.with(|n| n.set(0));
+    // `n` of [`refine`]'s `N = 2^(2^n)`, from `N = 4`.
+    let mut level = 1u32;
     let mut tried = false;
     #[cfg(test)]
     let mut wide = false;
@@ -1474,48 +1873,27 @@ fn chain_search(
                 tests::FALLBACKS.with(|n| n.set(n.get() + 1));
             }
         }
-        let width = &hi - &lo;
-        let newton = match bisect {
-            true => {
-                #[cfg(test)]
-                tests::BISECTIONS.with(|n| n.set(n.get() + 1));
-                None
-            }
-            false => {
-                #[cfg(test)]
-                tests::NEWTON_STEPS.with(|n| n.set(n.get() + 1));
-                let (x, fx) = if flo.abs() <= fhi.abs() {
-                    (&lo, &flo)
-                } else {
-                    (&hi, &fhi)
-                };
-                #[cfg(test)]
-                full_eval(wide);
-                let d = eval(&slope, x);
-                // `floor((x q'(x) - q(x)) / q'(x)) = x + floor(-q(x) / q'(x))`, `x` an
-                // integer: a quotient of the step's width, as in `doubling`'s step above.
-                (!d.is_zero()).then(|| x + div_floor_int(&-fx, &d))
-            }
-        };
-        for x in probes(newton, &lo, &hi) {
-            if !(lo < x && x < hi) {
-                continue;
-            }
+        // A step of NEWREFINE ([`refine`]), on the exact values: `v = q / q'`.
+        let below = flo.sign();
+        let mut side = |x: &BigInt| {
             #[cfg(test)]
             full_eval(wide);
-            let fx = eval(q, &x);
-            if fx.is_zero() {
-                return x;
+            let fx = eval(q, x);
+            match fx.sign() {
+                Sign::NoSign => Side::Root,
+                s if s == below => Side::Below,
+                _ => Side::Above,
             }
-            if fx.signum() == flo.signum() {
-                (lo, flo) = (x, fx);
-            } else {
-                (hi, fhi) = (x, fx);
-            }
+        };
+        let mut ratio = |x: &BigInt| {
+            #[cfg(test)]
+            (0..2).for_each(|_| full_eval(wide));
+            let d = eval(&slope, x);
+            (!d.is_zero()).then(|| (eval(q, x), d))
+        };
+        if let Some(x) = refine(&mut lo, &mut hi, &mut level, &mut side, &mut ratio) {
+            return x;
         }
-        #[cfg(test)]
-        tests::note_step(bisect, &width, &(&hi - &lo));
-        bisect = !bisect && (&hi - &lo) * 2 > width;
     }
     lo
 }
@@ -1544,6 +1922,57 @@ fn chain_ends(t: usize) -> u64 {
     u64::try_from(ends).unwrap_or(u64::MAX)
 }
 
+/// The branch and bound of [`positive_roots`] without the bound from above and with it from
+/// the first interval, for the benchmark `crossover roots-horner` (crate zed-benches), which
+/// fits [`HORNER_COST`]. Not for other use.
+#[doc(hidden)]
+pub mod crossover {
+    use num_bigint::BigInt;
+    use num_traits::{One, Zero};
+
+    use super::{Horner, positive_roots_by};
+
+    /// `super::HORNER_COST` as built.
+    pub const HORNER_COST: f64 = super::HORNER_COST;
+
+    /// The terms of `(x - 2) (x - 3) … (x - k - 1)`, by exponent, the cluster the benchmark
+    /// runs on.
+    pub fn cluster(k: u64) -> Vec<(u64, BigInt)> {
+        let mut c = vec![BigInt::one()];
+        for r in 2..k + 2 {
+            let mut next = vec![BigInt::zero(); c.len() + 1];
+            for (i, v) in c.iter().enumerate() {
+                next[i + 1] += v;
+                next[i] -= v * r;
+            }
+            c = next;
+        }
+        c.into_iter()
+            .enumerate()
+            .filter(|(_, v)| !v.is_zero())
+            .map(|(e, v)| (e as u64, v))
+            .collect()
+    }
+
+    /// The roots of `p` above 1, without the bound from above.
+    pub fn off(p: &[(u64, BigInt)]) -> Vec<BigInt> {
+        positive_roots_by(p, BigInt::from(2), None, Horner::Off).0
+    }
+
+    /// The roots of `p` above 1, with the bound from above found at the first interval.
+    pub fn at_start(p: &[(u64, BigInt)]) -> Vec<BigInt> {
+        positive_roots_by(p, BigInt::from(2), None, Horner::AtStart).0
+    }
+
+    /// The value of `HORNER_COST` below which the code as built finds the bound: the units the
+    /// branch and bound spends without it, times `t / D^2`.
+    pub fn flip(p: &[(u64, BigInt)]) -> f64 {
+        let (_, spent) = positive_roots_by(p, BigInt::from(2), None, Horner::Off);
+        let d = p.last().map_or(0, |(d, _)| *d) as f64;
+        spent as f64 * p.len() as f64 / (d * d)
+    }
+}
+
 #[cfg(test)]
 mod bench;
 
@@ -1559,14 +1988,21 @@ mod tests {
     thread_local! {
         /// How many times [`positive_roots`] has handed over to [`chain_roots`] on this thread.
         pub(super) static CHAINED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        /// The tests of [`positive_from`] on this thread.
+        pub(super) static HORNER_TESTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        /// Where `Some`, each interval [`positive_roots_by`] pops on this thread, after the cut
+        /// of [`horner_bound`].
+        pub(super) static BOXES: std::cell::RefCell<Option<Vec<(BigInt, BigInt)>>> =
+            const { std::cell::RefCell::new(None) };
         /// The units [`positive_roots`] has spent on this thread, a handover to the chain counted
         /// as the whole budget.
         pub(super) static UNITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         /// The evaluations [`chain_cells`] has made at the ends of stretches on this thread.
         pub(super) static END_EVALS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-        /// The Newton steps and the bisections [`search`] and [`chain_search`] have taken on
-        /// this thread.
-        pub(super) static NEWTON_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        /// The steps of [`refine`] in [`search`] and [`chain_search`] on this thread that cut
+        /// the bracket by a test (the boundary test or a guess's cell), and those that
+        /// bisected it.
+        pub(super) static REFINED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         pub(super) static BISECTIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         /// Whether [`search`] and [`chain_search`] take the guess of [`doubling`] on this
         /// thread ([`doubling_on`]).
@@ -1589,29 +2025,6 @@ mod tests {
         /// The precision and the bracket the first level of [`doubling`] ended with, last.
         pub(super) static LEVEL_ONE: std::cell::RefCell<Option<(u64, BigInt, BigInt)>> =
             const { std::cell::RefCell::new(None) };
-    }
-
-    thread_local! {
-        /// The bisections in a row of the current search on this thread, the most in a row
-        /// of any search since the last reset, and the bisections on an odd width `2 k + 1`
-        /// that kept the right half, of `k + 1` ([`note_step`]).
-        pub(super) static RUN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-        pub(super) static MOST_IN_A_ROW: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-        pub(super) static ODD_RIGHT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    }
-
-    /// Records a step of [`search`] or [`chain_search`] on a bracket of `width` that left one
-    /// of `left`, a bisection where `bisected`.
-    pub(super) fn note_step(bisected: bool, width: &BigInt, left: &BigInt) {
-        let run = match bisected {
-            true => RUN.with(|n| n.get()) + 1,
-            false => 0,
-        };
-        RUN.with(|n| n.set(run));
-        MOST_IN_A_ROW.with(|n| n.set(n.get().max(run)));
-        if bisected && width.is_odd() && left * 2u32 == width + 1u32 {
-            ODD_RIGHT.with(|n| n.set(n.get() + 1));
-        }
     }
 
     /// Records, for [`LEVELS`], a cut at the precision `e` whose widest coefficient has
@@ -1706,25 +2119,21 @@ mod tests {
     /// The variant `(x - R)^3 - S^3`, `S = 2^(n/16)`, root `R + S`, is reached. Its cluster
     /// of three roots `R + S w^k` (`w^3 = 1`) sits at the end `R` of the stretch the chain
     /// searches (the cell of `q''` and `q'`), so `q` is flat near that end and steep near the
-    /// other: Newton's step from the end of the smaller value, `R` (`q'(R) = 0`), leaves the
-    /// bracket, and each step is a bisection after a Newton step that fails, one bit of the
-    /// bracket for two full-precision steps, `n/8 - n/16` bits: `n/16 + 1` Newton steps and
-    /// `n/16` bisections, measured here (2026-11-23), each an evaluation of `n`-bit numbers,
-    /// `O(n M(n))` in all, with or without [`doubling`]: no reduced level can certify a sign in
-    /// the bracket, as `q` is about `S^3`, `3n/16` bits, there and its terms `3n` bits, and the
-    /// truncation error of a level is `2^((D - 1) n + e)` (`chain_level`). The bisection after
-    /// a weak Newton step already shrinks the bracket by a constant factor every two steps (the
-    /// fix D6 names); it is not enough, as the bracket has `Theta(n)` bits to lose. What fixes it
-    /// is open (the row): a cut at the cluster's end `R + 2^m`, `m` halving between the bits of
-    /// `S` and of `H` as the cuts at powers of 2 halve between the ends' bits, reaches the root's
-    /// scale in `O(log n)` steps, inferred, not built; Abbott, "Quadratic interval refinement
-    /// for real roots" (ACM Communications in Computer Algebra 48, 2014,
-    /// doi:10.1145/2644288.2644291) and Sagraloff, "When Newton meets Descartes" (ISSAC 2012,
-    /// doi:10.1145/2442829.2442872, Newton steps with a guess of the cluster's size) are the
-    /// published methods for such clusters (titles checked on Crossref 2026-11-23; their bounds
-    /// not yet read against this search).
+    /// other. Before plan row ROOTS-fallback-worst-case's NEWREFINE ([`refine`]), Newton's step
+    /// from the end of the smaller value, `R` (`q'(R) = 0`), left the bracket, and each step was
+    /// a bisection after a Newton step that failed, one bit of the bracket for two
+    /// full-precision steps, `n/8 - n/16` bits: `n/16 + 1` Newton steps and `n/16` bisections
+    /// (measured 2026-11-23), `O(n M(n))` in all, with or without [`doubling`]: no reduced level
+    /// can certify a sign in the bracket, as `q` is about `S^3`, `3n/16` bits, there and its
+    /// terms `3n` bits, and the truncation error of a level is `2^((D - 1) n + e)`
+    /// (`chain_level`). NEWREFINE's secant on `q / q'`, about `(x - R - S) / 3` past the
+    /// cluster, needs no count of the cluster's roots and takes `O(log n)` steps: at most
+    /// `log2 n + 3` asserted here, and the exact counts measured (the steps that cut by a test,
+    /// the bisections). Negative control: the old step (Newton's guess from an end, a bisection
+    /// after a weak one, `git show 06ed591d0:crates/zed-kernel/src/poly/roots.rs`) gives the
+    /// `n/16 + 1` and `n/16` above.
     #[test]
-    fn a_cluster_at_an_end_of_a_chain_stretch_takes_a_step_per_bit() {
+    fn a_cluster_at_an_end_of_a_chain_stretch_takes_log_log_steps() {
         let one = BigInt::one();
         for n in [256u64, 1024, 4096] {
             let r = (&one << n) + (&one << (n / 4));
@@ -1751,7 +2160,7 @@ mod tests {
                 for on in [true, false] {
                     DOUBLING.with(|d| d.set(on));
                     for c in [
-                        &NEWTON_STEPS,
+                        &REFINED,
                         &BISECTIONS,
                         &FULL_EVALS,
                         &FALLBACKS,
@@ -1767,8 +2176,8 @@ mod tests {
                         Roots::Listed(rs.clone()),
                         "{name}({n})"
                     );
-                    let [nw, bi, fe, fb, se, ch, un] = [
-                        &NEWTON_STEPS,
+                    let [rf, bi, fe, fb, se, ch, un] = [
+                        &REFINED,
                         &BISECTIONS,
                         &FULL_EVALS,
                         &FALLBACKS,
@@ -1778,16 +2187,16 @@ mod tests {
                     ]
                     .map(|c| c.with(|n| n.get()));
                     println!(
-                        "{name}({n}) doubling {on}: {nw} Newton steps, {bi} bisections, {fe} \
-                         evaluations at full precision, {fb} fallbacks, {se} searches, {ch} \
-                         chained, {un} units"
+                        "{name}({n}) doubling {on}: {rf} steps cut by a test, {bi} bisections, \
+                         {fe} evaluations at full precision, {fb} fallbacks, {se} searches, \
+                         {ch} chained, {un} units"
                     );
-                    let m = n / 16;
-                    let expected = match name {
-                        "codex" => [1, 0, 3, 1, 1, 1, 15],
-                        _ => [m + 1, m, 3 * m + 2, 2, 2, 1, 15],
-                    };
-                    assert_eq!([nw, bi, fe, fb, se, ch, un], expected, "{name}({n}), {on}");
+                    let bound = n.ilog2() as u64 + 3;
+                    assert!(
+                        rf + bi <= bound,
+                        "{name}({n}), {on}: {rf} + {bi} steps, over {bound}"
+                    );
+                    assert_eq!([ch, un], [1, 15], "{name}({n}), {on}");
                 }
             }
         }
@@ -1932,56 +2341,137 @@ mod tests {
         (from_big_roots(&rs), rs)
     }
 
-    /// A bisection is followed by a Newton step (plan row ROOTS-bisect-flag): on the cubic of
-    /// [`of_bits`] at 2,048 bits and on dense cubics of 1,024 and 4,096 bits, every search of
-    /// `search` and `chain_search` takes no two bisections in a row (`MOST_IN_A_ROW`, counted
-    /// per search at both sites), at most one bisection per Newton step, and exactly the
-    /// counts measured here (2026-11-23): 36, 42 and 58 bisections, of which 16, 13 and 15 were
-    /// on an odd width `2k + 1` that kept the right half, of `k + 1` (`ODD_RIGHT`). Before the
-    /// row such a bisection set the flag again, `(&hi - &lo) * 2 > width` being true of `k + 1`,
-    /// so bisections ran on in place of Newton steps. The guess of [`doubling`] is turned off,
-    /// as with it the searches take almost no step at full precision to count (plan row
-    /// ROOTS-doubling-newton). Negative control: the old line, `bisect = (&hi - &lo) * 2 >
-    /// width`, at both sites fails the count and the run of bisections.
+    /// A search takes at most a step per bit of its bracket ([`refine`]: each step leaves at
+    /// most half of it): on the cubic of [`of_bits`] at 2,048 bits and on dense cubics of 1,024
+    /// and 4,096 bits, with the guess of [`doubling`] off so that the searches run at full
+    /// precision, the steps of all searches are at most 3 times the bits plus 2 (three roots,
+    /// each searched once), and most of them cut the bracket by a test, not a bisection.
+    /// Before plan row ROOTS-fallback-worst-case the old step (Newton's guess, a bisection
+    /// after a weak one, plan row ROOTS-bisect-flag) took 36, 42 and 58 bisections here
+    /// (measured 2026-11-23).
     #[test]
-    fn a_bisection_is_followed_by_a_newton_step() {
+    fn a_search_takes_at_most_a_step_per_bit() {
         let mut rng = crate::seed::Rng::new(0x6269_7365);
         let cases = [
-            ("of_bits(2048)", of_bits(2048)),
-            ("dense_cubic(1024)", dense_cubic(&mut rng, 1024)),
-            ("dense_cubic(4096)", dense_cubic(&mut rng, 4096)),
+            (2048, "of_bits(2048)", of_bits(2048)),
+            (1024, "dense_cubic(1024)", dense_cubic(&mut rng, 1024)),
+            (4096, "dense_cubic(4096)", dense_cubic(&mut rng, 4096)),
         ];
         DOUBLING.with(|d| d.set(false));
-        let mut counts = Vec::new();
-        for (name, (f, rs)) in cases {
-            for c in [&NEWTON_STEPS, &BISECTIONS, &MOST_IN_A_ROW, &ODD_RIGHT] {
+        for (bits, name, (f, rs)) in cases {
+            for c in [&REFINED, &BISECTIONS] {
                 c.with(|n| n.set(0));
             }
             assert_eq!(integer_roots(&f, None, None), Roots::Listed(rs), "{name}");
-            let [newton, bisections, most, odd] =
-                [&NEWTON_STEPS, &BISECTIONS, &MOST_IN_A_ROW, &ODD_RIGHT]
-                    .map(|c| c.with(|n| n.get()));
-            println!(
-                "{name}: {newton} Newton steps, {bisections} bisections, at most {most} in a \
-                 row, {odd} on an odd width that kept the right half"
+            let [refined, bisections] = [&REFINED, &BISECTIONS].map(|c| c.with(|n| n.get()));
+            println!("{name}: {refined} steps cut by a test, {bisections} bisections");
+            assert!(
+                refined + bisections <= 3 * (bits + 2),
+                "{name}: {refined} + {bisections} steps"
             );
             assert!(
-                bisections <= newton,
-                "{name}: {bisections} bisections, {newton} Newton steps"
+                bisections <= refined,
+                "{name}: {bisections} bisections, {refined} cut by a test"
             );
-            assert!(most <= 1, "{name}: {most} bisections in a row");
-            counts.push((bisections, odd));
         }
         DOUBLING.with(|d| d.set(true));
-        assert_eq!(
-            counts,
-            [(36, 16), (42, 13), (58, 15)],
-            "the bisections measured"
-        );
-        assert!(
-            counts.iter().any(|&(_, odd)| odd > 0),
-            "no bisection on an odd width kept its right half"
-        );
+    }
+
+    /// Plan row ROOTS-fallback-worst-case, cross-review XR-lazy-and-kernel-batch-1 round 1:
+    /// NEWREFINE ([`refine`]) takes `O(log log)` steps of the bracket over the cluster's size,
+    /// called directly in [`chain_search`] (exact values) and [`search`] (scaled values), with
+    /// the guess of [`doubling`] on and off. `R = 2^n + 2^(n/4)`, `H = 2^(n/8)`, `S =
+    /// 2^(n/16)`, n = 256, 512 and 1,024. Family A, `(x - R)^3 - S^3` on `R + 1..=R + H`, root
+    /// `R + S` at the end of a cluster of three: at most 4, 5 and 6 steps, where the old step
+    /// took 32, 64 and 128. Family B, `((x - M)^3 - S^3) ((x - M)^2 + K^2)`, `M = R +
+    /// floor(5H / 13)`, `K = H / 2`, on `R..=R + H`, a cluster of three inside the bracket of a
+    /// quintic: at most 8, 10 and 14, where the old step took 31, 56 and 112 (Gemini's
+    /// `verify_req3`, rerun by the orchestrator). The counts are steps of [`refine`] (those
+    /// that cut by a test plus the bisections), and each may add up to 2 bisections of a
+    /// bracket of width at most 4 (the first branch of [`refine`]), a constant: with the guess
+    /// of [`doubling`] on, [`search`] tests the guess and its neighbor and goes on from the
+    /// bracket they leave, and on family A at n = 256 that took 4 steps cut by a test and 2
+    /// such bisections (measured 2026-11-27, local). Every count is printed before any is
+    /// checked.
+    #[test]
+    fn newrefine_takes_log_log_steps_on_a_cluster() {
+        let one = BigInt::one();
+        let mut over = Vec::new();
+        let product = |a: &[(u64, BigInt)], b: &[(u64, BigInt)]| {
+            let mut m = BTreeMap::<u64, BigInt>::new();
+            for (i, x) in a {
+                for (j, y) in b {
+                    *m.entry(i + j).or_insert_with(BigInt::zero) += x * y;
+                }
+            }
+            m.into_iter()
+                .filter(|(_, c)| !c.is_zero())
+                .collect::<Vec<_>>()
+        };
+        let cubic = |m: &BigInt, s: &BigInt| -> Vec<(u64, BigInt)> {
+            vec![
+                (0, -(m.pow(3) + s.pow(3))),
+                (1, 3 * m * m),
+                (2, -3 * m),
+                (3, one.clone()),
+            ]
+        };
+        for (n, most_a, most_b) in [(256u64, 4, 8), (512, 5, 10), (1024, 6, 14)] {
+            let r = (&one << n) + (&one << (n / 4));
+            let h = &one << (n / 8);
+            let s = &one << (n / 16);
+            let m = &r + (&h * 5u32) / 13u32;
+            let k = &h >> 1u32;
+            let quadratic: Vec<(u64, BigInt)> =
+                vec![(0, &m * &m + &k * &k), (1, -2 * &m), (2, one.clone())];
+            let cases = [
+                ("A", cubic(&r, &s), &r + 1u32, &r + &h, &r + &s, most_a),
+                (
+                    "B",
+                    product(&cubic(&m, &s), &quadratic),
+                    r.clone(),
+                    &r + &h,
+                    &m + &s,
+                    most_b,
+                ),
+            ];
+            for (name, q, lo, hi, root, most) in cases {
+                let times_x: Vec<(u64, BigInt)> = (q.iter())
+                    .filter(|(e, _)| *e > 0)
+                    .map(|(e, c)| (*e, c * BigInt::from(*e)))
+                    .collect();
+                for on in [false, true] {
+                    DOUBLING.with(|d| d.set(on));
+                    for site in ["chain_search", "search"] {
+                        for c in [&REFINED, &BISECTIONS] {
+                            c.with(|n| n.set(0));
+                        }
+                        let found = match site {
+                            "chain_search" => {
+                                let (flo, fhi) = (eval(&q, &lo), eval(&q, &hi));
+                                chain_search(&q, lo.clone(), hi.clone(), flo, fhi)
+                            }
+                            _ => search(&q, &times_x, None, lo.clone(), hi.clone(), &mut 0)
+                                .expect("a root"),
+                        };
+                        let [rf, bi] = [&REFINED, &BISECTIONS].map(|c| c.with(|n| n.get()));
+                        println!(
+                            "family {name}, n = {n}, {site}, doubling {on}: {rf} steps cut by \
+                             a test, {bi} bisections"
+                        );
+                        assert_eq!(found, root, "family {name}, n = {n}, {site}, {on}");
+                        if rf + bi > most + 2 {
+                            over.push(format!(
+                                "family {name}, n = {n}, {site}, {on}: {rf} + {bi} steps, \
+                                 over {most} + 2"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        DOUBLING.with(|d| d.set(true));
+        assert!(over.is_empty(), "{over:#?}");
     }
 
     /// The roots [`chain_roots`] finds on `p` in `2..=b`, and the evaluations at the ends of
@@ -2169,6 +2659,107 @@ mod tests {
             "(x - 2) … (x - 65): branch and bound {branch:?} (switched to the chain: \
              {switched}), chain alone {chain:?}"
         );
+    }
+
+    /// The intervals [`positive_roots_by`] pops on `p` from 2 with `horner`, those of them
+    /// that meet `[lo, hi]` and those wholly above `hi`, and the tests of [`positive_from`].
+    fn boxes(
+        p: &[(u64, BigInt)],
+        horner: Horner,
+        lo: i64,
+        hi: i64,
+    ) -> (Vec<BigInt>, u64, u64, u64) {
+        BOXES.with(|v| *v.borrow_mut() = Some(Vec::new()));
+        let before = HORNER_TESTS.with(|n| n.get());
+        let (roots, _) = positive_roots_by(p, BigInt::from(2), None, horner);
+        let tests = HORNER_TESTS.with(|n| n.get()) - before;
+        let popped = BOXES.with(|v| v.borrow_mut().take()).expect("recorded");
+        let (lo, hi) = (BigInt::from(lo), BigInt::from(hi));
+        let meet = popped.iter().filter(|(l, h)| *l <= hi && *h >= lo).count() as u64;
+        let above = popped.iter().filter(|(l, _)| *l > hi).count() as u64;
+        (roots, meet, above, tests)
+    }
+
+    /// The bound from above on `(x - 2) … (x - 65)` (plan row ROOTS-dense-cluster-constant,
+    /// cross-review XR-lazy-and-kernel-batch-1 round 1): as built, no interval popped lies wholly
+    /// above the largest root, 65, and at least 127 meet `[2, 65]`, Claude's proved lower bound
+    /// for that count (a box holding two roots is split, so 64 roots need 63 splits and 64
+    /// leaves at least). Negative control: without the bound the intervals above 65 are the
+    /// 1,152 Gemini's `verify_req2` counted, of 1,293.
+    #[test]
+    fn the_bound_from_above_drops_the_intervals_past_the_cluster() {
+        let rs: Vec<i64> = (2..=65).collect();
+        let f = from_roots(1, &rs);
+        let p = f.terms();
+        let want: Vec<BigInt> = rs.iter().map(|&r| BigInt::from(r)).collect();
+        let (roots, meet, above, tests) = boxes(p, Horner::Built, 2, 65);
+        assert_eq!(roots, want);
+        assert_eq!(above, 0, "intervals above 65 as built");
+        assert!(meet >= 127, "{meet} intervals meet [2, 65]");
+        assert!(tests > 0, "the bound was found");
+        let (roots, meet_off, above_off, tests_off) = boxes(p, Horner::Off, 2, 65);
+        assert_eq!(roots, want);
+        assert_eq!(tests_off, 0);
+        println!(
+            "as built: {meet} meet [2, 65], {tests} tests; without: {meet_off} meet, {above_off} above"
+        );
+        assert!(
+            above_off > 1_000,
+            "{above_off} intervals above 65 without the bound"
+        );
+    }
+
+    /// The bound from above is sound where its test fails low and where the cap stops it: on
+    /// `(x - 2) … (x - k - 1)` for `k` from 1 to 34, with a root of `2^b` added for `b` in 8, 64
+    /// and 300 (past the cap at `b = 300`, as `D bits(u) > 2 B` before `u` reaches the root),
+    /// each mode gives the same roots, and the `u` of [`horner_bound`], where it is found, is
+    /// above the largest root and the least integer whose test passes.
+    #[test]
+    fn the_bound_from_above_keeps_every_root() {
+        for k in [1i64, 2, 3, 5, 8, 13, 21, 34] {
+            for far in [None, Some(8u32), Some(64), Some(300)] {
+                let mut rs: Vec<BigInt> = (2..k + 2).map(BigInt::from).collect();
+                if let Some(b) = far {
+                    rs.push(BigInt::one() << b);
+                }
+                let f = from_big_roots(&rs);
+                let p = f.terms();
+                let off = positive_roots_by(p, BigInt::from(2), None, Horner::Off).0;
+                assert_eq!(off, rs, "k = {k}, far {far:?}, off");
+                for horner in [Horner::AtStart, Horner::Built] {
+                    let on = positive_roots_by(p, BigInt::from(2), None, horner).0;
+                    assert_eq!(on, rs, "k = {k}, far {far:?}, {horner:?}");
+                }
+                let mut spent = 0;
+                let top = rs.last().expect("a root").clone();
+                if let Some(u) = horner_bound(p, &(&top << 2u32), &mut spent) {
+                    assert!(u > top, "k = {k}, far {far:?}: {u} not above {top}");
+                    assert!(
+                        u == BigInt::from(2) || !positive_from(p, &(&u - 1)),
+                        "k = {k}: {u} not the least"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The sparse inputs stay as they were: on `(x^n + 1)(x - 4)` (`t = 4`, `D = n + 1`) for
+    /// `n` to 8,192, the trigger `spent t >= HORNER_COST D^2` is not reached and no test of
+    /// [`positive_from`] runs (the units of the far roots of
+    /// [`the_count_of_units_on_far_roots_is_proved`] are checked there, also with no test).
+    #[test]
+    fn the_bound_from_above_leaves_sparse_inputs_as_they_were() {
+        for n in [3u64, 64, 1_000, 8_192] {
+            let p = big(&[
+                (0, BigInt::from(-4)),
+                (1, BigInt::one()),
+                (n, BigInt::from(-4)),
+                (n + 1, BigInt::one()),
+            ]);
+            let (roots, _, _, tests) = boxes(p.terms(), Horner::Built, 2, 4);
+            assert_eq!(roots, vec![BigInt::from(4)], "n = {n}");
+            assert_eq!(tests, 0, "n = {n}");
+        }
     }
 
     /// [`chain_ends`] is the sum it is written as, for every `t` up to 300.
@@ -2604,12 +3195,28 @@ mod tests {
                 terms.push((2 * i, -r.clone()));
                 terms.push((2 * i + 1, BigInt::one()));
             }
+            // The proof is of the branch and bound alone: `2 tau + 8` units above 1.
+            let (_, spent) = positive_roots_by(&terms, BigInt::from(2), None, Horner::Off);
+            println!("tau = {tau}: {spent} units above 1 without the bound from above");
+            assert_eq!(spent, u64::from(2 * tau + 8), "tau = {tau}");
             UNITS.with(|u| u.set(0));
+            let tests = HORNER_TESTS.with(|n| n.get());
             let roots = integer_roots(&big(&terms), None, None);
             let units = UNITS.with(|u| u.get());
             assert_eq!(roots, Roots::Listed(vec![r.clone()]), "tau = {tau}");
-            // `2 tau + 8` in the search above 1, 1 for the reflected polynomial.
-            assert_eq!(units, u64::from(2 * tau + 9), "tau = {tau}");
+            // As built, the bound from above is tried only once the units reach the trigger
+            // `HORNER_COST D^2 / t`, `D = t - 1`, so not where the trigger is above the
+            // `2 tau + 8` units; where it is not tried, the count is the proved one, and 1 for
+            // the reflected polynomial.
+            let d = (t - 1) as f64;
+            let past = HORNER_COST * d * d / t as f64 > f64::from(2 * tau + 8);
+            let tried = HORNER_TESTS.with(|n| n.get()) != tests;
+            if past {
+                assert!(!tried, "tau = {tau}: Horner tried");
+            }
+            if !tried {
+                assert_eq!(units, u64::from(2 * tau + 9), "tau = {tau}");
+            }
         }
     }
 }

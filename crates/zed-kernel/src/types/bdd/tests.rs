@@ -90,6 +90,10 @@ fn three_valued_holds(p: &Part<Row>, known: u32, fixed: u32) -> [bool; 4] {
     {
         let holds = |set: u32| move |t: &Row| (0..6).any(|i| set & (1 << i) != 0 && *t == atom(i));
         assert!(p.settle() == p.settle_by_scans(), "settling changed");
+        assert!(
+            p.settle() == p.settle_by(Pins::Carried),
+            "the cut changed the pins"
+        );
         let inside: Vec<u32> = (0..64).filter(|&set| p.eval(&holds(set))).collect();
         let fix = |t: &Row| {
             (0..6)
@@ -3565,4 +3569,335 @@ fn a_choice_with_equal_branches_has_a_diagram_as_complement() {
     assert!(matches!(m, Part::Expr(_)), "{m:?}");
     let flipped: Vec<bool> = values(&control).into_iter().map(|v| !v).collect();
     assert_eq!(values(&m), flipped);
+}
+
+/// An expression that stays one when a round rebuilds the part: the union of two meets of two
+/// atoms each, which is no chain under `|` ([`pinned_one_a_round`]), the atoms from `at`.
+fn opaque(at: u64) -> Part<Row> {
+    Part::connect(Op::Or, Part::Bdd(meet(at, 2)), Part::Bdd(meet(at + 2, 2)))
+}
+
+/// [`Part::settle_by`] round by round: the part settled, the steps of [`Part::pins_by`] in all
+/// (`SETTLE_WORK`) and the pins of each round. For [`Pins::Cut`] and [`Pins::Carried`] it
+/// checks that no round costs more than the first, as a round rebuilds the part with constants
+/// put in, which leaves no more expressions: the work is at most the rounds, plus the last
+/// round that finds no pin, times the first round's.
+fn settled_by(p: &Part<Row>, how: Pins) -> (Part<Row>, u64, Vec<usize>) {
+    SETTLE_WORK.with(|w| w.set(0));
+    let (mut q, mut rounds, mut first) = (p.clone(), Vec::new(), None);
+    loop {
+        let pins = q.pins_by(how);
+        first.get_or_insert_with(|| SETTLE_WORK.with(|w| w.get()));
+        if pins.is_empty() {
+            break;
+        }
+        rounds.push(pins.len());
+        q = q.substitute_all(&pins);
+    }
+    let work = SETTLE_WORK.with(|w| w.get());
+    let first = first.expect("one round at least");
+    if how != Pins::Required {
+        assert!(
+            work <= (rounds.len() as u64 + 1) * first,
+            "{how:?}: work {work} over {} rounds of {first}",
+            rounds.len() + 1
+        );
+    }
+    (q, work, rounds)
+}
+
+/// [`settled_by`] with [`Pins::Cut`], checked against [`Pins::Carried`] (the same part and
+/// rounds, and no more work) and, when `scans`, against [`Part::settle_by_scans`]. Prints
+/// whether [`Pins::Required`] (Claude's A+B) gives the same part, for the cross-review. Gives
+/// the cut's part, the cut's work, the carried work and the rounds.
+fn settled_alike(p: &Part<Row>, scans: bool, what: &str) -> (Part<Row>, u64, u64, Vec<usize>) {
+    let (cut, cut_work, rounds) = settled_by(p, Pins::Cut);
+    let (carried, carried_work, carried_rounds) = settled_by(p, Pins::Carried);
+    assert!(cut == carried, "{what}: the cut changed the part");
+    assert_eq!(rounds, carried_rounds, "{what}");
+    assert!(
+        cut_work <= carried_work,
+        "{what}: {cut_work} > {carried_work}"
+    );
+    if scans {
+        assert!(cut == p.settle_by_scans(), "{what}: not the scans' part");
+    }
+    let (required, _, required_rounds) = settled_by(p, Pins::Required);
+    eprintln!(
+        "{what}: A+B gives the same part: {}, in {} rounds against {}",
+        required == cut,
+        required_rounds.len(),
+        rounds.len()
+    );
+    (cut, cut_work, carried_work, rounds)
+}
+
+/// Codex's witness (cross-review XR-lazy-and-kernel-batch-1, round 1): `p = x | y`,
+/// `u = p & A`, `root = ((u | B) & (u | !p)) & p`. The walk finds `u` shared, then `p`. A round
+/// cannot pin `u`: neither trial value makes the root `false` while `p` is unknown. It pins
+/// `p = true`, and the rebuild turns `u` into the diagram `A`, so the part settles to `A`. A
+/// worklist that tried `u` again after the pin of `p` would pin `u = true` and settle to
+/// `true`, another superset, and so does Claude's A+B ([`Pins::Required`]: `root = true`
+/// requires `p`, and then `u | !p` requires `u`). So both change what `settle` gives, and are
+/// not used.
+#[test]
+fn worklist_cannot_pin_an_expression_the_round_turns_into_a_bdd() {
+    let lit = |i| Part::literal(atom(i));
+    let p = Part::connect(Op::Or, lit(9500), lit(9501));
+    let u = Part::connect(Op::And, p.clone(), lit(9502));
+    let r = Part::connect(Op::Or, u.clone(), lit(9503));
+    let s = Part::connect(Op::Or, u.clone(), Part::not_expr(p.clone()));
+    let root = Part::connect(Op::And, Part::connect(Op::And, r, s), p.clone());
+    let pins = root.pins();
+    assert_eq!(pins.len(), 1, "{pins:?}");
+    assert_eq!(pins.get(&p.id()), Some(&true));
+    let (settled, _, _, rounds) = settled_alike(&root, true, "witness");
+    assert!(settled == lit(9502), "{settled:?}");
+    assert_eq!(rounds, vec![1]);
+    let required = root.pins_by(Pins::Required);
+    assert_eq!(required.get(&u.id()), Some(&true), "{required:?}");
+    assert_eq!(root.settle_by(Pins::Required).is_leaf(), Some(true));
+}
+
+/// The And-path certificate of [`Pins::Cut`] fires only along unfixed `And`s: `e` is under `f`
+/// (an `And`) and under an `Or`; `f`, found shared first, is pinned `true`, which leaves `e` no
+/// unfixed `And` path to the root, and neither trial of `e` makes the root `false`. A cut that
+/// took every upward path, or kept `f` as a path once fixed, would pin `e` too.
+#[test]
+fn the_and_path_certificate_stops_at_a_fixed_and_and_at_an_or() {
+    let lit = |i| Part::literal(atom(i));
+    let e = opaque(9600);
+    let f = Part::connect(Op::And, lit(9610), e.clone());
+    let left = Part::connect(Op::Or, f.clone(), lit(9611));
+    let right = Part::connect(
+        Op::And,
+        f.clone(),
+        Part::connect(Op::Or, e.clone(), lit(9612)),
+    );
+    let root = Part::connect(Op::And, left, right);
+    let pins = root.pins();
+    assert_eq!(pins.len(), 1, "{pins:?}");
+    assert_eq!(pins.get(&f.id()), Some(&true));
+    assert!(!pins.contains_key(&e.id()));
+    settled_alike(&root, true, "certificate");
+}
+
+/// Codex's spine (cross-review XR-lazy-and-kernel-batch-1, round 1): `m` shared expressions,
+/// each as `s_i | s_i` under one tree of unions, then `m` unions with atoms up to the root. No
+/// trial pins anything. Carried, each trial `s_i = true` turns the spine above it `true` up to
+/// the root, `Θ(m^2)` in all on `O(m)` nodes; with the polarity cut of [`Pins::Cut`], a
+/// value that cannot make the root `false` (`true` under unions) is carried no higher and the
+/// round is linear.
+#[test]
+fn a_spine_of_unions_is_tried_in_linear_work() {
+    let spine = |m: usize| {
+        let s = (0..m as u64).map(|j| {
+            let x = opaque(20_000 + 4 * j);
+            Part::connect(Op::Or, x.clone(), x)
+        });
+        let tree = s
+            .reduce(|a, b| Part::connect(Op::Or, a, b))
+            .expect("m is at least 1");
+        (0..m as u64).fold(tree, |r, j| {
+            Part::connect(Op::Or, r, Part::literal(atom(40_000 + j)))
+        })
+    };
+    let mut last: Option<(u64, u64)> = None;
+    for m in [64, 128, 256] {
+        let (_, cut, carried, rounds) = settled_alike(&spine(m), m <= 64, "spine");
+        assert!(rounds.is_empty(), "m = {m}: {rounds:?}");
+        eprintln!("spine m = {m}: cut work {cut}, carried work {carried}");
+        if let Some((c0, k0)) = last {
+            assert!(cut as f64 <= 2.2 * c0 as f64, "m = {m}: cut {c0} to {cut}");
+            assert!(
+                carried as f64 >= 3.5 * k0 as f64,
+                "m = {m}: carried {k0} to {carried}"
+            );
+        }
+        last = Some((cut, carried));
+    }
+}
+
+/// Gemini's `G_k` (cross-review XR-lazy-and-kernel-batch-1, round 1): `!s_0`, and for `k` from
+/// 1 `!s_k | ((s_(k-1) | b_k) & !b_k)` with `b_k` an atom, and `s_k | d_k` beside each so that
+/// every `s_k` is shared. `s_(k-1)` pinned `false` leaves `(s_(k-1) | b_k) & !b_k` unknown
+/// until the rebuild makes it `b_k & !b_k = false`; only then does the trial `s_k = true` make
+/// the root `false`. So `m` rounds of one pin each, each round `Θ(N)`: `Θ(N^2)` in all.
+#[test]
+fn gated_by_the_one_before_takes_a_round_a_pin() {
+    let gated = |m: usize| {
+        let s: Vec<Part<Row>> = (0..m as u64).map(|k| opaque(50_000 + 4 * k)).collect();
+        let mut conj = vec![Part::not_expr(s[0].clone())];
+        for k in 1..m {
+            let b = 60_000 + k as u64;
+            let or = Part::connect(Op::Or, s[k - 1].clone(), Part::literal(atom(b)));
+            let g = Part::connect(Op::And, or, Part::Bdd(Bdd::literal(atom(b)).not()));
+            conj.push(Part::connect(Op::Or, Part::not_expr(s[k].clone()), g));
+        }
+        for (k, sk) in s.iter().enumerate() {
+            let d = Part::literal(atom(70_000 + k as u64));
+            conj.push(Part::connect(Op::Or, sk.clone(), d));
+        }
+        conj.into_iter()
+            .reduce(|a, b| Part::connect(Op::And, a, b))
+            .expect("m is at least 1")
+    };
+    for m in [4, 16, 64] {
+        let (_, cut, carried, rounds) = settled_alike(&gated(m), m <= 16, "G_k");
+        assert_eq!(rounds, vec![1; m], "m = {m}");
+        eprintln!("G_k m = {m}: cut work {cut}, carried work {carried}");
+    }
+}
+
+/// Gemini's family against a worklist, at `K = S = n` (cross-review XR-lazy-and-kernel-batch-1,
+/// round 1): `S` shared expressions under both `e_1 & … & e_S` and `e_1 | … | e_S`, the first
+/// below a spine of `K` `And`s with `u_1, …, u_K`, and the `u_j` pinned one by one by the chain
+/// of [`pinned_one_a_round`]. A worklist tries each `e_i` again after each pin of a `u_j`, each
+/// time across the spine: `Θ(n^3)`. The rounds try each `e_i` once a round.
+#[test]
+fn cubic_for_a_worklist() {
+    let family = |n: usize| {
+        let es: Vec<Part<Row>> = (0..n as u64).map(|i| opaque(80_000 + 4 * i)).collect();
+        let us: Vec<Part<Row>> = (0..=n as u64).map(|j| opaque(90_000 + 4 * j)).collect();
+        let and = |a, b| Part::connect(Op::And, a, b);
+        let or = |a, b| Part::connect(Op::Or, a, b);
+        let c = es.iter().cloned().reduce(and).expect("n is at least 1");
+        let c2 = es.iter().cloned().reduce(or).expect("n is at least 1");
+        let spine = (1..=n).fold(c, |r, j| and(r, us[j].clone()));
+        let dead = or(spine, Part::literal(atom(99_000)));
+        let dead2 = or(c2, Part::literal(atom(99_001)));
+        let chain = (1..n).rev().fold(us[n].clone(), |rest, j| {
+            and(or(us[j].clone(), Part::not_expr(us[j + 1].clone())), rest)
+        });
+        and(and(dead, dead2), chain)
+    };
+    for n in [8, 16, 32] {
+        let (_, cut, carried, rounds) = settled_alike(&family(n), n <= 16, "K = S = n");
+        eprintln!("K = S = n = {n}: cut work {cut}, carried work {carried}, rounds {rounds:?}");
+    }
+}
+
+/// Codex's gated parities (cross-review XR-lazy-and-kernel-batch-1, round 1) on the diagrams
+/// `pair(i) = (L_i, H_i)`: `E_i = L_i | H_i`, an expression, `F_i = L_i | (H_i & E_(i-1))`, and
+/// the part `E_0 & F_1 & … & F_m & (E_m | g)`, `g` the atom `last`, each `E_i` built once (an
+/// expression's id is new at each build, [`Part::made`], and sharing is by id).
+fn gated_parities(
+    pair: &dyn Fn(usize) -> (Part<Row>, Part<Row>),
+    last: u64,
+    m: usize,
+) -> Part<Row> {
+    let es: Vec<Part<Row>> = (0..=m)
+        .map(|i| {
+            let (l, h) = pair(i);
+            Part::connect(Op::Or, l, h)
+        })
+        .collect();
+    let mut conj = vec![es[0].clone()];
+    for i in 1..=m {
+        let (l, h) = pair(i);
+        conj.push(Part::connect(
+            Op::Or,
+            l,
+            Part::connect(Op::And, h, es[i - 1].clone()),
+        ));
+    }
+    conj.push(Part::connect(
+        Op::Or,
+        es[m].clone(),
+        Part::literal(atom(last)),
+    ));
+    conj.into_iter()
+        .reduce(|a, b| Part::connect(Op::And, a, b))
+        .expect("at least two conjuncts")
+}
+
+/// [`gated_parities`] as Codex gave them, `L_i = a_i & !b_i` and `H_i = !a_i & b_i` on two atoms
+/// `a_i, b_i`. Only `E_0` is shared at first; each round pins one expression and its rebuild
+/// exposes the next shared (how the rebuild does so is not inspected): `m + 1` rounds of one
+/// pin each, and the rounds' work about `m^2`, each round over the whole part (measured
+/// 2026-11-27: cut work 73, 541 and 6,733 at m 2, 8 and 32). A+B finds the same part in the
+/// same rounds. Before 2026-11-27 this test built each `E_i` twice, so no `E_i` was shared and
+/// the family pinned nothing; that 0 was the test's fault.
+#[test]
+fn gated_parities_expose_one_pin_per_rebuild() {
+    let pair = |i: usize| {
+        let (a, b) = (atom(120_000 + 2 * i as u64), atom(120_001 + 2 * i as u64));
+        let low = Bdd::literal(a.clone()).and_literal((b.clone(), false));
+        let high = Bdd::literal(a).not().and_literal((b, true));
+        (Part::Bdd(low), Part::Bdd(high))
+    };
+    let mut all = Vec::new();
+    for m in [2, 8, 32] {
+        let p = gated_parities(&pair, 129_999, m);
+        let (_, cut, carried, rounds) = settled_alike(&p, m <= 8, "gated parities");
+        eprintln!("gated parities m = {m}: cut {cut}, carried {carried}, rounds {rounds:?}");
+        all.push((m, rounds));
+    }
+    for (m, rounds) in all {
+        assert_eq!(rounds, vec![1; m + 1], "m = {m}");
+    }
+}
+
+/// [`gated_parities`] with `L_i` and `H_i` meets of two atoms of their own, as in [`opaque`]:
+/// one round, which pins `E_0`. The rebuilt `F_1`, `L_1 | H_1`, is an expression of its own,
+/// not `E_1`, so nothing more is shared (measured 2026-11-27 at m 2, 8 and 32).
+#[test]
+fn gated_parities_on_meets_pin_once() {
+    let pair = |i: usize| {
+        let at = 110_000 + 4 * i as u64;
+        (Part::Bdd(meet(at, 2)), Part::Bdd(meet(at + 2, 2)))
+    };
+    let mut all = Vec::new();
+    for m in [2, 8, 32] {
+        let p = gated_parities(&pair, 119_999, m);
+        let (_, cut, carried, rounds) = settled_alike(&p, m <= 8, "gated parities on meets");
+        eprintln!(
+            "gated parities on meets m = {m}: cut {cut}, carried {carried}, rounds {rounds:?}"
+        );
+        all.push((m, rounds));
+    }
+    for (m, rounds) in all {
+        assert_eq!(rounds, vec![1], "m = {m}");
+    }
+}
+
+/// [`pinned_one_a_round`]'s work under each way of finding pins. [`Pins::Cut`] and
+/// [`Pins::Carried`] (the rounds) take the same rounds, which grow faster than `m` (measured
+/// 2026-11-27: 8 rounds at m 32 and 20 at 64, cut work 5.1 times a doubling);
+/// [`settled_by`] holds their work to the rounds plus 1 times the first round. The cross-review
+/// (XR-lazy-and-kernel-batch-1, round 1) holds [`Pins::Required`] (A+B), the change meant to
+/// make this family linear, to at most 2.2 times its total work a doubling of `m`, to the same
+/// part as the rounds, and to one run of its phase A a call of [`Part::pins_by`] (before phase A
+/// was one propagation, measured 2026-11-27: 1 round, but work 4,547 at m 32 and 17,299 at 64,
+/// 3.8 times). Every count is printed before any is checked.
+#[test]
+fn settling_a_chain_pinned_one_a_round_takes_rounds_times_the_part() {
+    let mut last: Option<u64> = None;
+    let mut over = Vec::new();
+    for m in [16, 32, 64, 128] {
+        let p = pinned_one_a_round(130_000, m);
+        SETTLE_WORK.with(|w| w.set(0));
+        p.pins();
+        let one = SETTLE_WORK.with(|w| w.get());
+        let (settled, cut, carried, rounds) = settled_alike(&p, false, "pinned one a round");
+        REQUIRED_PASSES.with(|n| n.set(0));
+        let (by_required, required, required_rounds) = settled_by(&p, Pins::Required);
+        let passes = REQUIRED_PASSES.with(|n| n.get());
+        eprintln!(
+            "pinned one a round m = {m}: first round {one}, rounds {}, cut work {cut}, carried \
+             work {carried}; A+B rounds {}, passes {passes}, work {required}",
+            rounds.len(),
+            required_rounds.len()
+        );
+        assert!(by_required == settled, "m = {m}: A+B gave another part");
+        // Phase A once a call of `pins_by`: the rounds that pin, and the last that finds none.
+        assert_eq!(passes, required_rounds.len() as u64 + 1, "m = {m}");
+        if let Some(r0) = last
+            && required as f64 > 2.2 * r0 as f64
+        {
+            over.push(format!("m = {m}: A+B work {r0} to {required}"));
+        }
+        last = Some(required);
+    }
+    assert!(over.is_empty(), "{over:#?}");
 }

@@ -284,7 +284,10 @@ pub struct Fit {
 }
 
 impl Fit {
-    /// The value to set: the geometric mean of the ends, or the end there is, to two digits.
+    /// The value to set: the geometric mean of the ends, or the end there is, to two digits,
+    /// rounded toward the inside of the range, and unrounded where the range is narrower than
+    /// two digits. Rounded to the nearest, an end could leave it: `0 to 6.5625` gave 6.6, whose
+    /// worst ratio was 2.08 against the range's 1.00 (`crossover roots-horner`, 2026-11-27).
     pub fn value(&self) -> f64 {
         let v = match (self.lo > 0.0, self.hi.is_finite()) {
             (true, true) => (self.lo * self.hi).sqrt(),
@@ -293,7 +296,11 @@ impl Fit {
             (false, false) => 1.0,
         };
         let scale = 10f64.powf(v.log10().floor() - 1.0);
-        (v / scale).round() * scale
+        [f64::round, f64::floor, f64::ceil]
+            .map(|r| r(v / scale) * scale)
+            .into_iter()
+            .find(|x| (self.lo..=self.hi).contains(x))
+            .unwrap_or(v)
     }
 }
 
@@ -914,5 +921,32 @@ mod tests {
         let calls = Cell::new(0);
         let _ = median_time(|| calls.set(calls.get() + 1));
         assert_eq!(calls.get(), TIMED_RUNS);
+    }
+
+    /// The value a fit sets is inside its range: `0 to 6.5625` sets 6.5, not 6.6, which is past
+    /// the range (`crossover roots-horner`, 2026-11-27).
+    #[test]
+    fn the_value_a_fit_sets_is_inside_its_range() {
+        let fit = |lo, hi| Fit { lo, hi, worst: 1.0 }.value();
+        for (lo, hi, set) in [
+            (0.0, 6.5625, 6.5),
+            (1.04, f64::INFINITY, 1.1),
+            (2.0, 8.0, 4.0),
+        ] {
+            assert!(
+                (fit(lo, hi) - set).abs() < 1e-9,
+                "{lo} to {hi}: {}",
+                fit(lo, hi)
+            );
+        }
+        for (lo, hi) in [
+            (0.0, 6.5625),
+            (1.04, f64::INFINITY),
+            (2.0, 8.0),
+            (3.96, 3.99),
+        ] {
+            let v = fit(lo, hi);
+            assert!(lo <= v && v <= hi, "{lo} to {hi}: {v}");
+        }
     }
 }

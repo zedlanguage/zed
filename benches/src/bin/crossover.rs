@@ -80,6 +80,12 @@
 //! - `poly-support-gaps [terms]`: the square of a sum of `terms` terms (256) in pairs `i s`,
 //!   `i s + 1`, `s` a gap from 3 to 4098.
 //!
+//! In `zed_kernel::poly::roots`, its `HORNER_COST`, which decides when the branch and bound of
+//! the integer roots finds the bound from above by Ruffini's shifts (ROOTS-dense-cluster-constant):
+//!
+//! - `roots-horner`: the roots above 1 of `(x - 2) … (x - k - 1)`, `k` from 4 to 128, without
+//!   the bound and with it from the first interval.
+//!
 //! In `zed_corpus_ref::zedrt` (the corpus's reference programs):
 //!
 //! - `corpus-leaf-digits`: its `LEAF_DIGITS`, as `leaf-digits`.
@@ -109,6 +115,7 @@ use zed_kernel::num::{
     PRINT_HANDOFF, PRINT_WHOLE, mul_uint, to_decimal, to_decimal_split, to_decimal_split_at,
 };
 use zed_kernel::poly::crossover as px;
+use zed_kernel::poly::roots::crossover as rx;
 use zed_kernel::text::{self, Text};
 use zed_tests::instances::Rng;
 use zed_tests::scaling::Meter;
@@ -1658,7 +1665,7 @@ type Bench = (
 );
 
 /// Every benchmark, with its arguments in `all`; `print-never-slower` is not a threshold.
-const BENCHES: [Bench; 56] = [
+const BENCHES: [Bench; 57] = [
     ("mul", mul, &["1"]),
     ("mul", mul, &["4"]),
     ("mul", mul, &["32"]),
@@ -1715,7 +1722,47 @@ const BENCHES: [Bench; 56] = [
     ("poly-support", poly_support, &["4"]),
     ("poly-support", poly_support, &["16"]),
     ("poly-support-gaps", poly_support_gaps, &["256"]),
+    ("roots-horner", roots_horner, &[]),
 ];
+
+/// The roots above 1 of the cluster `(x - 2) … (x - k - 1)` without the bound from above and
+/// with it from the first interval, `k` from 4 to 128 in halves of a doubling. As built the
+/// bound is found once the branch and bound has spent `HORNER_COST D^2 / t` units, so the
+/// second method stands for it from the first interval: the work before the trigger is the
+/// same in both and small against the rest where it fires.
+fn roots_horner(_: &[String]) -> ExitCode {
+    type Terms = Vec<(u64, BigInt)>;
+    let note = |k: usize| format!(" (degree {k})");
+    let inputs = |k: usize| vec![rx::cluster(k as u64)];
+    let bench = Crossover {
+        unit: "k",
+        note: &note,
+        inputs: &inputs,
+        below: Method {
+            name: "no bound",
+            run: &|p: &Terms| rx::off(p),
+        },
+        above: Method {
+            name: "bound",
+            run: &|p: &Terms| rx::at_start(p),
+        },
+        takes_above: &|p: &Terms| rx::flip(p) >= rx::HORNER_COST,
+        constant: Some(Constant {
+            name: "HORNER_COST",
+            built: rx::HORNER_COST,
+            flip: &|p: &Terms| Some(rx::flip(p)),
+            below_at_most: false,
+        }),
+    };
+    let verdict = bench.report(
+        &mut Meter::new(),
+        "roots-horner",
+        &format!("HORNER_COST {}", rx::HORNER_COST),
+        &ladder(4, 128, 2),
+        TOLERANCE,
+    );
+    status(verdict.holds())
+}
 
 /// The limit on each benchmark of `all`.
 const LIMIT: Duration = Duration::from_secs(60);

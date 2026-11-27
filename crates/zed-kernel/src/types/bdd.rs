@@ -58,6 +58,39 @@ use crate::digest::Digest;
 use list::Cell;
 use set::{Key, NEXT, Set};
 
+/// How a round of [`Part::settle`] finds its pins ([`Part::pins_by`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Pins {
+    /// Every trial carried as far as it changes nodes; kept to test [`Pins::Cut`] against.
+    #[cfg(test)]
+    Carried,
+    /// The trials of [`Pins::Carried`], skipped or stopped where the verdict is known without
+    /// carrying them: the same pins.
+    Cut,
+    /// Claude's A+B of cross-review XR-lazy-and-kernel-batch-1, kept to show that it changes
+    /// the answer: first pin what `root = true` requires, then the trials.
+    #[cfg(test)]
+    Required,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The steps of [`Part::pins_by`] on this thread: nodes walked, evaluated, read by a carry
+    /// or kept by the cut. Read by the tests that bound the work.
+    static SETTLE_WORK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// The passes of A and B that [`Pins::Required`] has made on this thread, each `O(N)`.
+    static REQUIRED_PASSES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts `n` steps of [`Part::pins_by`] (tests only).
+#[inline]
+fn settle_work(n: u64) {
+    #[cfg(test)]
+    SETTLE_WORK.with(|w| w.set(w.get() + n));
+    #[cfg(not(test))]
+    let _ = n;
+}
+
 /// A connective of two operands.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Op {
@@ -1803,24 +1836,54 @@ impl<A: Literal> Part<A> {
     /// the round before, so the end does too. Of a superset, what every value forces is forced
     /// on the part as well (`Part::forced`'s use in `narrow_tuples`).
     ///
-    /// Complexity tradeoff (COMPLEXITY.md K144): a round costs `O(N)` for a part of `N` nodes
-    /// (the walk, the trials each carried only through what they change, the rebuild), but the
-    /// rounds are not bounded by a constant: a pin found late in a round can make the trial of an
-    /// expression tried earlier in it succeed, and the next round finds that. On
-    /// `tests::pinned_one_a_round`, `m` terms, there are about `m / 3.4` rounds, so `O(N^2)` in all
-    /// (bench `settling_a_chain_pinned_one_a_round_stays_quadratic`, held to power 2). Not used: a
-    /// worklist that tries again only the expressions a pin could affect, for two reasons. A trial
-    /// reads the other operand of each operator on its way up, so a pin that changes a node can
-    /// affect the trial of every shared expression below that node's parents, and nothing bounds
-    /// those re-trials below `O(N)` a pin. And a round gains from the rebuild that a worklist on
-    /// the old graph does not see: `substitute_all` joins two diagrams into one, which may be a
-    /// leaf, and makes equal expressions one, so new expressions become shared. A worklist that
-    /// gave other pins would also change which superset `settle` returns, which the callers in
-    /// `empty.rs` read. The work to remove this is SETTLE-rounds-worklist.
+    /// Complexity tradeoff (COMPLEXITY.md K144): `O(rounds · S · N)` for a part of `N` nodes and
+    /// `S` shared expressions. A round is one walk, one evaluation with every atom unknown
+    /// (Kahn's order), `S` trials and one rebuild; a trial is carried up through the operators it
+    /// changes, up to `N` of them, so a round is `Θ(S · N)` at worst, not `O(N)` as this note
+    /// said before cross-review XR-lazy-and-kernel-batch-1 (round 1, all three reviewers,
+    /// computed: Codex's spine `Or(s_i, s_i)` under a chain of unions, 471 to 25,279 visits
+    /// over three doublings; test `a_spine_of_unions_is_tried_in_linear_work`). The rounds are
+    /// not bounded by a constant: a pin found late in a round can make the trial of an expression
+    /// tried earlier in it succeed, and the next round finds that, and a rebuild can make a new
+    /// shared expression. On `tests::pinned_one_a_round`, `m` terms, there are about `m / 3.4`
+    /// rounds (bench `settling_a_chain_pinned_one_a_round_stays_quadratic`, held to power 2), and
+    /// on Gemini's `G_k` `m` rounds of one pin each
+    /// (`tests::gated_by_the_one_before_takes_a_round_a_pin`).
+    ///
+    /// A round's trials are cut short where the cut gives the trial's verdict without carrying it
+    /// ([`Part::pins_by`], [`Pins::Cut`]): the same pins in the same order, so the same part, as
+    /// carrying every trial (tested against [`Pins::Carried`] on every family below and on random
+    /// parts).
+    ///
+    /// Lower bound, conditional: deciding whether a CNF formula has a failed literal, the
+    /// question a round of trials answers for its own kind of formula, has no
+    /// `O((N + M)^(2 - ε))` algorithm on Horn-3-CNF formulas of `N` variables and `M` clauses
+    /// unless the strong exponential time hypothesis fails (M. Järvisalo and J. H. Korhonen,
+    /// "Conditional Lower Bounds for Failed Literals and Related Techniques", SAT 2014, LNCS 8561,
+    /// pp. 75-84, doi:10.1007/978-3-319-09284-3_7, Theorem 1 and Corollary 1: "Failed literal
+    /// existence cannot be solved on Horn-3-CNF formulas with N variables and M clauses in time
+    /// O((N + M)^(2-ε)) for any ε > 0 unless SETH fails"; read 2026-11-27 in the text Gemini
+    /// fetched for the cross-review, verification only). The trials here are not that problem:
+    /// they carry values up only, from shared expressions only, three-valued with every atom
+    /// unknown. The bridge to `pins` is Gemini's reduction from orthogonal vectors (a part whose
+    /// round pins something exactly when two of the vectors are orthogonal), computed correct on
+    /// 200 random instances with a negative control and not proved, so no lower bound for this
+    /// code is claimed. Not used: a worklist that tries again only the expressions a pin could
+    /// affect (the request of SETTLE-rounds-worklist), rejected in that cross-review: `Θ(N^3)` on
+    /// Gemini's family `tests::cubic_for_a_worklist`, and it changes which superset `settle`
+    /// returns, which the callers in `empty.rs` read (Codex's witness,
+    /// `tests::worklist_cannot_pin_an_expression_the_round_turns_into_a_bdd`). Nor Claude's A+B
+    /// ([`Pins::Required`]), which pins the expressions that `root = true` requires before the
+    /// trials: it takes pins the round would not, and changes the answer on that witness.
     pub(super) fn settle(&self) -> Part<A> {
+        self.settle_by(Pins::Cut)
+    }
+
+    /// [`Part::settle`], each round's pins found as `how` says.
+    fn settle_by(&self, how: Pins) -> Part<A> {
         let mut p = self.clone();
         loop {
-            let pins = p.pins();
+            let pins = p.pins_by(how);
             if pins.is_empty() {
                 return p;
             }
@@ -1828,10 +1891,17 @@ impl<A: Literal> Part<A> {
         }
     }
 
-    /// The pins of one round of [`Part::settle`]. Each trial value is carried up from the
-    /// expression through the operators it changes, and stops at the first it leaves alone, so
-    /// that a trial reads what it changes, not the whole part.
+    /// The pins of one round of [`Part::settle`] (the tests read them).
+    #[cfg(test)]
     fn pins(&self) -> DigestMap<u64, bool> {
+        self.pins_by(Pins::Cut)
+    }
+
+    /// The pins of one round of [`Part::settle`], found as `how` says. Each trial value is
+    /// carried up from the expression through the operators it changes, and stops at the first
+    /// it leaves alone, so that a trial reads what it changes, not the whole part; [`Pins::Cut`]
+    /// skips or stops trials whose verdict is known without carrying them.
+    fn pins_by(&self, how: Pins) -> DigestMap<u64, bool> {
         // The expressions; those shared, in the order the walk finds them shared, so that the
         // pins taken do not depend on the expressions' ids.
         let mut ids: DigestMap<u64, usize> = DigestMap::default();
@@ -1841,6 +1911,7 @@ impl<A: Literal> Part<A> {
         let mut stack = vec![self.clone()];
         while let Some(q) = stack.pop() {
             let Part::Expr(e) = q else { continue };
+            settle_work(1);
             if let Some(&i) = ids.get(&e.id) {
                 uses[i] += 1;
                 if uses[i] == 2 {
@@ -1917,47 +1988,255 @@ impl<A: Literal> Part<A> {
         // `zed_graph::kahn` is the one copy; its test is
         // `order::tests::each_ready_set_gives_its_own_topological_order`).
         let mut ready: Vec<usize> = zed_graph::sources(&waiting).collect();
+        // Kahn's order, each expression after its operands; read backward, each before them.
+        let mut order = Vec::with_capacity(exprs.len());
         zed_graph::kahn(
             &mut waiting,
             &mut ready,
             |i| parents[i].iter().copied(),
             |i| {
+                settle_work(1);
                 let v = step(&exprs[i], &|c| known[c]);
                 known[i] = v;
+                order.push(i);
             },
         );
+        let operand_ids = |q: usize| {
+            operands(&exprs[q])
+                .into_iter()
+                .flatten()
+                .filter_map(|x| id(&x))
+        };
+        let is_and = |q: usize| matches!(exprs[q].form(), Form::And(..));
         let mut fixed = vec![false; exprs.len()];
+        // `need[n]`: the values of `n` that can make the root `false` (bit `FALSE`, bit `TRUE`).
+        // The root's is `false`; `And` and `Or` pass their own to their operands, `Not` its own
+        // swapped. Each node from its parents, before its operands (backward Kahn's order),
+        // `O(N + E)`.
+        const FALSE: u8 = 1;
+        const TRUE: u8 = 2;
+        let bit = |v: bool| if v { TRUE } else { FALSE };
+        let mut need = vec![0u8; exprs.len()];
+        need[root] = FALSE;
+        // `reach[n]`: whether a path of unfixed `And`s leads from `n` up to the root (the root's
+        // own is `true`); `live[n]`: the uses of `n` as an operand of such an `And`. Kept as
+        // pins fix nodes, each node's `reach` lost at most once, `O(N + E)` a round.
+        let mut reach = vec![false; exprs.len()];
+        let mut live = vec![0u32; exprs.len()];
+        reach[root] = true;
+        for &q in order.iter().rev() {
+            let passed = match exprs[q].form() {
+                Form::Not(_) => (need[q] & FALSE) << 1 | (need[q] & TRUE) >> 1,
+                _ => need[q],
+            };
+            let through = reach[q] && is_and(q);
+            for c in operand_ids(q) {
+                settle_work(1);
+                need[c] |= passed;
+                if through {
+                    live[c] += 1;
+                    reach[c] = true;
+                }
+            }
+        }
+        // `f` newly fixed: it carries no trial up, so it leaves every path through it.
+        let cut = |f: usize, reach: &mut [bool], live: &mut [u32], fixed: &[bool]| {
+            if !(reach[f] && is_and(f)) {
+                return;
+            }
+            let mut work = vec![f];
+            while let Some(q) = work.pop() {
+                for c in operand_ids(q) {
+                    settle_work(1);
+                    live[c] -= 1;
+                    if live[c] == 0 && c != root {
+                        reach[c] = false;
+                        if is_and(c) && !fixed[c] {
+                            work.push(c);
+                        }
+                    }
+                }
+            }
+        };
+        // The trial `i = v` carried up. With `need`, a node is carried no higher when its new
+        // value cannot make the root `false`; with `req` (only [`Pins::Required`]), the carry
+        // stops at a node given the value opposite the one `root = true` requires of it, and
+        // reports the root `false`.
         let carry = |i: usize,
                      v: bool,
                      known: &[Option<bool>],
-                     fixed: &[bool]|
+                     fixed: &[bool],
+                     need: Option<&[u8]>,
+                     req: &[Option<bool>]|
          -> DigestMap<usize, Option<bool>> {
             let mut changed = DigestMap::from_iter([(i, Some(v))]);
             let mut work = vec![i];
             while let Some(n) = work.pop() {
                 for &q in &parents[n] {
+                    settle_work(1);
                     if fixed[q] {
                         continue;
                     }
                     let now = step(&exprs[q], &|c| changed.get(&c).copied().unwrap_or(known[c]));
                     if now != changed.get(&q).copied().unwrap_or(known[q]) {
                         changed.insert(q, now);
-                        work.push(q);
+                        if let (Some(x), Some(r)) = (now, req.get(q).copied().flatten())
+                            && x != r
+                        {
+                            changed.insert(root, Some(false));
+                            return changed;
+                        }
+                        match (now, need) {
+                            (Some(x), Some(need)) if need[q] & bit(x) == 0 => {}
+                            _ => work.push(q),
+                        }
                     }
                 }
             }
             changed
         };
         let mut pins: DigestMap<u64, bool> = DigestMap::default();
+        let mut pin = |i: usize,
+                       v: bool,
+                       known: &mut [Option<bool>],
+                       fixed: &mut [bool],
+                       reach: &mut [bool],
+                       live: &mut [u32]| {
+            pins.insert(exprs[i].id, v);
+            fixed[i] = true;
+            cut(i, reach, live, fixed);
+            let changed = carry(i, v, known, fixed, None, &[]);
+            let mut nodes = Vec::with_capacity(changed.len());
+            for (n, x) in changed {
+                known[n] = x;
+                nodes.push(n);
+            }
+            // The nodes whose value the pin changed, read by [`Pins::Required`]'s phase A.
+            nodes
+        };
+        #[cfg(test)]
+        if how == Pins::Required {
+            let shared_too = |q: usize| uses[q] >= 2;
+            loop {
+                REQUIRED_PASSES.with(|n| n.set(n.get() + 1));
+                // A: the values `root = true` requires, from each node to its operands; a shared
+                // expression required `r` is pinned to `r`. One propagation with a stack, as in
+                // unit propagation: a node is pushed when its requirement is set, and again when
+                // a pin changes the value of one of its operands (an `And` required `false` or an
+                // `Or` required `true` passes its requirement on once the other operand is known
+                // to leave the result to it). A requirement is set once and a value changes at
+                // most once (from unknown), so each node and arc is handled `O(1)` times:
+                // `O(N + E)` and the carries of the pins, in whatever order the nodes come.
+                // Before (measured 2026-11-27), A was a pass in backward Kahn's order repeated
+                // until it took no pin, and on [`pinned_one_a_round`] each pass learned one more
+                // `s_k`, as `T_(k-1)` comes before `T_k`: about `m` passes over the part.
+                let mut req: Vec<Option<bool>> = vec![None; exprs.len()];
+                req[root] = Some(true);
+                let mut stack = vec![root];
+                while let Some(q) = stack.pop() {
+                    settle_work(1);
+                    let r = req[q].expect("pushed with a requirement");
+                    if shared_too(q) && !fixed[q] {
+                        for n in pin(q, r, &mut known, &mut fixed, &mut reach, &mut live) {
+                            for &p in &parents[n] {
+                                settle_work(1);
+                                if req[p].is_some() {
+                                    stack.push(p);
+                                }
+                            }
+                        }
+                    }
+                    let value = |p: &Part<A>| match p {
+                        Part::Expr(x) => known[ids[&x.id]],
+                        Part::Bdd(Bdd::Leaf(v)) => Some(*v),
+                        Part::Bdd(_) => None,
+                    };
+                    let mut set = |p: &Part<A>, x: bool| {
+                        if let Some(c) = id(p)
+                            && req[c].is_none()
+                        {
+                            req[c] = Some(x);
+                            stack.push(c);
+                        }
+                    };
+                    match (exprs[q].form(), r) {
+                        (Form::Not(a), r) => set(a, !r),
+                        (Form::And(a, b), true) | (Form::Or(a, b), false) => {
+                            set(a, r);
+                            set(b, r);
+                        }
+                        // One operand known to leave the result to the other.
+                        (Form::And(a, b), false) | (Form::Or(a, b), true) => {
+                            if value(a) == Some(!r) {
+                                set(b, r);
+                            } else if value(b) == Some(!r) {
+                                set(a, r);
+                            }
+                        }
+                    }
+                }
+                // B: the trials of the others, cut off at a node given the value opposite its
+                // requirement. A runs again only after a pin of B, as A leaves nothing to take
+                // on its own.
+                let mut took = false;
+                for &i in &shared {
+                    if fixed[i] {
+                        continue;
+                    }
+                    for v in [true, false] {
+                        let trial = carry(i, !v, &known, &fixed, None, &req);
+                        if trial.get(&root).copied().unwrap_or(known[root]) == Some(false) {
+                            pin(i, v, &mut known, &mut fixed, &mut reach, &mut live);
+                            took = true;
+                            break;
+                        }
+                    }
+                }
+                if !took {
+                    return pins;
+                }
+            }
+        }
         for i in shared {
             for v in [true, false] {
-                let trial = carry(i, !v, &known, &fixed);
-                if trial.get(&root).copied().unwrap_or(known[root]) == Some(false) {
-                    pins.insert(exprs[i].id, v);
-                    fixed[i] = true;
-                    for (n, x) in carry(i, v, &known, &fixed) {
-                        known[n] = x;
+                let fails = match how {
+                    #[cfg(test)]
+                    Pins::Carried | Pins::Required => {
+                        let trial = carry(i, !v, &known, &fixed, None, &[]);
+                        trial.get(&root).copied().unwrap_or(known[root]) == Some(false)
                     }
+                    // An unbroken path of unfixed `And`s from `i` to the root: `i = false` makes
+                    // each of them `false` whatever its other operand, so the root too (Codex's
+                    // And-path certificate, cross-review XR-lazy-and-kernel-batch-1 round 1). The
+                    // carried trial gives the same verdict, so the pin is the one it gives.
+                    Pins::Cut if v && reach[i] => true,
+                    // Every operator is monotone in three-valued logic: a trial of an unknown
+                    // expression only turns unknown nodes known, and a known node keeps its
+                    // value. So the root turns `false` only along a path of nodes each given a
+                    // value that can make it `false`: `false` under `And` and `Or`, `true` under
+                    // `Not` (`need`). A node given another value is carried no higher, and a
+                    // trial whose own value is such is not carried at all. Proof that nothing
+                    // is lost: the root is `false` after the trial and was not before, so it
+                    // changed; an operator that changed to `false` (`true`) has an operand that
+                    // changed to `false` (`true`) under `And` and `Or`, or to `true` (`false`)
+                    // under `Not`, since the rest kept their values; that operand's `need` holds
+                    // its new value by the rule above, so the carry passed it; by induction down
+                    // to `i`. Only when `i` and the root are unknown before the trial: a known
+                    // `i` given the other value is no refinement, and a root already `false`
+                    // makes every trial fail.
+                    Pins::Cut if known[i].is_none() && known[root].is_none() => {
+                        need[i] & bit(!v) != 0 && {
+                            let trial = carry(i, !v, &known, &fixed, Some(&need), &[]);
+                            trial.get(&root).copied().unwrap_or(known[root]) == Some(false)
+                        }
+                    }
+                    Pins::Cut => {
+                        let trial = carry(i, !v, &known, &fixed, None, &[]);
+                        trial.get(&root).copied().unwrap_or(known[root]) == Some(false)
+                    }
+                };
+                if fails {
+                    pin(i, v, &mut known, &mut fixed, &mut reach, &mut live);
                     break;
                 }
             }
