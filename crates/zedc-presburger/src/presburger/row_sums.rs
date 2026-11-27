@@ -4454,7 +4454,8 @@ mod tests {
         let twice = |i: usize| (1 + (i % 2) as i64) * w(i);
         // The step between the indices of a group's atoms, the value of atom i, and the
         // period of the values in the start index.
-        let kinds: [(usize, &dyn Fn(usize) -> i64, usize); 3] =
+        type Value<'a> = &'a dyn Fn(usize) -> i64;
+        let kinds: [(usize, Value, usize); 3] =
             [(1, &w, 991), (2, &w, 991), (1, &twice, 1982)];
         let mut most = 0;
         for (kind, &(step, value, period)) in kinds.iter().enumerate() {
