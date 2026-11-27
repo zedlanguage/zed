@@ -237,6 +237,14 @@ fn allocate_of_the_benchmark_input_keeps_the_total() {
 
 #[test]
 fn allocate_is_refused_as_a_function_value_with_the_lambda_as_repair() {
+    assert_eq!(
+        type_errors("g = allocate;\n"),
+        vec![
+            "`allocate` is given here as a function value; this version of zedc checks \
+             `allocate` only where it is called. [allocate]"
+                .to_string()
+        ]
+    );
     let out = rejected_with_main("g = allocate;\n");
     assert!(
         out.contains(
@@ -245,4 +253,39 @@ fn allocate_is_refused_as_a_function_value_with_the_lambda_as_repair() {
         ) && out.contains("repair: write `(total, weights) -> allocate(total, weights)`"),
         "{out}"
     );
+}
+
+#[test]
+fn allocate_with_one_argument_is_refused_with_both_forms_as_repairs() {
+    let src = "f(positional t: int) = allocate(t);\n";
+    assert_eq!(
+        type_errors(src),
+        vec![
+            "`allocate` takes a total and a list of weights, passed by position, and an \
+             optional `places:` by name. [allocate(t)]"
+                .to_string()
+        ]
+    );
+    let out = rejected_with_main(src);
+    assert!(
+        out.contains("repair: write `allocate(total, weights)`")
+            && out.contains("repair: write `allocate(total, weights, places: 2)`"),
+        "{out}"
+    );
+}
+
+#[test]
+fn allocate_with_its_total_before_the_dot_is_refused_with_the_call_as_repair() {
+    let src = "f(positional t: int) = t.allocate([1, 2]);\n";
+    assert_eq!(
+        type_errors(src),
+        vec![
+            "`allocate` is called here with its total before the dot; this version of zedc \
+             builds `allocate` only with every argument in the parentheses. \
+             [t.allocate([1, 2])]"
+                .to_string()
+        ]
+    );
+    let out = rejected_with_main(src);
+    assert!(out.contains("repair: write `allocate(t, [1, 2])`"), "{out}");
 }
