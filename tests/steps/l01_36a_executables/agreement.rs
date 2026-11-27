@@ -109,8 +109,9 @@ fn every_enabled_corpus_program_agrees() {
 #[cfg(feature = "spec")]
 #[test]
 fn every_enabled_fence_program_agrees() {
-    // A fence with `main` is a program; of the enabled fences at L1, one is: the environment
-    // fence, which writes `m.env["HOME"]` to `m.stdout`. Both runs see the same environment.
+    // A fence with `main` is a program; of the enabled fences at L1, two are: hello world, of L1
+    // since the array display is (step L1.16), and the environment fence, which writes
+    // `m.env["HOME"]` to `m.stdout`. Both runs see the same environment.
     let programs: Vec<_> = zed_tests::fences::all()
         .into_iter()
         .filter(|f| f.layer <= ENABLED && !f.notation)
@@ -120,7 +121,13 @@ fn every_enabled_fence_program_agrees() {
         })
         .collect();
     let keys: Vec<&str> = programs.iter().map(|(_, f)| f.key.as_str()).collect();
-    assert_eq!(keys, ["EXAMPLES.md [18. Files, stores, and the world] 8"]);
+    assert_eq!(
+        keys,
+        [
+            "EXAMPLES.md [1. Programs and ports] 1",
+            "EXAMPLES.md [18. Files, stores, and the world] 8"
+        ]
+    );
     let d = dir("fences");
     for (k, (text, f)) in programs.iter().enumerate() {
         assert!(zedc::run::load(text.as_bytes()).is_ok(), "{}", f.at);

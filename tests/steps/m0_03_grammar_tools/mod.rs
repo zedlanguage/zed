@@ -696,18 +696,21 @@ fn syntax_with_old_break() -> String {
 }
 
 /// The fuzz finds a sentence the old `break` derives with every lookahead satisfied but the
-/// parser rejects. Seed 27 at five sentences per ring was found by running seeds 1 to 500 (the
-/// first of them that finds it at this size; 37, 123, 198, 261, 273, 320, 325, 338, 423, 435,
-/// 440, 460, 489 and 500 do too) after the type-level `else` went out and the `else` tail took a
-/// union of atoms in parentheses (QUESTIONS A113; seed 11, found after `()` became a tuple value,
+/// parser rejects. Seed 90 at five sentences per ring was found by running seeds 1 to 500 (the
+/// first of them that finds it at this size; 96, 236, 261, 322, 396, 407, 423, 440 and 450 do
+/// too) after the array, set and map displays went to ring L1 (LAYER-audit-open item F; seed 27,
+/// found after the type-level `else` went out and the `else` tail took a union of atoms in
+/// parentheses, QUESTIONS A113, no longer does; seed 11, found after `()` became a tuple value,
 /// seed 85 after the type-level `else` came in, seed 13 after the `if` statement, seed 294 before
 /// it and seed 45 before that no longer do); if a grammar change moves it, run the seeds again
-/// (zed-tools' `fuzz SPEC_DIR 5 SEED` under zrun, on the grammar with the old `break`). The same
-/// seed on the real grammar finds nothing, so the failure comes from the change.
+/// with a test that calls `fuzz_of` on this test's two specs for each seed and keeps those that
+/// meet the asserts below (the `fuzz` binary cannot: `Spec::open` reads the grammar of the tree
+/// it was built in). The same seed on the real grammar finds nothing, so the failure comes from
+/// the change.
 #[test]
 fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
     const N: usize = 5;
-    const SEED: i64 = 27;
+    const SEED: i64 = 90;
     let real = spec_dir("fuzz_real", &design(""), "");
     let real = Spec::open(&real.root()).expect("the spec reads");
     let (outcome, out) = fuzz_of(&real, N, SEED);

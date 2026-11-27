@@ -2,7 +2,7 @@
 source: tests/steps/l01_37a_short_addresses/record.rs
 expression: without_addresses(&out)
 ---
-DESIGN.md [sec:ports] 3
+DESIGN.md [sec:ports] 4
   warnings: []
   checks: [Outcome { line: 7, col: 3, failure: Some("this file declares 2 functions named `main`, at the places listed below, and a program starts at exactly one. Keep the `main` the program should start at, and rename or remove each of the others.\n  [1] 2:3: `main` is declared here\n      2 |   main(m: MainArgs) {\n        |   ^^^^^^^^^^^^^^^^^^^\n  [2] 7:3: `main` is declared here\n      7 |   main(m: MainArgs) -> int {\n        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^"), not_run: None }]
 
@@ -148,6 +148,10 @@ DESIGN.md [sec:memory] 1
     },
 ]
   checks: [Outcome { line: 2, col: 44, failure: Some("the declared result type `-> (int, Utf8String)` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }]
+
+EXAMPLES.md [1. Programs and ports] 1
+  warnings: []
+  checks: []
 
 EXAMPLES.md [2. Bindings and values] 1
   rejected: [
@@ -528,6 +532,11 @@ EXAMPLES.md [6. Functions] 3
     },
 ]
   checks: [Outcome { line: 2, col: 8, failure: Some("`greet` is not defined.\n  [1] 2:8: `greet` was looked for in the unit's top level, its imports and the prelude\n      2 | g3   = greet(\"Al\", ...);                // currying leaves out named parameters: called g3(punct: \"?\") or g3()\n        |        ^^^^^\n  [2] 2:8: repair: define `greet` above its use, as `greet = …;`"), not_run: None }, Outcome { line: 3, col: 8, failure: Some("`add` is not defined.\n  [1] 3:8: `add` was looked for in the unit's top level, its imports and the prelude\n      3 | add1 = add[1];                          // brackets index one level: the section b -> add(1, b)\n        |        ^^^\n  [2] 3:8: repair: `add1 = add1[1];                          // brackets index one level: the section b -> add(1, b)`\n  [3] 3:8: repair: define `add` above its use, as `add = …;`"), not_run: None }, Outcome { line: 4, col: 14, failure: Some("`add` is not defined.\n  [1] 4:14: `add` was looked for in the block around its use, then the unit's top level, its imports and the prelude\n      4 | add1b = b -> add(1, b);                 // the lambda spelling, always available\n        |              ^^^\n  [2] 4:14: repair: `add1b = b -> add1(1, b);                 // the lambda spelling, always available`\n  [3] 4:14: repair: define `add` above its use, as `add = …;`"), not_run: None }, Outcome { line: 5, col: 8, failure: Some("the mark names the row \"Missing argument\", and the diagnostic is in no row of the rejection table: `greet` is not defined."), not_run: None }, Outcome { line: 6, col: 8, failure: Some("the mark names the row \"Argument in the wrong form\", and the diagnostic is in no row of the rejection table: `greet` is not defined."), not_run: None }, Outcome { line: 7, col: 36, failure: Some("The type `Utf8String` is not defined."), not_run: None }, Outcome { line: 7, col: 51, failure: Some("The type `Utf8String` is not defined."), not_run: None }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 14, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+
+EXAMPLES.md [10. Structs and updates] 5
+  warnings: []
+  `origin`: Ok(Family(Family({Atom(Atom { name: "x", fields: [], payload: None }): Float(0.0), Atom(Atom { name: "y", fields: [], payload: None }): Float(0.0)})))
+  checks: []
 
 EXAMPLES.md [18. Files, stores, and the world] 8
   warnings: []

@@ -130,6 +130,9 @@ rows! {
     BareLoopEntry => "A boundary entry of a loop written without `initial`",
     // No diagnostic uses the next row yet: plan row INITIAL-decl emits it.
     StepReadAsEntry => "Step read written as an entry",
+    // No diagnostic uses the next row yet: plan row L7.2 emits it, with the indexed generation
+    // push.
+    PushToReadEntry => "Push to an entry of the value a step reads",
     InitialOutsideLoop => "An `initial` statement outside a loop, or under `local`",
     BreakOutsideLoop => "`break` outside the body of a loop or a `for`",
     InitialNotUpdated => "An `initial` statement for a name the loop does not update",
@@ -151,6 +154,8 @@ rows! {
         "Two members of one name with different declarations in a struct or interface body",
     PathLeavesPackage =>
         "File read at the compile-time stage by a path that leaves the package root",
+    // No diagnostic uses this row yet: plan row L2.8c emits it, with the byte pin.
+    StaleBytePin => "Dependency whose bytes no longer match their pin",
     StalePin => "Pinned file whose content no longer matches its pin",
     // No diagnostic uses this row yet: plan row SCHED-schema-types emits it.
     SchemaNotInBuild => "Type computed from a schema file the build does not carry",

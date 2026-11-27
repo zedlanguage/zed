@@ -67,7 +67,7 @@ fn every_l1_fence_passes_but_for_its_free_names() {
     assert_eq!(
         alternatives,
         [
-            "DESIGN.md [sec:ports] 3",
+            "DESIGN.md [sec:ports] 4",
             "DESIGN.md [sec:checking_in_zed] 1"
         ]
     );
@@ -86,13 +86,17 @@ fn every_l1_fence_passes_but_for_its_free_names() {
         ]
     );
     assert_eq!(rejection, 1);
-    // The rebinding fence checks its one mark; the lambda fence binds every name it uses, and
-    // the environment fence reads only `m.env`, a field of `main`'s argument.
+    // The rebinding fence checks its one mark; the lambda fence and the `origin` fence bind
+    // every name they use, and hello world and the environment fence use only `m.stdout` and
+    // `m.env`, fields of `main`'s argument (hello world and `origin` are of L1 since the array
+    // and map displays are, step L1.16).
     assert_eq!(
         clean,
         [
+            ("EXAMPLES.md [1. Programs and ports] 1".to_string(), 0),
             ("EXAMPLES.md [2. Bindings and values] 2".to_string(), 1),
             ("EXAMPLES.md [6. Functions] 2".to_string(), 0),
+            ("EXAMPLES.md [10. Structs and updates] 5".to_string(), 0),
             (
                 "EXAMPLES.md [18. Files, stores, and the world] 8".to_string(),
                 0

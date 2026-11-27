@@ -15,15 +15,18 @@ fn every_enabled_fence_agrees() {
             r.add(&f.at, unit(&f.text, engines));
         }
     });
-    // The lambda fence's two bindings run together, once under each engine.
-    assert_eq!(runs, 2, "native runs, each leaving no cell live");
+    // The lambda fence's two bindings run together, once under each engine, and so does the
+    // `origin` binding of EXAMPLES section 10 fence 5, of L1 since the map display is (step L1.16).
+    assert_eq!(runs, 4, "native runs, each leaving no cell live");
     assert_eq!(r.mismatches, Vec::<String>::new());
     assert_eq!(r.not_compared, Vec::<String>::new());
-    // The lambda fence's `five` and `seven` under each engine, and the table checks, under
-    // each engine, of the fences whose front passes: the lambda fence and the `main` of DESIGN
-    // sec:ports 1 with `MainArgs`, and EXAMPLES section 18 fence 8,
-    // `m.env["HOME"] else #notFound -> "no HOME"`; a fence the front rejects compares nothing.
-    assert_eq!(r.compared, 10);
+    // The lambda fence's `five` and `seven` and EXAMPLES section 10 fence 5's `origin` under
+    // each engine, and the table checks, under each engine, of the fences whose front passes:
+    // the lambda fence, the `main` of DESIGN sec:ports 1 with `MainArgs`, EXAMPLES section 18
+    // fence 8, `m.env["HOME"] else #notFound -> "no HOME"`, the `origin` fence, and the hello
+    // world `main` of EXAMPLES section 1 fence 1, of L1 since the array display is (step L1.16);
+    // a fence the front rejects compares nothing.
+    assert_eq!(r.compared, 16);
 }
 
 #[test]
