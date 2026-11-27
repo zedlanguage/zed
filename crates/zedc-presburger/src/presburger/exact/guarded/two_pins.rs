@@ -664,7 +664,7 @@ fn form_values(
     cell: &Cell,
     cut: Option<Form>,
     work: &mut Work,
-) -> Result<Option<(i128, i128, i128, Vec<Run>)>, Refusal> {
+) -> Result<Option<FormSteps>, Refusal> {
     let (al, be, ga) = f;
     let (g, a, b) = if al == 0 && be == 0 {
         (0, 1, 0)
@@ -703,6 +703,9 @@ fn form_values(
 /// The values of `u` a reader gives, `(k, base, runs of t)`: `u = base + k·t` for each `t` of
 /// the runs, `k >= 1`; `(1, 0, runs of u)` but where [`on_line`] solved an equation.
 type Steps = (i128, i128, Vec<Run>);
+
+/// The values of a form a reader gives, `(s, g, o, runs of t)` ([`form_values`]).
+type FormSteps = (i128, i128, i128, Vec<Run>);
 
 /// The runs of `u` itself as [`Steps`].
 fn plain(runs: Option<Vec<Run>>) -> Option<Steps> {

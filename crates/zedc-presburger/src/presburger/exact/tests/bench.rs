@@ -128,7 +128,8 @@ fn the_two_pin_reading_takes_a_bounded_time_per_unit_of_work() {
 #[test]
 fn the_two_pin_reading_of_a_line_costs_the_same_at_8n() {
     let syms: Vec<Atom> = ["p", "q", "y"].iter().map(|s| a(s)).collect();
-    let cases: [(&str, fn(i64) -> Formula); 2] = [("line", line), ("face", super::face)];
+    type Case = (&'static str, fn(i64) -> Formula);
+    let cases: [Case; 2] = [("line", line), ("face", super::face)];
     for (what, f) in cases {
         let units = |n: i64| read(&f(n), &syms);
         TWO_PIN_LINE_OFF.set(true);

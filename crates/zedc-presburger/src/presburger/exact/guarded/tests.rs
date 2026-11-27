@@ -172,7 +172,7 @@ fn pins_match_the_recursive_walk_on_random_formulas() {
 /// row here holds for some `w` in `40..=400`); elsewhere it gives `None`.
 #[test]
 fn on_line_gives_the_values_of_u_at_the_points() {
-    let dirs = [
+    let dirs: [(i128, i128); 8] = [
         (1, 0),
         (0, 1),
         (2, 3),
