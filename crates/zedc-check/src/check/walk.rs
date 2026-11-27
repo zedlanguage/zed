@@ -4916,20 +4916,34 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the body, as `f(y)` for a parameter `f` of the enclosing function, would be met at each
     /// call with `y` unbound, read as `_`, before the receiver's need binds it
     /// (FAIL-map-lambda-calls-param-entry). On a receiver of known type the lambda stays
-    /// generic and is applied to the entries, as before.
-    // Complexity tradeoff: a scan of `x`'s pieces, O(pieces), and `word_entries` where it
-    // applies, recorded once per call site of the word.
+    /// generic and is applied to the entries, as before, except where those entries are
+    /// families proved to hold no entries ([`Self::proved_no_entries`]), as the rows of
+    /// `{0 -> []}` or `[[], []]` are: the lambda is checked with its parameter of that type, so
+    /// a fold of it in the body is refused as always failing with `#empty`, by its own
+    /// headline (DESIGN sec:type_language, the `m >< op` row: "`[] >< max` is rejected"),
+    /// where a generic lambda, fitted to the entries by its signature alone, was refused by
+    /// the word (plan row MSG-map-display-row-fold-headline).
+    // Complexity tradeoff: a scan of `x`'s pieces, O(pieces), and `word_entries` where the
+    // first parameter has no written type, O(arrows of `x`), as `map_end` pays at the same
+    // call site, recorded once per call site of the word; `proved_no_entries` is O(arrows of
+    // the entries), which the union bounds.
     fn lambda_entries(&mut self, x: &Ty, f: &Expr, span: Span) -> Option<Ty> {
         let ExprKind::Lambda { params, .. } = &f.kind else {
             return None;
         };
+        if !params.first().is_some_and(|p| p.ty.is_none()) {
+            return None;
+        }
         let open = x.pieces().into_iter().any(|p| match p {
             Piece::Var(v) => {
                 (self.class_root(&v)).is_some_and(|r| self.classes[r].resolved.is_none())
             }
             _ => false,
         });
-        (open && params.first().is_some_and(|p| p.ty.is_none())).then(|| self.word_entries(x, span))
+        // With no open class in `x`, `word_entries` records no need: each variable is read as
+        // its resolved type, or as `_` where it has no class.
+        let entries = self.word_entries(x, span);
+        (open || self.proved_no_entries(&entries)).then_some(entries)
     }
 
     /// Whether the lambda `f` reads, at any depth, a name bound outside it that is not a
