@@ -25061,7 +25061,7 @@ impl Ty {
     // sort, O(s log s) comparisons for s sequences, each O(k) members for the k a comparison
     // reads. Naive, the lists made inside each comparison, O(s log s · c / s) lists. One
     // sequence is its own order, O(1).
-    fn union_order<'a>(seqs: &[Vec<&'a Ty>]) -> Vec<usize> {
+    fn union_order(seqs: &[Vec<&Ty>]) -> Vec<usize> {
         let mut places: Vec<usize> = (0..seqs.len()).collect();
         if seqs.len() < 2 {
             return places;
