@@ -76,11 +76,14 @@ fn a_group_need_reading_another_parameter_is_met_at_each_call() {
 #[test]
 fn a_level_need_reading_another_parameter_is_met_at_each_call() {
     let y = "g(positional m, positional y) = m.any(x -> x > y);";
+    // The call is refused, which is what this test is for. The headline names `g`'s arguments,
+    // not the comparison `x > y` that fails; plan row
+    // MSG-level-need-at-call-names-the-comparison makes it name the comparison.
     refused(
         "any_y_bad",
         y,
         "g([\"a\"], 1)",
-        "the function given to `any` does not take (\"a\")",
+        "`g` does not take (0 -> \"a\", 1)",
     );
     runs("any_y_good", y, "g([1, 5], 2)", "true");
     // Since FAIL-any-lambda-calls-param the lambda is checked with the entries bound, so the
