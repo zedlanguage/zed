@@ -28,6 +28,7 @@ export interface LedgerEntry {
   state: string;
   by?: string;
   agent?: string;
+  owner?: unknown;
   started?: string;
   // When the line was written: orchestrator lines use `at`, some older lines `ts`.
   at?: string;
@@ -137,8 +138,21 @@ export function parsePlan(markdown: string): PlanRow[] {
 // the colon is no role, is one item in both.
 const rolePattern = /^([^:#]+):([a-z][^#]*?)(?:#(.*))?$/;
 
+// The ids a label's item part names: "A, B", "A+B" and "A B" are A and B, and a note in parentheses
+// is dropped ("units-value-names (P237)"). In a list only a word that starts with a capital is an
+// id, so "LOOP-boundary-spec merge" is LOOP-boundary-spec, "Done: B" is B, and
+// "FAIL-x+3" (FAIL-x and three more) is FAIL-x. Of the 16 log labels with spaces on 2026-11-27,
+// 5 were lists with spaces alone or "id word" (DAG-problem-report-cleanup). A list with no such word
+// ("group-4 rows") stays one id, as before, so its line is not lost.
+export function labelIds(text: string): string[] {
+  const parts = text.replace(/\([^()]*\)/g, " ").split(/[\s,+]+/).filter((p) => p !== "");
+  if (parts.length <= 1) return parts;
+  const ids = parts.filter((p) => /^[A-Z][\w.*-]*$/.test(p));
+  return ids.length > 0 ? ids : [text.trim()];
+}
+
 // A label that is one item's own id: no role and no list.
-export const ownLabel = (raw: string): boolean => !rolePattern.test(raw) && !/[,+]/.test(raw);
+export const ownLabel = (raw: string): boolean => !rolePattern.test(raw) && labelIds(raw).length === 1;
 
 export function parseLog(text: string): LogEntry[] {
   const out: LogEntry[] = [];
@@ -146,9 +160,9 @@ export function parseLog(text: string): LogEntry[] {
     const m = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) \| ([^|]+?) \| (.*)$/.exec(line);
     if (!m) continue;
     // "A:impl#1", and "A:orchestrator" or "A:code-sweep" with no attempt: all three are lines of A.
-    // "A, B:orchestrator", "A+B:merge#1" or "A, B" is a line of A and a line of B.
+    // "A, B:orchestrator", "A+B:merge#1", "A, B" or "A B" is a line of A and a line of B (labelIds).
     const label = rolePattern.exec(m[2]);
-    for (const id of (label ? label[1] : m[2]).split(/\s*[,+]\s*/)) {
+    for (const id of labelIds(label ? label[1] : m[2])) {
       out.push({
         at: Date.parse(m[1].replace(" ", "T")),
         time: m[1],
@@ -283,11 +297,10 @@ export function ledgerId(e: LedgerEntry): string {
   return (one ?? "").split(/[\s,]+/).filter((s) => s !== "").join(",");
 }
 
-// The items a ledger id names: "STRNAN-spec:merge" is STRNAN-spec, and "A+B" or "A, B" is A and B.
+// The items a ledger id names: "STRNAN-spec:merge" is STRNAN-spec, and "A+B", "A, B" or "A B" is A and B.
 export function ledgerItems(raw: string, known: Map<string, string>): string[] {
   const label = rolePattern.exec(raw);
-  const ids = (label ? label[1] : raw)
-    .split(/\s*[,+]\s*/)
+  const ids = labelIds(label ? label[1] : raw)
     .map((part) => resolveId(part, known)?.id ?? "")
     .filter((id) => id !== "");
   return [...new Set(ids)];
@@ -447,11 +460,19 @@ export function buildGraph(inp: Inputs): BoardState {
   const gone = (id: string) => outside(id) || dropped(id);
   const rows = inp.plan.filter((r) => !gone(r.id));
   const planned = new Set(rows.map((r) => r.id));
+  // The agents the ledger names in a by, owner or agent field ("kernel27:impl#1" is kernel27). An
+  // agent's name starts with a small letter; a by such as BATCH or DAG-overrides-retire names an item.
+  // Of the 63 LABEL WITH NO ITEM lines on 2026-11-27, 53 were log lines labeled with the agent's own
+  // name, which names no item to give a ledger line to (DAG-problem-report-cleanup).
+  const agents = new Set<string>();
+  for (const e of inp.ledger) {
+    for (const v of [e.by, e.owner, e.agent]) if (typeof v === "string" && /^[a-z]/.test(v)) agents.add(v.replace(/:.*/, ""));
+  }
   // A label alone makes no node: an item needs a plan row or a ledger line of its own.
   for (const id of new Set([...logs.keys(), ...ledger.keys()])) {
     if (planned.has(id) || gone(id)) continue;
     if (ownLines.has(id)) rows.push({ id, level: -1, title: lastOwn<string>(id, "title", "string") ?? id, size: "", hard: false, needs: [] });
-    else if (labelOf.has(id)) problems.push(`LABEL WITH NO ITEM: ${id} (from "${labelOf.get(id)}"; give it a ledger line)`);
+    else if (labelOf.has(id) && !agents.has(id)) problems.push(`LABEL WITH NO ITEM: ${id} (from "${labelOf.get(id)}"; give it a ledger line)`);
   }
   const nodeIds = new Set(rows.map((r) => r.id));
 
