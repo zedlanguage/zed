@@ -994,8 +994,10 @@ struct LitMasks {
 /// key type of the kernel's treaps.
 ///
 /// Complexity tradeoff (DERIV-too-large-chain-quadratic, bench
-/// `l01_29_repairs_and_printing::bench::scaling::deriving_through_values_read_twice_scales`):
-/// naive version, `imbl::OrdSet`, a B-tree whose union inserts each key of the smaller set into
+/// `l01_29_repairs_and_printing::bench::scaling::checking_a_chain_read_twice_scales`, which
+/// times the whole check of the chain; `deriving_through_values_read_twice_scales` beside it
+/// counts the steps [`Ck::derivation_lines`] takes on the same chain, 3 a binding, but not
+/// the cost of a union, which is not a step; TEST-l01_29-share): naive version, `imbl::OrdSet`, a B-tree whose union inserts each key of the smaller set into
 /// the larger: where the steps form a DAG, as `a_i = a_(i-1) + a_(i-1)`, a step's next steps
 /// hold nearly the same `i` lines, and their union cost O(i log n), Theta(n^2 log n) along the
 /// chain (ratio 46.07 at 2100 and 16800 bindings). Used: the kernel's persistent treap, whose
@@ -2103,7 +2105,8 @@ impl Reason {
 
 thread_local! {
     /// The parts of derivations built on this thread since [`derivation_steps`] last read
-    /// it: each expression a derivation walks and each premise put into words.
+    /// it: each expression a derivation walks, each premise put into words, and each step
+    /// [`Ck::derivation_lines`] and the derivation of a widening take.
     static DERIVED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
@@ -2112,12 +2115,12 @@ fn built(k: u64) {
 }
 
 /// The parts of derivations built on this thread since the last call, which resets the
-/// count: each expression a derivation walked and each premise put into words. A check whose
+/// count: each expression a derivation walked, each premise put into words, and each step
+/// `Ck::derivation_lines` and the derivation of a widening take. A check whose
 /// rejections are not reported builds none (step L1.39b).
 pub fn derivation_steps() -> u64 {
     DERIVED.replace(0)
 }
-
 /// A chain of narrowings is as long as the tests nest, so its origins are dropped in a loop,
 /// each one whose last holder this is.
 impl Drop for Origin<'_> {
@@ -5419,6 +5422,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let mut r = base.cloned().unwrap_or_default();
                 let mut todo: Vec<Span> = vec![s];
                 while let Some(t) = todo.pop() {
+                    // Each step this walk takes, held or not, for [`derivation_steps`]: a walk
+                    // that goes again through the steps it holds counts each time
+                    // (TEST-l01_29-share).
+                    built(1);
                     let n = d.keys.len() as i64;
                     let k = *d.keys.entry(t).or_insert(n);
                     if r.steps.contains(&k) {
@@ -5480,6 +5487,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         d: &mut DerivedLines,
         tuples: &mut HashMap<Span, Ty>,
     ) -> StepLines {
+        // A step of a derivation, for [`derivation_steps`] (TEST-l01_29-share).
+        built(1);
         let mut step = StepLines {
             lines: Vec::new(),
             narrowing: None,

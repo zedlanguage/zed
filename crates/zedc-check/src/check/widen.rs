@@ -714,6 +714,8 @@ impl<'t, 'a> Walk<'t, 'a> {
             if std::mem::replace(&mut seen[j as usize], mark) == mark {
                 continue;
             }
+            // A step of a derivation, for [`super::derivation_steps`] (TEST-l01_29-share).
+            super::built(1);
             let n = &self.nodes[j as usize];
             let Some((lo, hi)) = values[j as usize] else {
                 continue;

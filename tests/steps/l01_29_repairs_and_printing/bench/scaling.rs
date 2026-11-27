@@ -2,6 +2,7 @@
 //! (TEST-bench-move-l0125). Each input is built at both sizes before any run is timed.
 
 use zed_tests::scaling;
+use zedc::check::derivation_steps;
 
 use crate::scaling::*;
 
@@ -14,15 +15,60 @@ fn placing_a_diagnostic_on_every_line_scales() {
     });
 }
 
+/// The whole check of [`doubled`], parse to message. The derivation is a small part of it
+/// (468,262 of 1,382,527,695 instructions at 2100 bindings, TEST-l01_29-share), so this holds
+/// the chain; [`deriving_through_values_read_twice_scales`] holds the derivation.
 #[test]
-fn deriving_through_values_read_twice_scales() {
+fn checking_a_chain_read_twice_scales() {
     let n = 2100;
     let srcs = scaling::inputs(n, doubled);
     scaling::check(
-        "the derivation of a chain read twice at each of n bindings",
+        "the check of a chain read twice at each of n bindings",
         n,
         |k| derived_through_values_read_twice(&srcs[&k], k),
     );
+}
+
+/// The steps of the derivations of a rejection ([`derivation_steps`]: each step
+/// `Ck::derivation_lines` takes, and each part the derivation builds), at `n` and `8n`, held
+/// to [`scaling::PREFERRED`] by [`scaling::hold_linear`]: where `doubled` reads each binding
+/// twice and `unions_inside` meets `a_(i-1)` through two tuples, a walk that went again
+/// through the steps it shares would count Theta(n^2) steps (DERIV-too-large-chain-quadratic,
+/// SCALE-derivation-lines-memo). A count is not timed, so it holds the derivation alone,
+/// which a timing of the whole check does not: there the derivation is 0.034% of the work,
+/// and a quadratic of fewer than 29 instructions a pair passes. Controls (TEST-l01_29-share):
+/// one more step for each 4096 steps already keyed, at each step `derivation_lines` enters,
+/// measured 24,042 and 280,108 steps, 11.65 times, and failed; one for each 65,536 passed.
+/// The cost of one union of two sets of lines is not a step;
+/// [`checking_a_chain_read_twice_scales`] times it with the rest.
+#[test]
+fn deriving_through_values_read_twice_scales() {
+    for (what, n, make) in [
+        (
+            "the derivation of a chain read twice at each of n bindings",
+            2100,
+            doubled as fn(usize) -> String,
+        ),
+        (
+            "the derivation of a chain of n tuples meeting a name twice",
+            1000,
+            crate::type_size::unions_inside,
+        ),
+    ] {
+        let srcs = scaling::inputs(n, make);
+        let steps = |k: usize| {
+            derivation_steps();
+            crate::rejected(&srcs[&k]);
+            let steps = derivation_steps();
+            // The walk takes each binding: a count that stays the same as `k` grows, as
+            // `derivation_steps` gave before it counted `derivation_lines`, holds nothing.
+            assert!(steps >= k as u64, "{what}: {steps} steps at {k}");
+            steps
+        };
+        let small = steps(n);
+        let large = steps(scaling::FACTOR * n);
+        scaling::hold_linear(what, "derivation steps", small, large);
+    }
 }
 
 #[test]
