@@ -8,6 +8,7 @@
 #![recursion_limit = "256"]
 
 mod complete;
+mod exact_sets_study;
 mod forms;
 mod is;
 mod kinds;
