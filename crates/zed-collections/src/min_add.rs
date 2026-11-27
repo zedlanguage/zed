@@ -330,6 +330,82 @@ mod tests {
         assert_eq!(got, [0, 2, 3]);
     }
 
+    /// Items that stay in `i64` while a node's own sum leaves it
+    /// (FAIL-min-add-inner-node-overflow): the -1 added to all four items is kept at the root,
+    /// so after the third addition the leaf of item 1 holds `i64::MAX + 1`, and item 1 is
+    /// `i64::MAX`. The same with the signs turned, at `i64::MIN`.
+    #[test]
+    fn a_node_sum_past_i64_keeps_the_items_that_fit() {
+        let mut tree = MinAdd::new(4);
+        tree.add(1, 1, i64::MAX);
+        tree.add(0, 3, -1);
+        tree.add(1, 1, 1);
+        // Items [-1, i64::MAX, -1, -1].
+        assert_eq!(tree.min(), Some(-1));
+        assert_eq!(tree.first_at_most(1, i64::MAX - 1), Some(2));
+        assert_eq!(tree.first_at_most(1, i64::MAX), Some(1));
+        let mut got = Vec::new();
+        tree.for_each_at_most(1, 1, i64::MAX, |i| got.push(i));
+        assert_eq!(got, [1]);
+
+        let mut tree = MinAdd::new(4);
+        tree.add(1, 1, i64::MIN);
+        tree.add(0, 3, 1);
+        tree.add(1, 1, -1);
+        // Items [1, i64::MIN, 1, 1].
+        assert_eq!(tree.min(), Some(i64::MIN));
+        assert_eq!(tree.first_at_most(0, i64::MIN), Some(1));
+        assert_eq!(tree.first_at_most(2, 0), None);
+    }
+
+    /// As `additions_and_searches_match_an_array`, with additions near `±2^62`, so the sums
+    /// kept at the nodes pass `i64` while the items stay in it: an addition that would take an
+    /// item out of `i64` is not made. Compared with an array of `i128`, for n from 1 to 16,
+    /// at the bounds `i64::MIN`, -1, 0, 1 and `i64::MAX`.
+    #[test]
+    fn large_additions_match_an_array() {
+        let (mut rng, _) = crate::seed::Rng::fresh("large_additions_match_an_array");
+        let mut next = move |m: u64| rng.below_u64(m);
+        let big = 1i64 << 62;
+        let steps = [-big - 1, -big, -1, 0, 1, big, big + 1];
+        for n in 1..=16usize {
+            let mut items = vec![0i128; n];
+            let mut tree = MinAdd::new(n);
+            for _ in 0..8 * n {
+                let a = next(n as u64) as usize;
+                let b = next(n as u64) as usize;
+                let (lo, hi) = (a.min(b), a.max(b));
+                let d = steps[next(steps.len() as u64) as usize];
+                let fits = |x: i128| i64::try_from(x + i128::from(d)).is_ok();
+                if !items[lo..=hi].iter().all(|&x| fits(x)) {
+                    continue;
+                }
+                tree.add(lo, hi, d);
+                for x in &mut items[lo..=hi] {
+                    *x += i128::from(d);
+                }
+                let least = (items.iter().copied().min()).map(|x| i64::try_from(x).unwrap());
+                assert_eq!(tree.min(), least, "n {n} items {items:?}");
+                for bound in [i64::MIN, -1, 0, 1, i64::MAX] {
+                    for from in 0..=n {
+                        let want = (from..n).find(|&i| items[i] <= i128::from(bound));
+                        assert_eq!(
+                            tree.first_at_most(from, bound),
+                            want,
+                            "n {n} from {from} bound {bound} items {items:?}"
+                        );
+                    }
+                    let mut got = Vec::new();
+                    tree.for_each_at_most(lo, hi, bound, |i| got.push(i));
+                    let want: Vec<usize> = (lo..=hi)
+                        .filter(|&i| items[i] <= i128::from(bound))
+                        .collect();
+                    assert_eq!(got, want, "n {n} {lo}..={hi} bound {bound} items {items:?}");
+                }
+            }
+        }
+    }
+
     /// An empty range adds nothing, and a range past the end is refused with its message.
     #[test]
     fn an_empty_range_adds_nothing_and_one_past_the_end_panics() {
