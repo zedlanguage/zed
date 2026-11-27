@@ -34445,20 +34445,37 @@ mod probe_order {
                     }
                     // Which disjuncts it removes (TESTS-audit-battery-gaps): never one that
                     // holds at a point of the formula, since a removal needs a proof that the
-                    // disjunct has no point with the rest. A disjunction left with one
-                    // disjunct may have it merged into the parts, its rows among `q.cons`.
+                    // disjunct has no point with the rest. The probe hands on each disjunct it
+                    // keeps as the same `Rc` (`probe_kept_status` and `settle` filter the
+                    // lists; neither rebuilds a disjunct), so a kept disjunct keeps its id.
+                    // A disjunction left with one disjunct `e` is merged into the parts by
+                    // `settle` instead, and its rows cannot be matched in `q.cons`:
+                    // `Linked::meet` drops a row that a row with the same terms already
+                    // implies (`v + 3 >= 0` beside `v >= 0`, as `rows_in` draws). So a
+                    // disjunction none of whose disjuncts is left is checked by count: at most
+                    // one of its disjuncts holds at a point of the formula. Proof that this
+                    // misses no removal: `q` implies `e`; `q` and `f` agree at every point of
+                    // the box (asserted above), and `f` bounds each atom to the box, so `e`
+                    // holds at every point of `f`; a held disjunct `d` means such a point
+                    // exists, so `e` is held, and `d` other than `e` makes two held.
                     let left: HashSet<u64> = q.ors.iter().flatten().map(|d| d.id()).collect();
-                    for d in p_ors.iter().flatten() {
-                        let held = points.iter().find(|m| d.holds(m));
-                        let kept = left.contains(&d.id())
-                            || (d.ors.is_empty() && d.cons.iter().all(|c| q.cons.contains(c)));
-                        assert!(
-                            held.is_none() || kept,
-                            "seed {seed:#x}, case {case}: the probe removed from {f:?} a \
-                             disjunct {:?} that holds at the point {:?}",
-                            d.cons,
-                            held
-                        );
+                    for ds in &p_ors {
+                        let held: Vec<(&Rc<Parts>, &Model)> = (ds.iter())
+                            .filter_map(|d| points.iter().find(|m| d.holds(m)).map(|m| (d, *m)))
+                            .collect();
+                        let merged = !ds.iter().any(|d| left.contains(&d.id()));
+                        for (d, m) in &held {
+                            assert!(
+                                if merged {
+                                    held.len() == 1
+                                } else {
+                                    left.contains(&d.id())
+                                },
+                                "seed {seed:#x}, case {case}: the probe removed from {f:?} a \
+                                 disjunct {:?} that holds at the point {m:?}",
+                                d.cons
+                            );
+                        }
                     }
                     let after: usize = q.ors.iter().map(Vec::len).sum();
                     removed += before.saturating_sub(after);
