@@ -1801,13 +1801,18 @@ fn lay_out_with(
 /// 2. A mention is read only in a text that also holds the type it names a variable of: it is
 ///    written after that type in the same text (zedc-types `arrow_text_naming`), and that type
 ///    is a [`defs::VARS`] region, U+FDD9, since the variable has a mark only inside one
-///    (zedc-types `write_text`). `defs::name_vars` reads a text only when the text holds a
-///    region, and it resolves a mention against the regions closed before it in that text.
+///    (zedc-types `write_text`); `arrow_text_naming` gives a mention a key only when the text
+///    holds the variable's mark. `defs::name_vars` resolves a mention against the regions
+///    closed before it in that text.
 ///
-/// A text holding a mention and no region would reach [`lay_out`] by 1, and keep the mention
-/// unread there, its marks in the message. So in a debug build that stops the check
-/// (`a_text_holding_a_mention_and_no_type_region_is_caught`). Cost: none in a release build;
-/// in a debug build up to two more passes over the text.
+/// A text holding a mention and no region cannot happen, by 2. Were it to happen, it would
+/// still not keep its marks: `defs::name_vars` reads a text holding a mention even when it
+/// holds no region, and writes the mention as its fallback, the program's name of the
+/// variable, which may then not be the name the type gave it. The debug check below is kept
+/// for that case, which 2 rules out, so that a change that breaks 2 stops the check in a
+/// debug build (`a_text_holding_a_mention_and_no_type_region_is_caught`) instead of printing
+/// a wrong name. Cost: none in a release build; in a debug build up to two more passes over
+/// the text.
 fn holds_lay_out_mark(text: &str) -> bool {
     let holds = text.contains(|c| ('\u{FDD0}'..='\u{FDDF}').contains(&c));
     debug_assert!(
