@@ -27617,6 +27617,14 @@ fn is_difference(c: &Con) -> bool {
     }
 }
 
+/// Whether `c` is an equality of three atoms, each of coefficient 1 or -1: `x - y + e·s + k ==
+/// 0` (in some order) with `s` the slack atom, read by [`forest_component_domains`] as the
+/// band `x - y` in `-e·S - k` for the values `S` of `s` (item PROJECT-each-eq-slack). Which
+/// atom is `s` is chosen there.
+fn is_slack_row(c: &Con) -> bool {
+    c.rel == Rel::Eq && c.lin.terms.len() == 3 && c.lin.terms.values().all(|k| k.is_unit())
+}
+
 /// The exact domain of each atom of a component whose base rows are difference rows and
 /// bounds and whose disjunctions name atoms of one or two tie classes each (atoms whose
 /// differences the base fixes), with difference rows and bounds in every disjunct, when the
@@ -27809,7 +27817,11 @@ fn forest_domains_classed(
             .iter()
             .flat_map(|r| linked.held[*r].iter().map(|i| &linked.cons[*i]))
             .collect();
-        if !cons.iter().all(|c| is_difference(c)) {
+        // The base rows that are not difference rows must be equalities with a slack atom
+        // ([`is_slack_row`]), read as bands below (item PROJECT-each-eq-slack).
+        let (cons, slack): (Vec<&Con>, Vec<&Con>) =
+            cons.into_iter().partition(|c| is_difference(c));
+        if !slack.iter().all(|c| is_slack_row(c)) {
             continue;
         }
         let g = if cons.is_empty() {
@@ -27826,7 +27838,7 @@ fn forest_domains_classed(
                 None => continue,
             }
         };
-        match forest_component_domains(&g, free_atoms, js, ors) {
+        match forest_component_domains(&g, free_atoms, &slack, js, ors) {
             Some(None) => return (doms, handled, true),
             Some(Some(d)) => {
                 doms.extend(d);
@@ -28052,6 +28064,61 @@ struct ForestPart {
     hi: Option<Int>,
 }
 
+/// A slack row of [`forest_component_domains`] by its nodes: `x - y == σ·s + κ`, with `up`
+/// for `σ = 1` and `!up` for `σ = -1`.
+struct SlackRow {
+    x: usize,
+    y: usize,
+    s: usize,
+    atom: Atom,
+    up: bool,
+    kappa: Int,
+}
+
+/// Each row of `slack` ([`is_slack_row`]) as a [`SlackRow`], its slack atom `s` one whose node
+/// has no edge to another atom in `g` and that is in no other slack row; the first such atom
+/// of the row whose other two have opposite signs. `None` when a row has none, and the
+/// component then keeps main's way. O(r log r) for r slack rows.
+fn slack_rows(
+    g: &Differences,
+    node: &HashMap<&Atom, usize>,
+    slack: &[&Con],
+) -> Option<Vec<SlackRow>> {
+    let mut uses: HashMap<usize, usize> = HashMap::new();
+    for a in slack.iter().flat_map(|c| c.lin.terms.keys()) {
+        *uses.entry(node[a]).or_insert(0) += 1;
+    }
+    let alone = |v: usize| {
+        uses[&v] == 1
+            && (v >= g.out.len() || (g.out[v].iter().chain(&g.back[v])).all(|(u, _)| *u == 0))
+    };
+    let mut out = Vec::with_capacity(slack.len());
+    for c in slack {
+        let ts: Vec<(usize, bool, &Atom)> = (c.lin.terms.iter())
+            .map(|(a, k)| (node[a], k.is_positive(), a))
+            .collect();
+        let row = (0..3).find_map(|i| {
+            let (s, ks, atom) = ts[i];
+            let (p, q) = (ts[(i + 1) % 3], ts[(i + 2) % 3]);
+            if p.1 == q.1 || !alone(s) {
+                return None;
+            }
+            // `x - y + ks·s + k == 0` with `x` the positive one: `x - y == -ks·s - k`.
+            let (x, y) = if p.1 { (p.0, q.0) } else { (q.0, p.0) };
+            Some(SlackRow {
+                x,
+                y,
+                s,
+                atom: atom.clone(),
+                up: !ks,
+                kappa: -&c.lin.constant,
+            })
+        })?;
+        out.push(row);
+    }
+    Some(out)
+}
+
 /// An edge between classes `a < b`: bounds of `rep(b) - rep(a)`, and the disjunction on it.
 struct ForestEdge {
     a: usize,
@@ -28064,16 +28131,26 @@ struct ForestEdge {
 fn forest_component_domains(
     g: &Differences,
     free_atoms: &[&Atom],
+    slack: &[&Con],
     js: &[usize],
     ors: &[Vec<Rc<Parts>>],
 ) -> Option<Option<HashMap<Atom, Classed>>> {
-    // Nodes: 0 is z, 1..=atoms the graph's atoms, then the free atoms.
+    // Nodes: 0 is z, 1..=atoms the graph's atoms, then the free atoms, then the atoms of the
+    // slack rows in no difference row.
     let n0 = g.out.len();
-    let n = n0 + free_atoms.len();
     let mut node: HashMap<&Atom, usize> = g.node.iter().map(|(a, v)| (*a, *v)).collect();
     for (k, a) in free_atoms.iter().enumerate() {
         node.insert(*a, n0 + k);
     }
+    let mut extra: Vec<&Atom> = Vec::new();
+    for a in slack.iter().flat_map(|c| c.lin.terms.keys()) {
+        if !node.contains_key(a) {
+            node.insert(a, n0 + free_atoms.len() + extra.len());
+            extra.push(a);
+        }
+    }
+    let n = n0 + free_atoms.len() + extra.len();
+    let rows = slack_rows(g, &node, slack)?;
     let p = |v: usize| -> Int { if v < n0 { g.p[v].clone() } else { Int::ZERO } };
     // Tie classes: strongly connected components of the edges of reduced weight 0 between
     // atoms (Kosaraju, explicit stacks).
@@ -28304,11 +28381,58 @@ fn forest_component_domains(
             *d = d.meet_ranges(&fold_in_pairs(us, true));
         }
     }
+    // Each slack row `x - y == σ·s + κ` as a disjunction on the edge of `x` and `y`, one part
+    // per piece `[l, h]` of the values of `s`: `x - y` in `σ·[l, h] + κ`. The class of `s` is
+    // `s` alone (it has no edge to another atom, so no tie), and no edge meets it (checked
+    // below), so its set is final here.
+    let int_end = |e: &End| match e {
+        End::Fin(v) => Some(Int::from(v)),
+        _ => None,
+    };
+    let mut slack_edge: Vec<usize> = Vec::with_capacity(rows.len());
+    for r in &rows {
+        if class[r.x] == class[r.y] {
+            return None;
+        }
+        let e = edge(class[r.x], class[r.y], &mut edges, &mut key)?;
+        if edges[e].parts.is_some() {
+            return None;
+        }
+        let a = edges[e].a;
+        let mut parts: Vec<ForestPart> = Vec::new();
+        for (l, h) in dom[class[r.s]].pieces() {
+            let (l, h) = (int_end(&l), int_end(&h));
+            let (lo, hi) = if r.up {
+                (l.map(|l| &l + &r.kappa), h.map(|h| &h + &r.kappa))
+            } else {
+                (h.map(|h| &r.kappa - &h), l.map(|l| &r.kappa - &l))
+            };
+            let mut part = ForestPart {
+                ia: IntervalSet::top(),
+                ib: IntervalSet::top(),
+                lo: None,
+                hi: None,
+            };
+            // `x - y <= hi` is `x <= y + hi`; `x - y >= lo` is `y <= x - lo`.
+            if let Some(hi) = &hi {
+                le(r.y, r.x, hi, a, &mut part.lo, &mut part.hi);
+            }
+            if let Some(lo) = &lo {
+                le(r.x, r.y, &-lo, a, &mut part.lo, &mut part.hi);
+            }
+            parts.push(part);
+        }
+        edges[e].parts = Some(parts);
+        slack_edge.push(e);
+    }
     // Two passes of arc revision over each tree.
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nc];
     for (i, e) in edges.iter().enumerate() {
         adj[e.a].push(i);
         adj[e.b].push(i);
+    }
+    if rows.iter().any(|r| !adj[class[r.s]].is_empty()) {
+        return None;
     }
     let revise = |e: &ForestEdge, x: usize, dx: &Classed| -> Classed {
         // The values of the other end `y` that some value of `x` in `dx` supports.
@@ -28407,23 +28531,123 @@ fn forest_component_domains(
     if dom.iter().any(Classed::is_empty) {
         return Some(None);
     }
-    Some(Some(
-        (1..n)
-            .map(|v| {
-                let c = &off[v];
-                let k = Some(c.clone());
-                (
-                    (if v < n0 {
-                        g.atoms[v - 1]
-                    } else {
-                        free_atoms[v - n0]
-                    })
-                    .clone(),
-                    shifted_classed(&dom[class[v]], &k, &k),
-                )
+    let mut out: HashMap<Atom, Classed> = (1..n)
+        .map(|v| {
+            let c = &off[v];
+            let k = Some(c.clone());
+            let a = if v < n0 {
+                g.atoms[v - 1]
+            } else if v < n0 + free_atoms.len() {
+                free_atoms[v - n0]
+            } else {
+                extra[v - n0 - free_atoms.len()]
+            };
+            (a.clone(), shifted_classed(&dom[class[v]], &k, &k))
+        })
+        .collect();
+    for (r, &e) in rows.iter().zip(&slack_edge) {
+        let s = slack_values(r, &edges[e], &dom, &class, &off);
+        if s.is_empty() {
+            return Some(None);
+        }
+        out.insert(r.atom.clone(), s);
+    }
+    Some(Some(out))
+}
+
+/// The values of the slack atom `s` of the row `r` (`x - y == σ·s + κ`) at the points of its
+/// component, once the two passes of [`forest_component_domains`] have made `dom` exact: the
+/// values `t` of `s`'s set for which some value of `x`'s class and some value of `y`'s class
+/// meet the edge `e` between them with `x - y == σ·t + κ`.
+///
+/// Proof that each such `t` has a point, and only those: the class of `s` is `s` alone and no
+/// edge meets it, so `s` is bound only by its own set and by this row. With `d = rep(c_U) -
+/// rep(c_V)` for `(U, V) = (x, y)` when `σ = 1`, else `(y, x)`, the row is `s == d + off(U) -
+/// off(V) - σκ`. A pair of values of the two classes that meets the edge `e` (its base bounds
+/// and one of its parts, each part a piece of `s`'s set) extends to a point of the whole tree:
+/// with the edge removed, the tree falls into the side of `c_U` and the side of `c_V`, and
+/// after both passes every value of a final domain extends to a point of its side (step 4 of
+/// the proof at [`forest_domains_classed`], applied to each side, since a value with a support
+/// across `e` keeps the supports it has within its own side). So `t` has a point exactly when
+/// `t` is in `s`'s set and `t - off(U) + off(V) + σκ` is a difference `u - v` of values of the
+/// classes within the edge's base bounds; that `t` lies in a part is then `t` in `s`'s set.
+///
+/// Cost, for `p` and `q` pieces in the two classes' sets and `c` values of `s`: each value of
+/// `s` checked, `dom(c_U)` met with `dom(c_V)` moved by it, O(c·(p + q) log), or the set of
+/// differences built, `dom(c_U)` moved by each piece of `dom(c_V)` and joined, O(p·q log);
+/// the smaller of the two is taken (as [`touches_simple`] takes its smaller side), so a slack
+/// of few values costs O(p + q) a value: `acc`'s `x[k+1] == x[k] + y[k]` with `y[k]` in
+/// `{0, 2}` checks 2 values per row.
+// Complexity tradeoff: the set of differences alone has p·q pieces at most and that many in
+// general (`{0, 10, 20}` less `{0, 1, 2}`), so it is the naive bound; checking each value is
+// linear in the sets but unbounded for a slack of many values. Taking the cheaper by their
+// counts costs O(p + q) to count.
+fn slack_values(
+    r: &SlackRow,
+    e: &ForestEdge,
+    dom: &[Classed],
+    class: &[usize],
+    off: &[Int],
+) -> Classed {
+    let (u, v) = if r.up { (r.x, r.y) } else { (r.y, r.x) };
+    let (cu, cv) = (class[u], class[v]);
+    // Bounds of `d = rep(cu) - rep(cv)` from the edge's base rows (on `rep(b) - rep(a)`).
+    let (lo, hi) = if cu == e.b {
+        (e.lo.clone(), e.hi.clone())
+    } else {
+        (e.hi.as_ref().map(|h| -h), e.lo.as_ref().map(|l| -l))
+    };
+    // `s == d + c`.
+    let sigma_kappa = if r.up { r.kappa.clone() } else { -&r.kappa };
+    let c = &(&off[u] - &off[v]) - &sigma_kappa;
+    let fin = |k: &Option<Int>, neg: bool| match k {
+        Some(k) => End::Fin(Num::from(k)),
+        None if neg => End::NegInf,
+        None => End::PosInf,
+    };
+    let band = IntervalSet::range(fin(&lo, true), fin(&hi, false));
+    let own = &dom[class[r.s]];
+    let (du, dv) = (dom[cu].met(), dom[cv].met());
+    let (p, q) = (du.len() as u64, dv.len() as u64);
+    let each = own.count().saturating_mul(p + q);
+    let int_end = |e: &End| match e {
+        End::Fin(x) => Some(Int::from(x)),
+        _ => None,
+    };
+    let ds = if each <= p.saturating_mul(q) {
+        // Each value `t` of `s`: `d = t - c` must be in the band with `du ∩ (dv + d)` not empty.
+        let mut keep: Vec<(End, End)> = Vec::new();
+        for (l, h) in own.pieces() {
+            let (Some(l), Some(h)) = (int_end(&l), int_end(&h)) else {
+                unreachable!("a set of finite count has finite ends")
+            };
+            let mut t = l;
+            while t <= h {
+                let d = &t - &c;
+                let dd = Some(d.clone());
+                if band.contains_end(&End::Fin(Num::from(&d)))
+                    && !du.meet(&shifted(&dv, &dd, &dd)).is_empty()
+                {
+                    let te = End::Fin(Num::from(&t));
+                    keep.push((te.clone(), te));
+                }
+                t = &t + &Int::ONE;
+            }
+        }
+        IntervalSet::from_pieces(keep)
+    } else {
+        // `du - dv`: `du` moved by `-[l, h]` for each piece `[l, h]` of `dv`.
+        let diffs: Vec<IntervalSet> = (dv.pieces())
+            .map(|(l, h)| {
+                let (l, h) = (int_end(l), int_end(h));
+                shifted(&du, &h.map(|h| -h), &l.map(|l| -l))
             })
-            .collect(),
-    ))
+            .collect();
+        let d = fold_in_pairs(diffs, false).meet(&band);
+        let c = Some(c.clone());
+        shifted(&d, &c, &c)
+    };
+    own.meet_ranges(&ds)
 }
 
 /// The bounds that the row `lin >= 0` gives each of its atoms from the bounds `b` of the
