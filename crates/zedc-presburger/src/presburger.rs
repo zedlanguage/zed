@@ -24199,10 +24199,16 @@ impl Level {
         // that such a refusal is the same under every naming; where it differs, the disjunct
         // is asked again with the base's groups (`groups` below), which reads the base as it is
         // and so answers alike under every naming, but whether that answer and the projection's
-        // agree on every hull is not proved either (row PROOF-tied-projection-refusal-names).
-        // Evidence: two copies of a random three-variable system joined by a disjunction that a
-        // swap of the copies maps onto itself, 180 systems under 20 random namings each, gave
-        // one answer each.
+        // agree on every hull is not proved either. Where [`decide_named`] and
+        // [`satisfiable_named`] reach here, a tied formula has first been renamed by its
+        // structure where that can be done ([`Renamed::untied`];
+        // PROOF-tied-projection-refusal-names, done), so the names as given are the
+        // structure's. The claim stays open where no renaming is found (true symmetries,
+        // PRES-tie-symmetry) and for a call of [`project_parts`] over the names as given
+        // (PROOF-sweep-zedc-presburger), as the doc of [`stage_kernels`] says of a tied
+        // component. Evidence: two copies of a random three-variable system joined by a
+        // disjunction that a swap of the copies maps onto itself, 180 systems under 20 random
+        // namings each, gave one answer each.
         let mut kernels: Vec<Vec<Option<Vec<Con>>>> =
             ors.iter().map(|ds| vec![None; ds.len()]).collect();
         {
