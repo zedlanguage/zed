@@ -21,7 +21,9 @@
 //! lambda's parameters its formal parameters (plan row DEBUG-dwarf-clif-bindings, [`bindings`]):
 //! one entry per name and function, whose location list gives, over the code where a binding of
 //! that name is in scope, that binding's word, a 16-byte `zed_word` of a tag (`enum zed_tag`,
-//! [`zed_rt::Word`]'s tags) and its payload, in its stack slot or as a constant. So `print x`
+//! [`zed_rt::Word`]'s tags) and its payload, in its stack slot or as a constant; a binding to a
+//! non-scalar constant is its value, a string's bytes or another value's printed text
+//! ([`ShownTypes`]), in a lexical block of its own. So `print x`
 //! shows the binding the source line sees when one name is bound twice in one function. A name
 //! bound outside a lambda and read in it is a variable of the body too: the body reads each
 //! capture from the closure once, at its start, into a slot of its own frame. `main`'s argument
@@ -275,11 +277,10 @@ pub(crate) fn add(
     let mut ranges = Vec::with_capacity(code.len());
     let root = dwarf.unit.root();
     let word = (code.iter().any(|c| !c.vars.is_empty())).then(|| word_type(&mut dwarf));
+    let mut shown_types = ShownTypes::default();
     for (c, name) in code.iter().zip(names) {
-        let at = Address::Symbol {
-            symbol: symbols.len(),
-            addend: 0,
-        };
+        let symbol = symbols.len();
+        let at = Address::Symbol { symbol, addend: 0 };
         symbols.push(product.function_symbol(c.id));
         ranges.push(Range::StartLength {
             begin: at,
@@ -332,11 +333,53 @@ pub(crate) fn add(
             let e = dwarf.unit.get_mut(sub);
             e.set(gimli::DW_AT_frame_base, AttributeValue::Exprloc(base));
             for b in bound {
+                // A binding to a non-scalar constant is a variable of its own, of its value's
+                // type, in a lexical block of the code where it is in force ([`ShownTypes`]):
+                // one variable has one type, and a name may be bound to a word over some of the
+                // code. gdb looks a name up in the innermost block that holds the pc first, as
+                // for a C name declared again in an inner block (DWARF 5 section 3.5).
+                let (shown, words): (Vec<_>, Vec<_>) =
+                    (b.pieces.iter()).partition(|p| matches!(p.2, Place::Shown(_)));
+                let mut blocks: BTreeMap<u32, Vec<Range>> = BTreeMap::new();
+                for &&(begin, end, place) in &shown {
+                    if let Place::Shown(i) = place {
+                        blocks.entry(i).or_default().push(Range::StartLength {
+                            begin: Address::Symbol {
+                                symbol,
+                                addend: i64::from(begin),
+                            },
+                            length: u64::from(end - begin),
+                        });
+                    }
+                }
+                for (i, ranges) in blocks {
+                    let value = &c.shown[i as usize];
+                    let ty = shown_types.of(&mut dwarf, value.string, value.bytes.len());
+                    let block = dwarf.unit.add(sub, gimli::DW_TAG_lexical_block);
+                    let list = dwarf.unit.ranges.add(RangeList(ranges));
+                    let e = dwarf.unit.get_mut(block);
+                    e.set(gimli::DW_AT_ranges, AttributeValue::RangeListRef(list));
+                    let v = dwarf.unit.add(block, gimli::DW_TAG_variable);
+                    let e = dwarf.unit.get_mut(v);
+                    e.set(
+                        gimli::DW_AT_name,
+                        AttributeValue::String(b.name.as_bytes().to_vec()),
+                    );
+                    e.set(gimli::DW_AT_type, AttributeValue::UnitRef(ty));
+                    // A static value (zed/DEBUGGING.md section 4, `DW_AT_const_value`).
+                    e.set(
+                        gimli::DW_AT_const_value,
+                        AttributeValue::Block(value.bytes.clone()),
+                    );
+                }
+                if words.is_empty() {
+                    continue;
+                }
                 let mut list = vec![Location::BaseAddress { address: at }];
                 list.extend(
-                    b.pieces
+                    words
                         .iter()
-                        .map(|&(begin, end, place)| Location::OffsetPair {
+                        .map(|&&(begin, end, place)| Location::OffsetPair {
                             begin: u64::from(begin),
                             end: u64::from(end),
                             data: location(place),
@@ -631,6 +674,59 @@ fn put_location(x: &mut Expression, place: Place) {
             bytes.extend(w.bits.to_le_bytes());
             x.op_implicit_value(bytes.into());
         }
+        // No word: [`add`] writes such a binding as a variable of its own, and a field of
+        // `main`'s argument ([`Whole`]) is an input, never a constant. An empty location is
+        // one gdb shows as `<optimized out>`.
+        Place::Shown(_) => {}
+    }
+}
+
+/// The types of the [`Shown`](crate::codegen::Shown) constants of one compilation unit, each
+/// added once: `zed_str`, for a string's bytes, and `zed_text`, for another value's printed
+/// text, each a name (`DW_TAG_typedef`) for an array of its length in `char`s
+/// (`DW_TAG_array_type` with a `DW_TAG_subrange_type` of that `DW_AT_count`, DWARF 5 sections
+/// 5.5 and 5.13), which gdb prints as a string, `"hi"`. O(log t) a lookup for t types.
+#[derive(Default)]
+struct ShownTypes {
+    byte: Option<UnitEntryId>,
+    of: BTreeMap<(bool, usize), UnitEntryId>,
+}
+
+impl ShownTypes {
+    /// The type of a [`Shown`](crate::codegen::Shown) of `len` bytes, a string's when `string`.
+    fn of(&mut self, dwarf: &mut DwarfUnit, string: bool, len: usize) -> UnitEntryId {
+        if let Some(&t) = self.of.get(&(string, len)) {
+            return t;
+        }
+        let root = dwarf.unit.root();
+        let byte = *self.byte.get_or_insert_with(|| {
+            let t = dwarf.unit.add(root, gimli::DW_TAG_base_type);
+            let e = dwarf.unit.get_mut(t);
+            e.set(gimli::DW_AT_name, AttributeValue::String("char".into()));
+            e.set(
+                gimli::DW_AT_encoding,
+                AttributeValue::Encoding(gimli::DW_ATE_signed_char),
+            );
+            e.set(gimli::DW_AT_byte_size, AttributeValue::Udata(1));
+            t
+        });
+        let array = dwarf.unit.add(root, gimli::DW_TAG_array_type);
+        dwarf
+            .unit
+            .get_mut(array)
+            .set(gimli::DW_AT_type, AttributeValue::UnitRef(byte));
+        let range = dwarf.unit.add(array, gimli::DW_TAG_subrange_type);
+        dwarf
+            .unit
+            .get_mut(range)
+            .set(gimli::DW_AT_count, AttributeValue::Udata(len as u64));
+        let t = dwarf.unit.add(root, gimli::DW_TAG_typedef);
+        let e = dwarf.unit.get_mut(t);
+        let name = if string { "zed_str" } else { "zed_text" };
+        e.set(gimli::DW_AT_name, AttributeValue::String(name.into()));
+        e.set(gimli::DW_AT_type, AttributeValue::UnitRef(array));
+        self.of.insert((string, len), t);
+        t
     }
 }
 

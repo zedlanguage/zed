@@ -214,9 +214,10 @@ fn staging_for_names_keeps_the_graph_and_the_code() {
     // `zedc build` stages keeping the `let`s of the names the build made literals
     // (`Program::stage_named`), for the debugger; a literal lowers to no node, so the ZIR and
     // the code are those of `Program::stage`, which run and replay take. The programs: the
-    // chain, one with folded lets of an integer, a float and a string (whose name is not shown
-    // yet, plan row FAIL-dwarf-staged-let-nonscalar, but whose kept `let` must still build),
-    // and the step programs.
+    // chain, one with folded lets of an integer, a float and a string (whose kept `let` must
+    // still build; gdb shows its value, test
+    // `gdb_prints_the_value_of_a_name_bound_to_a_constant_that_is_not_a_word`), and the step
+    // programs.
     let folded = "main(m: MainArgs) {
     n = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 1;
     c = 7;

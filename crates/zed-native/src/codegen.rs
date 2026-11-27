@@ -27,6 +27,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
 use cranelift_module::{FuncId, Linkage, Module};
 
 use zed_kernel::Prim;
+use zed_kernel::value::Value;
 use zedc::zir::legalize::Expansion;
 use zedc::zir::lower::Names;
 use zedc::zir::memory::{Mode, RegionPlan};
@@ -102,6 +103,18 @@ pub(crate) struct Code {
     /// The names the program binds in it, in the order bound, when [`define`] is given
     /// [`Named`]; otherwise empty.
     pub vars: Vec<Var>,
+    /// The non-scalar constants names are bound to in it, by [`Place::Shown`]'s index.
+    pub shown: Vec<Shown>,
+}
+
+/// A non-scalar constant a name is bound to, as a debugger shows it: a string's UTF-8 bytes,
+/// or for any other value (a tuple, a family, a rational) the text the interpreter prints for
+/// it (`zed_kernel::value::Value`'s `Display`), so `print s` of `s = "hi"` gives `"hi"`.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Shown {
+    /// Whether it is a string's bytes, not a printed value.
+    pub string: bool,
+    pub bytes: Vec<u8>,
 }
 
 /// The names the program binds to its values, for a debugger (plan row
@@ -136,11 +149,22 @@ pub(crate) enum Place {
     Frame(i64),
     /// A constant, the word itself.
     Word(Word),
+    /// A non-scalar constant, entry `i` of the function's [`Code::shown`]: it has no word in
+    /// the code, since a literal a `let` keeps for its name lowers to no node.
+    Shown(u32),
+}
+
+/// Where a name bound in the function being built is: a word's place in the code, or entry
+/// `i` of [`Gen::shown`].
+#[derive(Clone, Copy)]
+enum Held {
+    Loc(Loc),
+    Shown(u32),
 }
 
 /// A name bound in the function being built ([`Gen::bound`]): its name, where it is, the first
 /// and last node of its scope, and whether it is a parameter.
-type Bound = (Arc<str>, Loc, u32, u32, bool);
+type Bound = (Arc<str>, Held, u32, u32, bool);
 
 struct Gen<'a, M: Module> {
     m: &'a mut M,
@@ -176,6 +200,9 @@ struct Gen<'a, M: Module> {
     /// The names bound so far in the function being built; a scope's end is set when its
     /// region's code ends ([`Frame::vars`]).
     bound: Vec<Bound>,
+    /// The non-scalar constants of [`Gen::bound`] in the function being built
+    /// ([`Code::shown`]).
+    shown: Vec<Shown>,
     /// The number of the last node whose code was marked in the function being built.
     last: u32,
     /// In the test build, the printed name of a primitive whose every node first reads
@@ -350,6 +377,7 @@ pub(crate) fn define<'a, M: Module>(
         region_names,
         body_params,
         bound: Vec::new(),
+        shown: Vec::new(),
         last: 0,
         #[cfg(feature = "counts")]
         fault: std::env::var("ZED_TEST_FAULT").ok(),
@@ -382,6 +410,7 @@ impl<M: Module> Gen<'_, M> {
         f: impl FnOnce(&mut Self, &mut Fx<'_>, Vec<W>) -> Result<Vec<W>, String>,
     ) -> Result<(), String> {
         self.bound.clear();
+        self.shown.clear();
         self.last = 0;
         let mut ctx = self.m.make_context();
         ctx.func.signature = sig(self.m, 2 * params, 2 * rets);
@@ -472,6 +501,7 @@ impl<M: Module> Gen<'_, M> {
                 nodes,
                 unwind,
                 vars,
+                shown: std::mem::take(&mut self.shown),
             });
         }
         self.m.clear_context(&mut ctx);
@@ -498,8 +528,11 @@ impl<M: Module> Gen<'_, M> {
             .map(|(name, loc, a, e, param)| Var {
                 name: name.clone(),
                 place: match *loc {
-                    Loc::Slot(s) => Place::Frame(i64::from(f.stackslots[s].offset) - below_cfa),
-                    Loc::Const(w) => Place::Word(w),
+                    Held::Loc(Loc::Slot(s)) => {
+                        Place::Frame(i64::from(f.stackslots[s].offset) - below_cfa)
+                    }
+                    Held::Loc(Loc::Const(w)) => Place::Word(w),
+                    Held::Shown(i) => Place::Shown(i),
                 },
                 scope: (*a, *e),
                 param: *param,
@@ -523,19 +556,27 @@ impl<M: Module> Gen<'_, M> {
         let mut out = Vec::with_capacity(names.len());
         for (x, s) in names {
             let loc = match s {
-                Src::Arg(i) => args.get(*i).copied(),
-                // A scalar is shown as its word. A non-scalar is shown only when the code uses
-                // it, so that it is in the table of constants: a `let` of a string that
-                // staging made a literal and kept for its name (`zedc::stage::mix_named`) is
-                // read by no code, and is left unshown (plan row
-                // FAIL-dwarf-staged-let-nonscalar).
+                Src::Arg(i) => args.get(*i).copied().map(Held::Loc),
+                // A scalar is shown as its word. A non-scalar is shown as its value
+                // ([`Shown`]), not as the word of its entry in the table of constants, whose
+                // index tells a debugger nothing, and which holds no entry for a `let` that
+                // staging made a literal and kept for its name (`zedc::stage::mix_named`),
+                // since no code reads it (plan row FAIL-dwarf-staged-let-nonscalar).
                 Src::Const(v) => match Word::scalar(v) {
-                    Some(w) => Some(Loc::Const(w)),
-                    None => (self.t.const_index_if(v)).map(|i| {
-                        Loc::Const(Word {
-                            tag: Word::VAL,
-                            bits: i as i64,
-                        })
+                    Some(w) => Some(Held::Loc(Loc::Const(w))),
+                    // Past `u32::MAX` constants in one function a name is left unshown.
+                    None => u32::try_from(self.shown.len()).ok().map(|i| {
+                        self.shown.push(match v {
+                            Value::Str(s) => Shown {
+                                string: true,
+                                bytes: s.chunks().flat_map(str::bytes).collect(),
+                            },
+                            _ => Shown {
+                                string: false,
+                                bytes: v.to_string().into_bytes(),
+                            },
+                        });
+                        Held::Shown(i)
                     }),
                 },
                 Src::Out(..) => None,
@@ -954,7 +995,8 @@ impl<M: Module> Gen<'_, M> {
                 if let Some(&loc) = o.get(*p) {
                     f.vars.push(self.bound.len());
                     let first = bound_number(number).saturating_add(1);
-                    self.bound.push((x.clone(), loc, first, 0, false));
+                    self.bound
+                        .push((x.clone(), Held::Loc(loc), first, 0, false));
                 }
             }
         }
