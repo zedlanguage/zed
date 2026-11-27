@@ -230,25 +230,51 @@ fn is_subset_of_joined_cuts_scales_with_the_gaps() {
     // 16 and 128 (2026-11-21, units without the term for `D`), close to the limit of 1.31 either
     // way. The test that fails on that walk is `is_subset_work_within_its_bound` in `tests.rs`,
     // which counts the walk's units of work on gaps built with 200 such keys each.
+    //
+    // FAIL-treap-joined-cuts-ratio: per unit of the terms above the ratio was fixed for a seed
+    // and ranged 1.19 to 1.38 over `ZED_TREAP_SEED` 0 to 15, past the limit 1.3125 at seeds 3, 7
+    // and 9 (b22-kernel6, 2026-11-23; b22-free2, 2026-11-25). Those terms are an estimate of the
+    // work, not the work: the depths of the gap ends in `all` (about `2 ln (129 l)`, 1.27 times
+    // from 16 to 128) are charged at every gap, where the proof charges what lies above a gap's
+    // ends only through `U`, `D` and the `3h` moves (steps 9 and 14), and the terms move with the
+    // seed apart from the walk. So the two claims are held apart here. (a) The proof's bound:
+    // the walk's own count (`IS_SUBSET_WORK`, a unit per pair taken and per move of `p`) is at
+    // most `2U + 2D + 3gh + 1` (steps 9 and 14) on these sets at both sizes, `D` at most the
+    // keys of `all` not in `joined` and `h` the height of `joined`, as in
+    // `is_subset_work_within_its_bound`. (b) Each unit of that count costs `O(1)` instructions
+    // (step 9): instructions per counted unit, with the two spines of `first` and `last`, held to
+    // the limit of power 0.
     let g = 64;
     hold_per_unit(
         "is_subset of 65 cuts of the keys joined, gaps of l keys, against the keys, l = 16 and 128",
-        "the work per node of U, per key of a gap on its ends' paths, per depth of a gap's ends \
-         and per spine",
+        "the work per unit the walk counts (pairs and moves) and per node of the two spines",
         (16, 128),
         |l| joined_cuts(g, l),
         |l, joined, all| {
-            let mut bound =
-                not_shared(joined, all) + spine(&joined.root, true) + spine(&joined.root, false);
-            for i in 0..g {
-                let (s1, s2) = (2 * i * l + l - 1, 2 * i * l + 2 * l);
-                for end in [s1, s2] {
-                    bound += depth(&joined.root, end)
-                        + depth(&all.root, end)
-                        + inside_on_path(&all.root, end, s1, s2);
-                }
-            }
-            bound
+            let u = not_shared(joined, all);
+            let d = (all.len() - joined.len()) as u64;
+            let h = depths_of(&joined.root).0;
+            let bound = 2 * u + 2 * d + 3 * (g as u64) * h + 1;
+            IS_SUBSET_WORK.with(|c| c.set(0));
+            assert!(joined.is_subset(all));
+            let work = IS_SUBSET_WORK.with(|c| c.get());
+            let spines = spine(&joined.root, true) + spine(&joined.root, false);
+            let ends: u64 = (0..g)
+                .map(|i| (2 * i * l + l - 1, 2 * i * l + 2 * l))
+                .map(|(s1, s2)| {
+                    inside_on_path(&all.root, s1, s1, s2) + inside_on_path(&all.root, s2, s1, s2)
+                })
+                .sum();
+            eprintln!(
+                "joined cuts, l = {l}: work {work}, bound {bound} (U = {u}, D <= {d}, g = {g}, \
+                 h = {h}), keys of the gaps on their ends' paths {ends}, spines {spines}"
+            );
+            assert!(
+                work <= bound,
+                "is_subset did {work} units of work at l = {l}, over the bound 2U + 2D + 3gh + 1 \
+                 = {bound}"
+            );
+            work + spines
         },
     );
 }

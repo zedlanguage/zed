@@ -340,7 +340,7 @@ fn is_subset_work_within_its_bound() {
     eprintln!("is_subset work {work}, bound {bound} (U = {u}, D <= {d}, g = {gaps}, h = {h})");
     assert!(
         work <= bound,
-        "is_subset did {work} units of work, over the bound 2U + 2D + 4gh + 1 = {bound}"
+        "is_subset did {work} units of work, over the bound 2U + 2D + 3gh + 1 = {bound}"
     );
 }
 
