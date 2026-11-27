@@ -94,19 +94,30 @@ fn mixing_nested_lets_of_one_built_value_over_one_body_scales() {
 #[test]
 fn mixing_nested_lets_of_two_built_values_over_one_body_scales() {
     // The mixed term has a node for each value of `x` at each level, d(d + 7)/2 in all.
-    // That size is forced, so power 2: with a = 1 and b = 2, level k has k + 1 values of
-    // `x` (`nodes` in `dag.rs` counts them), and two distinct values give two distinct mixed
-    // subterms, as their smallest leaf differs, so a shared term has at least sum(k + 1) =
-    // Theta(d^2) nodes. The mix made d(d + 1) evaluations (1260 at 35, 78680 at 280, local
-    // job dv115), each of one `let` and no stub; that each costs O(1) is measured, not proved
-    // (BENCH-stage-mix-two-values-limit: 62.44 times the evaluations, 62.59 the instructions).
-    // At d = 50 and 400 this took 19 s alone at load 45 (TEST-bench-move-l0125).
+    // That size is forced: with a = 1 and b = 2, level k has k + 1 values of `x` (`nodes` in
+    // `dag.rs` counts them), and two distinct values give two distinct mixed subterms, as
+    // their smallest leaf differs, so a shared term has at least sum(k + 1) = Theta(d^2)
+    // nodes. The cost is O(d(d + 1)) expected (BENCH-stage-mix-two-values-limit):
+    // 1. The mix makes d(d + 1) evaluations (1260 at 35, 78680 at 280, local job dv115),
+    //    each of `x + a` or `x + b` with `x` a known literal, and no stub.
+    // 2. Each evaluation is O(1) expected. The scope holds `c` and `x` alone, so the lets and
+    //    stubs `Mixer::eval` gathers (`needs`, `closed`) and the maps `Maps::restrict` gives
+    //    (memoized on the map and the set) have at most two entries; `Scope::known_below`
+    //    asked at the top of the scope takes its O(1) fast path; `Mixer::number` finds a
+    //    literal in `literals`, a hash table keyed by its canonical form, in O(1) expected;
+    //    and `run_with` runs a term of O(1) size under the prelude, a term of fixed size.
+    // 3. The rest of the mix is O(1) per output node, d(d + 7)/2 <= 4 d(d + 1) of them.
+    // So the work is held to the ratio of d(d + 1), 62.44 times from 35 to 280. Measured
+    // (dv139, dv142, six runs): 62.387 to 62.392 times the instructions, 62.30 the bytes;
+    // about 227,000 instructions an evaluation at both sizes, almost all of it the prelude's
+    // run (inferred from the constant, not profiled). At d = 50 and 400 this took 19 s alone
+    // at load 45 (TEST-bench-move-l0125).
     let n = 35;
     let apart = scaling::inputs(n, |d| built(d, 1, 2, true));
-    scaling::check_order(
+    scaling::check_proved_cost(
         "stage::mix on d nested ifs whose two arms are lets of two built values over one body",
         n,
-        2,
+        ("d(d + 1)", |d| (d * (d + 1)) as f64),
         |d| {
             let (mixed, _) = stage::mix(&apart[&d], &["main"]);
             assert_eq!(distinct(&mixed.defs[0].term), nodes(d, false));

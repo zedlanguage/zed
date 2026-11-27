@@ -2074,7 +2074,12 @@ impl Scope {
     /// The innermost build-stage entry of `x` below position `below`.
     fn known_below(&self, x: &str, below: usize) -> Option<usize> {
         let at = self.by_name.get(x)?;
-        let n = at.partition_point(|&i| i < below);
+        // At the top of the scope, as `Mixer::number` and the evaluations ask, every entry of
+        // `x` is below: O(1), not the O(log k) search over the k entries of `x`.
+        let n = match at.last() {
+            Some(&i) if i < below => at.len(),
+            _ => at.partition_point(|&i| i < below),
+        };
         at[..n]
             .iter()
             .rev()
@@ -2261,7 +2266,7 @@ struct Key {
 }
 
 /// A value's canonical form.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum Canon {
     /// A number, boolean, atom or family, compared as before.
     Other(Value),
@@ -2367,6 +2372,15 @@ impl PartialEq for Key {
 }
 
 impl Eq for Key {}
+
+/// Hashes the canonical form, by which keys are equal: equal forms hash alike, as `Value`'s
+/// hash does for `Canon::Other` (zed-kernel `value.rs`, the proof at `impl Hash for Value`),
+/// and the derived hashes of `Name` and `u64` for the other arms.
+impl std::hash::Hash for Key {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.canon.hash(state);
+    }
+}
 
 impl PartialOrd for Key {
     fn partial_cmp(&self, other: &Key) -> Option<std::cmp::Ordering> {
@@ -2717,8 +2731,10 @@ struct Mixer {
     maps: Maps,
     /// The last number given to a build-stage binding ([`Mixer::number`]).
     given: Binding,
-    /// The number of each build-stage binding to a literal, by its value.
-    literals: BTreeMap<Key, Binding>,
+    /// The number of each build-stage binding to a literal, by its value. A hash map, not a
+    /// `BTreeMap`: it is only looked up, and a lookup costs O(1) expected, not the O(log L)
+    /// comparisons of L literals (BENCH-stage-mix-two-values-limit).
+    literals: HashMap<Key, Binding>,
     /// The names of the strings and tuples of keys ([`Key`]), shared with each stub.
     names: Arc<Mutex<Namer>>,
     /// The exact number of each other build-stage binding, by the id of its term and the exact
