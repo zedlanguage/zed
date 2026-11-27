@@ -450,9 +450,12 @@ fn census_systems() -> Vec<Vec<Con>> {
 /// The CANON census: the number of color classes of each of the 420 systems, the same under 10
 /// random namings and row orders of each (the shuffle set), counted and kept as a snapshot. The
 /// census was printed by h2's verifier only and could not be rebuilt (TESTS-audit-battery-gaps).
-/// Control: one round of plain refinement gives another census, so the snapshot sees a coloring
-/// that stops early; the full refinement gives this one, as
-/// `the_partition_is_the_one_plain_refinement_reaches` shows system by system.
+/// The full plain refinement gives this census, as
+/// `the_partition_is_the_one_plain_refinement_reaches` shows system by system. Controls: the
+/// refinement of the systems with their constants, or the sizes of their coefficients, erased
+/// gives another census, so the snapshot sees a coloring that loses either. The relations do
+/// not change the census of these systems (erased, they give it too), so they are checked on a
+/// system where they part two classes.
 #[test]
 fn the_census_of_the_color_classes_of_420_systems() {
     let systems = census_systems();
@@ -496,7 +499,6 @@ fn the_census_of_the_color_classes_of_420_systems() {
     };
     let controls = [
         ("the constants", erased(|c| c.lin.constant = 0.into())),
-        ("the relations", erased(|c| c.rel = Rel::Ge)),
         (
             "the sizes of the coefficients",
             erased(|c| {
@@ -514,5 +516,19 @@ fn the_census_of_the_color_classes_of_420_systems() {
         blind.is_empty(),
         "a coloring blind to {blind:?} gives the census too: {got}\n{controls:#?}"
     );
+    // The relations: `x0 + x1 >= 0` and `x2 + x3 == 0` differ only by their relation, which
+    // parts `x0, x1` from `x2, x3`; with the relations erased the refinement gives one class.
+    let parted = [
+        row(&[("x0", 1), ("x1", 1)], 0, false),
+        row(&[("x2", 1), ("x3", 1)], 0, true),
+    ];
+    assert_eq!(distinct(&colors(&parted)), 2, "{:?}", colors(&parted));
+    let blind: Vec<Con> = (parted.iter().cloned())
+        .map(|mut c| {
+            c.rel = Rel::Ge;
+            c
+        })
+        .collect();
+    assert_eq!(classes_of(plain_refinement(&blind, usize::MAX)), 1);
     insta::assert_snapshot!(got);
 }
