@@ -156,8 +156,11 @@ fn written_in<'t>(text: &'t str, into: &mut HashSet<&'t str>) {
 /// where it is first written, and looking back over the text for a name in use, would be
 /// quadratic in a type with many variables (COMPLEXITY.md F169). The names of the closed types
 /// are kept for the mentions, memory linear in the marks.
+///
+/// A text that holds a mention and no type is read too, and each mention in it is written as
+/// its fallback, since no type before it was closed: so no caller prints a mention's marks.
 pub fn name_vars(out: &mut String, from: usize, taken: &dyn Fn(&str) -> bool) {
-    if !out[from..].contains(VARS) {
+    if !out[from..].contains([VARS, MENTION]) {
         return;
     }
     let text = out.split_off(from);
@@ -291,7 +294,7 @@ fn standing(m: &str) -> String {
 /// ([`mention`]) is no word: it is written as the name its type gives, so a variable that
 /// skipped its fallback would print apart from the mention (PRINT-headline-note-same-name).
 fn name_all_vars(texts: &mut [&mut String], taken: &dyn Fn(&str) -> bool) {
-    if !texts.iter().any(|t| t.contains(VARS)) {
+    if !texts.iter().any(|t| t.contains([VARS, MENTION])) {
         return;
     }
     // The text outside the mentions: each piece after a `MENTION_END`, up to a `MENTION`.
@@ -1214,6 +1217,20 @@ mod tests {
         );
         name_vars(&mut text, 0, &|_| false);
         assert_eq!(text, "(T): X Y");
+    }
+
+    /// A text that holds a mention and no type writes the mention's fallback, so no caller
+    /// prints a mention's marks. zedc-types writes a mention only after the mark it names
+    /// (`arrow_text_naming`), so no caller makes such a text today; this keeps one from
+    /// printing marks if one ever does. Red before: the text was left as it was.
+    #[test]
+    fn a_mention_with_no_type_before_it_writes_its_fallback() {
+        let mut text = format!("with {}", mention(0, "0", "A"));
+        name_vars(&mut text, 0, &|_| false);
+        assert_eq!(text, "with A");
+        let mut text = format!("with {}", mention(0, "0", "A"));
+        name_all_vars(&mut [&mut text], &|_| false);
+        assert_eq!(text, "with A");
     }
 
     #[test]
