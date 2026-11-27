@@ -261,6 +261,14 @@ mod a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product {
     }
 
     #[test]
+    fn seed_892430831927573369() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-hubs-seed-892430831927573367, run seed
+        // 892430831927573367 in merge_check of wt/xr-hole-2 762bc2898): the two scopes settled
+        // `a0` apart after the last step (lazy.rs:93, "a0 after").
+        run(&bounded_hubs(), [892430831927573369], wide);
+    }
+
+    #[test]
     fn seed_2_holds_a_star_of_two_related_hubs() {
         let (stale, two, related, _) = run(&bounded_hubs(), [2], wide);
         assert!(stale > 0, "the lazy scope settled every name at once");
