@@ -508,6 +508,25 @@ fn an_unbounded_end_that_the_rows_the_disjunctions_imply_bound_is_read() {
     assert_hull(&f, None, Some(5));
 }
 
+/// [`an_unbounded_end_that_the_rows_the_disjunctions_imply_bound_is_read`] with `c` in {0, 2}:
+/// a swap of `b` and `c` maps the formula onto itself, so its atoms are tied and it is
+/// projected by questions no order of its parts changes (`project_parts` with `sets`), and
+/// the rows the two disjunctions imply, `0 <= b <= 2` and `0 <= c <= 2`, give `z <= 4`,
+/// reached at `b = c = 2` (item PRES-cases-end: the sets path did not read the implied rows).
+/// The default path answers `z` by the exact cover before the solver is asked, so the gap shows
+/// only under the solver alone (`solver_alone`), where the hull was unbounded above; with
+/// `c` in {0, 3} the atoms are not tied and the solver alone gave `z <= 5` before the item.
+#[test]
+fn an_unbounded_end_that_the_implied_rows_bound_is_read_where_atoms_are_tied() {
+    let f = Formula::and(vec![
+        ge(named("b").plus(&named("c")).minus(&named("z"))),
+        one_of(&named("b"), &[0, 2]),
+        one_of(&named("c"), &[0, 2]),
+    ]);
+    assert_hull(&f, None, Some(4));
+    solver_alone(|| assert_hull(&f, None, Some(4)));
+}
+
 /// `z + 2w >= 1 || z + 3y >= 3` with `w <= 1` and `y` in {-1, 2}: at `y = -1` the least `z`
 /// is -1 (`w = 1`), at `y = 2` it is -3 (`z + 6 >= 3`), so `z >= -3`. The second disjunct,
 /// projected with the base alone, has `y` free and leaves `z` unbounded below; the bound needs
