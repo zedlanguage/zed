@@ -512,10 +512,19 @@ mod tests {
     /// One byte past the machine's memory and swap is refused whatever the kernel's mode of
     /// accounting, and a small request is still given (FAIL-power-too-large-built-before-
     /// refusal). In mode 0 the allocator refuses it too, so this fails before the fix only on a
-    /// machine in mode 1, as the test machines are.
+    /// machine in mode 1, as the test machines are. On Linux `/proc/meminfo` names both sizes,
+    /// so a missing size fails the test rather than skipping it (TEST-room-skip-without-meminfo);
+    /// elsewhere the test has no size to read and does nothing.
     #[test]
     fn a_request_past_memory_and_swap_is_refused_unasked() {
-        let Some(most) = memory_and_swap() else {
+        let most = memory_and_swap();
+        if cfg!(target_os = "linux") {
+            assert!(
+                most.is_some(),
+                "no MemTotal or SwapTotal read from /proc/meminfo"
+            );
+        }
+        let Some(most) = most else {
             return;
         };
         let past = (BigUint::from(most) + 1u32) << 3u32;
