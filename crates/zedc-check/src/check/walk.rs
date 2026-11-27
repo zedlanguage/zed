@@ -30083,8 +30083,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Reports, at the call `span` of the one-arrow signature `sig`, that its bounded variable
     /// `v` meets two carriers: that of the literal passed at the one parameter that is `v`,
     /// whose class could not take `rest`, and `rest`, of one other carrier, which a need of the
-    /// body on another parameter gave `v` when the call met it. So for `g(positional m, positional y) = m.any(x -> x > y);`,
-    /// `g(["a"], 1)` reads "`g` does not take (0 -> "a", 1): `m.any(x -> x > y)` in its body
+    /// body on another parameter gave `v` when the call met it. So for
+    /// `g(positional m, positional y) = m.any(x -> x > y);`, `g(["a"], 1)` reads "`g` does not take (0 -> "a", 1): `m.any(x -> x > y)` in its body
     /// uses a value of `m` and `y` at one type, and here they are "a" : String and 1 : int",
     /// with the repair "pass `y` a value of String, or `m` values of int" (plan row
     /// MSG-level-need-at-call-names-the-comparison). Before it the headline named `g`'s
