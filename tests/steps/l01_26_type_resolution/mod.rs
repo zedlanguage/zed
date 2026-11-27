@@ -36,6 +36,7 @@ mod kept_checks;
 mod literals;
 mod named_calls;
 mod narrowing;
+mod need_free_names;
 mod never;
 mod never_operands;
 mod no_common_value;

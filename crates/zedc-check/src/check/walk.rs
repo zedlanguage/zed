@@ -16558,6 +16558,59 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// links in their order), so one program always gets the same errors. Not proved: the
     /// same with use checks inside a merge, which may restrict or join other classes in a way
     /// that depends on what was joined before; each error is placed at its own link.
+    ///
+    /// With use checks inside a merge: the reduction to a known theorem, and the step that is
+    /// still open. (a) Which (use, inflow) pairs are checked does not depend on the order: a
+    /// pair is checked once, when its use and its inflow are first in one class: at the use's
+    /// record (`check_on` over what flowed, beside `join_order` in `need`), at the inflow's
+    /// arrival (`flow`, `check_on` over the uses), or at the merge that joins their classes
+    /// (`merge`, the `cross` pairs); so the set of pairs is fixed by the final partition
+    /// (b22-checkwalk11, by reading). (b) If every check `check_on(n, t)` (through `meet` and
+    /// `flow`) is monotone in the class state, that is, run on a coarser partition with smaller
+    /// masks it restricts and joins at least as much, then each link's join and each check is
+    /// a monotone operator on the finite lattice of (partition, masks) ordered by refinement,
+    /// that only moves down, and the search is an iteration of the kind defined by
+    /// P. Cousot and R. Cousot, "Automatic synthesis of optimal invariant assertions:
+    /// mathematical foundations", Symposium on Artificial Intelligence and Programming
+    /// Languages, SIGPLAN Notices 12(8), 1977, pages 1-12, DOI 10.1145/872734.806926, page 2:
+    /// "DEFINITION 2.1 A chaotic iteration corresponding to the operator F and starting with a
+    /// given vector X^0 such that X^0 <= F(X^0) <= lfp(F) is a sequence X^k ... defined
+    /// recursively by X^k = F_{J^{k-1}}(X^{k-1})", where F_J applies the components in J and
+    /// keeps the rest, and the J^k leave no component out for more than m steps; "THEOREM 2.2
+    /// The limit X^infinity of a chaotic iteration X^0,...,X^k,X^{k+1},... is equal to
+    /// lfp(F)", that is, "one can arbitrarily determine at each step which are the components
+    /// of the system of equations which will evolve and in what order (as long as no
+    /// component is forgotten indefinitely)". The theorem is stated for a system of equations
+    /// X_i = F_i(X), each step updating some components; here each step (a join or a check)
+    /// may write the whole state, so the theorem is not applied as stated, and its proof's
+    /// induction (Lemma 2.2.1: every iterate stays on one side of the fixpoint, by isotony)
+    /// is redone for this form. Let the state s be (partition, masks), ordered s <= s' when s
+    /// is coarser with masks within those of s'; the states over the walk's classes are
+    /// finitely many. Let each operator f (one link's join, one pair's check) be monotone
+    /// (s <= s' gives f(s) <= f(s'): this is (b)) and only move down (f(s) <= s: merges only
+    /// join and masks only shrink, (1) above). Let G be the greatest state below the start s0
+    /// that every f leaves unchanged (the greatest fixpoint of g(s) = meet of all f(s) below
+    /// s0, by Tarski's theorem, which the same page quotes; a state every f leaves unchanged
+    /// is exactly a fixpoint of g, since each f(s) <= s). Claim: every fair run ends at G
+    /// (a failed merge changes nothing and is an f that leaves s unchanged; which link
+    /// reports a failure may still depend on the order, as without use checks above).
+    /// (i) G <= s_k for every k, by induction: G <= s0, and G <= s_k gives
+    /// G = f(G) <= f(s_k) = s_{k+1}. (ii) The run ends, since the states only move down and
+    /// are finitely many. (iii) Where it ends, by fairness every f has been tried since the
+    /// last change and changed nothing, so the end is a state every f leaves unchanged, so it
+    /// is <= G, and with (i) it is G. The search's order is fair: by (2) above, every link
+    /// active at the end is tried, and every check is run when its pair first shares a class.
+    /// So with (b), whether a link fails and the classes at the end would not depend on the
+    /// order. Checked: the paper's page 2 read by eye from the authors' scan
+    /// (<https://www.di.ens.fr/~cousot/COUSOTpapers/publications.www/CousotCousot-SIGPLANNotices-v12-n8-p1-12-1977.pdf>),
+    /// 2026-11-24, b22-checkwalk13; Lemma 2.2.1 and the rest of the proof of Theorem 2.2 were
+    /// read on that page, the later pages were not. Not proved: (b), the monotonicity of
+    /// `check_on`, `meet` and `flow`; `meet` reads the masks of the classes of the type
+    /// variables in `n` and `t` at the time of the check, so (b) is a property of every arm
+    /// of `meet`, and an arm whose result is not monotone in those masks would refute it, as
+    /// would a program whose result changes with the order of the roots. No test checks the
+    /// order independence with use checks; the test
+    /// `tests::join_narrowed_joins_a_chain_whatever_the_order_of_its_roots` checks it without.
     // Complexity tradeoff (COMPLEXITY.md row F119): the naive version passes over the links
     // until no join changes a class, O(n²) for a chain of n links where each pass moves a
     // carrier one link (inferred). The two passes it was replaced with were O(n log n) but
