@@ -14,6 +14,7 @@ use std::fmt;
 use std::ops::Neg;
 use std::sync::{Arc, OnceLock};
 
+use zed_collections::avl::{self, concat, join, node, parts, split_first, split_last};
 use zed_kernel::{Prim, Value};
 use zed_numtheory::m61::{P, PolyHash};
 
@@ -162,21 +163,21 @@ pub struct IntervalSet {
 }
 
 /// A subtree of an [`IntervalSet`]: `None` is the empty one.
-type Link = Option<Arc<Node>>;
+type Link = avl::Tree<Keyed>;
 
-/// A piece with its hash.
-type Keyed = ((End, End), u64);
+/// A node of an [`IntervalSet`]'s tree: its piece ([`Keyed`]), and the height, the count of
+/// pieces and the [`Totals`] of its subtree, kept by [`zed_collections::avl`].
+type Node = avl::Node<Keyed>;
 
-/// A node of an [`IntervalSet`]'s tree, with the totals of its subtree.
-struct Node {
+/// A piece with its hash: the item of a node.
+#[derive(Clone)]
+struct Keyed {
     piece: (End, End),
     piece_hash: u64,
-    left: Link,
-    right: Link,
-    /// The height of the subtree, 1 for a leaf.
-    height: u8,
-    /// The count of pieces in the subtree.
-    count: usize,
+}
+
+/// The totals a node keeps of its subtree beside the height and the count of pieces.
+struct Totals {
     /// The lower end of the subtree's first piece.
     first: End,
     /// The upper end of the subtree's last piece.
@@ -227,46 +228,34 @@ fn run_between(a: &End, b: &End) -> Num {
     }
 }
 
-fn height(t: &Link) -> u8 {
-    t.as_ref().map_or(0, |n| n.height)
-}
-
-/// The node with the given children and piece, which lies between them with at least one
-/// integer missing on each side.
-fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
-    let (mut hash, mut count, mut h) = (PolyHash::EMPTY, 1, 0);
-    let first = match &left {
-        Some(l) => {
-            (hash, count, h) = (l.hash, count + l.count, l.height);
-            l.first.clone()
+/// The totals of a node whose piece lies between its children with at least one integer
+/// missing on each side, which every builder keeps ([`run_between`]).
+impl avl::Item for Keyed {
+    type Sum = Totals;
+    #[inline]
+    fn sum(&self, left: Option<&Totals>, right: Option<&Totals>) -> Totals {
+        let (mut hash, first) = match left {
+            Some(l) => (l.hash, l.first.clone()),
+            None => (PolyHash::EMPTY, self.piece.0.clone()),
+        };
+        hash = hash.then(PolyHash::unit(self.piece_hash, R));
+        let last = match right {
+            Some(r) => {
+                hash = hash.then(r.hash);
+                r.last.clone()
+            }
+            None => self.piece.1.clone(),
+        };
+        Totals {
+            first,
+            last,
+            gap: OnceLock::new(),
+            members: OnceLock::new(),
+            in_class: OnceLock::new(),
+            spacing: OnceLock::new(),
+            hash,
         }
-        None => piece.0.clone(),
-    };
-    hash = hash.then(PolyHash::unit(piece_hash, R));
-    let last = match &right {
-        Some(r) => {
-            hash = hash.then(r.hash);
-            count += r.count;
-            h = h.max(r.height);
-            r.last.clone()
-        }
-        None => piece.1.clone(),
-    };
-    Arc::new(Node {
-        piece,
-        piece_hash,
-        left,
-        right,
-        height: h + 1,
-        count,
-        first,
-        last,
-        gap: OnceLock::new(),
-        members: OnceLock::new(),
-        in_class: OnceLock::new(),
-        spacing: OnceLock::new(),
-        hash,
-    })
+    }
 }
 
 /// The longest run of integers missing between two neighboring pieces of `n`'s subtree,
@@ -276,13 +265,15 @@ fn node(left: Link, (piece, piece_hash): Keyed, right: Link) -> Arc<Node> {
 /// step). The nodes a new set shares with an older one keep their runs, so after one
 /// [`IntervalSet::max_gap`] of the older set the next costs `O(1)` for each new node.
 fn gap(n: &Node) -> &Num {
-    n.gap.get_or_init(|| {
+    n.sum().gap.get_or_init(|| {
         let mut g = Num::ZERO;
-        if let Some(l) = &n.left {
-            g = run_between(&l.last, &n.piece.0).max(gap(l).clone());
+        if let Some(l) = n.left() {
+            g = run_between(&l.sum().last, &n.item().piece.0).max(gap(l).clone());
         }
-        if let Some(r) = &n.right {
-            g = g.max(run_between(&n.piece.1, &r.first)).max(gap(r).clone());
+        if let Some(r) = n.right() {
+            g = g
+                .max(run_between(&n.item().piece.1, &r.sum().first))
+                .max(gap(r).clone());
         }
         g
     })
@@ -291,19 +282,19 @@ fn gap(n: &Node) -> &Num {
 /// The count of integers in `n`'s subtree, `None` when it is infinite, computed for the nodes
 /// that do not hold it yet and kept in them, lazily for the reason [`gap`] gives.
 fn members(n: &Node) -> &Option<Num> {
-    n.members.get_or_init(|| {
-        let (Fin(lo), Fin(hi)) = &n.piece else {
+    n.sum().members.get_or_init(|| {
+        let (Fin(lo), Fin(hi)) = &n.item().piece else {
             return None;
         };
         let mut c = &(hi - lo) + &Num::ONE;
-        for child in [&n.left, &n.right].into_iter().flatten() {
+        for child in [n.left(), n.right()].into_iter().flatten() {
             c = &c + members(child).as_ref()?;
         }
         Some(c)
     })
 }
 
-/// The gcd of the differences of the members of `n`'s subtree ([`Node::spacing`]), computed
+/// The gcd of the differences of the members of `n`'s subtree ([`Totals::spacing`]), computed
 /// for the nodes that do not hold it yet and kept in them, lazily for the reason [`gap`] gives.
 ///
 /// Proof that it is that gcd, `G(S)` for the members `S` of the subtree, with `gcd(0, d) =
@@ -351,7 +342,7 @@ fn members(n: &Node) -> &Option<Num> {
 /// two integers, negative points and rays to either infinity, and on sets that share
 /// subtrees, at `kept_from` 255, [`SPACING_KEPT_FROM`] and 0).
 fn spacing(n: &Node, kept_from: u8) -> &Num {
-    n.spacing.get_or_init(|| {
+    n.sum().spacing.get_or_init(|| {
         let mut f = Spacing {
             g: Gcd::Empty,
             last: None,
@@ -362,7 +353,7 @@ fn spacing(n: &Node, kept_from: u8) -> &Num {
     })
 }
 
-/// The least height of a node that keeps its gcd in [`Node::spacing`]; a smaller subtree is
+/// The least height of a node that keeps its gcd in [`Totals::spacing`]; a smaller subtree is
 /// walked point by point each time its parent's gcd is computed. The answer is the same at
 /// every height (proof (f) at [`spacing`]; the test reads it at 0, this height and 255), so
 /// the height is a measured switchover between two costs: a lower one keeps more gcds and
@@ -496,33 +487,33 @@ impl<'a> Spacing<'a> {
 
     /// `n`'s piece and the subtrees of its children, in order.
     fn node(&mut self, n: &'a Node) -> bool {
-        let (Fin(v), Fin(hi)) = &n.piece else {
+        let (Fin(v), Fin(hi)) = &n.item().piece else {
             return self.one();
         };
         if v != hi {
             return self.one();
         }
-        if let Some(l) = n.left.as_deref()
+        if let Some(l) = n.left().as_deref()
             && self.subtree(l)
         {
             return true;
         }
-        self.point(v) || n.right.as_deref().is_some_and(|r| self.subtree(r))
+        self.point(v) || n.right().as_deref().is_some_and(|r| self.subtree(r))
     }
 
     /// The points of `n`'s subtree: by its kept gcd when it is tall enough to keep one.
     fn subtree(&mut self, n: &'a Node) -> bool {
-        if n.height < self.kept_from {
+        if n.height() < self.kept_from {
             return self.node(n);
         }
         let s = spacing(n, self.kept_from);
         if s.to_i64() == Some(1) {
             return self.one();
         }
-        if self.point(finite(&n.first)) {
+        if self.point(finite(&n.sum().first)) {
             return true;
         }
-        self.last = Some(finite(&n.last));
+        self.last = Some(finite(&n.sum().last));
         self.join(s)
     }
 }
@@ -538,16 +529,20 @@ fn finite(e: &End) -> &Num {
 /// `t` with each piece's lower end raised and upper end lowered to the nearest integer that is
 /// `r` modulo `m`, for `m > 1`, and the pieces left empty dropped: [`IntervalSet::in_class`].
 /// A subtree that already has every end in the class is returned shared, and is marked so
-/// ([`Node::in_class`]), so that a later call on a set sharing it passes it by in `O(1)`.
+/// ([`Totals::in_class`]), so that a later call on a set sharing it passes it by in `O(1)`.
 ///
 /// The result is a valid tree: a piece only shrinks, so the gaps between pieces only widen,
 /// and the order of the pieces is kept; a dropped piece's neighbors are joined by [`concat()`].
 fn in_class(t: &Link, m: &Num, r: &Num) -> Link {
     let n = t.as_ref()?;
-    if n.in_class.get().is_some_and(|(a, b)| a == m && b == r) {
+    if n.sum()
+        .in_class
+        .get()
+        .is_some_and(|(a, b)| a == m && b == r)
+    {
         return t.clone();
     }
-    let (left, right) = (in_class(&n.left, m, r), in_class(&n.right, m, r));
+    let (left, right) = (in_class(n.left(), m, r), in_class(n.right(), m, r));
     let up = |e: &End| match e {
         Fin(v) => Fin(v + &(r - v).rem_euclid(m)),
         e => e.clone(),
@@ -556,15 +551,15 @@ fn in_class(t: &Link, m: &Num, r: &Num) -> Link {
         Fin(v) => Fin(v - &(v - r).rem_euclid(m)),
         e => e.clone(),
     };
-    let piece = (up(&n.piece.0), down(&n.piece.1));
+    let piece = (up(&n.item().piece.0), down(&n.item().piece.1));
     let shared = |a: &Link, b: &Link| match (a, b) {
         (Some(a), Some(b)) => Arc::ptr_eq(a, b),
         (None, None) => true,
         _ => false,
     };
-    if piece == n.piece && shared(&left, &n.left) && shared(&right, &n.right) {
+    if piece == n.item().piece && shared(&left, n.left()) && shared(&right, n.right()) {
         // A modulus seen first keeps the mark; another is checked by the walk each time.
-        _ = n.in_class.set((m.clone(), r.clone()));
+        _ = n.sum().in_class.set((m.clone(), r.clone()));
         return t.clone();
     }
     if piece.0 > piece.1 {
@@ -574,157 +569,25 @@ fn in_class(t: &Link, m: &Num, r: &Num) -> Link {
     }
 }
 
-/// The children and the piece of `n`, moved out when `n` is not shared and cloned when it is.
-fn parts(n: Arc<Node>) -> (Link, Keyed, Link) {
-    match Arc::try_unwrap(n) {
-        Ok(n) => (n.left, (n.piece, n.piece_hash), n.right),
-        Err(n) => (
-            n.left.clone(),
-            (n.piece.clone(), n.piece_hash),
-            n.right.clone(),
-        ),
-    }
-}
-
-fn rotate_left(t: Arc<Node>) -> Arc<Node> {
-    let (a, x, r) = parts(t);
-    let (b, y, c) = parts(r.expect("a right child to rotate"));
-    node(Some(node(a, x, b)), y, c)
-}
-
-fn rotate_right(t: Arc<Node>) -> Arc<Node> {
-    let (l, y, c) = parts(t);
-    let (a, x, b) = parts(l.expect("a left child to rotate"));
-    node(a, x, Some(node(b, y, c)))
-}
-
-/// The tree of `l`'s pieces, then `k`, then `r`'s, for every piece of `l` below `k` and of `r`
-/// above it: `O(|height(l) - height(r)| + 1)`.
-// G. E. Blelloch, D. Ferizovic and Y. Sun, "Just Join for Parallel Ordered Sets", SPAA 2016,
-// pp. 253-264, doi:10.1145/2935764.2935768; arXiv:1602.02120. Section 3 ("The JOIN
-// Function"), the AVL figure: join(TL, k, TR) is joinRight when h(TL) > h(TR) + 1, joinLeft
-// when h(TR) > h(TL) + 1, and node(TL, k, TR) otherwise; joinRight walks down the right spine
-// of TL to the first subtree c with h(c) <= h(TR) + 1, puts node(c, k, TR) there, and on the
-// way back up makes one single or double rotation where a node's right side has grown two
-// taller than its left. `join_right` and `join_left` follow the figure line for line. Its
-// cost is O(|h(TL) - h(TR)|) (the paper's Theorem for AVL trees), and split, union, meet and
-// difference are built from join alone (section 4 and Figure 1), so that two sets of m <= n
-// pieces cost O(m log(n/m + 1)) (the paper's main theorem). Departures: the keys are pieces,
-// not points, so `union` merges overlapping and touching pieces as it goes (see there); nodes
-// are shared, not changed in place, so a new node is built where the paper rotates; and
-// nothing runs in parallel. Checked 2026-11-20: the DOI, venue and pages on Crossref; the
-// arXiv LaTeX source read (the figure, section 4 and the theorem). The tests:
-// `set_operations_agree_with_the_vec_version_on_random_sets` runs every operation on random
-// sets against a sorted-list version, and `check_tree` asserts on each result that every
-// node's two heights differ by at most 1 and its stored height and summaries are right. They
-// do not measure the cost; `interval_set_operations_scale` in the step tests does.
-fn join(l: Link, k: Keyed, r: Link) -> Arc<Node> {
-    let (hl, hr) = (height(&l), height(&r));
-    match (l, r) {
-        (Some(l), r) if hl > hr + 1 => join_right(l, k, r),
-        (l, Some(r)) if hr > hl + 1 => join_left(l, k, r),
-        (l, r) => node(l, k, r),
-    }
-}
-
-/// Proof that the `expect`s here and in the rotations cannot fire (`h` is [`height`], 0 for
-/// `None`; `tl` is a valid AVL tree, as every tree built by [`node`] through [`join`] is, which
-/// `check_tree` asserts on every test result). Precondition: `h(tl) > h(tr) + 1`; [`join`]
-/// calls with it, and the recursive call below with `h(c) > h(tr) + 1`. (1) `c.expect`: in the
-/// `else` branch `h(c) > h(tr) + 1 >= 1`, so `c` is `Some`. (2) `rotate_right(t)`, `t =
-/// node(c, k, tr)`, needs `c` to be `Some`. Balance of `tl` gives `max(h(l), h(c)) = h(tl) - 1`
-/// and `|h(l) - h(c)| <= 1`; as `h(c) <= h(tr) + 1 <= h(tl) - 1`, `h(l) >= h(tl) - 2 >= h(tr)`.
-/// The rotation is taken when `h(t) = max(h(c), h(tr)) + 1 > h(l) + 1`; `h(tr) <= h(l)` rules
-/// out `h(tr)` as the maximum, so `h(c) > h(l) >= 0`, and `c` is `Some`. (3) The outer
-/// `rotate_left`, and the one in the `else` branch, rotate a node built here with `Some` as
-/// its right child. The same proof, mirrored, holds for [`join_left`]. Tests:
-/// `set_operations_agree_with_the_vec_version_on_random_sets` and `check_tree`; they reach
-/// every branch on random sets, and the argument covers the trees they do not draw.
-fn join_right(tl: Arc<Node>, k: Keyed, tr: Link) -> Arc<Node> {
-    let (l, x, c) = parts(tl);
-    if height(&c) <= height(&tr) + 1 {
-        let t = node(c, k, tr);
-        if t.height <= height(&l) + 1 {
-            node(l, x, Some(t))
-        } else {
-            rotate_left(node(l, x, Some(rotate_right(t))))
-        }
-    } else {
-        let t = join_right(c.expect("taller than tr"), k, tr);
-        let tall = t.height > height(&l) + 1;
-        let t = node(l, x, Some(t));
-        if tall { rotate_left(t) } else { t }
-    }
-}
-
-fn join_left(tl: Link, k: Keyed, tr: Arc<Node>) -> Arc<Node> {
-    let (c, x, r) = parts(tr);
-    if height(&c) <= height(&tl) + 1 {
-        let t = node(tl, k, c);
-        if t.height <= height(&r) + 1 {
-            node(Some(t), x, r)
-        } else {
-            rotate_right(node(Some(rotate_left(t)), x, r))
-        }
-    } else {
-        let t = join_left(tl, k, c.expect("taller than tl"));
-        let tall = t.height > height(&r) + 1;
-        let t = node(Some(t), x, r);
-        if tall { rotate_right(t) } else { t }
-    }
-}
-
 /// The pieces of `t` whose lower end satisfies `goes_left`, and the rest; `goes_left` holds
-/// on a prefix of the pieces. `O(log p)`.
+/// on a prefix of the pieces. `O(log p)`: [`avl::split`].
+///
+/// The tree's join, split, `split_first`, `split_last` and `concat` are those of
+/// [`zed_collections::avl`] (Blelloch, Ferizovic and Sun, "Just Join for Parallel Ordered Sets",
+/// SPAA 2016, doi:10.1145/2935764.2935768, section 3, the AVL figure; the citation, how it was
+/// checked and the proof that its `expect`s cannot fire are there), moved there from this
+/// module (DRY-persistent-trees-2026-11-26). Split, union, meet and difference are built from
+/// join alone (section 4 and Figure 1), so that two sets of m <= n pieces cost
+/// O(m log(n/m + 1)) (the paper's main theorem). Departures: the keys are pieces, not points,
+/// so `union` merges overlapping and touching pieces as it goes (see there); nodes are shared,
+/// not changed in place; nothing runs in parallel. The tests:
+/// `set_operations_agree_with_the_vec_version_on_random_sets` runs every operation on random
+/// sets against a sorted-list version, and `check_tree` asserts on each result that every
+/// node's two heights differ by at most 1 and its stored height and summaries are right. They
+/// do not measure the cost; `interval_set_operations_scale` in the step tests does.
+#[inline]
 fn split(t: Link, goes_left: &impl Fn(&End) -> bool) -> (Link, Link) {
-    let Some(n) = t else {
-        return (None, None);
-    };
-    let left = goes_left(&n.piece.0);
-    let (l, k, r) = parts(n);
-    if left {
-        let (rl, rr) = split(r, goes_left);
-        (Some(join(l, k, rl)), rr)
-    } else {
-        let (ll, lr) = split(l, goes_left);
-        (ll, Some(join(lr, k, r)))
-    }
-}
-
-/// The tree without its last piece, and that piece.
-fn split_last(t: Arc<Node>) -> (Link, Keyed) {
-    let (l, k, r) = parts(t);
-    match r {
-        None => (l, k),
-        Some(r) => {
-            let (r, last) = split_last(r);
-            (Some(join(l, k, r)), last)
-        }
-    }
-}
-
-/// The tree without its first piece, and that piece.
-fn split_first(t: Arc<Node>) -> (Keyed, Link) {
-    let (l, k, r) = parts(t);
-    match l {
-        None => (k, r),
-        Some(l) => {
-            let (first, l) = split_first(l);
-            (first, Some(join(l, k, r)))
-        }
-    }
-}
-
-/// `l`'s pieces then `r`'s, for every piece of `l` below each of `r` with a gap between.
-fn concat(l: Link, r: Link) -> Link {
-    match (l, r) {
-        (l, None) => l,
-        (None, r) => r,
-        (l, Some(r)) => {
-            let (k, r) = split_first(r);
-            Some(join(l, k, r))
-        }
-    }
+    avl::split(t, &|k: &Keyed| goes_left(&k.piece.0))
 }
 
 /// The union of `lo` and `hi` when both are non-empty and every piece of `lo` lies below every
@@ -763,16 +626,16 @@ fn below_then(lo: &Link, hi: &Link) -> Option<Link> {
     let (Some(l), Some(h)) = (lo, hi) else {
         return None;
     };
-    (l.last < h.first).then(|| concat_ordered(lo.clone(), hi.clone()))
+    (l.sum().last < h.sum().first).then(|| concat_ordered(lo.clone(), hi.clone()))
 }
 
 /// `lo`'s pieces then `hi`'s, the touching end pieces made one, for `lo`'s last end below
 /// `hi`'s first: [`below_then`] after its test, which the negative control leaves out.
 fn concat_ordered(lo: Link, hi: Link) -> Link {
     match (lo, hi) {
-        (Some(l), Some(h)) if h.first.at_most_succ(&l.last) => {
-            let (rest_l, ((a, _), _)) = split_last(l);
-            let (((_, b), _), rest_h) = split_first(h);
+        (Some(l), Some(h)) if h.sum().first.at_most_succ(&l.sum().last) => {
+            let (rest_l, Keyed { piece: (a, _), .. }) = split_last(l);
+            let (Keyed { piece: (_, b), .. }, rest_h) = split_first(h);
             Some(join(rest_l, keyed((a, b)), rest_h))
         }
         (lo, hi) => concat(lo, hi),
@@ -781,16 +644,16 @@ fn concat_ordered(lo: Link, hi: Link) -> Link {
 
 /// A piece with its hash.
 fn keyed(piece: (End, End)) -> Keyed {
-    let h = piece_hash(&piece);
-    (piece, h)
+    let piece_hash = piece_hash(&piece);
+    Keyed { piece, piece_hash }
 }
 
 /// `t` without its last piece when that piece reaches `lo - 1`, with `lo..=hi` grown to hold
 /// it.
 fn absorb_last(t: Link, lo: &mut End, hi: &mut End) -> Link {
     match t {
-        Some(t) if lo.at_most_succ(&t.last) => {
-            let (t, ((l, h), _)) = split_last(t);
+        Some(t) if lo.at_most_succ(&t.sum().last) => {
+            let (t, Keyed { piece: (l, h), .. }) = split_last(t);
             *lo = l;
             if h > *hi {
                 *hi = h;
@@ -814,20 +677,27 @@ fn union(a: Link, b: Link) -> Link {
         (Some(a), Some(b)) if Arc::ptr_eq(&a, &b) => return Some(a),
         (Some(a), Some(b)) => (a, b),
     };
-    let (la, ((mut lo, mut hi), _), ra) = parts(a);
+    let (
+        la,
+        Keyed {
+            piece: (mut lo, mut hi),
+            ..
+        },
+        ra,
+    ) = parts(a);
     let (below, rest) = split(Some(b), &|l| *l < lo);
     let below = absorb_last(below, &mut lo, &mut hi);
     let (merged, above) = split(rest, &|l| l.at_most_succ(&hi));
-    if let Some(m) = merged.filter(|m| m.last > hi) {
-        hi = m.last.clone();
+    if let Some(m) = merged.filter(|m| m.sum().last > hi) {
+        hi = m.sum().last.clone();
     }
     // The pieces of the left side from `lo` on lie below the root piece of `a`, so inside
     // `lo..=hi`; the last one before them merges when it reaches `lo - 1`.
     let (left, _) = split(union(la, below), &|l| *l < lo);
     let left = absorb_last(left, &mut lo, &mut hi);
     let (merged, right) = split(union(ra, above), &|l| l.at_most_succ(&hi));
-    if let Some(m) = merged.filter(|m| m.last > hi) {
-        hi = m.last.clone();
+    if let Some(m) = merged.filter(|m| m.sum().last > hi) {
+        hi = m.sum().last.clone();
     }
     Some(join(left, keyed((lo, hi)), right))
 }
@@ -841,15 +711,21 @@ fn intersection(a: Link, b: Link) -> Link {
         (Some(a), Some(b)) if Arc::ptr_eq(&a, &b) => return Some(a),
         (Some(a), Some(b)) => (a, b),
     };
-    let (la, ((lo, hi), _), ra) = parts(a);
+    let (
+        la,
+        Keyed {
+            piece: (lo, hi), ..
+        },
+        ra,
+    ) = parts(a);
     let (below, rest) = split(Some(b), &|l| *l < lo);
     let (inside, above) = split(rest, &|l| *l <= hi);
     // The last piece below `lo`, when it reaches into `lo..`, and the end past `hi` of the
     // piece that reaches past it: the last inside, or else that one.
     let reach = (below.as_ref())
-        .map(|t| t.last.clone())
+        .map(|t| t.sum().last.clone())
         .filter(|e| *e >= lo);
-    let past = (inside.as_ref().map(|t| &t.last))
+    let past = (inside.as_ref().map(|t| &t.sum().last))
         .or(reach.as_ref())
         .filter(|e| **e > hi);
     // The part past `hi` of that piece meets only the pieces of `ra`, which start past
@@ -861,8 +737,8 @@ fn intersection(a: Link, b: Link) -> Link {
         None => above,
     };
     let mut middle = inside.map(|t| {
-        if t.last > hi {
-            let (t, ((l, _), _)) = split_last(t);
+        if t.sum().last > hi {
+            let (t, Keyed { piece: (l, _), .. }) = split_last(t);
             join(t, keyed((l, hi.clone())), None)
         } else {
             t
@@ -886,17 +762,23 @@ fn difference(a: Link, b: Link) -> Link {
         (Some(a), Some(b)) if Arc::ptr_eq(&a, &b) => return None,
         (Some(a), Some(b)) => (a, b),
     };
-    let (lb, ((lo, hi), _), rb) = parts(b);
+    let (
+        lb,
+        Keyed {
+            piece: (lo, hi), ..
+        },
+        rb,
+    ) = parts(b);
     let (below, rest) = split(Some(a), &|l| *l < lo);
     let (inside, above) = split(rest, &|l| *l <= hi);
-    let reach = (below.as_ref()).map(|t| t.last.clone());
-    let past = (inside.as_ref().map(|t| &t.last))
+    let reach = (below.as_ref()).map(|t| t.sum().last.clone());
+    let past = (inside.as_ref().map(|t| &t.sum().last))
         .or(reach.as_ref())
         .filter(|e| **e > hi)
         .cloned();
     let below = match below {
-        Some(t) if t.last >= lo => {
-            let (t, ((l, _), _)) = split_last(t);
+        Some(t) if t.sum().last >= lo => {
+            let (t, Keyed { piece: (l, _), .. }) = split_last(t);
             Some(join(t, keyed((l, lo.pred())), None))
         }
         t => t,
@@ -911,10 +793,10 @@ fn difference(a: Link, b: Link) -> Link {
 /// The last piece of `t`.
 fn last_piece(t: &Link) -> Option<&(End, End)> {
     let mut n = t.as_deref()?;
-    while let Some(r) = n.right.as_deref() {
+    while let Some(r) = n.right().as_deref() {
         n = r;
     }
-    Some(&n.piece)
+    Some(&n.item().piece)
 }
 
 /// The tree of the given pieces, sorted and normalized, balanced: `O(p)`.
@@ -930,8 +812,7 @@ fn build(pieces: &mut impl Iterator<Item = (End, End)>, count: usize) -> Link {
     let left = build(pieces, count / 2);
     let piece = pieces.next().expect("count pieces");
     let right = build(pieces, count - count / 2 - 1);
-    let h = piece_hash(&piece);
-    Some(node(left, (piece, h), right))
+    Some(node(left, keyed(piece), right))
 }
 
 /// The pieces of an [`IntervalSet`] in increasing order, from either end.
@@ -957,14 +838,14 @@ impl<'a> Pieces<'a> {
     fn push_left_spine(&mut self, mut t: Option<&'a Node>) {
         while let Some(n) = t {
             self.front.push(n);
-            t = n.left.as_deref();
+            t = n.left().as_deref();
         }
     }
 
     fn push_right_spine(&mut self, mut t: Option<&'a Node>) {
         while let Some(n) = t {
             self.back.push(n);
-            t = n.right.as_deref();
+            t = n.right().as_deref();
         }
     }
 }
@@ -977,9 +858,9 @@ impl<'a> Iterator for Pieces<'a> {
             return None;
         }
         let n = self.front.pop()?;
-        self.push_left_spine(n.right.as_deref());
+        self.push_left_spine(n.right().as_deref());
         self.left -= 1;
-        Some(&n.piece)
+        Some(&n.item().piece)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -1004,9 +885,9 @@ impl DoubleEndedIterator for Pieces<'_> {
             self.push_right_spine(Some(root));
         }
         let n = self.back.pop()?;
-        self.push_right_spine(n.left.as_deref());
+        self.push_right_spine(n.left().as_deref());
         self.left -= 1;
-        Some(&n.piece)
+        Some(&n.item().piece)
     }
 }
 
@@ -1025,7 +906,7 @@ impl<'a> Step<'a> {
     /// The least and the greatest member.
     fn ends(self) -> (&'a End, &'a End) {
         match self {
-            Step::Tree(n) => (&n.first, &n.last),
+            Step::Tree(n) => (&n.sum().first, &n.sum().last),
             Step::Piece((lo, hi)) => (lo, hi),
         }
     }
@@ -1067,9 +948,9 @@ impl<'a> Walk<'a> {
         let Some(Step::Tree(n)) = self.stack.pop() else {
             unreachable!("only a subtree opens");
         };
-        self.stack.extend(n.right.as_deref().map(Step::Tree));
-        self.stack.push(Step::Piece(&n.piece));
-        self.stack.extend(n.left.as_deref().map(Step::Tree));
+        self.stack.extend(n.right().as_deref().map(Step::Tree));
+        self.stack.push(Step::Piece(&n.item().piece));
+        self.stack.extend(n.left().as_deref().map(Step::Tree));
     }
 }
 
@@ -1081,7 +962,7 @@ fn same(a: Step<'_>, b: Step<'_>) -> bool {
 /// The count of pieces in a step.
 fn size(s: Step<'_>) -> usize {
     match s {
-        Step::Tree(n) => n.count,
+        Step::Tree(n) => n.size(),
         Step::Piece(_) => 1,
     }
 }
@@ -1167,12 +1048,12 @@ impl IntervalSet {
         };
         let mut t = self.root.as_deref();
         while let Some(n) = t {
-            if !before(&n.piece) {
+            if !before(&n.item().piece) {
                 it.front.push(n);
-                t = n.left.as_deref();
+                t = n.left().as_deref();
             } else {
-                it.left -= n.left.as_ref().map_or(0, |l| l.count) + 1;
-                t = n.right.as_deref();
+                it.left -= avl::len(n.left()) + 1;
+                t = n.right().as_deref();
             }
         }
         it
@@ -1185,7 +1066,7 @@ impl IntervalSet {
 
     /// The count of pieces: `O(1)`.
     pub fn len(&self) -> usize {
-        self.root.as_ref().map_or(0, |n| n.count)
+        self.root.as_ref().map_or(0, |n| n.size())
     }
 
     /// Whether the set is empty.
@@ -1196,10 +1077,10 @@ impl IntervalSet {
     /// The first piece: `O(log p)`.
     pub fn first(&self) -> Option<&(End, End)> {
         let mut n = self.root.as_deref()?;
-        while let Some(l) = n.left.as_deref() {
+        while let Some(l) = n.left().as_deref() {
             n = l;
         }
-        Some(&n.piece)
+        Some(&n.item().piece)
     }
 
     /// The last piece: `O(log p)`.
@@ -1211,8 +1092,8 @@ impl IntervalSet {
     pub fn only(&self) -> Option<&(End, End)> {
         self.root
             .as_deref()
-            .filter(|n| n.count == 1)
-            .map(|n| &n.piece)
+            .filter(|n| n.size() == 1)
+            .map(|n| &n.item().piece)
     }
 
     /// The last piece whose lower end is at or below `v`: the piece that holds `v`, or the
@@ -1220,11 +1101,11 @@ impl IntervalSet {
     pub fn piece_at_or_below(&self, v: &End) -> Option<&(End, End)> {
         let (mut t, mut found) = (self.root.as_deref(), None);
         while let Some(n) = t {
-            if n.piece.0 <= *v {
-                found = Some(&n.piece);
-                t = n.right.as_deref();
+            if n.item().piece.0 <= *v {
+                found = Some(&n.item().piece);
+                t = n.right().as_deref();
             } else {
-                t = n.left.as_deref();
+                t = n.left().as_deref();
             }
         }
         found
@@ -1235,11 +1116,11 @@ impl IntervalSet {
     pub fn piece_at_or_above(&self, v: &End) -> Option<&(End, End)> {
         let (mut t, mut found) = (self.root.as_deref(), None);
         while let Some(n) = t {
-            if n.piece.1 >= *v {
-                found = Some(&n.piece);
-                t = n.left.as_deref();
+            if n.item().piece.1 >= *v {
+                found = Some(&n.item().piece);
+                t = n.left().as_deref();
             } else {
-                t = n.right.as_deref();
+                t = n.right().as_deref();
             }
         }
         found
@@ -1288,7 +1169,9 @@ impl IntervalSet {
 
     /// The least and the greatest endpoint, or `None` for the empty set: `O(1)`.
     pub fn bounds(&self) -> Option<(&End, &End)> {
-        self.root.as_deref().map(|n| (&n.first, &n.last))
+        self.root
+            .as_deref()
+            .map(|n| (&n.sum().first, &n.sum().last))
     }
 
     /// The smallest single interval containing the set.
@@ -1390,8 +1273,9 @@ impl IntervalSet {
             (None, _) => return true,
             (Some(_), None) => return false,
             (Some(x), Some(y)) if Arc::ptr_eq(x, y) => return true,
-            (Some(x), Some(y)) if x.count == 1 && y.count == 1 => {
-                return y.piece.0 <= x.piece.0 && x.piece.1 <= y.piece.1;
+            (Some(x), Some(y)) if x.size() == 1 && y.size() == 1 => {
+                let (x, y) = (&x.item().piece, &y.item().piece);
+                return y.0 <= x.0 && x.1 <= y.1;
             }
             _ => {}
         }
@@ -1819,9 +1703,9 @@ impl PartialEq for IntervalSet {
         // in order, the field comment's formula. Equal hashes prove nothing (a collision
         // modulo `P`), so the walk below decides them exactly; `R` and `piece_hash` affect
         // only how often the walk runs, never the answer. Test: `tests::check_tree`, called by
-        // `tests::agrees` on every set the tests build, asserts `n.hash` (both parts) against the
-        // formula at each node; it cannot catch a tree shape that no test builds.
-        if x.count != y.count || x.hash != y.hash {
+        // `tests::agrees` on every set the tests build, asserts `n.sum().hash` (both parts)
+        // against the formula at each node; it cannot catch a tree shape that no test builds.
+        if x.size() != y.size() || x.sum().hash != y.sum().hash {
             return false;
         }
         // Complexity tradeoff: naive version, the trees walked, the walk's stack allocated.
@@ -1830,8 +1714,8 @@ impl PartialEq for IntervalSet {
         if Arc::ptr_eq(x, y) {
             return true;
         }
-        if x.count == 1 {
-            return x.piece == y.piece;
+        if x.size() == 1 {
+            return x.item().piece == y.item().piece;
         }
         let (mut a, mut b) = (Walk::of(&self.root), Walk::of(&other.root));
         loop {
@@ -1862,7 +1746,10 @@ impl Eq for IntervalSet {}
 impl std::hash::Hash for IntervalSet {
     /// The count and the content hash of the pieces: `O(1)`.
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let (count, hash) = self.root.as_ref().map_or((0, 0), |n| (n.count, n.hash.h));
+        let (count, hash) = self
+            .root
+            .as_ref()
+            .map_or((0, 0), |n| (n.size(), n.sum().hash.h));
         state.write_usize(count);
         state.write_u64(hash);
     }
@@ -2439,15 +2326,15 @@ mod tests {
     /// Checks the tree's balance and every summary it keeps against its pieces.
     fn check_tree(t: &Link) -> usize {
         let Some(n) = t else { return 0 };
-        let (hl, hr) = (check_tree(&n.left), check_tree(&n.right));
+        let (hl, hr) = (check_tree(n.left()), check_tree(n.right()));
         assert!(hl.abs_diff(hr) <= 1, "unbalanced");
-        assert_eq!(usize::from(n.height), hl.max(hr) + 1);
+        assert_eq!(usize::from(n.height()), hl.max(hr) + 1);
         let whole = IntervalSet { root: t.clone() };
         let pieces: Vec<&(End, End)> = whole.pieces().collect();
-        assert_eq!(n.count, pieces.len());
-        assert_eq!(n.first, pieces[0].0);
-        assert_eq!(n.last, pieces[pieces.len() - 1].1);
-        assert_eq!(n.piece_hash, piece_hash(&n.piece));
+        assert_eq!(n.size(), pieces.len());
+        assert_eq!(n.sum().first, pieces[0].0);
+        assert_eq!(n.sum().last, pieces[pieces.len() - 1].1);
+        assert_eq!(n.item().piece_hash, piece_hash(&n.item().piece));
         let mut gap = Num::ZERO;
         let (mut hash, mut pow) = (0, 1);
         for w in pieces.windows(2) {
@@ -2460,7 +2347,7 @@ mod tests {
             pow = mul_mod(pow, R);
         }
         assert_eq!(*super::gap(n), gap);
-        assert_eq!((n.hash.h, n.hash.pow), (hash, pow));
+        assert_eq!((n.sum().hash.h, n.sum().hash.pow), (hash, pow));
         hl.max(hr) + 1
     }
 
@@ -2568,14 +2455,14 @@ mod tests {
                 assert_eq!(got, want, "{lo} join {hi}, ZED_TEST_SEED={seed}");
             }
             let is_below = match (&lo.root, &hi.root) {
-                (Some(l), Some(h)) => l.last < h.first,
+                (Some(l), Some(h)) => l.sum().last < h.sum().first,
                 _ => false,
             };
             assert_eq!(below_then(&lo.root, &hi.root).is_some(), is_below);
             match (&lo.root, &hi.root) {
                 (Some(l), Some(h)) if is_below => {
                     ordered += 1;
-                    touching += usize::from(l.last.succ() == h.first);
+                    touching += usize::from(l.sum().last.succ() == h.sum().first);
                 }
                 (Some(_), Some(_)) => {
                     overlapping += 1;

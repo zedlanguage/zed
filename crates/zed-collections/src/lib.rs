@@ -55,6 +55,7 @@
 // is never loaded, so this dylib would carry its own copy of num-bigint beside zed-numtheory's.
 extern crate zed_numtheory as _;
 
+pub mod avl;
 pub mod by_address;
 pub mod cartesian;
 pub mod ext;

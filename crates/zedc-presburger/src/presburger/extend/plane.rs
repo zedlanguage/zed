@@ -78,6 +78,7 @@ use std::sync::Arc;
 use super::super::formula::Rel;
 use super::super::{Atom, Con, Formula, Id};
 use super::counts;
+use zed_collections::avl;
 use zedc_affine::plane::{self, Basis};
 use zedc_int::int::Int;
 
@@ -224,118 +225,39 @@ fn vs(x: &Ext, c: &Int) -> Ordering {
 // ---- the persistent sequence of sides ----
 
 type S = Arc<Row>;
-type Tree = Option<Arc<Node>>;
 
-/// A node of the join-based AVL tree of sides, in sequence order. Each node holds the first
-/// and last side of its subtree, so that the side before any node is read in O(1) during a
-/// descent: the last of its left subtree, or the side of the ancestor the descent last went
-/// right from.
-#[derive(Debug)]
-struct Node {
-    side: S,
-    left: Tree,
-    right: Tree,
-    height: u32,
-    size: usize,
-    first: S,
-    last: S,
+/// A side as an item of the join-based AVL tree of sides ([`zed_collections::avl`]), in
+/// sequence order. Each node holds the first and last side of its subtree as its summary, so
+/// that the side before any node is read in O(1) during a descent: the last of its left
+/// subtree, or the side of the ancestor the descent last went right from.
+#[derive(Clone, Debug)]
+struct Side(S);
+
+impl avl::Item for Side {
+    /// The first and the last side of the subtree.
+    type Sum = (S, S);
+
+    /// Made once for each new node, so each node made is counted here, as with every node
+    /// read ([`counts::HULL_NODES`], META3 H3).
+    fn sum(&self, l: Option<&(S, S)>, r: Option<&(S, S)>) -> (S, S) {
+        counts::add(counts::HULL_NODES, 1);
+        let first = l.map_or_else(|| self.0.clone(), |s| s.0.clone());
+        let last = r.map_or_else(|| self.0.clone(), |s| s.1.clone());
+        (first, last)
+    }
 }
 
-fn height(t: &Tree) -> u32 {
-    t.as_ref().map_or(0, |n| n.height)
-}
+type Tree = avl::Tree<Side>;
 
 fn size(t: &Tree) -> usize {
-    t.as_ref().map_or(0, |n| n.size)
+    avl::len(t)
 }
 
-/// A new node, counted with every node read ([`counts::HULL_NODES`], META3 H3).
-fn mk(l: Tree, s: S, r: Tree) -> Tree {
-    counts::add(counts::HULL_NODES, 1);
-    let first = l.as_ref().map_or_else(|| s.clone(), |n| n.first.clone());
-    let last = r.as_ref().map_or_else(|| s.clone(), |n| n.last.clone());
-    Some(Arc::new(Node {
-        height: 1 + height(&l).max(height(&r)),
-        size: size(&l) + size(&r) + 1,
-        side: s,
-        left: l,
-        right: r,
-        first,
-        last,
-    }))
-}
-
-fn parts(n: &Arc<Node>) -> (Tree, S, Tree) {
-    (n.left.clone(), n.side.clone(), n.right.clone())
-}
-
-fn rot_left(t: Tree) -> Tree {
-    let n = t.expect("a rotation of a node");
-    let (l, s, r) = parts(&n);
-    let rn = r.expect("a left rotation has a right child");
-    let (rl, rs, rr) = parts(&rn);
-    mk(mk(l, s, rl), rs, rr)
-}
-
-fn rot_right(t: Tree) -> Tree {
-    let n = t.expect("a rotation of a node");
-    let (l, s, r) = parts(&n);
-    let ln = l.expect("a right rotation has a left child");
-    let (ll, ls, lr) = parts(&ln);
-    mk(ll, ls, mk(lr, s, r))
-}
-
-/// `l`, then `s`, then `r`, as one balanced tree: Blelloch, Ferizovic and Sun's AVL join (SPAA
-/// 2016, Figure 2). It descends the taller tree's spine to the height of the shorter, making
-/// O(|h(l) - h(r)| + 1) nodes, and rebalances with at most two rotations at each level it
-/// returns through; their Lemma 1 shows the result is an AVL tree of height at most
-/// `max(h(l), h(r)) + 1`.
+/// `l`, then `s`, then `r`, as one balanced tree: Blelloch, Ferizovic and Sun's AVL join
+/// ([`avl::join`], which has the citation), making O(|h(l) - h(r)| + 1) nodes, of height at
+/// most `max(h(l), h(r)) + 1`.
 fn join(l: Tree, s: S, r: Tree) -> Tree {
-    if height(&l) > height(&r) + 1 {
-        join_right(l, s, r)
-    } else if height(&r) > height(&l) + 1 {
-        join_left(l, s, r)
-    } else {
-        mk(l, s, r)
-    }
-}
-
-fn join_right(l: Tree, s: S, r: Tree) -> Tree {
-    let n = l.expect("the taller tree is not empty");
-    let (ll, ls, lr) = parts(&n);
-    let t = if height(&lr) <= height(&r) + 1 {
-        let t = mk(lr, s, r);
-        if height(&t) > height(&ll) + 1 {
-            return rot_left(mk(ll, ls, rot_right(t)));
-        }
-        t
-    } else {
-        join_right(lr, s, r)
-    };
-    if height(&t) <= height(&ll) + 1 {
-        mk(ll, ls, t)
-    } else {
-        rot_left(mk(ll, ls, t))
-    }
-}
-
-fn join_left(l: Tree, s: S, r: Tree) -> Tree {
-    let n = r.expect("the taller tree is not empty");
-    let (rl, rs, rr) = parts(&n);
-    let t = if height(&rl) <= height(&l) + 1 {
-        let t = mk(l, s, rl);
-        if height(&t) > height(&rr) + 1 {
-            return rot_right(mk(rot_left(t), rs, rr));
-        }
-        t
-    } else {
-        join_left(l, s, rl)
-    };
-    if height(&t) <= height(&rr) + 1 {
-        mk(t, rs, rr)
-    } else {
-        rot_right(mk(t, rs, rr))
-    }
+    Some(avl::join(l, Side(s), r))
 }
 
 /// `l` then `r`. O(log(|l| + |r|) + 1): one split of the last side off `l`, one join.
@@ -348,7 +270,7 @@ fn join2(l: Tree, r: Tree) -> Tree {
     }
     let k = size(&l);
     let (a, b) = split_at(&l, k - 1);
-    let last = b.expect("the last side").side.clone();
+    let last = b.expect("the last side").item().0.clone();
     join(a, last, r)
 }
 
@@ -360,13 +282,14 @@ fn split_at(t: &Tree, i: usize) -> (Tree, Tree) {
         return (None, None);
     };
     counts::add(counts::HULL_NODES, 1);
-    let ls = size(&n.left);
+    let ls = size(n.left());
+    let side = &n.item().0;
     if i <= ls {
-        let (a, b) = split_at(&n.left, i);
-        (a, join(b, n.side.clone(), n.right.clone()))
+        let (a, b) = split_at(n.left(), i);
+        (a, join(b, side.clone(), n.right().clone()))
     } else {
-        let (a, b) = split_at(&n.right, i - ls - 1);
-        (join(n.left.clone(), n.side.clone(), a), b)
+        let (a, b) = split_at(n.right(), i - ls - 1);
+        (join(n.left().clone(), side.clone(), a), b)
     }
 }
 
@@ -376,7 +299,8 @@ fn from_slice(v: &[S]) -> Tree {
         return None;
     }
     let m = v.len() / 2;
-    mk(from_slice(&v[..m]), v[m].clone(), from_slice(&v[m + 1..]))
+    let (l, r) = (from_slice(&v[..m]), from_slice(&v[m + 1..]));
+    Some(avl::node(l, Side(v[m].clone()), r))
 }
 
 /// The side at index `i < size(t)`. O(log n).
@@ -384,13 +308,13 @@ fn get(t: &Tree, mut i: usize) -> &S {
     let mut node = t.as_ref().expect("an index in range");
     loop {
         counts::add(counts::HULL_NODES, 1);
-        let ls = size(&node.left);
+        let ls = size(node.left());
         match i.cmp(&ls) {
-            Ordering::Less => node = node.left.as_ref().expect("an index in range"),
-            Ordering::Equal => return &node.side,
+            Ordering::Less => node = node.left().as_ref().expect("an index in range"),
+            Ordering::Equal => return &node.item().0,
             Ordering::Greater => {
                 i -= ls + 1;
-                node = node.right.as_ref().expect("an index in range");
+                node = node.right().as_ref().expect("an index in range");
             }
         }
     }
@@ -400,18 +324,18 @@ fn get(t: &Tree, mut i: usize) -> &S {
 fn to_vec(t: &Tree, out: &mut Vec<S>) {
     if let Some(n) = t {
         counts::add(counts::HULL_NODES, 1);
-        to_vec(&n.left, out);
-        out.push(n.side.clone());
-        to_vec(&n.right, out);
+        to_vec(n.left(), out);
+        out.push(n.item().0.clone());
+        to_vec(n.right(), out);
     }
 }
 
 fn first(t: &Tree) -> Option<&S> {
-    t.as_ref().map(|n| &n.first)
+    t.as_ref().map(|n| &n.sum().0)
 }
 
 fn last(t: &Tree) -> Option<&S> {
-    t.as_ref().map(|n| &n.last)
+    t.as_ref().map(|n| &n.sum().1)
 }
 
 /// The least index `i` in `lo..hi` at which `pred(before, side)` holds, `before` the side at
@@ -431,17 +355,17 @@ fn search(
     let mut best = None;
     while let Some(n) = node {
         counts::add(counts::HULL_NODES, 1);
-        let i = base + size(&n.left);
+        let i = base + size(n.left());
         let go_left = if i < lo {
             false
         } else if i >= hi {
             true
         } else {
-            let prev = match &n.left {
-                Some(l) => Some(&*l.last),
+            let prev = match n.left() {
+                Some(l) => Some(&*l.sum().1),
                 None => before.as_deref(),
             };
-            if pred(prev, &n.side) {
+            if pred(prev, &n.item().0) {
                 best = Some(i);
                 true
             } else {
@@ -449,11 +373,11 @@ fn search(
             }
         };
         if go_left {
-            node = n.left.as_ref();
+            node = n.left().as_ref();
         } else {
-            before = Some(n.side.clone());
+            before = Some(n.item().0.clone());
             base = i + 1;
-            node = n.right.as_ref();
+            node = n.right().as_ref();
         }
     }
     best
