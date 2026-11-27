@@ -200,8 +200,14 @@ pub fn can_attach_dynamorio() -> bool {
 ///
 /// The child fails the same way in both cases (job j27 on l42: the trial ended by SIGSEGV after
 /// 950 ms, and by exit status 40 after 3.2 ms on the 2^32-byte stack), and the six benchmarks
-/// that failed there count with the fallback. Cost of the trial: no instruction of the count,
-/// which starts in this process after the trial, at the client's first read; in time, @@HM@@.
+/// that failed there count with the fallback. On hm1 (AMD EPYC 7B12, the same kernel 6.6.159,
+/// job j28) the start works in the child and in the process on the usual stack, and the trial
+/// fails with exit status 40 on the 2^32-byte stack, as the process did. Cost of the trial: 0
+/// instructions of the count, which starts in this process after the trial, at the client's
+/// first read; in time, where the child starts DynamoRIO, 673 ms (the shadowing benchmark of
+/// l01_39) and 53 ms (eval3 of zed-kernel) on hm1, once per process; where it fails, 3.2 to
+/// 17.9 ms on hm1 and 3.2 ms (exit 40) to 950 ms (SIGSEGV) on l42, before the start under
+/// `drrun`. The time is spent before the first measured run, so no measure includes it.
 ///
 /// Counting is off until the client's first read, as under `drrun` (tools/icount/zed_icount.c),
 /// so what the process does between the start and that read is not counted. An error names the
