@@ -76,14 +76,21 @@ fn a_group_need_reading_another_parameter_is_met_at_each_call() {
 #[test]
 fn a_level_need_reading_another_parameter_is_met_at_each_call() {
     let y = "g(positional m, positional y) = m.any(x -> x > y);";
-    // The call is refused, which is what this test is for. The headline names `g`'s arguments,
-    // not the comparison `x > y` that fails; plan row
-    // MSG-level-need-at-call-names-the-comparison makes it name the comparison.
+    // The headline names the use that compares an entry of `m` with `y`, and the two values
+    // and types that meet there (plan row MSG-level-need-at-call-names-the-comparison), and
+    // the repair says what to pass instead.
     refused(
         "any_y_bad",
         y,
         "g([\"a\"], 1)",
-        "`g` does not take (0 -> \"a\", 1)",
+        "`g` does not take (0 -> \"a\", 1): `m.any(x -> x > y)` in its body uses a value of `m` \
+         and `y` at one type, and here they are \"a\" : String and 1 : int",
+    );
+    refused(
+        "any_y_bad_repair",
+        y,
+        "g([\"a\"], 1)",
+        "repair: pass `y` a value of String, or `m` values of int",
     );
     runs("any_y_good", y, "g([1, 5], 2)", "true");
     // Since FAIL-any-lambda-calls-param the lambda is checked with the entries bound, so the
@@ -104,6 +111,35 @@ fn a_level_need_reading_another_parameter_is_met_at_each_call() {
         "`f` does not take (\"a\")",
     );
     runs("count_good", c, "g([1, 5], w -> w > 2)", "1");
+}
+
+/// `g`, which compares each entry of `m` with `y`, and a `main` that calls it `n` times with a
+/// String entry and an int `y`: each call is refused with its own message, which names the
+/// comparison (plan row MSG-level-need-at-call-names-the-comparison).
+pub(super) fn compared_calls(n: usize) -> String {
+    let calls: String = (0..n)
+        .map(|i| format!("  c{i} = g([\"a{i}\"], {i});\n"))
+        .collect();
+    let shown: String = (0..n).map(|i| format!("${{c{i}}}")).collect();
+    format!(
+        "g(positional m, positional y) = m.any(x -> x > y);\n\
+         main(m: MainArgs) {{\n{calls}  m.stdout <- \"{shown}\";\n}}\n"
+    )
+}
+
+#[test]
+fn each_call_that_compares_a_string_entry_with_an_int_names_the_comparison() {
+    let es = super::type_errors(&compared_calls(3));
+    assert_eq!(es.len(), 3, "{es:?}");
+    for (i, e) in es.iter().enumerate() {
+        assert!(
+            e.contains(&format!(
+                "`m.any(x -> x > y)` in its body uses a value of `m` and `y` at one type, and \
+                 here they are \"a{i}\" : String and {i} : int"
+            )),
+            "{e}"
+        );
+    }
 }
 
 #[test]

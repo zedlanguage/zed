@@ -23,6 +23,7 @@ mod held_functions;
 mod is_chains;
 mod literals;
 mod named_calls;
+mod need_free_names;
 mod never;
 mod never_operands;
 mod no_common_value;
