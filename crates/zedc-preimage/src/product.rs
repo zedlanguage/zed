@@ -2201,6 +2201,9 @@ pub struct Scope {
     /// its lambda: a test that calls a function is closed over it before its preimage is taken
     /// ([`Scope::close`]). Shared between the scopes of a walk's arms, not copied.
     bindings: imbl::OrdMap<Arc<str>, Binding>,
+    /// In a lazy scope ([`Scope::lazy`]), for each name, the bound names whose term reads it
+    /// ([`Binding::reads`]): settling a name settles these too ([`Scope::settled`]).
+    read_by: imbl::OrdMap<Arc<str>, imbl::OrdSet<Arc<str>>>,
     /// The order of each name's binding ([`Orders`]).
     orders: Orders,
     /// The order the next binding gets.
@@ -2614,6 +2617,9 @@ struct Binding {
     /// The term of the integer the name is bound to, read when a test narrows the name and
     /// it has no summary that holds ([`Scope::through_terms`]).
     term: Option<Shared>,
+    /// The names `term` reads ([`stage::free`]), found when a lazy scope binds the name, which
+    /// keeps the binding under each of them in [`Scope::read_by`]; empty otherwise.
+    reads: Arc<[Arc<str>]>,
 }
 
 /// The summary a binding keeps ([`Scope::summarize`]), made the first time it is read
@@ -10291,6 +10297,7 @@ impl Scope {
             refusals: imbl::OrdMap::new(),
             refused_by: imbl::OrdMap::new(),
             bindings: imbl::OrdMap::new(),
+            read_by: imbl::OrdMap::new(),
             orders: imbl::OrdMap::new(),
             clock: 0,
             reduced: Reduced::default(),
@@ -10506,6 +10513,21 @@ impl Scope {
     /// sequences of `a_lazy_scope_settles_each_name_to_the_eager_product` check equality
     /// after every step of up to 12, joins among them.
     pub fn lazy(mut self) -> Scope {
+        if !self.lazy {
+            // The bindings made while the scope was eager are kept in `read_by` now, once.
+            let bound: Vec<(Arc<str>, Binding)> = (self.bindings.iter())
+                .filter(|(_, b)| b.reads.is_empty())
+                .filter_map(|(x, b)| {
+                    let t = b.term.as_ref()?;
+                    let reads = stage::free(t).into_iter().collect();
+                    Some((x.clone(), Binding { reads, ..b.clone() }))
+                })
+                .collect();
+            for (x, b) in bound {
+                self.bindings.insert(x.clone(), b);
+                self.index_reads(&x, true);
+            }
+        }
         self.lazy = true;
         self
     }
@@ -10739,11 +10761,19 @@ impl Scope {
 
     /// Projects the due parts of `blocks` ([`Scope::settle`]), and with `fresh` also the one
     /// part of a block that holds exactly one conjunct not a constraint (`Scope::refresh`),
-    /// then reduces.
+    /// then reduces, reads back the terms of the bound names that narrowed
+    /// ([`Scope::read_back_terms`]) and, when that narrowed a name, reduces again: the steps
+    /// of a test ([`Scope::assume`]), so that a star projected here gives what it gave the
+    /// eager scope at the test that made it (FAIL-lazy-hubs-seed-3066150143192435835, at
+    /// [`Scope::settled`]).
+    // Cost: one diff of the names, O(c log n) for the `c` names changed, and the read-back of
+    // those with a summary, as a test pays; the second reduction only when a read-back
+    // narrowed a name.
     fn settle_blocks(&mut self, blocks: Vec<BlockId>, fresh: bool) {
         if blocks.is_empty() {
             return;
         }
+        let start = self.names.clone();
         // Per class, the other names and the leaf's interval and class before its last
         // projection, and the leaf's interval after.
         type Before = (Projected, (IntervalSet, Congruence));
@@ -10807,16 +10837,40 @@ impl Scope {
             }
         }
         self.reduce_with(false);
+        if self.read_back_terms(&start, None) {
+            self.reduce_with(false);
+        }
         debug_assert!(fresh || !self.bottom, "settling a leaf emptied a scope");
     }
 
     /// The product of `name` as the eager scope has it: [`Scope::get`] of the scope with the
-    /// name settled ([`Scope::lazy`]), on a copy, in O(log n) and the leaf's projection.
+    /// name settled ([`Scope::lazy`]), on a copy, in O((k + 1) log n) for its `k` binders below
+    /// and the projections of their stars and its own.
+    ///
+    /// The stars settled are `name`'s and those of the bound names whose term reads `name`
+    /// ([`Scope::with_readers`]): the eager scope projects such a binder's star at the test
+    /// that makes it, and when that narrows the binder, reads its term back into `name`
+    /// ([`Scope::read_back_terms`]); settling `name`'s own stars alone left `name` wider than
+    /// the eager scope has it (FAIL-lazy-hubs-seed-3066150143192435835: `a1` bound to `a0`'s
+    /// product, `a1` then a leaf of the hubs `n` and `m`; `a0` in [-11, inf) eager and
+    /// [-18, inf) lazy; FAIL-lazy-scope-seed-17799186487984213239 likewise). Test:
+    /// `l01_39_scope_relations::lazy::a_name_a_bound_term_reads_is_settled_through_the_binding`.
+    // Complexity tradeoff: naive version, every binding scanned for a term that reads `name`,
+    // O(b s) a read for `b` bindings of terms of size `s`, and so O(n b s) over a walk that
+    // reads each of `n` names. Used: the binders indexed by the names they read
+    // ([`Scope::read_by`]), O(log n + k log n) a read for `k` binders of `name`, paid as
+    // O(s log s + r log n) a binding in a lazy scope to find the `r` names its term reads.
+    // Tradeoff: a lazy scope finds those names at every integer binding, also of a name no
+    // test reads, where the summary is made only when read ([`Lazy`]); an eager scope finds
+    // none.
     pub fn settled(&self, name: &Arc<str>) -> Product {
-        if self.lazy && !self.bottom && !self.stale([name]).is_empty() {
-            let mut s = self.clone();
-            s.settle([name]);
-            return s.get(name);
+        if self.lazy && !self.bottom {
+            let names = self.with_readers(name);
+            if !self.stale(&names).is_empty() {
+                let mut s = self.clone();
+                s.settle(&names);
+                return s.get(name);
+            }
         }
         self.get(name)
     }
@@ -10825,7 +10879,10 @@ impl Scope {
     /// reads it through [`Scope::get`], as [`forward`] does: a later test that moves a hub
     /// then projects its stars again, and a leaf no read settles is never read.
     pub fn eager_on(&mut self, term: &Term) {
-        let names = stage::free(term);
+        // With the binders of each name read, as `Scope::settled` settles them.
+        let names: BTreeSet<Arc<str>> = (stage::free(term).iter())
+            .flat_map(|x| self.with_readers(x))
+            .collect();
         self.settle(&names);
         // The stars a lazy scope left unprojected are not known: each is cut by every bound
         // until it is projected ([`Order::projected`]).
@@ -11067,16 +11124,23 @@ impl Scope {
         };
         let order = self.clock;
         let lambda = matches!(**e, Term::Lam(..));
+        let term = (!lambda && self.summarizes(&p)).then(|| e.clone());
+        let reads: Arc<[Arc<str>]> = match &term {
+            Some(t) if self.lazy => stage::free(t).into_iter().collect(),
+            _ => Arc::new([]),
+        };
         let binding = Binding {
             function: lambda.then(|| e.clone()),
             summary,
-            term: (!lambda && self.summarizes(&p)).then(|| e.clone()),
+            term,
+            reads,
         };
         self.clock += 1;
         if !self.bottom && !p.is_empty() && !self.names.contains_key(x) {
             let before = self.fresh_before();
             self.names.set_fresh(x, Some(p));
             self.bindings.insert(x.clone(), binding);
+            self.index_reads(x, true);
             self.orders.insert(x.clone(), order);
             self.seen_fresh(x, before.as_ref());
             return Unbind::Fresh(x.clone());
@@ -11150,7 +11214,9 @@ impl Scope {
         // `…::a_question_on_a_shadowed_name_is_not_found_by_the_name_that_shadows_it`.
         self.unspend(x);
         self.refused_by.remove(x);
+        self.index_reads(x, false);
         self.bindings.insert(x.clone(), binding);
+        self.index_reads(x, true);
         self.orders.insert(x.clone(), order);
         self.names.insert(x.clone(), p);
         if self.names[x].is_empty() {
@@ -11183,6 +11249,7 @@ impl Scope {
             Unbind::Fresh(x) => {
                 let before = self.fresh_before();
                 self.names.set_fresh(&x, None);
+                self.index_reads(&x, false);
                 self.bindings.remove(&x);
                 self.orders.remove(&x);
                 for upper in [false, true] {
@@ -11192,6 +11259,37 @@ impl Scope {
             }
             Unbind::Saved(s) => *self = *s,
         }
+    }
+
+    /// Adds `x`'s binding to [`Scope::read_by`] under each name its term reads, or with `add`
+    /// false takes it out. `O(r log n)` for the `r` names the term reads.
+    fn index_reads(&mut self, x: &Arc<str>, add: bool) {
+        let Some(reads) = self.bindings.get(x).map(|b| b.reads.clone()) else {
+            return;
+        };
+        for r in reads.iter() {
+            let mut by = self.read_by.get(r).cloned().unwrap_or_default();
+            if add {
+                by.insert(x.clone());
+            } else {
+                by.remove(x);
+            }
+            if by.is_empty() {
+                self.read_by.remove(r);
+            } else {
+                self.read_by.insert(r.clone(), by);
+            }
+        }
+    }
+
+    /// `name` and the bound names whose term reads it ([`Scope::read_by`]): settling a star of
+    /// one of these can narrow it, and reading its term back then narrows `name`
+    /// ([`Scope::read_back_terms`]), as the eager scope does at the test that made the star.
+    /// `O(k log n)` for the `k` names given.
+    fn with_readers(&self, name: &Arc<str>) -> Vec<Arc<str>> {
+        let readers = self.read_by.get(name).into_iter().flatten();
+        let bound = readers.filter(|y| self.bindings.get(*y).is_some_and(|b| b.term.is_some()));
+        std::iter::once(name.clone()).chain(bound.cloned()).collect()
     }
 
     /// The names before a fresh binding or unbinding, for [`Scope::seen_fresh`]: the exact map
@@ -12438,6 +12536,7 @@ impl Scope {
             // Both sides narrow one scope, which bound the names; neither binds one the other
             // does not.
             bindings: self.bindings.clone(),
+            read_by: self.read_by.clone(),
             orders: self.orders.clone(),
             clock: self.clock.max(other.clock),
             names: names.into(),
@@ -12678,7 +12777,7 @@ impl Scope {
             if s.bottom || !s.names.implicit() && !certified {
                 let before = s.names.clone();
                 reduce(&mut s);
-                if s.read_back_terms(&before, premises) {
+                if s.read_back_terms(&before, Some(premises)) {
                     reduce(&mut s);
                 }
             }
@@ -15212,7 +15311,11 @@ impl Scope {
     // `let_terms`' nested chain (4n + 1, against 4n) and 14, 79 and 1087 for its else chain
     // (n² + 2n - 1, against n (n + 1)), the same order, and changed none of the ranges those
     // tests check; with summaries alone the counts are 4n and n (n + 1) as pinned.
-    fn read_back_terms(&mut self, before: &NameProducts, prem: &Premises) -> bool {
+    //
+    // `prem` is the test's premises; `None` after settling ([`Scope::settle_blocks`]), where no
+    // test is read, takes the premises of the names read back, which the projection that
+    // narrowed them gave them.
+    fn read_back_terms(&mut self, before: &NameProducts, prem: Option<&Premises>) -> bool {
         if self.bottom || self.bindings.is_empty() {
             return false;
         }
@@ -15222,7 +15325,19 @@ impl Scope {
             .filter(|n| self.view().summary(n).is_some())
             .cloned()
             .collect();
-        !changed.is_empty() && self.through_terms(changed, false, prem, true)
+        if changed.is_empty() {
+            return false;
+        }
+        let prem = prem.cloned().unwrap_or_else(|| {
+            let mut p = Premises::new();
+            for n in &changed {
+                if let Some(q) = self.names.get(n) {
+                    p.extend(&q.premises());
+                }
+            }
+            p
+        });
+        self.through_terms(changed, false, &prem, true)
     }
 
     /// Passes information between the domains of every product, the relation and the written
