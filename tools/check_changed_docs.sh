@@ -268,6 +268,7 @@ fi
 # package. A test, bench, example or build script is not documented; a file under its directory
 # alone belongs to no documented target (tests/steps/... in zed-tests).
 root=$(pwd -P)
+metadata=$(cargo metadata --no-deps --format-version 1) || exit 1
 declare -A package_of
 while read -r package kind dir; do
   case $kind in
@@ -275,7 +276,7 @@ while read -r package kind dir; do
   esac
   dir=${dir#"$root"/}
   [ -n "${package_of[$dir]}" ] || package_of[$dir]=$package
-done < <(cargo metadata --no-deps --format-version 1 |
+done < <(printf '%s\n' "$metadata" |
   grep -oE '"name":"[^"]*","version":"[^"]*","id"|"kind":\[[^]]*\],"crate_types":\[[^]]*\],"name":"[^"]*","src_path":"[^"]*"' |
   awk -F '"' '
     /"version"/ { package = $4; next }
@@ -353,10 +354,23 @@ document() {
     failed=$((failed + 1))
   fi
 }
+# The build with the workspace's features goes to a build directory of its own, the cargo build
+# directory with -docfeatures appended (PERF-doc-check-every-run). In the same directory as the
+# build alone, the builds of a package were never fresh from one call to the next (b22-tests10 on
+# l42, 2026-11-24: four builds of 2 to 3 s each on every call, 7 to 8 s each after 36 calls, for
+# two packages): the package and its dependencies have other features in each build, and a doc
+# page or a dylib has the same file name whatever its features, so each build replaces what the
+# other wrote. With two directories each build finds its own output on the next call (measured
+# before and after in the Done cell of PERF-doc-check-every-run in docs/plan_dag.md; test:
+# tools/test_check_changed_docs.sh, "a second call writes no doc file"). The cost is a second
+# copy of the check data of the documented packages' dependencies, built once.
+target_dir=${CARGO_TARGET_DIR:-$(printf '%s\n' "$metadata" | grep -oE '"target_directory":"[^"]*"' | cut -d'"' -f4)}
+[ -n "$target_dir" ] || { echo "check_changed_docs: cargo metadata names no target_directory"; exit 2; }
 for p in $packages; do
   document "$p" "alone, with its own default features"
   features=$(echo "$workspace_features" | awk -v p="$p" '$1 == p && $NF ~ /^\[/ { f = $NF; gsub(/[][]/, "", f); print f; exit }')
-  [ -z "$features" ] || document "$p" "with the workspace build's features $features" --features "$features"
+  [ -z "$features" ] ||
+    CARGO_TARGET_DIR=${target_dir%/}-docfeatures document "$p" "with the workspace build's features $features" --features "$features"
 done
 if [ "$failed" != 0 ]; then
   echo "DOC FAILED: documentation builds of changed packages that failed: $failed, their output in $log."
