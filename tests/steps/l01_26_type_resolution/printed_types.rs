@@ -59,7 +59,9 @@ fn signatures_and_types_of_the_corpus_programs() {
 }
 
 /// Each shape of [`deep::programs`], 4 and 12 deep: nested function types, tuples and lambdas
-/// are what the explicit stacks of 81f3d848 walk.
+/// are what the explicit stacks of 81f3d848 walk. Each program, and then its nested
+/// expression bound at top level (`Program::bound`), whose type the checker prints: inside
+/// `main` it prints none, so the programs alone print mostly `() -> ()` (TESTS-audit-battery-gaps).
 #[test]
 fn signatures_and_types_of_the_deep_programs() {
     let mut out = String::new();
@@ -67,6 +69,9 @@ fn signatures_and_types_of_the_deep_programs() {
         for p in deep::programs(n) {
             writeln!(out, "{} ({n} deep):", p.shape).expect("a String takes any write");
             out += &printed(&p.text);
+            writeln!(out, "{} ({n} deep), bound at top level:", p.shape)
+                .expect("a String takes any write");
+            out += &printed(&p.bound);
         }
     }
     insta::assert_snapshot!(out);

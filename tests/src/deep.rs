@@ -113,6 +113,10 @@ pub struct Program {
     pub text: String,
     /// What `main` pushes to `stdout`.
     pub prints: String,
+    /// A unit with the nested expression bound to the top-level name `t`, after the
+    /// definitions it reads: the checker gives the type of a top-level name (`Info::tops`),
+    /// and of no name inside `main`.
+    pub bound: String,
 }
 
 /// `main` printing `prefix` + `body` + `suffix`, inside a string hole.
@@ -122,6 +126,7 @@ fn printing(top: &str, hole: String, prints: String, shape: &'static str) -> Pro
         shape,
         text,
         prints,
+        bound: format!("{top}t = {hole};\n"),
     }
 }
 
@@ -145,6 +150,7 @@ pub fn programs(n: usize) -> Vec<Program> {
         shape,
         text: format!("main(m: MainArgs) {{\n  t = {body};\n  m.stdout <- \"done\";\n}}\n"),
         prints: "done".into(),
+        bound: format!("t = {body};\n"),
     };
     vec![
         printing("", ones, n.to_string(), "a left-nested sum"),
