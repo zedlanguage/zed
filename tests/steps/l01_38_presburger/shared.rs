@@ -917,8 +917,9 @@ pub(super) fn random_tiers(rng: &mut Rng) -> Formula {
 
 /// 200 formulas of [`random_tiers`] of a new seed each run, through
 /// [`factoring_loses_no_precision`]. A projection narrower than as written is rare (none to two
-/// in 200; one in the 600 of seed 0x5f5b), so [`a_shared_part_taken_out_narrows_a_projection`]
-/// checks one that narrows, and
+/// in 200), so
+/// [`formula_14_of_order3s_run_loses_no_precision_when_its_shared_part_is_taken_out`] checks
+/// one that narrows, and
 /// [`formula_122_of_seed_0x5f5b_loses_no_precision_when_its_shared_part_is_taken_out`] one
 /// that stays the same; no count of either is reached at every seed, so none is asserted here.
 /// The 600 formulas of seed 0x5f5b (1.06 s at load 25) are in `bench::shared`.
@@ -1007,15 +1008,20 @@ fn taking_a_shared_part_out_keeps_the_holes_of_a_projection() {
     }
 }
 
-/// Formula 2161 of seed 0x5f5b, `d == 2 && !(...)`, whose projection by the solver alone
-/// (`solver_alone`, which reads the formula as written) narrows when the shared part
-/// `3 b <= 2 && (3 b <= -4 || 2 a + b == 0)` is taken out of the negated disjunction: the
-/// narrower sets hold every value of a point in the window. With the exact cover both writings
-/// give the exact sets, so the same.
+/// Formula 2161 of seed 0x5f5b, `d == 2 && !(...)`, with the shared part
+/// `3 b <= 2 && (3 b <= -4 || 2 a + b == 0)` in each disjunct of the negated disjunction. Its
+/// projection by the solver alone (`solver_alone`, which reads the formula as written) narrowed
+/// when the part was taken out, `b` in [-1, inf) against (-inf, inf) as written, until each
+/// round of the probe read its parts in the order of their content
+/// (PROOF-probe-order-independent): since then the solver alone gives the exact [-1, inf) both
+/// ways, so the same. With the exact cover both writings give the exact sets, so the same. No
+/// formula is known now whose projection narrows when a part is taken out of a negation
+/// (PRES-negation-narrow-case); formula 14 above narrows where the formula as written is
+/// refused.
 ///
 /// Formula 9 of the same seed, `2 c >= -4 && !(...)`, was this test's case until
 /// `project_each` renamed every question by its structure (PRES-project-each-naming), and is
-/// now its control, the same both ways: the solver alone narrowed `b` from (-inf, inf) to
+/// its control, the same both ways: the solver alone narrowed `b` from (-inf, inf) to
 /// (-inf, 0] once `2 b >= 2` was taken out only because the factored formula, which holds the
 /// part once, and the formula as written, which writes it twice, were named apart by the
 /// coloring of their atoms. Named alike, the solver alone gives `b` in (-inf, inf) both ways,
@@ -1024,10 +1030,10 @@ fn taking_a_shared_part_out_keeps_the_holes_of_a_projection() {
 /// by the same coloring. The solver alone is a test control; with the cover, the default, both
 /// writings give the exact sets.
 #[test]
-fn a_shared_part_taken_out_narrows_a_projection() {
+fn a_shared_part_taken_out_of_a_negation_gives_the_same_projection() {
     let f = tiers_formula(0x5F5B, 2161);
     let c = solver_alone(|| factoring_loses_no_precision([(2161, f.clone())]));
-    assert_eq!((c.same, c.narrower, c.answered), (0, 1, 0), "{c:?}");
+    assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
     let c = factoring_loses_no_precision([(2161, f)]);
     assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
     let f = tiers_formula(0x5F5B, 9);

@@ -21430,7 +21430,7 @@ fn project_each_as_named(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each
     // row, which [`factored`] did not take out, and so it lost the narrowing of seed 0x5f5b's
     // formula 9 under its written names (`b` in (-inf, inf) where the formula as written gives
     // (-inf, 0]); test, now on its formula 2161, with formula 9 as written as its control:
-    // `l01_38_presburger::shared::a_shared_part_taken_out_narrows_a_projection`.
+    // `l01_38_presburger::shared::a_shared_part_taken_out_of_a_negation_gives_the_same_projection`.
     let written;
     let f = if cover && !meter::EXACT_OFF.get() {
         written = cover_input(f);
@@ -22542,9 +22542,11 @@ fn factored_or(g: &Formula, links: &AtomLinks, even: bool) -> Option<Formula> {
     // `2c == d + 3` give `d` the set `[..=1, 3..]` as written and `[..]` once taken out
     // (FAIL-shared-part-precision-seed). Every other join keeps each rest a disjunct of its own,
     // read with the base by the projection as written. Under an odd number of negations the
-    // part is taken out still: there `!(u && true)` is `!u`, narrower than the two disjunctions
-    // the formula as written gives (formula 9 of seed 0x5f5b,
-    // `l01_38_presburger::shared::a_shared_part_taken_out_narrows_a_projection`).
+    // part is taken out still: there `!(u && true)` is `!u`, which the solver alone projected
+    // narrower than the two disjunctions the formula as written gives (formula 9, then 2161, of
+    // seed 0x5f5b) until PROOF-probe-order-independent; no formula is known now where it is
+    // narrower (PRES-negation-narrow-case; test of the same sets on formula 2161:
+    // `l01_38_presburger::shared::a_shared_part_taken_out_of_a_negation_gives_the_same_projection`).
     // Complexity tradeoff (COMPLEXITY.md, FAIL-shared-part-precision-seed): the rests are
     // written one way once more here, O(r log r) for rests of r distinct parts, which the
     // projection that follows reads anyway; a disjunction left as written costs O(d k), as the
