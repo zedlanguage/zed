@@ -36,7 +36,13 @@ run_copy() {
   local out rc
   mkdir -p "$copy" && (pushd "$ws" >/dev/null && "$check" --changes) >"$copy.changes" &&
     (pushd "$ws" >/dev/null && git ls-files -z -co --exclude-standard | tar --null -T - -cf -) |
-    tar -xf - -C "$copy" || { echo "the copy of $ws failed"; return; }
+    tar -m -xf - -C "$copy" || { echo "the copy of $ws failed"; return; }
+  # -m: each file of the copy gets the time of the copy, as a job's changed files get the time of
+  # its rsync (colab/job.sh: rsync -c without -t). tar's own format keeps whole seconds, so a file
+  # edited within a second or two of the copy's last build of its package could read as older
+  # than that build, and cargo kept the build: b's doc in the copy then passed on its link to the
+  # renamed a::linked, through a's metadata from the case before (job G3 on hm3, 3.log line 22;
+  # inferred from that output and tar's format, not traced in cargo's fingerprints).
   # A target directory of its own, as a job's copy has. With the workspace's, b's doc in the copy
   # failed on a link to the item an earlier case renamed in the workspace ("no item named
   # `linked` in module `a`", b22-tests8 job f6), its a in the copy unchanged: inferred, not
