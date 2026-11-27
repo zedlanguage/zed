@@ -203,8 +203,8 @@ Primary       = ~Literal                                                        
               | ~Match                                                             L2
               | ~For                                                               L3
               | ~Loop                                                              L6
-              | ~ArrayExpr                                                         L3
-              | ~Display                                                           L2
+              | ~ArrayExpr                                                         L1
+              | ~Display                                                           L1
               | !HEAD &('{' Item) ~Block                                           L1
               | ~HoleExpr                                                          L15
 AtomExpr      = ATOM                                                               L1
@@ -213,7 +213,7 @@ OpFunction    = '(' BinOp ')'                                                   
 Group         = '(' nest(Expr) ')'                                                 L1
 TupleExpr     = '(' ')'                                                            L1
               | '(' nest(Expr ((',' Expr)+ ','? | ',')) ')'                        L1
-ArrayExpr     = '[' nest((Expr12 % ',' ','?)?) ']'                                 L3
+ArrayExpr     = '[' nest((Expr12 % ',' ','?)?) ']'                                 L1
 HoleExpr      = '?'                                                                L15
 Literal       = INT | FLOAT | RAT | STRING | 'true' | 'false'                      L1
 BinOp         = '+' | '-' | '*' | '/' | '^' | '++' | 'div' | 'mod' | '&&' | '||' | '==' | '!=' | '<=' | '<' | '>=' | '>'   L3
@@ -221,10 +221,10 @@ BinOp         = '+' | '-' | '*' | '/' | '^' | '++' | 'div' | 'mod' | '&&' | '||'
 Block         = '{' nest(Item* Expr?) '}'                                          L1
               | Display                                                            L2
 Display       = '{' nest((Name ':' (Lambda | Expr12)?) % ',' ','?) '}'               L2
-              | '{' '}'                                                            L3
-              | '{' nest(Entry % ',' ','?) '}'                                     L3
-Entry         = Expr12 '->' Expr12                                                 L3
-              | Expr12                                                             L3
+              | '{' '}'                                                            L1
+              | '{' nest(Entry % ',' ','?) '}'                                     L1
+Entry         = Expr12 '->' Expr12                                                 L1
+              | Expr12                                                             L1
 If            = 'if' head(Expr12) Block 'else' (If | Block)                        L1
 Match         = 'match' head(Expr12) '{' nest(Arm % ',' ','?) '}'                  L2
 Arm           = Pattern ('where' Expr12)? '->' (Block | !'{' Expr)                 L2
