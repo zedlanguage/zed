@@ -50,10 +50,10 @@ pub(super) fn keeps_and_finds_each(keys: &[Key]) {
     let mut db = Db::new();
     // A row's result is `Ok(())` or its failure; the failure `i` tells the rows apart.
     for (i, k) in keys.iter().enumerate() {
-        let _ = db.row(Query::Row, k.clone(), || Err(i.to_string()));
+        let _ = db.row(Query::Row, k.clone(), vec![], || Err(i.to_string()));
     }
     for (i, k) in keys.iter().enumerate() {
-        let again = db.row(Query::Row, k.clone(), || Err("again".into()));
+        let again = db.row(Query::Row, k.clone(), vec![], || Err("again".into()));
         assert_eq!(again, Err(i.to_string()));
     }
     assert_eq!(db.computed(Query::Row), keys.len());

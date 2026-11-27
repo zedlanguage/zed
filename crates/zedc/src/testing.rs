@@ -243,8 +243,9 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
                         let mut roots = vec![&main, &t.want];
                         roots.extend(&t.args);
                         let ports = format!("{:?} {:?}", p.inputs(), p.outputs());
-                        let k = query::key("wave", &[&db.cone(&cones, &roots), ports.as_bytes()]);
-                        counted_row(db, Query::Wave, k, &t.function, || {
+                        let (cone, reads) = db.cone(&cones, &roots);
+                        let k = query::key("wave", &[&cone, ports.as_bytes()]);
+                        counted_row(db, Query::Wave, k, reads, &t.function, || {
                             wave(&cones, None, p, t, map)
                         })
                         .err()
@@ -254,9 +255,12 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
                         // The values a clause gives the row's ports are part of what it computes.
                         let mut roots = vec![&t.check];
                         roots.extend(&t.args[t.args.len() - t.ports.len()..]);
-                        let k = query::key("row", &[&db.cone(&cones, &roots)]);
-                        counted_row(db, Query::Row, k, &t.function, || row(&cones, None, t, map))
-                            .err()
+                        let (cone, reads) = db.cone(&cones, &roots);
+                        let k = query::key("row", &[&cone]);
+                        counted_row(db, Query::Row, k, reads, &t.function, || {
+                            row(&cones, None, t, map)
+                        })
+                        .err()
                     }
                 };
                 out.push(Outcome {
@@ -290,16 +294,17 @@ fn main_program(stmts: &[Stmt], unit: &Arc<Unit>) -> Result<Program, ast::Error>
 
 /// The row of `definition`'s table that `db` keeps under `k`, a key of `q`, computed by `check`
 /// when none is kept: counted as the work of [`Stage::Test`] on `definition` when computed, and
-/// as taken from the cache otherwise (TIME-report).
+/// as taken from the cache otherwise (TIME-report). A row computed records `reads` (step L1.30a).
 fn counted_row(
     db: &mut Db,
     q: Query,
     k: query::Key,
+    reads: Vec<query::Read>,
     definition: &str,
     check: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     let mut computed = false;
-    let r = db.row(q, k, || {
+    let r = db.row(q, k, reads, || {
         computed = true;
         work::stage(Stage::Test, Some(definition), check)
     });

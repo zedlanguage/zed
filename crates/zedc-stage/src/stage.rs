@@ -215,6 +215,11 @@ impl<'u> Cones<'u> {
         seen.into_iter().collect()
     }
 
+    /// The definition at position `i` of the unit, a position [`Cones::reach`] gives.
+    pub fn def(&self, i: usize) -> &'u Def {
+        &self.unit.defs[i]
+    }
+
     /// The definitions `roots` reach, in the unit's order.
     pub fn defs(&self, roots: &[&Term]) -> impl Iterator<Item = &'u Def> + use<'u> {
         let unit = self.unit;

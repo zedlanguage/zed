@@ -34,7 +34,7 @@ use crate::lex::{self, Span, Tok};
 use crate::parse::{TOP, parse_unit};
 use crate::pin::{self, Check, Edit, PIN_FILE, PRELUDE, Pins};
 use crate::place::{MANIFEST, Place};
-use crate::query::{self, Db};
+use crate::query::{self, Db, Query};
 use crate::resolve::{self, Exports, Ref, Refused, Resolved, Units};
 use crate::source;
 use crate::suppress::{InFile, Severity, Suppress, addresses};
@@ -807,6 +807,10 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
     // key holds what it reads, never a hash of it (step L1.37a), and a number per unit keeps
     // an importer's key the size of its imports.
     let mut numbers = vec![[0u8; 8]; pkg.units.len()];
+    // The key of each resolved unit's resolution, which its importers record they read (step
+    // L1.30a). A key holds its unit's text, so this is a copy of each text while the package
+    // loads, O(total text), against reading the key back from the database by unit.
+    let mut keys: Vec<Option<query::Key>> = vec![None; pkg.units.len()];
     let mut listed = Listed::default();
     for k in 0..pkg.order.len() {
         let u = pkg.order[k];
@@ -884,8 +888,20 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
             push_read(&mut parts, path, Read::Prelude(&numbers[pkg.index[path]]));
         }
         let k = query::key("resolve", &parts);
+        // The resolutions read: those of the imports resolved and of the prelude unit, each
+        // resolved by this loop before `u`, with its key.
+        let resolved_key = |path: &Arc<str>| {
+            let key = keys[pkg.index[path]].clone();
+            query::Read::Query(Query::Resolve, key.expect("a resolved unit has its key"))
+        };
+        let reads: Vec<query::Read> = (deps.iter())
+            .filter(|(_, d)| d.is_ok())
+            .map(|(path, _)| resolved_key(path))
+            .chain(prelude.iter().map(|(path, _)| resolved_key(path)))
+            .collect();
+        keys[u] = Some(k.clone());
         let linked = Linked { deps, prelude };
-        let r = db.resolve(k, || {
+        let r = db.resolve(k, reads, || {
             front::resolve_recovered(text, stmts, &broken.defines, &linked)
         });
         let file = &pkg.units[u].file;

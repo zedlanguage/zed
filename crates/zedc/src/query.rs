@@ -32,6 +32,17 @@
 //! definition, as a digest did, and two definitions share a number only when their texts are
 //! equal.
 //!
+//! Each query records what it read when it is computed (step L1.30a; DESIGN.md sec:incremental,
+//! "The compiler's own stages are derived the same way", item 3): a row, each definition its
+//! cone reaches ([`Read::Definition`], by its number and written name); a unit's resolution, the
+//! resolution of each unit it imports and of the prelude unit it sees; a unit's address, the
+//! front end it reads ([`Read::Query`]). The front end, a unit's parse and its check read their
+//! text and the build alone, which are their keys, so they record nothing. The database keeps
+//! the reverse map from each read to the queries that read it ([`Db::readers`]). No result
+//! depends on the records; step L7.13 propagates a change along the reverse map. A query
+//! answered from what is kept records nothing again, so an edit that recomputes no query (a
+//! comment) changes no record.
+//!
 //! Where DESIGN.md does not say: results are kept for the life of the [`Db`] and never
 //! evicted, which a long-lived process (the language server, step L25.1) must bound; the
 //! interpreter and the prelude are fixed for one build of the compiler, so they are not in
@@ -51,8 +62,18 @@ use crate::pin::{self, Address};
 use crate::resolve::{Exports, Resolved};
 
 /// A query's key: its inputs, encoded.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct Key(pub Box<[u8]>);
+
+/// What a query read (step L1.30a).
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub enum Read {
+    /// A definition of the unit: the number the database gave its text ([`Db::cone`]), which a
+    /// row's key holds, and its written name.
+    Definition(u64, Arc<str>),
+    /// The result of another query, by its key.
+    Query(Query, Key),
+}
 
 /// The key of query `name` over `parts`.
 pub fn key(name: &str, parts: &[&[u8]]) -> Key {
@@ -77,7 +98,7 @@ fn front_at(
     text: &str,
     build: &Build,
 ) -> Arc<Front> {
-    let k = key("front", &[text.as_bytes(), &build.bytes()]);
+    let k = front_key(text, build);
     if let Some(f) = front.get(&k) {
         return f.clone();
     }
@@ -87,8 +108,13 @@ fn front_at(
     f
 }
 
+/// The key of the front end's result for the unit `text` built for `build`.
+fn front_key(text: &str, build: &Build) -> Key {
+    key("front", &[text.as_bytes(), &build.bytes()])
+}
+
 /// The queries.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub enum Query {
     /// Lexing through elaboration, keyed by the text and the build.
     Front,
@@ -119,6 +145,13 @@ pub struct Db {
     addresses: HashMap<Key, Arc<Address>>,
     checks: HashMap<Key, Arc<Vec<Error>>>,
     computed: HashMap<Query, usize>,
+    /// What each query computed read, in the order computed: its query, its key and its reads
+    /// (step L1.30a). A query that read nothing has no record.
+    records: Vec<(Query, Key, Box<[Read]>)>,
+    /// The position in `records` of each recorded query, by query and key.
+    recorded: HashMap<Query, HashMap<Key, usize>>,
+    /// The reverse map: the positions in `records` of the queries that read each read.
+    readers: HashMap<Read, Vec<usize>>,
     /// The number given to each definition's text, for a row's key.
     texts: HashMap<Box<str>, u64>,
     /// The number given to each unit's exports ([`Exports::bytes`]), for its importers' keys.
@@ -143,6 +176,9 @@ impl Default for Db {
             addresses: HashMap::new(),
             checks: HashMap::new(),
             computed: HashMap::new(),
+            records: Vec::new(),
+            recorded: HashMap::new(),
+            readers: HashMap::new(),
             texts: HashMap::new(),
             exports: HashMap::new(),
             build: Build::default(),
@@ -162,6 +198,9 @@ impl Clone for Db {
             addresses: self.addresses.clone(),
             checks: self.checks.clone(),
             computed: self.computed.clone(),
+            records: self.records.clone(),
+            recorded: self.recorded.clone(),
+            readers: self.readers.clone(),
             texts: self.texts.clone(),
             exports: self.exports.clone(),
             build: self.build.clone(),
@@ -228,13 +267,19 @@ impl Db {
     }
 
     /// The resolution kept under `k`, a key of [`Query::Resolve`], computing it with `compute`
-    /// when none is kept.
-    pub fn resolve(&mut self, k: Key, compute: impl FnOnce() -> Resolved) -> Arc<Resolved> {
+    /// when none is kept, which then records `reads`: the resolutions it reads.
+    pub fn resolve(
+        &mut self,
+        k: Key,
+        reads: Vec<Read>,
+        compute: impl FnOnce() -> Resolved,
+    ) -> Arc<Resolved> {
         if let Some(r) = self.resolved.get(&k) {
             return r.clone();
         }
         *self.computed.entry(Query::Resolve).or_default() += 1;
         let r = Arc::new(compute());
+        self.record(Query::Resolve, &k, reads);
         self.resolved.insert(k, r.clone());
         r
     }
@@ -261,16 +306,19 @@ impl Db {
             Ok((_, unit, _)) => Some(pin::address(unit, exports)),
             Err(_) => None,
         });
+        let read = Read::Query(Query::Front, front_key(text, &pinned));
+        self.record(Query::Address, &k, vec![read]);
         self.addresses.insert(k, a.clone());
         a
     }
 
     /// The result of the table row `q` under `k`, computing it with `check` when no result
-    /// is kept.
+    /// is kept, which then records `reads`: the definitions the row reaches ([`Db::cone`]).
     pub fn row(
         &mut self,
         q: Query,
         k: Key,
+        reads: Vec<Read>,
         check: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), String> {
         let rows = self.rows.entry(q).or_default();
@@ -279,8 +327,49 @@ impl Db {
         }
         *self.computed.entry(q).or_default() += 1;
         let r = check();
-        rows.insert(k, r.clone());
+        rows.insert(k.clone(), r.clone());
+        self.record(q, &k, reads);
         r
+    }
+
+    /// Records that the query `q` computed under `k` read `reads`, and enters it in the reverse
+    /// map under each: nothing when it read nothing. Each query is computed once under a key,
+    /// so it is recorded once.
+    // Complexity tradeoff: a reader in the reverse map is the position of its record, not its
+    // key, which for a row holds a number per definition it reaches: entering the key under
+    // each of a row's r reads would copy O(r) bytes r times, O(r²), where a position costs
+    // O(1). The record costs O(r) entries, one hash of each read (a definition's name, or a
+    // key of the query read, whose bytes the caller built already), and the key twice, in the
+    // record and in `recorded`.
+    fn record(&mut self, q: Query, k: &Key, reads: Vec<Read>) {
+        if reads.is_empty() {
+            return;
+        }
+        let at = self.records.len();
+        for r in &reads {
+            self.readers.entry(r.clone()).or_default().push(at);
+        }
+        self.recorded.entry(q).or_default().insert(k.clone(), at);
+        self.records.push((q, k.clone(), reads.into_boxed_slice()));
+    }
+
+    /// Every record: each query computed that read something, its key and what it read, in
+    /// the order computed.
+    pub fn records(&self) -> impl Iterator<Item = (Query, &Key, &[Read])> {
+        (self.records.iter()).map(|(q, k, reads)| (*q, k, &**reads))
+    }
+
+    /// What the query `q` read when computed under `k`; `None` when it read nothing or was not
+    /// computed.
+    pub fn reads(&self, q: Query, k: &Key) -> Option<&[Read]> {
+        let at = *self.recorded.get(&q)?.get(k)?;
+        Some(&self.records[at].2)
+    }
+
+    /// The queries that read `r`, each by its query and key, in the order computed.
+    pub fn readers(&self, r: &Read) -> impl Iterator<Item = (Query, &Key)> {
+        (self.readers.get(r).into_iter().flatten())
+            .map(|&at| (self.records[at].0, &self.records[at].1))
     }
 
     /// The number of the exports `e`, given when this database first meets them: two exports
@@ -313,7 +402,10 @@ impl Db {
     // canonicalizer's walk (`canon::binders`), once per definition, whose number is kept, and
     // once per root of each row; sorting the numbers costs O(d log d) for d definitions
     // reached, which `Cones::reach` already pays to collect them in a `BTreeSet`.
-    pub fn cone(&mut self, cones: &Cones<'_>, roots: &[&Term]) -> Vec<u8> {
+    ///
+    /// With the bytes, the reads a row keyed by them records ([`Db::row`]): each definition
+    /// reached, by its number and written name, in the unit's order.
+    pub fn cone(&mut self, cones: &Cones<'_>, roots: &[&Term]) -> (Vec<u8>, Vec<Read>) {
         let mut out = Vec::new();
         let mut put = |s: &[u8]| {
             out.extend_from_slice(&(s.len() as u64).to_le_bytes());
@@ -321,18 +413,20 @@ impl Db {
         };
         let free = |x: &str| cones.key_name(x);
         let texts = &mut self.texts;
-        let mut ids: Vec<u64> = (cones.reach(roots).into_iter())
-            .map(|i| {
-                cones.number(i, self.stamp, |d| {
-                    let name = cones
-                        .key_name(&d.kernel)
-                        .unwrap_or_else(|| d.kernel.clone());
-                    let text = format!("{name}={:?}", keyed(&d.term, &free));
-                    let n = texts.len() as u64;
-                    *texts.entry(text.into()).or_insert(n)
-                })
-            })
-            .collect();
+        let mut ids = Vec::new();
+        let mut reads = Vec::new();
+        for i in cones.reach(roots) {
+            let n = cones.number(i, self.stamp, |d| {
+                let name = cones
+                    .key_name(&d.kernel)
+                    .unwrap_or_else(|| d.kernel.clone());
+                let text = format!("{name}={:?}", keyed(&d.term, &free));
+                let n = texts.len() as u64;
+                *texts.entry(text.into()).or_insert(n)
+            });
+            ids.push(n);
+            reads.push(Read::Definition(n, cones.def(i).name.as_str().into()));
+        }
         ids.sort_unstable();
         for id in ids {
             put(&id.to_le_bytes());
@@ -340,6 +434,6 @@ impl Db {
         for t in roots {
             put(format!("{:?}", keyed(t, &free)).as_bytes());
         }
-        out
+        (out, reads)
     }
 }
