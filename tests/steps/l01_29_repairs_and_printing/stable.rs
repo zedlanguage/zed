@@ -250,7 +250,7 @@ pub(super) fn printed_types_stable_over(batch: &[String]) {
     }
 }
 
-/// The types printed by a batch of one unit and of three (`bench::stable` times 30 and 240).
+/// The types printed by a batch of one unit and of three (`bench::stable` times 777 and 6216).
 #[test]
 fn checking_printed_types_over_a_batch() {
     let first = shown(&generic_unit(3));
