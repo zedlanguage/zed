@@ -246,3 +246,43 @@ fn the_dwarf_of_n_statements_scales() {
         },
     );
 }
+
+/// The object file of an executable whose n `let`s of strings staging made literals and kept
+/// for their names (plan row FAIL-dwarf-staged-let-nonscalar): each is a variable in a lexical
+/// block of its own, of a type found in O(log t) among the t added ([`zed_native`]'s
+/// `dwarf::ShownTypes`), and its bytes, so the DWARF is linear in n and in the strings' bytes.
+/// Small instance: `dwarf::gdb_prints_the_value_of_a_name_bound_to_a_constant_that_is_not_a_word`.
+#[test]
+fn the_dwarf_of_n_kept_string_lets_scales() {
+    let n = 500;
+    let made = |m: usize| {
+        let mut src = String::from("main(m: MainArgs) {\n    s = String(m.args);\n");
+        for k in 0..m {
+            src += &format!("    c{k} = \"v{k}\";\n");
+        }
+        src += "    m.stdout <- s;\n}\n";
+        let p = zedc::run::load(src.as_bytes()).unwrap().stage_named().0;
+        let lowered = lower_debug(&p.term(), Some(p.sites())).unwrap();
+        (p, lowered)
+    };
+    scaling::check_inputs(
+        "the object file of n kept string lets, with DWARF",
+        n,
+        made,
+        |made| {
+            let (p, (g, sited)) = made;
+            let object = zed_native::executable_object(
+                g.clone(),
+                true,
+                p.ports(),
+                &p.limits(),
+                p.address().unwrap(),
+                (p.file(), p.text()),
+                sited,
+                true,
+            )
+            .unwrap();
+            std::hint::black_box(object);
+        },
+    );
+}

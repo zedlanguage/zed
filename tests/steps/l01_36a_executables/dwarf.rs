@@ -509,6 +509,63 @@ fn gdb_prints_the_words_the_names_are_bound_to() {
 }
 
 #[test]
+fn gdb_prints_the_value_of_a_name_bound_to_a_constant_that_is_not_a_word() {
+    // Plan row FAIL-dwarf-staged-let-nonscalar: staging makes `s`, `t` and `u` literals and
+    // keeps their `let`s for their names (`Program::stage_named`). `s` and `t` are read by no
+    // code, so the table of constants has no entry for them; `u` is read, in place, by the
+    // send. Each is shown as its value: a string's bytes (`zed_str`), the tuple's printed text
+    // (`zed_text`), both as gdb prints a `char` array. `k` is still a word in the frame.
+    if !cfg!(target_arch = "x86_64") {
+        return;
+    }
+    let src = "main(m: MainArgs) {
+    n = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 1;
+    s = \"hi\";
+    t = (1, 2);
+    u = \"yo\";
+    k = n + 1;
+    m.stdout <- \"${k}${u}\";
+}
+";
+    let (_, exe) = executable_of("shown", src);
+    let out = under_gdb(
+        &exe,
+        &[
+            "break shown.zed:7",
+            "run -- 5",
+            "print s",
+            "print t",
+            "print u",
+            "print k",
+            "whatis s",
+            "whatis t",
+            "info locals",
+            "continue",
+        ],
+    );
+    assert_eq!(stops(&out, "shown.zed"), [7], "{out}");
+    let p = zedc::run::load(src.as_bytes()).unwrap().stage_named().0;
+    let sited = lower_debug(&p.term(), Some(p.sites())).unwrap().1;
+    let named = format!("names {:?}, root {:?}", sited.names, sited.root);
+    for want in [
+        "$1 = \"hi\"",
+        "$2 = \"(1, 2)\"",
+        "$3 = \"yo\"",
+        "$4 = {tag = INT, bits = 6}",
+        "type = zed_str",
+        "type = zed_text",
+        "exited normally",
+    ] {
+        assert!(out.contains(want), "no {want:?} in:\n{out}\n{named}");
+    }
+    // `info locals` lists the names of the inner blocks too.
+    for want in ["s = \"hi\"", "t = \"(1, 2)\"", "u = \"yo\""] {
+        assert!(out.contains(want), "no local {want:?} in:\n{out}\n{named}");
+    }
+    assert!(out.contains("6yo"), "{out}");
+}
+
+#[test]
 fn gdb_prints_a_name_a_lambda_captures_inside_its_body() {
     // zed/DEBUGGING.md: every binding in scope, and a name bound outside a lambda is in scope
     // in its body. The body reads `c` from the closure into its own frame at its start, so at
