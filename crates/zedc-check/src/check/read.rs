@@ -31,42 +31,164 @@ use zedc_syntax::parse::{self, TOP};
 /// Time linear in the text: each part is read once, and a name's type is shared where it is
 /// named (`Ty` copies its outer level only). The text is lexed once; a part's tokens are taken
 /// from it (`part_tokens`), and lexed again only once its leaves are replaced.
+///
+/// A capitalized name is a variable by the rule a written type has, applied to the text with
+/// each definition written out at each name for it ([`Times`]): so a part the printer writes
+/// once as a definition, whose variables stand once in its body and twice in the type, reads
+/// back as the type written in full (row PRINT-shared-part-exponential).
 pub fn parse_type(text: &str) -> Result<Ty, String> {
-    let mut tokens = lex::lex(text)
-        .map_err(|e| format!("`{text}`: {e}"))?
-        .into_iter();
-    let mut named = Binds::new();
-    let mut seen = Seen::default();
+    let tokens = lex::lex(text).map_err(|e| format!("`{text}`: {e}"))?;
+    // Each definition by its name and the tokens of its body, and last the text's, each with
+    // the bytes of the text it spans.
+    let mut parts: Vec<(Option<Arc<str>>, std::ops::Range<usize>, usize, usize)> = Vec::new();
+    let mut i = 0;
     loop {
-        let rest = tokens.as_slice();
-        let tok = |i: usize| rest.get(i).map(|t| &t.tok);
+        let tok = |j: usize| tokens.get(i + j).map(|t| &t.tok);
         let (Some(Tok::Keyword("type")), Some(Tok::Name(name)), Some(Tok::Op("="))) =
             (tok(0), tok(1), tok(2))
         else {
             break;
         };
-        let end = (3..rest.len())
-            .find(|&j| rest[j].tok == Tok::Op(";"))
+        let end = (i + 3..tokens.len())
+            .find(|&j| tokens[j].tok == Tok::Op(";"))
             .ok_or_else(|| format!("`{text}`: the definition of `{name}` has no `;`"))?;
-        let name: Arc<str> = name.as_str().into();
-        let (from, to) = (rest[3].span.start, rest[end].span.start);
-        let part: Vec<lex::Token> = tokens.by_ref().take(end).skip(3).collect();
-        tokens.next(); // the `;`
-        let t = read_part(text, &text[from..to], from, part, &mut named, &mut seen)?;
+        let (from, to) = (tokens[i + 3].span.start, tokens[end].span.start);
+        parts.push((Some(name.as_str().into()), i + 3..end, from, to));
+        i = end + 1;
+    }
+    let from = tokens.get(i).map_or(text.len(), |t| t.span.start);
+    parts.push((None, i..tokens.len(), from, text.len()));
+    let times = Times::of(&tokens, &parts);
+    let mut named = Binds::new();
+    let mut seen = Seen::default();
+    // The variables each definition holds, its own and those of the definitions it names.
+    let mut held: HashMap<Arc<str>, Arc<[Arc<str>]>> = HashMap::new();
+    let mut tokens = tokens.into_iter();
+    let mut at = 0;
+    for (name, range, from, to) in parts {
+        tokens.by_ref().take(range.start - at).for_each(drop);
+        at = range.end;
+        let part: Vec<lex::Token> = tokens.by_ref().take(range.len()).collect();
+        let inner: Vec<Arc<str>> = (part.iter())
+            .filter_map(|t| match &t.tok {
+                Tok::Name(n) => held.get(n.as_str()).cloned(),
+                _ => None,
+            })
+            .flat_map(|vs| vs.to_vec())
+            .collect();
+        let read = Reader {
+            times: &times,
+            held: &held,
+        };
+        let (t, free) = read_part(
+            text,
+            &text[from..to],
+            from,
+            part,
+            &mut named,
+            &mut seen,
+            read,
+        )?;
+        let Some(name) = name else {
+            return Ok(t);
+        };
+        let mut vs: Vec<Arc<str>> = free.into_iter().chain(inner).collect();
+        vs.sort_unstable();
+        vs.dedup();
+        held.insert(name.clone(), vs.into());
         named.insert(name, t);
     }
-    let from = tokens
-        .as_slice()
-        .first()
-        .map_or(text.len(), |t| t.span.start);
-    read_part(
-        text,
-        &text[from..],
-        from,
-        tokens.collect(),
-        &mut named,
-        &mut seen,
-    )
+    unreachable!("the text's own part is the last of `parts`")
+}
+
+/// How many times the text of a printed type writes each capitalized name, with each
+/// definition written out at each name for it: the count the rule for a variable reads
+/// (sec:type_resolution, rule 4, a name written twice or more), so that a definition used
+/// twice counts each name in its body twice (row PRINT-shared-part-exponential). A name a
+/// `for` clause binds, one followed by `in` (`TypeBounds = 'for' (Name 'in' TypeUnion) % ','`,
+/// syntax.peg), and a name of a definition, are not counted, as the reading of each part
+/// skips them.
+// Complexity tradeoff: naive, the text written out with each definition at each name for it and
+// the names counted there, O(2^d) for a part used twice at each of d levels, the fault the
+// definitions remove. Used: each definition's uses counted in each part's tokens, its weight
+// (the times the written-out text holds it) found from the weights of the parts that name it,
+// in the order last to first, since a definition names only those before it; then each name's
+// count is the sum over the parts of its count there times the part's weight. O(n) in the
+// tokens with a hash lookup each, and saturating sums, so a count past 2^64 stays above 2.
+// Test: `l01_29_diagnostics::shared_parts`, the three cases of the rule.
+struct Times {
+    times: HashMap<Arc<str>, u64>,
+}
+
+impl Times {
+    fn of<'t>(
+        tokens: &'t [lex::Token],
+        parts: &[(Option<Arc<str>>, std::ops::Range<usize>, usize, usize)],
+    ) -> Times {
+        let capital = |n: &str| n.starts_with(|c: char| c.is_ascii_uppercase());
+        let clause: HashSet<&str> = (tokens.windows(2))
+            .filter_map(|w| match (&w[0].tok, &w[1].tok) {
+                (Tok::Name(n), Tok::Keyword("in")) if capital(n) => Some(n.as_str()),
+                _ => None,
+            })
+            .collect();
+        // The definitions named before each part, by name, the last of a name kept, as the
+        // reading of each part sees them.
+        let mut defined: HashMap<&str, usize> = HashMap::new();
+        let mut uses: Vec<Vec<usize>> = Vec::with_capacity(parts.len());
+        let mut names: Vec<HashMap<&'t str, u64>> = Vec::with_capacity(parts.len());
+        for (p, (name, range, ..)) in parts.iter().enumerate() {
+            let (mut u, mut m) = (Vec::new(), HashMap::new());
+            for t in &tokens[range.clone()] {
+                let Tok::Name(n) = &t.tok else { continue };
+                match defined.get(n.as_str()) {
+                    Some(&q) => u.push(q),
+                    None if capital(n) && !clause.contains(n.as_str()) => {
+                        *m.entry(n.as_str()).or_insert(0u64) += 1;
+                    }
+                    None => {}
+                }
+            }
+            uses.push(u);
+            names.push(m);
+            if let Some(name) = name {
+                defined.insert(&**name, p);
+            }
+        }
+        let mut weight = vec![0u64; parts.len()];
+        if let Some(last) = weight.last_mut() {
+            *last = 1;
+        }
+        for p in (0..parts.len()).rev() {
+            for &q in &uses[p] {
+                weight[q] = weight[q].saturating_add(weight[p]);
+            }
+        }
+        let mut times: HashMap<&'t str, u64> = HashMap::new();
+        for (m, w) in names.into_iter().zip(weight) {
+            for (n, c) in m {
+                let t = times.entry(n).or_insert(0);
+                *t = t.saturating_add(c.saturating_mul(w));
+            }
+        }
+        let times = times.into_iter().map(|(n, t)| (n.into(), t)).collect();
+        Times { times }
+    }
+
+    /// Whether `name` is written twice or more in the text written out.
+    fn twice(&self, name: &str) -> bool {
+        self.times.get(name).is_some_and(|&t| t >= 2)
+    }
+}
+
+/// What the reading of each part of a printed type knows of the whole text.
+#[derive(Clone, Copy)]
+struct Reader<'a> {
+    /// How many times the text written out writes each name.
+    times: &'a Times,
+    /// The variables each definition read so far holds, which the outermost signature around a
+    /// name for it binds, as it binds them written out there.
+    held: &'a HashMap<Arc<str>, Arc<[Arc<str>]>>,
 }
 
 /// The tokens of `head`, the text of a printed type from byte `from` to a token's start or the
@@ -132,7 +254,8 @@ fn part_tokens(
 /// The type `head`, a part of the printed type `text` from its byte `from`, whose tokens there
 /// are `tokens`, which may name the types of `named`: the definitions before it, and the leaves
 /// of layer L10 read so far, to which it adds its own. `seen` holds what the parts before it
-/// walked of their types, and gets what this one walks.
+/// walked of their types, and gets what this one walks. Gives the type and the variables
+/// written in the part.
 fn read_part(
     text: &str,
     head: &str,
@@ -140,7 +263,8 @@ fn read_part(
     tokens: Vec<lex::Token>,
     named: &mut Binds,
     seen: &mut Seen,
-) -> Result<Ty, String> {
+    read: Reader,
+) -> Result<(Ty, HashSet<Arc<str>>), String> {
     let tokens = part_tokens(text, head, from, tokens)?;
     // The names the resolver finds: the definitions `head` names, and its own leaves.
     let mut found: HashSet<Arc<str>> = (tokens.iter())
@@ -260,22 +384,23 @@ fn read_part(
     // A capitalized name written twice or more that neither a definition nor a clause binds is a
     // variable of the outermost signature around it (sec:type_resolution, rule 4), as the
     // printer writes a variable that stands in two places or more (UNDERSCORE-print); a name
-    // written once stays undefined, as in a written signature. One pass over the tokens with a
-    // hash count, O(n).
+    // written once stays undefined, as in a written signature. Written means in the text with
+    // each definition written out at each name for it ([`Times`]), so that a definition used
+    // twice writes the names of its body twice. One pass over the tokens with a hash lookup,
+    // O(n).
     let clauses: HashSet<&str> = bounded.iter().copied().collect();
-    let mut times: HashMap<&str, usize> = HashMap::new();
-    for t in &tokens {
-        if let Tok::Name(n) = &t.tok
-            && n.starts_with(|c: char| c.is_ascii_uppercase())
-            && !binds.contains_key(n.as_str())
-            && !clauses.contains(n.as_str())
-        {
-            *times.entry(n.as_str()).or_default() += 1;
-        }
-    }
-    let free: HashSet<Arc<str>> = (times.into_iter())
-        .filter(|&(_, k)| k >= 2)
-        .map(|(n, _)| n.into())
+    let free: HashSet<Arc<str>> = (tokens.iter())
+        .filter_map(|t| match &t.tok {
+            Tok::Name(n)
+                if n.starts_with(|c: char| c.is_ascii_uppercase())
+                    && !binds.contains_key(n.as_str())
+                    && !clauses.contains(n.as_str())
+                    && read.times.twice(n) =>
+            {
+                Some(n.as_str().into())
+            }
+            _ => None,
+        })
         .collect();
     found.extend(free.iter().cloned());
     // A difference from the unknown `_` is refused rather than read as more than it says:
@@ -286,7 +411,7 @@ fn read_part(
     // reads back as `#a(x: int)`, l01_22
     // `kinds::the_difference_of_payloads_of_one_atom_takes_the_payloads`),
     // and a difference that takes part of a variable is held by `left_of`.
-    let (ty, inexact) = denoted_inexact(&t, binds, &free, Ranged { keyed, hulls });
+    let (ty, inexact) = denoted_inexact(&t, binds, &free, read.held, Ranged { keyed, hulls });
     if let Some(Inexact { span, printed, .. }) = inexact
         .into_iter()
         .find(|i| matches!(i.cause, Loss::Unknown))
@@ -323,7 +448,9 @@ fn read_part(
     // a program's types are read by the front end, never here. (2) In a printed type no
     // part but the last holds a clause: `write_parts` writes each clause (`Print::Bounds`)
     // right after the arrows of the signature it bounds, and the definitions before the
-    // text are kernel sets (`KType::surfaces_by_name`), whose printer writes no clause. (3)
+    // text are kernel sets (`KType::surfaces_by_name`), whose printer writes no clause, or
+    // tuples written once (zedc-types `Shared::local`), which hold no function and no
+    // variable any clause bounds, so no clause either. (3)
     // Read back, the last part denotes each signature it writes as a new `Sig`, at an
     // address no part before met (`Seen` holds each signature it met), bounding each
     // variable of its clause the signature uses (one it does not use the resolver rejects:
@@ -358,7 +485,7 @@ fn read_part(
         let why: Vec<String> = es.into_iter().map(|e| written.back(&e.message)).collect();
         return Err(format!("`{text}`: {}", why.join("; ")));
     }
-    Ok(ty)
+    Ok((ty, free))
 }
 
 /// What the reading of one printed type has walked of its parts' types, for the check that

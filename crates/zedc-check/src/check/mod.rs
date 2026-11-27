@@ -1798,10 +1798,11 @@ fn lay_out_with(
 }
 
 /// Whether `text` holds a mark that [`lay_out`] reads: a reference, a variable or [`DECLARE`],
-/// all in U+FDD0..=U+FDDF (module `defs` of the kernel). [`lay_out`] leaves a text with none
-/// as it is, though its words are names the others' names skip.
+/// all in U+FDD0..=U+FDDF, or a tuple written once in its printed type, [`defs::LOCALS`]
+/// (module `defs` of the kernel). [`lay_out`] leaves a text with none as it is, though its
+/// words are names the others' names skip.
 fn holds_lay_out_mark(text: &str) -> bool {
-    text.contains(|c| ('\u{FDD0}'..='\u{FDDF}').contains(&c))
+    text.contains(|c| ('\u{FDD0}'..='\u{FDDF}').contains(&c) || defs::LOCALS.contains(&c))
 }
 
 /// What [`lay_out`] makes of a message whose one marked text is the note `text`
@@ -1937,9 +1938,10 @@ fn lay_out_alone(text: &Arc<str>) -> LaidAlone {
 ///
 /// Proof that the swap changes nothing else:
 /// 1. A placeholder is U+FDE0, a decimal index and U+FDE1. It holds no `$`, so `named`
-///    copies it, and no mark of U+FDD0..=U+FDDF, so `lay_out` neither starts nor ends a part
-///    in it and moves it whole with the text around it.
-/// 2. The printer never writes U+FDE0 (its marks are U+FDD0..=U+FDDF), and the program
+///    copies it, and no mark of U+FDD0..=U+FDDF or [`defs::LOCALS`], so `lay_out` neither
+///    starts nor ends a part in it and moves it whole with the text around it.
+/// 2. The printer never writes U+FDE0 (its marks are U+FDD0..=U+FDDF and
+///    [`defs::LOCALS`], U+FDE2..=U+FDE6), and the program
 ///    writes one only inside a string or a comment, which then is a piece here: a name is
 ///    ASCII (DESIGN.md sec:lexical), and no other token takes a noncharacter. So after the
 ///    swap each U+FDE0 left in a text starts a placeholder, and [`Self::restore`] writes
@@ -6747,7 +6749,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
-        let (ty, inexact) = denoted_inexact(t, &Binds::new(), &HashSet::new(), ranged);
+        let (ty, inexact) =
+            denoted_inexact(t, &Binds::new(), &HashSet::new(), &Held::new(), ranged);
         let any_var = inexact.iter().any(|i| matches!(i.cause, Loss::Var(_)));
         for Inexact {
             span,
@@ -19440,8 +19443,12 @@ pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
 /// variables). A printed type writes such a name for a variable that stands in two places or
 /// more (UNDERSCORE-print), which only `parse_type` reads back.
 pub fn denoted_free(t: &Type, leaves: &Binds, free: &HashSet<Arc<str>>) -> Ty {
-    denoted_inexact(t, leaves, free, Ranged::default()).0
+    denoted_inexact(t, leaves, free, &Held::new(), Ranged::default()).0
 }
+
+/// The variables each definition of a printed type holds, its own and those of the
+/// definitions it names, by the definition's name ([`Denote::held`]).
+type Held = HashMap<Arc<str>, Arc<[Arc<str>]>>;
 
 /// The ranges read where an arrow of a type is, by the arrow's span, which the type's own
 /// parts do not denote ([`Denote::make`]).
@@ -19459,16 +19466,19 @@ struct Ranged {
 
 /// [`denoted_free`], with the span and printed text of each difference in `t` whose value holds
 /// more than the difference ([`Ty::diff_exact`]). Each arrow whose span `ranged` holds is read
-/// with its range ([`Ranged`]).
+/// with its range ([`Ranged`]), and each definition of `leaves` that `held` lists makes the
+/// outermost function type around a name for it the home of the variables it holds.
 fn denoted_inexact(
     t: &Type,
     leaves: &Binds,
     free: &HashSet<Arc<str>>,
+    held: &Held,
     ranged: Ranged,
 ) -> (Ty, Vec<Inexact>) {
     let mut d = Denote {
         leaves,
         free,
+        held,
         bound: HashMap::new(),
         open: Vec::new(),
         empty: None,
@@ -19501,6 +19511,7 @@ fn emptied(t: &Type, out: &mut Vec<Note>) {
     let mut d = Denote {
         leaves: &Binds::new(),
         free: &HashSet::new(),
+        held: &Held::new(),
         bound: HashMap::new(),
         open: Vec::new(),
         empty: Some(HashSet::new()),
@@ -19702,6 +19713,14 @@ struct Denote<'a> {
     /// The names read as variables of the outermost function type around them where no clause
     /// bounds them ([`denoted_free`]).
     free: &'a HashSet<Arc<str>>,
+    /// The variables each definition of `leaves` holds, of which the outermost function type
+    /// around a name for the definition is the home, as it is of them where the definition is
+    /// written out in full (`read::parse_type`, row PRINT-shared-part-exponential).
+    // Complexity tradeoff: each name for a definition inserts each of its `k` variables into
+    // its home's sorted set, O(k log k) a use, where a variable written once in the definition
+    // would be inserted once; the alternative, the definition's variables found by a walk of
+    // its value at each use, costs its size a use. `k` is at most the variables of the text.
+    held: &'a Held,
     /// Each variable a clause around the place bounds: its mask and the number of function
     /// types open at the clause, which is the index in `open` of its signature.
     bound: HashMap<&'a str, (u8, usize)>,
@@ -19853,6 +19872,11 @@ impl<'a> Denote<'a> {
                 return;
             }
             TypeKind::Name(n) if self.leaves.contains_key(n.as_str()) => {
+                if let Some(vs) = self.held.get(n.as_str())
+                    && let Some(home) = self.open.first_mut()
+                {
+                    home.free.extend(vs.iter().cloned());
+                }
                 self.leaves[n.as_str()].clone()
             }
             TypeKind::Name(n) => match n.as_str() {

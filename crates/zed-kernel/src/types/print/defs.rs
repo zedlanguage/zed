@@ -89,6 +89,109 @@ pub const VAR: char = '\u{FDDD}';
 /// Separates the members of a union of [`UNION`].
 pub const NEXT: char = '\u{FDDE}';
 
+/// Opens a tuple a printed type holds in two places or more and writes in full at its first
+/// place only (zedc-types `Shared::local`, row PRINT-shared-part-exponential): the tuple's
+/// number within its printed type, [`END`], its text, then [`LOCAL_CLOSE`]. Once the type's
+/// variables are named, [`lift_holding`] takes that text as the body of a soft part
+/// ([`Kind::Local`]) and writes the part's reference in its place ([`take_locals`]). The marks
+/// U+FDD0..=U+FDDF are all taken, and U+FDE0 and U+FDE1 are zedc-check's placeholders of the
+/// program's own text, so these are the noncharacters after them.
+const LOCAL_OPEN: char = '\u{FDE2}';
+/// As [`LOCAL_OPEN`], where the tuple stands parenthesized, as [`SOFT_WRAP`] says.
+const LOCAL_OPEN_WRAP: char = '\u{FDE3}';
+/// Closes what [`LOCAL_OPEN`] opens.
+const LOCAL_CLOSE: char = '\u{FDE4}';
+/// Writes again a tuple [`LOCAL_OPEN`] opened earlier in the same printed type: its number,
+/// then [`END`].
+const LOCAL_REF: char = '\u{FDE5}';
+/// As [`LOCAL_REF`], where the tuple stands parenthesized.
+const LOCAL_REF_WRAP: char = '\u{FDE6}';
+/// Every mark of a tuple written once in its printed type.
+pub const LOCALS: [char; 5] = [
+    LOCAL_OPEN,
+    LOCAL_OPEN_WRAP,
+    LOCAL_CLOSE,
+    LOCAL_REF,
+    LOCAL_REF_WRAP,
+];
+
+/// Opens in `out` the text of tuple `id` of a printed type ([`LOCAL_OPEN`]), parenthesized
+/// where it stands if `wrap`.
+pub fn local_open(out: &mut String, id: usize, wrap: bool) {
+    out.push(if wrap { LOCAL_OPEN_WRAP } else { LOCAL_OPEN });
+    write!(out, "{id}{END}").expect("a String takes any text");
+}
+
+/// Closes in `out` the text [`local_open`] opened last.
+pub fn local_close(out: &mut String) {
+    out.push(LOCAL_CLOSE);
+}
+
+/// Writes in `out` tuple `id` of a printed type again ([`LOCAL_REF`]), parenthesized where
+/// it stands if `wrap`.
+pub fn local_ref(out: &mut String, id: usize, wrap: bool) {
+    out.push(if wrap { LOCAL_REF_WRAP } else { LOCAL_REF });
+    write!(out, "{id}{END}").expect("a String takes any text");
+}
+
+/// `text` with each tuple [`local_open`] wrote taken out as the body of a soft part
+/// ([`Kind::Local`]) and written by its reference, there and at each [`local_ref`] to it, so
+/// that [`lift_holding`] names it or writes it in full by the rule of a soft part, and also
+/// names it when it holds a part and is written twice anywhere. The
+/// variables in the bodies are named already ([`name_all_vars`]), so a body is the text its
+/// printed type writes there. A number is that of a tuple within one printed type, and a
+/// later printed type in the same text may use it again, so a reference is to the tuple
+/// opened last under its number, which in a printed type is opened before any reference to
+/// it.
+///
+/// Complexity: one pass over `text` with a stack of the bodies open, each character copied
+/// once, and one hash of each body by [`place`]; a body holds the tuples inside it by
+/// reference, so the bodies are together no longer than `text`.
+fn take_locals(text: &mut String) {
+    if !text.contains(LOCALS) {
+        return;
+    }
+    let reference = |k: usize, wrap: bool| match wrap {
+        true => wrapped(&soft_reference(k)),
+        false => soft_reference(k),
+    };
+    let mut placed: HashMap<usize, usize> = HashMap::new();
+    // The bodies open, innermost last, each with its tuple's number and whether it is
+    // parenthesized where it stands.
+    let mut open: Vec<(String, usize, bool)> = Vec::new();
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while let Some(i) = rest.find(LOCALS) {
+        let into = open.last_mut().map_or(&mut out, |(b, ..)| b);
+        into.push_str(&rest[..i]);
+        let mark = rest[i..].chars().next().expect("a mark was found");
+        let after = &rest[i + mark.len_utf8()..];
+        if mark == LOCAL_CLOSE {
+            let (body, id, wrap) = open.pop().expect("a tuple closed is open");
+            let k = place(body, Kind::Local);
+            placed.insert(id, k);
+            let into = open.last_mut().map_or(&mut out, |(b, ..)| b);
+            into.push_str(&reference(k, wrap));
+            rest = after;
+            continue;
+        }
+        let n = after.find(END).expect("a tuple's number is closed");
+        let id: usize = after[..n].parse().expect("a tuple's number is a number");
+        rest = &after[n + END.len_utf8()..];
+        match mark {
+            LOCAL_OPEN | LOCAL_OPEN_WRAP => open.push((String::new(), id, mark == LOCAL_OPEN_WRAP)),
+            _ => {
+                let k = placed[&id];
+                let into = open.last_mut().map_or(&mut out, |(b, ..)| b);
+                into.push_str(&reference(k, mark == LOCAL_REF_WRAP));
+            }
+        }
+    }
+    debug_assert!(open.is_empty(), "each tuple opened is closed");
+    out.push_str(rest);
+    *text = out;
+}
+
 /// Names the variables marked in `out` from `from` on ([`VARS`]): in each marked type, each the
 /// next of `T`, `U`, `V`, `W`, `T5`, … that the program does not bind and `taken` does not hold
 /// ([`fresh_name`]), in the order the variables are first met reading the type, and writes each
@@ -172,6 +275,9 @@ struct Table {
     /// Whether each definition is named by how often the steps of a message use it
     /// ([`add_counted`]), unless it is `hard` too.
     counted: Vec<bool>,
+    /// Whether each definition is a tuple that holds its function's variables
+    /// ([`take_locals`]).
+    local: Vec<bool>,
     /// What the printer keeps of the parts it printed for this table ([`with_kept`]); this
     /// module never reads it.
     kept: Option<Box<dyn Any>>,
@@ -267,6 +373,9 @@ enum Kind {
     Soft,
     /// Named from the first step that uses it twice or more ([`add_counted`]).
     Counted,
+    /// A tuple that holds its function's variables, named as a soft one and also when it
+    /// holds a part and is written twice anywhere ([`take_locals`]).
+    Local,
 }
 
 /// The place of a definition with `body`, which is known in full: that of an equal body if
@@ -301,11 +410,13 @@ fn place(body: String, kind: Kind) -> usize {
                 t.bodies.push(body);
                 t.hard.push(false);
                 t.counted.push(false);
+                t.local.push(false);
                 k
             }
         };
         t.hard[k] |= kind == Kind::Hard;
         t.counted[k] |= kind == Kind::Counted;
+        t.local[k] |= kind == Kind::Local;
         k
     })
 }
@@ -325,6 +436,7 @@ pub(super) fn reserve() -> usize {
         t.bodies.push(String::new());
         t.hard.push(true);
         t.counted.push(false);
+        t.local.push(false);
         t.bodies.len() - 1
     })
 }
@@ -703,6 +815,9 @@ pub fn lift_holding(
         });
     }
     name_all_vars(texts, taken);
+    for text in texts.iter_mut() {
+        take_locals(text);
+    }
     let raw: Option<Vec<String>> = LIFTED
         .with_borrow(Option::is_some)
         .then(|| texts.iter().map(|t| t.to_string()).collect());
@@ -768,11 +883,18 @@ pub fn lift_holding(
         // written in full. A definition is left after those its body refers to, but on a
         // cycle, whose parts are named.
         let mut bare: HashMap<usize, (bool, usize)> = HashMap::with_capacity(order.len());
+        // For each definition left, whether it is named and its length with every part it
+        // holds that is not named written in full. A tuple that holds its function's
+        // variables is judged by these ([`Kind::Local`]): the text, read back, holds each
+        // part not named as a copy at each place, so reading it back must give the same
+        // judgment, and these two are the same for a part and for its copies.
+        let mut whole: HashMap<usize, (bool, usize)> = HashMap::with_capacity(order.len());
         order
             .into_iter()
             .map(|k| {
                 let body = &t.bodies[k];
                 let (mut part, mut len) = (false, bare_len(body));
+                let (mut named_part, mut whole_len) = (false, len);
                 for (mark, j) in marked_refs(body) {
                     match bare.get(&j) {
                         Some(&(p, l)) if by_count(t, j) && !from.contains_key(&j) => {
@@ -781,23 +903,39 @@ pub fn lift_holding(
                         }
                         _ => part = true,
                     }
+                    match whole.get(&j) {
+                        Some(&(false, l)) => {
+                            let wrap = matches!(mark, WRAP | SOFT_WRAP);
+                            whole_len = whole_len.saturating_add(l + if wrap { 2 } else { 0 });
+                        }
+                        // Named, or on a cycle, whose parts are named.
+                        _ => named_part = true,
+                    }
                 }
                 bare.insert(k, (part, len));
+                let (part, len) = match t.local[k] {
+                    true => (named_part, whole_len),
+                    false => (part, len),
+                };
                 let (n, inside) = uses[&k];
                 // A tuple with a part of its own is named when it is written twice, once
                 // inside another part, so that a part held at each level of a nesting is
-                // written once. A tuple with none is named when its declaration `type Tk =
-                // …;` and a name at each of its uses in bodies are shorter than a copy at
-                // each.
+                // written once. A tuple that holds its function's variables and a part named
+                // is named when written twice anywhere: written in full twice in the text, it
+                // would read back as two tuples, which print again as other text (row
+                // PRINT-shared-part-exponential). A tuple with none is named when its
+                // declaration `type Tk = …;` and a name at each of its uses in bodies are
+                // shorter than a copy at each.
                 let named = t.hard[k]
                     || match (by_count(t, k), part) {
                         (true, _) => from.contains_key(&k),
-                        (false, true) => inside > 0 && n >= 2,
+                        (false, true) => (inside > 0 || t.local[k]) && n >= 2,
                         (false, false) => {
                             inside.saturating_mul(len)
                                 > len + "type  = ;".len() + (inside + 1) * name
                         }
                     };
+                whole.insert(k, (named, whole_len));
                 (k, body.clone(), named)
             })
             .collect()
@@ -915,7 +1053,7 @@ pub fn take_messages() -> Vec<Lifted> {
 
 /// Whether `text`, printed while a message collects definitions, holds a reference to one.
 pub fn holds_reference(text: &str) -> bool {
-    text.contains(MARKS)
+    text.contains(MARKS) || text.contains(LOCALS)
 }
 
 /// Writes the definition of `name` as a user declares it at the top level, `type Part1 = …;`, and
@@ -938,7 +1076,17 @@ impl fmt::Display for Declaration<'_> {
 /// `text` alone, finished: each of its definitions declared on a line of its own
 /// ([`declare`]), then the text, as a type printed outside a message is.
 pub fn plain(text: &str) -> String {
-    if !text.contains([REF, SOFT, COUNT, WRAP, SOFT_WRAP, TYPE, VARS]) {
+    if !text.contains([
+        REF,
+        SOFT,
+        COUNT,
+        WRAP,
+        SOFT_WRAP,
+        TYPE,
+        VARS,
+        LOCAL_OPEN,
+        LOCAL_OPEN_WRAP,
+    ]) {
         return text.into();
     }
     let mut root = text.to_string();
