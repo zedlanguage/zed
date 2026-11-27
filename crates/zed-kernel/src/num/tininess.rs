@@ -25,13 +25,13 @@
 //! result, and reading it would only add a way to be wrong.
 //!
 //! Why "not a float" is "not a multiple of `2^tiny`", `tiny = emin - p + 1` the exponent of the
-//! least subnormal's bit ([`FloatFormat::tiny`]), for a tiny `v`. (1) Every float `f` with
+//! least subnormal's bit (`FloatFormat::tiny`), for a tiny `v`. (1) Every float `f` with
 //! `0 < |f| < 2^emin` is a subnormal, `k * 2^tiny` with `0 < k < 2^(p - 1)` (the encoding with
 //! exponent field 0, IEEE 3.4, from memory; `float_text.rs` `decode` reads it so), so a
 //! tiny float is a multiple of `2^tiny`. (2) Conversely, a multiple `k * 2^tiny` with
 //! `0 < |k * 2^tiny| < 2^emin` has `0 < |k| < 2^(emin - tiny) = 2^(p - 1)`, which is the
 //! subnormal of significand `|k|`. So a tiny `v` is exact iff `v * 2^-tiny` is an integer. This
-//! is also why a sum or difference never underflows [Hauser96] (DESIGN.md sec:failure): both
+//! is also why a sum or difference never underflows \[Hauser96\] (DESIGN.md sec:failure): both
 //! operands are multiples of `2^tiny`, so their exact sum is one too.
 //!
 //! Tests: `tininess::tests`, below. `every_f16_product_pair` decides every pair of finite `f16`
