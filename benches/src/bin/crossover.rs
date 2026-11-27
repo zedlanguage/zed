@@ -85,6 +85,8 @@
 //!
 //! - `roots-horner`: the roots above 1 of `(x - 2) … (x - k - 1)`, `k` from 4 to 128, without
 //!   the bound and with it from the first interval.
+//! - `roots-horner-built` (not in `all`, not a crossover): the roots as built against the two,
+//!   on those clusters and on the sparse `(x - 4) (x^n + 1)`, built at most twice the cheaper.
 //!
 //! In `zed_corpus_ref::zedrt` (the corpus's reference programs):
 //!
@@ -1764,6 +1766,56 @@ fn roots_horner(_: &[String]) -> ExitCode {
     status(verdict.holds())
 }
 
+/// The most the roots as built may cost over the cheaper of no bound and the bound from the
+/// first interval: 2, the ski-rental bound at `positive_roots` (the trigger buys the test once
+/// the branch and bound has spent what one test costs, so the whole is at most about twice the
+/// cheaper of the two).
+const HORNER_BUILT_AT_MOST: f64 = 2.0;
+
+/// Codex's B1 (cross-review XR-lazy-and-kernel-batch-1, round 2): the roots as built, the bound
+/// from above found once the branch and bound has spent `HORNER_COST D^2 / t` units, measured
+/// as a third arm against no bound and the bound from the first interval, on the clusters of
+/// `roots-horner` and on the sparse `(x - 4) (x^n + 1)`, where the trigger is not to fire. The
+/// roots of the three are checked equal; built's ratio to the cheaper is held to
+/// [`HORNER_BUILT_AT_MOST`].
+fn roots_horner_built(_: &[String]) -> ExitCode {
+    let mut meter = Meter::new();
+    let unit = meter.unit();
+    println!(
+        "roots as built against no bound and the bound from the start (HORNER_COST {}), {}",
+        rx::HORNER_COST,
+        conditions()
+    );
+    println!(
+        "| input | no bound {unit} | from the start {unit} | built {unit} | built / cheaper |"
+    );
+    println!("|---|---|---|---|---|");
+    let clusters = ladder(4, 128, 2)
+        .into_iter()
+        .map(|k| (format!("cluster k = {k}"), rx::cluster(k as u64)));
+    let sparse = [64u64, 1_000, 8_192]
+        .into_iter()
+        .map(|n| (format!("sparse n = {n}"), rx::sparse(n)));
+    let mut held = true;
+    for (name, p) in clusters.chain(sparse) {
+        let roots = rx::off(&p);
+        assert_eq!(rx::at_start(&p), roots, "{name}");
+        assert_eq!(rx::built(&p), roots, "{name}");
+        let off = least(&mut meter, || drop(std::hint::black_box(rx::off(&p)))).units;
+        let start = least(&mut meter, || drop(std::hint::black_box(rx::at_start(&p)))).units;
+        let built = least(&mut meter, || drop(std::hint::black_box(rx::built(&p)))).units;
+        let ratio = built as f64 / off.min(start) as f64;
+        let mark = match ratio <= HORNER_BUILT_AT_MOST {
+            true => "",
+            false => " over",
+        };
+        held &= ratio <= HORNER_BUILT_AT_MOST;
+        println!("| {name} | {off} | {start} | {built} | {ratio:.3}{mark} |");
+    }
+    println!("{}", conditions());
+    status(held)
+}
+
 /// The limit on each benchmark of `all`.
 const LIMIT: Duration = Duration::from_secs(60);
 
@@ -1895,6 +1947,9 @@ fn main() -> ExitCode {
     }
     if name == "mul-units" {
         return mul_units(rest);
+    }
+    if name == "roots-horner-built" {
+        return roots_horner_built(rest);
     }
     match BENCHES.iter().find(|(n, _, _)| *n == name) {
         Some((_, run, _)) => run(rest),
