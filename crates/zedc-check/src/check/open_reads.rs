@@ -25,7 +25,16 @@
 //! domain: for every value of those inputs, each `j` of the box's set, which is not empty
 //! by (b), gives a point of the box, at which the read is decided, so the read ends. (b) Some
 //! set of the box empty: no point makes the term `true`, so no entry decides the read, at any
-//! value of the inputs, and the read never ends. (c) Otherwise the read is undetermined. The
+//! value of the inputs, and the read never ends. (d) Not exact, `j` the only input, and the
+//! preimage holding a relation with no `bitAnd` variable: the relation is met by every point
+//! that makes the term `true`, and every point of the box that meets it makes the term `true`
+//! (`Preimage::relation`); its definitions fix each auxiliary variable. So the read ends iff
+//! some `j` of the box meets the definitions and the relation, which the Presburger solver
+//! decides (`presburger::decide`, "whether `f` holds somewhere", over the box as
+//! `within_boxes` writes it): a point gives an entry that decides the read, and none means no
+//! entry does, case (b). A refusal of the solver leaves (c). With another input the question
+//! is "for every value of the inputs, some `j`", an alternation the solver is not asked; so
+//! `(n ..).find(x -> x >= n)` stays (c). (c) Otherwise the read is undetermined. The
 //! fragment holds no loop and no call, and `div` and `mod` by zero fault, which ends the run,
 //! so the entries before the deciding one each end.
 //!
@@ -35,8 +44,8 @@
 //! Incomplete where the box is not exact though an entry exists: `(n ..).find(x -> x >= n)`
 //! decides at `n` for every `n`, but where the box of a test between two inputs is not
 //! exact, the read is warned at; and a read through a call, as `(n ..).where(isPrime).first`,
-//! is warned at, as the rule says (no entry is shown). The `relation` the preimage keeps for
-//! a linear test that its box does not decide could prove more; it is not read yet.
+//! is warned at, as the rule says (no entry is shown). The `relation` the preimage keeps is
+//! read only where `j` is the only input, case (d).
 //!
 //! Tests: `l03_02_map_run::types::stopping_reads_of_an_open_range_are_proved_to_end_or_warned`.
 
@@ -47,7 +56,8 @@ use zed_kernel::{Prim, Shared, Term, Value};
 use zedc_base::rejection::Row;
 use zedc_int::int::Num;
 use zedc_lattice::interval::{End, IntervalSet};
-use zedc_preimage::preimage::{Demand, Domains, preimage};
+use zedc_preimage::preimage::{Demand, Domains, preimage, within_boxes};
+use zedc_presburger::presburger::{self, Formula};
 use zedc_resolve::resolve::{Ref, open_stream};
 use zedc_syntax::ast::{Error, Expr, ExprKind, Note, UnaryOp};
 use zedc_syntax::lex::Span;
@@ -193,10 +203,25 @@ impl<'t, 'a> Ck<'t, 'a> {
         let whole = (inputs.iter())
             .filter(|(n, _)| **n != key)
             .all(|(n, d)| set(n).is_none_or(|s| s == d));
-        match p.exact && whole {
-            true => Verdict::Ends,
-            false => Verdict::Undecided,
+        if p.exact && whole {
+            return Verdict::Ends;
         }
+        // Case (d): the key the only input.
+        if let (1, Some(rel)) = (inputs.len(), &p.relation)
+            && rel.bit_ands.is_empty()
+        {
+            let f = Formula::and(vec![
+                rel.defined(),
+                within_boxes(&p.domains),
+                rel.body.clone(),
+            ]);
+            match presburger::decide(&f) {
+                Ok(true) => return Verdict::Ends,
+                Ok(false) => return Verdict::Never,
+                Err(_) => {}
+            }
+        }
+        Verdict::Undecided
     }
 
     /// The binder of `e`, a name, where it reads one and its type holds only integers.

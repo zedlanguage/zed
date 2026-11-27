@@ -3014,8 +3014,9 @@ pub(crate) fn classed_member(k: &Arc<str>, c: &Classed) -> Option<Formula> {
 
 /// The box `b` as one formula, each set as [`presburger::member`] writes its ranges, or as
 /// [`classed_member`] where it has a class other than every integer. Read as for a point only
-/// ([`classed_member`]).
-pub(crate) fn within_boxes(b: &Boxes) -> Formula {
+/// ([`classed_member`]). Public for `zedc-check`'s `open_reads`, which asks whether a point of a
+/// box meets a preimage's relation.
+pub fn within_boxes(b: &Boxes) -> Formula {
     let parts = (b.iter())
         .map(|(k, c)| {
             classed_member(k, c)
