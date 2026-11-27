@@ -146,6 +146,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
         (a.span, &a.message, &a.menu).cmp(&(b.span, &b.message, &b.menu))
     });
     ck.info.blocking = blocking;
+    ck.info.port_params = std::mem::take(&mut ck.port_params);
     ck.info
 }
 
@@ -473,6 +474,10 @@ pub(super) enum Frame<'a> {
     ),
     TestArgs(Box<TestF<'a>>),
     TestWant(Box<TestF<'a>>, Ty),
+    /// Field `usize` of the record a row of a function with output port parameters expects,
+    /// the lines the row pushes to the port of its name, checked as a family of Strings, with
+    /// the number of errors before it ([`Ck::test_pushed`]).
+    TestLines(Box<TestF<'a>>, usize, Ty, usize),
     /// A binding, with the number of errors before its value is checked.
     Bind(&'a Stmt, usize),
     /// An expression statement, `say("hi", out: m.stdout);`.
@@ -684,6 +689,9 @@ pub(super) struct TestF<'a> {
     exprs: Vec<&'a Expr>,
     got: Vec<Option<Arg<'a>>>,
     waiting: bool,
+    /// The places of the output port parameters among `f`'s, in order: the key gives each
+    /// as `[]`, which is not walked, and the call is given the port's declared type there.
+    ports: Vec<usize>,
 }
 
 pub(super) struct InferF<'a> {
@@ -2055,8 +2063,19 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::TestWant(s, result) => {
                 let want = m.take_arg();
                 self.equal(&Arg::of(result), &want);
-                let TestF { f, sig, case, .. } = *s;
-                self.test_case(m, f, sig, case + 1);
+                self.test_pushed(m, s, 0);
+            }
+            Frame::TestLines(s, k, ty, before) => {
+                let a = m.take_arg();
+                // A lambda refused while it was fitted is not refused again, as at a clause
+                // (`Frame::TestPort`).
+                if self.errors.len() == before
+                    && let ExprKind::Record(fields) = &s.f.tests[s.case].1.kind
+                {
+                    let (name, e) = &fields[k];
+                    self.passes_into(&a.ty, &ty, &format!("`{name}`"), None, e.span);
+                }
+                self.test_pushed(m, s, k + 1);
             }
             Frame::Bind(s, before) => {
                 let v = m.take_ty();
@@ -2601,6 +2620,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 (ExprKind::Tuple(items), n) if items.len() == n => items.iter().collect(),
                 _ => continue,
             };
+            let ports = (f.params.iter().enumerate())
+                .filter(|(_, p)| self.port_params.contains(&self.id(p.span, &p.name)))
+                .map(|(i, _)| i)
+                .collect();
             let s = TestF {
                 f,
                 sig,
@@ -2608,6 +2631,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 exprs,
                 got: Vec::new(),
                 waiting: false,
+                ports,
             };
             return self.test_args(m, Box::new(s));
         }
@@ -2619,17 +2643,74 @@ impl<'t, 'a> Ck<'t, 'a> {
             let x = m.take_arg();
             s.got.push(Some(x));
         }
-        if let Some(&a) = s.exprs.get(s.got.len()) {
+        while let Some(&a) = s.exprs.get(s.got.len()) {
+            // A port the key gives as `[]` (`ports::table_rows` refused any other component)
+            // is passed as a call passes one: a value of the parameter's declared type.
+            let i = s.got.len();
+            if s.ports.contains(&i)
+                && let Some(ty) = s.sig.arrows.first().and_then(|r| r.params.get(i))
+            {
+                s.got.push(Some(Arg::of(ty.clone())));
+                continue;
+            }
             s.waiting = true;
             m.k(Frame::TestArgs(s));
             return m.job(Job::Arg(a, Want::default()));
         }
-        let (input, expected) = &s.f.tests[s.case];
+        let f = s.f;
+        let (input, expected) = &f.tests[s.case];
+        // A row of a function with output ports expects the record `{ result:, <port>: … }`
+        // (`ports::table_rows` refused any other value, and a record with no `result`): its
+        // result is compared as a row's value is, then each port's lines ([`Self::test_pushed`]).
+        let expected = match &expected.kind {
+            ExprKind::Record(fields) if !s.ports.is_empty() => (fields.iter())
+                .find(|(n, _)| n == "result")
+                .map_or(expected, |(_, e)| e),
+            // The resolver lets a record value through for a function with a `Lines`
+            // parameter, which may be an output port; where none is, the value is a record
+            // display, of a later step, which the walk of expressions does not take.
+            ExprKind::Record(_) => {
+                self.error_with(
+                    expected.span,
+                    "a record display is part of the Zed language but is not supported by this \
+                     version of zedc",
+                    Vec::new(),
+                );
+                let TestF { f, sig, case, .. } = *s;
+                return self.test_case(m, f, sig, case + 1);
+            }
+            _ => expected,
+        };
         let args = std::mem::take(&mut s.got);
-        let what = format!("`{}`", s.f.name);
+        let what = format!("`{}`", f.name);
         let (result, _) = self.apply(Label::Text(&what), &s.sig, args, false, input.span);
         m.k(Frame::TestWant(s, result));
         m.job(Job::Arg(expected, Want::default()));
+    }
+
+    /// The fields of the record row `s.case` expects from field `k` on, but `result`: each the
+    /// lines the row pushes to the output port of its name, checked as the family of Strings
+    /// the port's writes are, `int ->? Utf8String` (DESIGN.md sec:ports, "for a port that is
+    /// only written, an output stream …, it is the list of the values written, in order").
+    /// Then the next row. Cost: one check of each field, as of an argument.
+    fn test_pushed(&mut self, m: &mut M<'a>, s: Box<TestF<'a>>, mut k: usize) {
+        if let ExprKind::Record(fields) = &s.f.tests[s.case].1.kind
+            && !s.ports.is_empty()
+        {
+            while let Some((name, e)) = fields.get(k) {
+                if name == "result" {
+                    k += 1;
+                    continue;
+                }
+                let ty = port(Carrier::Int, false);
+                let want = Want::of(&ty);
+                let before = self.errors.len();
+                m.k(Frame::TestLines(s, k, ty, before));
+                return m.job(Job::Arg(e, want));
+            }
+        }
+        let TestF { f, sig, case, .. } = *s;
+        self.test_case(m, f, sig, case + 1);
     }
 
     fn stmt(&mut self, m: &mut M<'a>, s: &'a Stmt) {

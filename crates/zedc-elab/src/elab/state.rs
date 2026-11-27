@@ -68,7 +68,9 @@ pub(super) struct Elab<'a> {
     /// The shared parts given their source sites so far ([`zed_kernel::sites::mark`]).
     pub(super) sited: HashSet<u64>,
     /// The output ports of the unit's `main`, `m.stdout` and `m.stderr` where it pushes to
-    /// them, in the order of its header; empty when the unit has no `main`.
+    /// them, in the order of its header; empty when the unit has no `main`. Then the ports
+    /// `row.out<j>` a test row gives a function with more output port parameters than these
+    /// ([`Elab::new`]).
     pub(super) outputs: Vec<Arc<str>>,
     /// The first top-level statement, in the order elaboration takes them, that gave no term.
     pub(super) dropped: Option<&'a Stmt>,
@@ -85,12 +87,33 @@ impl<'a> Elab<'a> {
             *count.entry(&b.name).or_default() += 1;
         }
         let mut seen: HashMap<&str, usize> = HashMap::new();
-        let outputs = t
+        let mut outputs: Vec<Arc<str>> = t
             .funcs
             .values()
             .find_map(|f| f.ports())
             .map(|ports| ports.iter().map(|p| p.name.as_str().into()).collect())
             .unwrap_or_default();
+        // A row of a function's table gives its j-th output port parameter the port
+        // `outputs[j]`, and reads what the row pushed there (`Frame::TestWant`), so each such
+        // parameter of a row needs a port of its own: where a tested function has more of them
+        // than `main` has output ports, the ports `row.out<j>` are added, which no run of `main`
+        // gives a parameter. None is added when every tested function has at most as many as
+        // `main` (the usual case), and the pushes are as before. Cost: one pass over each
+        // tested function's parameters.
+        let most = (t.funcs.values())
+            .filter(|f| f.main.is_none() && !f.tests.is_empty())
+            .map(|f| {
+                (f.params.iter())
+                    .filter(|p| {
+                        (t.ids.get(&(p.span, p.name.as_str())))
+                            .is_some_and(|b| info.port_params.contains(b))
+                    })
+                    .count()
+            })
+            .max()
+            .unwrap_or(0);
+        let given = outputs.len();
+        outputs.extend((given..most).map(|j| Arc::from(format!("row.out{j}"))));
         let names = res
             .binders
             .iter()
@@ -307,7 +330,9 @@ impl<'a> Elab<'a> {
     // each function per port it is given would leave every later pass as it is too, but copies
     // a function once per tuple of ports, P^k copies for k output-port parameters, and gives each
     // copy's binders a second kernel name; making a port a value of the kernel would change every
-    // later pass. Neither pays for itself while P <= 2.
+    // later pass. Neither pays for itself while P <= 2. The ports `row.out<j>` added for test
+    // rows ([`Elab::new`]) raise P to the most output port parameters of a tested function, k,
+    // where that exceeds `main`'s: O(k) per push, k written by hand in one signature.
     pub(super) fn push(&self, span: Span, port: &str, v: Term) -> Term {
         let v = Shared::new(v);
         let held = match self.t.res.uses.get(&span) {
@@ -325,7 +350,9 @@ impl<'a> Elab<'a> {
             // them is ever given one: zedc-check check/ports.rs rejects any argument for an
             // output port parameter that is not an output port ("Each argument for an output
             // port parameter is an output port") and any naming of such a function other than
-            // as a callee ("named only as a callee"). A unit with an error does not run.
+            // as a callee ("named only as a callee"). A test row gives one only to a function
+            // with an output port parameter, and then [`Elab::new`] adds `row.out0`, so
+            // `outputs` is not empty. A unit with an error does not run.
             return Term::Push(port.into(), v);
         };
         let held = Term::Var(self.names[held].clone());

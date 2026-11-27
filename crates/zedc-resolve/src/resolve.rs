@@ -2918,16 +2918,23 @@ impl Resolver<'_> {
                 // The key of a row of `main` is a record of the run's inputs, and its value a
                 // record of the run's outputs (DESIGN.md "The operator inventory", row test
                 // table), which elaboration takes apart by field, so neither is a record
-                // display of a later step: their values alone are walked.
-                let row_side = |todo: &mut Vec<Task<'a>>, e: &'a Expr| match &e.kind {
-                    ExprKind::Record(fields) if f.main.is_some() => {
+                // display of a later step: their values alone are walked. So is the value of a
+                // row of a function with a `Lines` parameter, which may be an output port: the
+                // record `{ result:, <port>: … }` of its result and of the lines it pushes
+                // (DESIGN.md sec:ports, "A test table gives a port its values"), which the
+                // checker takes apart by field (zedc-check `ports::table_rows`), and refuses
+                // as a record display where the parameter is no output port.
+                let lines = (f.params.iter())
+                    .any(|p| matches!(p.ty.as_ref().map(|t| &t.kind), Some(TypeKind::Name(n)) if n == "Lines"));
+                let row_side = |todo: &mut Vec<Task<'a>>, e: &'a Expr, value: bool| match &e.kind {
+                    ExprKind::Record(fields) if f.main.is_some() || (value && lines) => {
                         todo.extend(fields.iter().rev().map(|(_, v)| Task::Expr(v)))
                     }
                     _ => todo.push(Task::Expr(e)),
                 };
                 for (a, b) in f.tests.iter().rev() {
-                    row_side(todo, b);
-                    row_side(todo, a);
+                    row_side(todo, b, true);
+                    row_side(todo, a, false);
                 }
                 self.test_ports(f, todo);
                 todo.extend(ports.iter().rev().map(|p| Task::Ty(&p.ty)));

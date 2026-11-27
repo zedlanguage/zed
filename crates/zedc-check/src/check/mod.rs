@@ -831,6 +831,11 @@ pub struct Info {
     /// The limits written before the unit's `main` (DESIGN.md sec:ports), which the run
     /// enforces; none when the unit writes none.
     pub limits: zed_kernel::limits::MainLimits,
+    /// The output port parameters, by binder: each parameter a push names as its target
+    /// (DESIGN.md L1.19). A row of a test table gives each one by its key's `[]`, and its
+    /// value's record holds what the row pushed there (sec:ports, "A test table gives a port
+    /// its values").
+    pub port_params: HashSet<usize>,
 }
 
 /// The two operands of `==` that [`Ck::equal`] pairs, built before a scaling test, so that
