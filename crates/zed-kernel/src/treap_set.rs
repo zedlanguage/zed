@@ -63,7 +63,7 @@
 //! whatever the draw; which keys share a point is said at each [`Elem`] implementation.
 //!
 //! Every walk keeps a stack of its own, and a set is dropped by a recursion of at most
-//! [`DEEPEST`] levels that goes on in a loop past them, so the stack needed does not depend on a
+//! `DEEPEST` levels that goes on in a loop past them, so the stack needed does not depend on a
 //! set's height.
 
 use std::cmp::Ordering;
