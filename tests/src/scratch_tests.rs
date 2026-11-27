@@ -18,7 +18,9 @@ fn a_child_process_reports_its_scratch_directory() {
         return;
     };
     let dir = process_tmpdir();
-    println!("scratch {}", dir.display());
+    // On a line of its own: libtest run on one thread has printed `test <name> ... ` without
+    // a newline before this ([`child`]).
+    println!("\nscratch {}", dir.display());
     std::fs::write(dir.join(file), "left by a child process").unwrap();
 }
 
@@ -30,6 +32,10 @@ fn child(file: &str) -> PathBuf {
             "--exact",
             "scratch_tests::a_child_process_reports_its_scratch_directory",
             "--nocapture",
+            // One thread, as a child pinned to one processor runs (a local job's line given
+            // one core): libtest then prints `test <name> ... ` before the test's own output,
+            // on the same line.
+            "--test-threads=1",
         ])
         .env(CHILD, file)
         .output()
