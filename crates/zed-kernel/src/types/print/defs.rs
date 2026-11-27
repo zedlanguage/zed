@@ -95,6 +95,24 @@ pub const UNION_END: char = '\u{FDDC}';
 pub const VAR: char = '\u{FDDD}';
 /// Separates the members of a union of [`UNION`].
 pub const NEXT: char = '\u{FDDE}';
+/// Separates, in a mark of [`VAR`], the variable's key from the name a declaration wrote for
+/// it: `b3:T` is a variable printed `T` unless another variable of its type took `T` first
+/// ([`name_vars`]). No key holds it: a key is a number, or `b` and a number (zedc-types
+/// `Scope::mark`).
+pub const WRITTEN: char = ':';
+
+/// The names declarations wrote for the variables marked in `text` up to the next [`VARS`] or
+/// [`VARS_END`], the marks after [`WRITTEN`], put in `into`: the names the other variables of
+/// that type skip ([`name_vars`]). Linear in the part read.
+fn written_in<'t>(text: &'t str, into: &mut HashSet<&'t str>) {
+    let end = text.find([VARS, VARS_END]).unwrap_or(text.len());
+    for mark in text[..end].split(VAR).skip(1) {
+        let key = mark.split([NEXT, UNION_END]).next().unwrap_or_default();
+        if let Some((_, w)) = key.split_once(WRITTEN) {
+            into.insert(w);
+        }
+    }
+}
 
 /// Opens a tuple a printed type holds in two places or more and writes in full at its first
 /// place only (zedc-types `Shared::local`, row PRINT-shared-part-exponential): the tuple's
@@ -202,11 +220,24 @@ fn take_locals(text: &mut String) {
 /// Names the variables marked in `out` from `from` on ([`VARS`]): in each marked type, each the
 /// next of `T`, `U`, `V`, `W`, `T5`, … that the program does not bind and `taken` does not hold
 /// ([`fresh_name`]), in the order the variables are first met reading the type, and writes each
-/// union's members by name ([`super::order::name_cmp`]). A printer names its text at once outside a
-/// message; inside one, [`lift`] names them, and `taken` is every word of the message.
+/// union's members by name ([`super::order::name_cmp`]). A variable a declaration wrote a name
+/// for ([`WRITTEN`]) keeps that name, unless a variable met before it in its type kept it,
+/// and no other variable of the type is given it (DESIGN.md sec:diagnostics, "Types in a
+/// message": "A type variable that a declaration writes prints by the name it wrote, bounded or
+/// not"). Bounded and unbounded variables are named alike, so the names follow their first
+/// places whatever bounds them (plan row UNDERSCORE-print-followups). A printer names its text at
+/// once outside a message; inside one, [`lift`] names them, and `taken` is every word of the
+/// message.
+///
+/// Why two variables of one type never get one name, step by step. (1) A fresh name is never a
+/// name given before in the type: `n` only grows, so [`fresh_name`] gives each name once, and it
+/// skips the written names of the type (`written`) and the names given so far (`used`). (2) A
+/// written name is given only when no variable before took it (`used`). (3) The key of a mark
+/// is one variable's, and `named` gives every place of the key the name it got first.
 ///
 /// Complexity tradeoff: linear in the text, with a hash lookup per mark, plus a sort of each
-/// union's k members, O(k log k). Naming each variable
+/// union's k members, O(k log k); each type is read twice, once for its written names
+/// ([`written_in`]). Naming each variable
 /// where it is first written, and looking back over the text for a name in use, would be
 /// quadratic in a type with many variables (COMPLEXITY.md F169).
 pub fn name_vars(out: &mut String, from: usize, taken: &dyn Fn(&str) -> bool) {
@@ -215,9 +246,12 @@ pub fn name_vars(out: &mut String, from: usize, taken: &dyn Fn(&str) -> bool) {
     }
     let text = out.split_off(from);
     let mut named: HashMap<&str, String> = HashMap::new();
+    let mut written: HashSet<&str> = HashSet::new();
+    let mut used: HashSet<String> = HashSet::new();
     let mut n = 0;
     let mut members: Vec<String> = Vec::new();
     let mut rest = text.as_str();
+    written_in(rest, &mut written);
     while let Some(i) = rest.find([VARS, VARS_END, UNION]) {
         out.push_str(&rest[..i]);
         let c = rest[i..].chars().next().expect("a mark was found");
@@ -225,6 +259,9 @@ pub fn name_vars(out: &mut String, from: usize, taken: &dyn Fn(&str) -> bool) {
         rest = match c {
             VARS | VARS_END => {
                 named.clear();
+                written.clear();
+                used.clear();
+                written_in(tail, &mut written);
                 n = 0;
                 tail
             }
@@ -233,10 +270,21 @@ pub fn name_vars(out: &mut String, from: usize, taken: &dyn Fn(&str) -> bool) {
                 members.clear();
                 for m in tail[..end].split(NEXT) {
                     members.push(match m.strip_prefix(VAR) {
-                        Some(k) => named
-                            .entry(k)
-                            .or_insert_with(|| fresh_name(Names::Variables, &mut n, taken))
-                            .clone(),
+                        Some(k) => match named.get(k) {
+                            Some(name) => name.clone(),
+                            None => {
+                                let wrote = k.split_once(WRITTEN).map(|(_, w)| w);
+                                let name = match wrote {
+                                    Some(w) if !used.contains(w) => w.to_string(),
+                                    _ => fresh_name(Names::Variables, &mut n, |c: &str| {
+                                        taken(c) || written.contains(c) || used.contains(c)
+                                    }),
+                                };
+                                used.insert(name.clone());
+                                named.insert(k, name.clone());
+                                name
+                            }
+                        },
                         None => m.to_string(),
                     });
                 }
@@ -266,7 +314,9 @@ pub fn name_vars(out: &mut String, from: usize, taken: &dyn Fn(&str) -> bool) {
     out.push_str(rest);
 }
 
-/// Names the variables marked in `texts` ([`name_vars`]), skipping every word they write.
+/// Names the variables marked in `texts` ([`name_vars`]), skipping every word they write. The
+/// words hold the names declarations wrote for marked variables ([`WRITTEN`]), so a variable
+/// of no written name skips them in every text, as it skips a name written out.
 fn name_all_vars(texts: &mut [&mut String], taken: &dyn Fn(&str) -> bool) {
     if !texts.iter().any(|t| t.contains(VARS)) {
         return;
