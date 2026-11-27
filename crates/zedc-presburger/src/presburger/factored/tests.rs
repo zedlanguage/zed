@@ -613,9 +613,10 @@ fn tiny_cone(rng: &mut Rng) -> (Tiny, Vec<Lists>) {
 /// found not implied. (The prototype's control compared verdicts only and saw 1 or 2
 /// differences in 4000 cases; the implication check caught 214 of the 530 cases where the
 /// mutant fired on shape 0, 146 of 478 on shape 1 and 225 of 525 on shape 2, VM run of
-/// 2026-11-24.)
-#[test]
-fn the_cone_rule_keeps_the_verdict_on_lists_shared_by_products() {
+/// 2026-11-24.) Each shape is a test of its own below, each a piece of tools/run_tests.sh, since
+/// the three in one test took 20.1 s alone at load 12.9 against a limit of 20 s
+/// (TESTS-split-two-presburger-tests-near-20s, 2026-11-27); each shape keeps its fixed seed.
+fn cone_rule_keeps_the_verdict(shape: usize) {
     // Whether each pair step 0 drops is implied by the factor rows and the products of the
     // pairs step 0 keeps (`step0`: the pairs of the reduced lists, whose class representative
     // may lie outside the product's list; the later steps drop some of them, so `left` alone
@@ -641,95 +642,112 @@ fn the_cone_rule_keeps_the_verdict_on_lists_shared_by_products() {
         }
         Some(true)
     };
-    for shape in 0..3usize {
-        let mut rng = Rng::new(0x0c0e_1000_0000_0000 + shape as u64);
-        let (mut fired, mut differ, mut replay_bad, mut not_implied, mut skip) = (0, 0, 0, 0, 0);
-        let mut skip_implied = 0;
-        let (mut ctrl_fired, mut ctrl_caught) = (0, 0);
-        let n = 2000;
-        for _ in 0..n {
-            let (t, mut bic) = tiny_cone(&mut rng);
-            let nr = t.rows.len();
-            let cone: Vec<usize> = (nr - 3..nr).collect();
-            let other: Vec<usize> = (0..nr - 3).filter(|_| rng.coin()).collect();
-            let b2 = if other.is_empty() { vec![0] } else { other };
-            let second = match shape {
-                0 => (bic[0].0.clone(), b2),
-                1 => {
-                    let gone = cone[rng.below(3)];
-                    (
-                        bic[0].0.iter().copied().filter(|&r| r != gone).collect(),
-                        b2,
-                    )
-                }
-                _ => (b2, bic[0].0.clone()),
-            };
-            bic.push(second);
-            let p = prob(&t.rows, &t.consts, &bic, &t.ment, t.nv);
-            let log = Opts {
-                log: true,
-                ..Opts::default()
-            };
-            let on = solve(&p, log);
-            let off = solve(
-                &p,
-                Opts {
-                    no_cone: true,
-                    ..log
-                },
-            );
-            let bad = solve(
-                &p,
-                Opts {
-                    cone_bad: true,
-                    ..log
-                },
-            );
-            let f = on.dominated.len() != off.dominated.len();
-            fired += usize::from(f);
-            replay_bad += usize::from(!replay_ok(&p, &on));
-            let cf = bad.dominated != on.dominated;
-            ctrl_fired += usize::from(cf);
-            match implied_all(&p, &on, true) {
-                Some(i) => not_implied += usize::from(!i),
-                None => skip_implied += 1,
+    let mut rng = Rng::new(0x0c0e_1000_0000_0000 + shape as u64);
+    let (mut fired, mut differ, mut replay_bad, mut not_implied, mut skip) = (0, 0, 0, 0, 0);
+    let mut skip_implied = 0;
+    let (mut ctrl_fired, mut ctrl_caught) = (0, 0);
+    let n = 2000;
+    for _ in 0..n {
+        let (t, mut bic) = tiny_cone(&mut rng);
+        let nr = t.rows.len();
+        let cone: Vec<usize> = (nr - 3..nr).collect();
+        let other: Vec<usize> = (0..nr - 3).filter(|_| rng.coin()).collect();
+        let b2 = if other.is_empty() { vec![0] } else { other };
+        let second = match shape {
+            0 => (bic[0].0.clone(), b2),
+            1 => {
+                let gone = cone[rng.below(3)];
+                (
+                    bic[0].0.iter().copied().filter(|&r| r != gone).collect(),
+                    b2,
+                )
             }
-            if cf {
-                ctrl_caught += usize::from(implied_all(&p, &bad, false) == Some(false));
-            }
-            match (
-                feasible(&p, &t.base, &all_pairs(&p), None),
-                feasible(&p, &t.base, &on.left, None),
-            ) {
-                (Some(x), Some(y)) => differ += usize::from(x != y),
-                _ => skip += 1,
-            }
+            _ => (b2, bic[0].0.clone()),
+        };
+        bic.push(second);
+        let p = prob(&t.rows, &t.consts, &bic, &t.ment, t.nv);
+        let log = Opts {
+            log: true,
+            ..Opts::default()
+        };
+        let on = solve(&p, log);
+        let off = solve(
+            &p,
+            Opts {
+                no_cone: true,
+                ..log
+            },
+        );
+        let bad = solve(
+            &p,
+            Opts {
+                cone_bad: true,
+                ..log
+            },
+        );
+        let f = on.dominated.len() != off.dominated.len();
+        fired += usize::from(f);
+        replay_bad += usize::from(!replay_ok(&p, &on));
+        let cf = bad.dominated != on.dominated;
+        ctrl_fired += usize::from(cf);
+        match implied_all(&p, &on, true) {
+            Some(i) => not_implied += usize::from(!i),
+            None => skip_implied += 1,
         }
-        println!(
-            "cone1 shape={shape}: n={n} rule_fired={fired} verdict_differs={differ} \
-             replay_failures={replay_bad} not_implied={not_implied} skipped_verdict={skip} \
-             skipped_implied={skip_implied} | control cone_bad: fired={ctrl_fired} \
-             caught_not_implied={ctrl_caught}"
-        );
-        assert_eq!(
-            (differ, replay_bad, not_implied),
-            (0, 0, 0),
-            "shape {shape}"
-        );
-        // At most a fifth of the cases refused by the oracle (measured 2026-11-24: 271 of 2000
-        // on shape 0, before the implication check was counted apart).
-        assert!(
-            skip * 5 <= n && skip_implied * 5 <= n,
-            "shape {shape}: the oracle refused {skip} verdicts and {skip_implied} implications of {n}"
-        );
-        assert!(fired > 0, "shape {shape}: the cone rule never fired");
-        // The prototype's verdict control saw 1 or 2 differences in 4000 cases; the implication
-        // check must catch at least a tenth of the cases where the mutant drops other pairs.
-        assert!(
-            ctrl_fired > 0 && ctrl_caught * 10 >= ctrl_fired,
-            "shape {shape}: the control cone_bad was caught in {ctrl_caught} of {ctrl_fired} cases"
-        );
+        if cf {
+            ctrl_caught += usize::from(implied_all(&p, &bad, false) == Some(false));
+        }
+        match (
+            feasible(&p, &t.base, &all_pairs(&p), None),
+            feasible(&p, &t.base, &on.left, None),
+        ) {
+            (Some(x), Some(y)) => differ += usize::from(x != y),
+            _ => skip += 1,
+        }
     }
+    println!(
+        "cone1 shape={shape}: n={n} rule_fired={fired} verdict_differs={differ} \
+         replay_failures={replay_bad} not_implied={not_implied} skipped_verdict={skip} \
+         skipped_implied={skip_implied} | control cone_bad: fired={ctrl_fired} \
+         caught_not_implied={ctrl_caught}"
+    );
+    assert_eq!(
+        (differ, replay_bad, not_implied),
+        (0, 0, 0),
+        "shape {shape}"
+    );
+    // At most a fifth of the cases refused by the oracle (measured 2026-11-24: 271 of 2000
+    // on shape 0, before the implication check was counted apart).
+    assert!(
+        skip * 5 <= n && skip_implied * 5 <= n,
+        "shape {shape}: the oracle refused {skip} verdicts and {skip_implied} implications of {n}"
+    );
+    assert!(fired > 0, "shape {shape}: the cone rule never fired");
+    // The prototype's verdict control saw 1 or 2 differences in 4000 cases; the implication
+    // check must catch at least a tenth of the cases where the mutant drops other pairs.
+    assert!(
+        ctrl_fired > 0 && ctrl_caught * 10 >= ctrl_fired,
+        "shape {shape}: the control cone_bad was caught in {ctrl_caught} of {ctrl_fired} cases"
+    );
+}
+
+/// Shape 0 of [`cone_rule_keeps_the_verdict`]: the second product has the same list on side A.
+#[test]
+fn the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_0() {
+    cone_rule_keeps_the_verdict(0);
+}
+
+/// Shape 1 of [`cone_rule_keeps_the_verdict`]: the second product has that list less one plane
+/// row.
+#[test]
+fn the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_1() {
+    cone_rule_keeps_the_verdict(1);
+}
+
+/// Shape 2 of [`cone_rule_keeps_the_verdict`]: the second product has that list on side B.
+#[test]
+fn the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_2() {
+    cone_rule_keeps_the_verdict(2);
 }
 
 /// Boolean matrix multiplication as one run of the solver (design sec. 5.3, the prototype's

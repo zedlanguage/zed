@@ -12428,7 +12428,7 @@ fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
 /// refuted) or answers differently on a stronger `q`, and the disjuncts kept untested as
 /// `Immune`. Neither (M1) nor (M2) is proved here.
 ///
-/// A fifth source, found by `probe_order::probe_leaves_the_same_parts_in_every_order` and fixed
+/// A fifth source, found by `probe_order::probe_leaves_the_same_parts` (now four tests) and fixed
 /// (2026-11-21): [`drop_by_bounds`] and [`bounds_refute`] read the parts four and two times in
 /// an order made from the order they were written in, and those readings stop short of the
 /// bounds' fixed point, so a disjunct without a point that `settle` does not refute was removed
@@ -35168,13 +35168,16 @@ mod probe_order {
     /// cases a seed, seeds 1 to 8), the answers of a seed kept 150 to 250 disjuncts without a
     /// point ([`has_point`] of the parts with each), so the test reaches the answers where an
     /// order could matter; 27 of 3669 differed on seed 1 before [`read_order`] read the parts
-    /// in the order of their content, none on any seed after.
-    #[test]
-    fn probe_leaves_the_same_parts_in_every_order() {
-        let (mut rng, seed) = Rng::fresh("probe_leaves_the_same_parts_in_every_order");
+    /// in the order of their content, none on any seed after. 375 cases of the 1500 the check
+    /// draws in all; the parts below are tests apart, each a piece of tools/run_tests.sh, since
+    /// the 1500 in one test took 20.0 s alone at load 11.8 against a limit of 20 s
+    /// (TESTS-split-two-presburger-tests-near-20s, 2026-11-27). Each part draws its own seed,
+    /// named after it.
+    fn probe_leaves_the_same_parts(part: &str) {
+        let (mut rng, seed) = Rng::fresh(part);
         let mut diffs = Vec::new();
         let mut asked = 0;
-        for case in 0..1500 {
+        for case in 0..375 {
             let f = match case % 3 {
                 0 => rows(&mut rng),
                 1 => slack(&mut rng),
@@ -35220,6 +35223,30 @@ mod probe_order {
             diffs.len(),
             diffs.join("\n")
         );
+    }
+
+    /// The first 375 cases of [`probe_leaves_the_same_parts`].
+    #[test]
+    fn probe_leaves_the_same_parts_in_every_order_part_1() {
+        probe_leaves_the_same_parts("probe_leaves_the_same_parts_in_every_order_part_1");
+    }
+
+    /// The second 375 cases of [`probe_leaves_the_same_parts`].
+    #[test]
+    fn probe_leaves_the_same_parts_in_every_order_part_2() {
+        probe_leaves_the_same_parts("probe_leaves_the_same_parts_in_every_order_part_2");
+    }
+
+    /// The third 375 cases of [`probe_leaves_the_same_parts`].
+    #[test]
+    fn probe_leaves_the_same_parts_in_every_order_part_3() {
+        probe_leaves_the_same_parts("probe_leaves_the_same_parts_in_every_order_part_3");
+    }
+
+    /// The fourth 375 cases of [`probe_leaves_the_same_parts`].
+    #[test]
+    fn probe_leaves_the_same_parts_in_every_order_part_4() {
+        probe_leaves_the_same_parts("probe_leaves_the_same_parts_in_every_order_part_4");
     }
 
     /// The parts [`probe`] leaves in the written order, reversed and shuffled are the same parts

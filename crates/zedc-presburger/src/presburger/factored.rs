@@ -2118,8 +2118,8 @@ fn free_atoms(p: &Prob, a: usize, b: usize) -> BTreeMap<(usize, usize), Int> {
 /// ⊗ b) + λ_2 (e_2 ⊗ b), and its pairs are dropped. Other groups are left as they are. Cross
 /// products are exact [`Int`] products (the prototype's i128 could overflow on wide
 /// coefficients). O(r log r) a group of r rows, for the sort. Tests:
-/// `tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products` (with the mutant
-/// `cone_bad` as control).
+/// `tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_0` to `_shape_2`
+/// (with the mutant `cone_bad` as control).
 fn cone(v: Vec<usize>, p: &Prob, bad: bool, work: &mut u64) -> Vec<usize> {
     type Dir<'a> = (&'a Int, &'a Int, usize);
     let mut planes: BTreeMap<(usize, usize), Vec<Dir>> = BTreeMap::new();

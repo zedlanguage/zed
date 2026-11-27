@@ -1274,6 +1274,17 @@ split="
 # and the others (16.6 s, slowest 1.1 s). In the listing no name holds types:: or
 # types::empty:: other than at its start, and no other name holds every_f16_product_pair
 # (TEST-bdd-bench-split).
+# zedc_presburger's other piece took 18.76 s alone and 30.04 s under load against its limit of
+# 20 s (dry-coll's merge check, 2026-11-27). Each of its 567 tests alone (tools/time_tests.sh,
+# 4 jobs, load 10.8 to 16.0, b30-pres4, 2026-11-27): 215.4 s together, the slowest 7.9 s. The rest
+# is four pieces by module (zedc_*-* below): presburger::exact:: (139 tests, 75.2 s
+# together, slowest 6.5 s), presburger::modular:: (115, 36.4 s, slowest 5.8 s),
+# presburger::extend:: (103, 25.7 s, slowest 2.8 s) and the others (210, 78.1 s, slowest 7.9 s).
+# In the listing no name holds one of the three other than at its start
+# (TESTS-split-zedc-presburger-lib-piece). In the same timing two pieces of this list came near
+# the limit alone: the test of probes in every order, 20.0 s at load 11.8, is now four tests of
+# 375 cases, and the test of the cone rule, 20.1 s at load 12.9, three, one a shape
+# (TESTS-split-two-presburger-tests-near-20s).
 alone="
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_1
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_2
@@ -1312,7 +1323,10 @@ alone="
   zedc_presburger::presburger::row_sums::tests::the_route_and_the_join_agree_on_wide_ranges_with_several_defined_atoms
   zedc_presburger::presburger::exact::tests::read_once_formulas_project_to_the_values_of_their_points
   zedc_presburger::presburger::exact::tests::every_writing_of_a_formula_gets_one_answer
-  zedc_presburger::presburger::probe_order::probe_leaves_the_same_parts_in_every_order
+  zedc_presburger::presburger::probe_order::probe_leaves_the_same_parts_in_every_order_part_1
+  zedc_presburger::presburger::probe_order::probe_leaves_the_same_parts_in_every_order_part_2
+  zedc_presburger::presburger::probe_order::probe_leaves_the_same_parts_in_every_order_part_3
+  zedc_presburger::presburger::probe_order::probe_leaves_the_same_parts_in_every_order_part_4
   zedc_check::check::r10_tests::landing5_chain_decode_grid
   zedc_check::check::r10_tests::landing6_battery::landing6_battery_held
   zedc_check::check::r10_tests::landing6_battery::landing6_battery_held_holding
@@ -1374,7 +1388,9 @@ alone="
   zedc_presburger::presburger::factored::tests::the_pairs_left_keep_the_verdict_on_random_tiny_instances
   zedc_presburger::presburger::factored::tests::the_pairs_left_keep_the_verdict_when_two_rows_conflict_on_a_variable
   zedc_presburger::presburger::factored::tests::the_pairs_left_keep_the_verdict_when_conflicting_rows_share_variables
-  zedc_presburger::presburger::factored::tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products
+  zedc_presburger::presburger::factored::tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_0
+  zedc_presburger::presburger::factored::tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_1
+  zedc_presburger::presburger::factored::tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_2
   zedc_presburger::presburger::factored::tests::the_residual_of_the_bmm_reduction_is_the_zeros_of_a_f
   zedc_presburger::presburger::factored::tests::the_worklist_of_wlgrow_g_scales
   zedc_presburger::presburger::factored::tests::the_pass1_and_worklist_of_wlgrow_scale
@@ -1496,7 +1512,16 @@ step_pieces() {
             echo "$t $c $p --exact ${t#*::}"
             skips="$skips --skip ${t#*::}"
           done
-          echo "$n $c $p$skips"
+          # zedc_presburger's rest in four pieces by module (see alone): exact::, modular::,
+          # extend:: and the others. Each filter matches only names that start with it.
+          rest=
+          if [ "$g" = zedc_presburger ]; then
+            for m in exact modular extend; do
+              echo "$n::presburger::$m $c $p presburger::$m::$skips"
+              rest="$rest --skip presburger::$m::"
+            done
+          fi
+          echo "$n $c $p$skips$rest"
           ;;
         zed_kernel-*)
           skips=
