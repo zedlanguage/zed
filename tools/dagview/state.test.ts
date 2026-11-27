@@ -523,6 +523,20 @@ test("a ledger line without an id is reported, not fatal", () => {
   assert.deepEqual(g.problems, ['LEDGER LINE WITH NO ID: {"item":"A","state":"ready","time":"2026-11-02T10:00:00Z"}']);
 });
 
+test("a ledger line with no id is read from its row field, which may name several ids split on commas and spaces (DECIDE-ledger-row-field-as-id)", () => {
+  const g = buildGraph(inputs("",
+    '{"row":"A","state":"blocked"}\n' +
+      '{"row":"B LR2, C","state":"waiting"}\n' +
+      // A line with an id is read from its id alone: its row does not move LR2.
+      '{"id":"C","row":"LR2","state":"blocked"}\n' +
+      '{"row":" ","state":"blocked"}\n' +
+      '{"row":"NEW-item","state":"blocked","title":"An item only the ledger names"}\n',
+  ));
+  const nodes = by(g.nodes);
+  assert.deepEqual(["A", "B", "LR2", "C", "NEW-item"].map((id) => nodes.get(id)?.state), ["blocked", "waiting", "waiting", "blocked", "blocked"]);
+  assert.deepEqual(g.problems, ['LEDGER LINE WITH NO ID: {"row":" ","state":"blocked"}']);
+});
+
 test("with a fixture QUESTIONS.md, every plan row an open question holds is blocked, a sub-step id (L10.3b) holds its row, and a row held only by an answered question or by nothing is not", () => {
   const rows = `# Plan
 ## Items by level
