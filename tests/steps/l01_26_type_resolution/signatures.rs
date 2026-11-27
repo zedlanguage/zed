@@ -94,7 +94,7 @@ fn a_parameter_any_value_fits_gets_a_type_variable() {
 #[test]
 fn a_type_variable_used_as_a_tuple_gives_a_variable_each_call_binds() {
     let s = sig_of("first(p) = p[0];\n", "first");
-    assert_eq!(s.to_string(), "(p: _) -> _");
+    assert_eq!(s.to_string(), "(p: 0 -> T) -> T");
     // The result is a second variable, which the need of `p[0]` gives at each call.
     let (p, r) = (&s.arrows[0].params[0].vars, &s.arrows[0].result.vars);
     assert_eq!((p.len(), r.len()), (1, 1));

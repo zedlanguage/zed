@@ -655,7 +655,22 @@ const NEAR_MISSES: &[NearMiss] = &[
         "1:18",
         Some("write the arm out once for each alternative: `#ok(x) -> 0, #err(y) -> 0`"),
     ),
+    (
+        Row::NotProvedToEnd,
+        "",
+        "y = (0 ..).all(x -> x < 3);\n",
+        "y = (0 ..).all(x -> x >= 0);\n",
+        "1:5",
+        Some(
+            "give the range an upper end, as `0 ..< n` for an `n` that bounds the search, or \
+             leave it, since a program may be meant never to end",
+        ),
+    ),
 ];
+
+/// Rows a build without `--total` gives as warnings only (DESIGN.md sec:diagnostics, row "Not
+/// proved to end"): the near miss compiles, and its diagnostic is among the warnings.
+const WARNED: &[Row] = &[Row::NotProvedToEnd];
 
 /// A near miss of a row that only a package raises: its row, the package's other files, the
 /// accepted and the rejected text of its unit `main` (one edit apart), the place of the row's
@@ -795,13 +810,23 @@ fn each_near_miss_gives_its_row_place_and_first_repair() {
                 "{}: the accepted program is accepted now: remove the row from LATER",
                 row.name()
             )),
+            (Ok((_, _, ws)), false) if ws.iter().any(|w| w.row == Some(row)) => failed.push(
+                format!("{}: the accepted program is warned at: {ws:?}", row.name()),
+            ),
             (Ok(_), false) => {}
         }
         let text = format!("{head}{rejected}");
         let front = Db::new().front(&text);
-        let Err(ds) = &*front else {
-            failed.push(format!("{}: the near miss is accepted", row.name()));
-            continue;
+        let ds = match (&*front, WARNED.contains(&row)) {
+            (Err(ds), false) | (Ok((_, _, ds)), true) => ds,
+            (Ok(_), false) => {
+                failed.push(format!("{}: the near miss is accepted", row.name()));
+                continue;
+            }
+            (Err(ds), true) => {
+                failed.push(format!("{}: the near miss is rejected: {ds:?}", row.name()));
+                continue;
+            }
         };
         let Some(d) = ds.iter().find(|d| d.row == Some(row)) else {
             failed.push(format!("{}: no diagnostic in the row: {ds:?}", row.name()));

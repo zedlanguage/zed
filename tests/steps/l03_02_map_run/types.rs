@@ -758,10 +758,11 @@ fn not_proved_to_end(body: &str) -> Vec<String> {
 
 #[test]
 fn stopping_reads_of_an_open_range_are_proved_to_end_or_warned() {
-    // RANGE-open-ending-warn (DESIGN.md sec:ranges): `.first`, `.any`, `.find` and `.all` of
-    // `a ..` walk it in key order until an entry decides them. The checker proves, by the
-    // integer solver over the entry and the names the test reads, that some entry decides
-    // the read for every value of those names, and else warns. The spec's two examples end.
+    // RANGE-open-ending-warn (DESIGN.md sec:grammar, rule Range): `.first`, `.any`, `.find`
+    // and `.all` of `a ..` walk it in key order until an entry decides them. The checker
+    // proves, by the integer solver over the entry and the names the test reads, that some
+    // entry decides the read for every value of those names, and else warns. The spec's two
+    // examples end.
     let mut wrong = Vec::new();
     for body in [
         "${(0 ..).any(x -> x > 3)}",

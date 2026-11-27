@@ -707,7 +707,7 @@ fn a_component_read_beside_a_handled_read_adds_no_atom_from_outside() {
     let k = "k(positional a) = (a[0] else #outOfBounds -> 0) + a[1];\n";
     let f = "f(positional a, positional x) = ((a[0] else #outOfBounds -> 0), a[1] + 1);\n";
     assert_eq!(type_errors(k), Vec::<String>::new(), "{k}");
-    assert_eq!(sig(k, "k"), "_ -> int");
+    assert_eq!(sig(k, "k"), "((0 -> _) & (1 -> int)) -> int");
     assert_eq!(type_errors(f), Vec::<String>::new(), "{f}");
     let printed = sig(f, "f");
     assert!(!printed.contains("#_"), "{printed}");

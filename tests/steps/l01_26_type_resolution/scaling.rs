@@ -157,7 +157,7 @@ fn nested_lambdas_name_their_variables_as_before() {
         ),
         (
             "g(positional f) = (x) -> (y) -> f(x, y) + x;\n",
-            "_ -> U -> _ -> U for U in int | f32 | f64 | rat",
+            "((U, T) -> U) -> U -> T -> U for U in int | f32 | f64 | rat",
         ),
         (
             "g(positional a, positional b) = ((c) -> (d) -> (c, d), a + b);\n",
@@ -167,11 +167,11 @@ fn nested_lambdas_name_their_variables_as_before() {
         // inside the lambdas, and are named in the order they appear there.
         (
             "g(positional f, positional h) = (x) -> (y) -> (h(y, x), f(x), y);\n",
-            "(_, _) -> _ -> T -> (_, _, T)",
+            "(T -> U, (V, T) -> W) -> T -> V -> (W, U, V)",
         ),
         (
             "g(positional f) = ((x) -> f(x), (y) -> (f(y), y));\n",
-            "_ -> (_ -> _, T -> (_, T))",
+            "((T -> U) & (V -> W)) -> (T -> U, V -> (W, V))",
         ),
     ] {
         assert_eq!(sig(text, "g"), want, "{text}");
@@ -672,7 +672,7 @@ fn needs_replayed_through_a_fan_of_calls_are_met_once() {
     // A small instance of the benchmark
     // `bench::scaling::needs_replayed_through_a_fan_of_calls_scale`.
     let s = sig_of(&fan(3), "g2");
-    assert_eq!(s.to_string(), "_ -> U for U in int | f32 | f64 | rat");
+    assert_eq!(s.to_string(), "(0 -> U) -> U for U in int | f32 | f64 | rat");
     assert_eq!(s.needs.len(), 1, "one need, met once for both calls");
 }
 
