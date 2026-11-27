@@ -206,7 +206,9 @@ thread_local! {
 // of 2n distinct sets" 512,569,625 / 5,105,550,554 against 502,109,511 / 5,021,870,381 (2.0%
 // fewer), every other bench of that run within 1.3%. A drop with no vector at all, recursing on
 // both children, measured the same (39,825,269 / 318,781,956) but needs a stack as deep as the
-// set.
+// set. Again locally, against 0eea6508d (2026-11-27, 1 core of 32): {i, -i} 51,339,637 /
+// 410,548,698 against 43,501,211 / 347,801,515 (15.3% fewer), distinct sets 1.5% / 1.2% fewer,
+// every other bench of that run within 0.33%.
 
 /// The levels of calls [`free`] makes before it hands a subtree to [`free_in_a_loop`].
 ///
