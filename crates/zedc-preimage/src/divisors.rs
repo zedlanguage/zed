@@ -105,6 +105,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use zed_collections::priority::Priorities;
+use zed_collections::treap::DEEP;
 use zedc_presburger::presburger::Lin;
 
 /// The priorities of the divisors, drawn once per run ([`zed_collections::priority`]): the run's
@@ -136,6 +137,20 @@ struct Node {
     /// [`Lin::aux_end`] of the divisors of the set: the largest of its divisor's and its two
     /// subtrees', made with the node, so O(1) (`Sets::aux_end`).
     aux_end: u32,
+}
+
+/// A step of [`Sets::union`].
+enum UnionStep {
+    /// The union, known at once: one set empty, the sets equal, or the pair met before.
+    Known(Set),
+    /// The union of `pair` is the divisor `key` over the unions of the pairs `left` and
+    /// `right`: the root of higher priority's children, each with its side of the other set.
+    Split {
+        key: u32,
+        pair: (Set, Set),
+        left: (Set, Set),
+        right: (Set, Set),
+    },
 }
 
 /// The divisors met and the nodes made, each once, and the unions made.
@@ -259,44 +274,92 @@ impl Sets {
         false
     }
 
-    /// The divisors of `s` before the divisor `k`, whether `s` holds it, and those after it.
-    fn split(&mut self, s: Set, k: u32) -> (Set, bool, Set) {
-        if s == EMPTY {
-            return (EMPTY, false, EMPTY);
-        }
-        #[cfg(test)]
-        {
-            self.split_steps += 1;
-        }
-        let Node {
-            key, left, right, ..
-        } = *self.node(s);
-        match self.divisor(k).cmp(self.divisor(key)) {
-            Ordering::Equal => (left, true, right),
-            Ordering::Less => {
-                let (l, found, r) = self.split(left, k);
-                (l, found, self.make(key, r, right))
+    /// The divisors of `s` before the divisor `k`, whether `s` holds it, and those after it:
+    /// one walk down the search path of `k`, kept on a vector, then the two sides made from the
+    /// bottom up, in the order a recursion makes them. A loop, so its depth is not the stack's:
+    /// the priorities of a run are random but known to a run that sets `ZED_TREAP_SEED`, and
+    /// divisors chosen against them make a path (FAIL-treap-inplace-recursion-depth). Test:
+    /// `deep_sets_take_no_deep_recursion`.
+    fn split(&mut self, mut s: Set, k: u32) -> (Set, bool, Set) {
+        // The nodes passed, as their divisor and the child off the path, and whether `k` is
+        // before each.
+        let mut path: Vec<(u32, Set, bool)> = Vec::new();
+        let (mut l, mut found, mut r) = (EMPTY, false, EMPTY);
+        while s != EMPTY {
+            #[cfg(test)]
+            {
+                self.split_steps += 1;
             }
-            Ordering::Greater => {
-                let (l, found, r) = self.split(right, k);
-                (self.make(key, left, l), found, r)
+            let Node {
+                key, left, right, ..
+            } = *self.node(s);
+            match self.divisor(k).cmp(self.divisor(key)) {
+                Ordering::Equal => {
+                    (l, found, r) = (left, true, right);
+                    break;
+                }
+                Ordering::Less => {
+                    s = left;
+                    path.push((key, right, true));
+                }
+                Ordering::Greater => {
+                    s = right;
+                    path.push((key, left, false));
+                }
+            }
+        }
+        for (key, off, before) in path.into_iter().rev() {
+            if before {
+                r = self.make(key, r, off);
+            } else {
+                l = self.make(key, off, l);
+            }
+        }
+        (l, found, r)
+    }
+
+    /// The divisors of `a` and of `b`. The root of higher priority is the union's root; the
+    /// other set is split by it and each side joined with its side, each pair once. A
+    /// recursion as deep as the treaps, `O(log n)` expected, to [`DEEP`] calls, past which
+    /// [`Sets::union_loop`] goes on with the pairs it has reached (the comment at `DEEP`).
+    pub(crate) fn union(&mut self, a: Set, b: Set) -> Set {
+        self.union_at(a, b, 0)
+    }
+
+    /// [`Sets::union`], `depth` calls below the first.
+    fn union_at(&mut self, a: Set, b: Set, depth: usize) -> Set {
+        if depth >= DEEP {
+            return self.union_loop(a, b);
+        }
+        match self.union_step(a, b) {
+            UnionStep::Known(u) => u,
+            UnionStep::Split {
+                key,
+                pair,
+                left,
+                right,
+            } => {
+                let (l, r) = (
+                    self.union_at(left.0, left.1, depth + 1),
+                    self.union_at(right.0, right.1, depth + 1),
+                );
+                self.union_made(key, pair, l, r)
             }
         }
     }
 
-    /// The divisors of `a` and of `b`. The root of higher priority is the union's root; the
-    /// other set is split by it and each side joined with its side, each pair once. Recursion
-    /// as deep as the treaps, O(log n) expected.
-    pub(crate) fn union(&mut self, a: Set, b: Set) -> Set {
+    /// One step of [`Sets::union`] of `a` and `b`: the union if it is known at once, else the
+    /// root's split done.
+    fn union_step(&mut self, a: Set, b: Set) -> UnionStep {
         if a == b || b == EMPTY {
-            return a;
+            return UnionStep::Known(a);
         }
         if a == EMPTY {
-            return b;
+            return UnionStep::Known(b);
         }
         let pair = (a.min(b), a.max(b));
         if let Some(&u) = self.unions.get(&pair) {
-            return u;
+            return UnionStep::Known(u);
         }
         let (top, other) = match self.above(self.node(a).key, self.node(b).key) {
             true => (a, b),
@@ -306,21 +369,71 @@ impl Sets {
             key, left, right, ..
         } = *self.node(top);
         let (l, _, r) = self.split(other, key);
-        let (l, r) = (self.union(left, l), self.union(right, r));
+        UnionStep::Split {
+            key,
+            pair,
+            left: (left, l),
+            right: (right, r),
+        }
+    }
+
+    /// The union of the pair `pair`, of root `key` and children `l` and `r`, made and kept.
+    fn union_made(&mut self, key: u32, pair: (Set, Set), l: Set, r: Set) -> Set {
         let u = self.make(key, l, r);
         self.unions.insert(pair, u);
         u
     }
 
-    /// Calls `f` on each divisor of `s`, in their order. Recursion as deep as the treap.
-    pub(crate) fn each(&self, s: Set, f: &mut impl FnMut(&Lin)) {
-        if s == EMPTY {
-            return;
+    /// [`Sets::union`] by a loop: the steps of the recursion kept on a vector, the unions made
+    /// on another, so the same splits, nodes and unions are made in the same order.
+    fn union_loop(&mut self, a: Set, b: Set) -> Set {
+        enum Step {
+            /// The union of a pair, to find.
+            Union(Set, Set),
+            /// The union of `pair` of root `key`, its two children the last two unions found.
+            Made(u32, (Set, Set)),
         }
-        let n = self.node(s);
-        self.each(n.left, f);
-        f(self.divisor(n.key));
-        self.each(n.right, f);
+        let (mut todo, mut done) = (vec![Step::Union(a, b)], Vec::new());
+        while let Some(step) = todo.pop() {
+            match step {
+                Step::Union(a, b) => match self.union_step(a, b) {
+                    UnionStep::Known(u) => done.push(u),
+                    UnionStep::Split {
+                        key,
+                        pair,
+                        left,
+                        right,
+                    } => {
+                        // The left pair is found first, as in the recursion.
+                        todo.push(Step::Made(key, pair));
+                        todo.push(Step::Union(right.0, right.1));
+                        todo.push(Step::Union(left.0, left.1));
+                    }
+                },
+                Step::Made(key, pair) => {
+                    let r = done.pop().expect("the right child's union");
+                    let l = done.pop().expect("the left child's union");
+                    let u = self.union_made(key, pair, l, r);
+                    done.push(u);
+                }
+            }
+        }
+        done.pop().expect("the union")
+    }
+
+    /// Calls `f` on each divisor of `s`, in their order: an in-order walk by a stack.
+    pub(crate) fn each(&self, s: Set, f: &mut impl FnMut(&Lin)) {
+        let (mut stack, mut at) = (Vec::new(), s);
+        loop {
+            while at != EMPTY {
+                stack.push(at);
+                at = self.node(at).left;
+            }
+            let Some(s) = stack.pop() else { return };
+            let n = self.node(s);
+            f(self.divisor(n.key));
+            at = n.right;
+        }
     }
 
     /// The divisors of `s` from `from` up, in order, while `more` holds of them. O(log n) and
@@ -344,6 +457,12 @@ impl Sets {
     /// consecutive divisors from `from` (one variable part, `Lin`'s order is terms first), so
     /// stopping at the first failure loses nothing. Test:
     /// `a_search_finds_the_divisors_of_one_variable_part_from_a_bound`.
+    ///
+    /// The walk is a loop: `stack` holds the nodes `>= from` whose left subtree is being
+    /// walked, nearest last, so it is the recursion's stack of pending nodes, kept on the heap
+    /// (FAIL-treap-inplace-recursion-depth, test `deep_sets_take_no_deep_recursion`). In the
+    /// right subtree of a pushed node every divisor is above it, so `>= from`, as in the
+    /// recursion.
     fn up_from(
         &self,
         s: Set,
@@ -351,22 +470,26 @@ impl Sets {
         more: &impl Fn(&Lin) -> bool,
         out: &mut Vec<Lin>,
     ) -> bool {
-        if s == EMPTY {
-            return true;
+        let (mut stack, mut at) = (Vec::new(), s);
+        loop {
+            while at != EMPTY {
+                let n = self.node(at);
+                if self.divisor(n.key) < from {
+                    at = n.right;
+                } else {
+                    stack.push(at);
+                    at = n.left;
+                }
+            }
+            let Some(s) = stack.pop() else { return true };
+            let n = self.node(s);
+            let d = self.divisor(n.key);
+            if !more(d) {
+                return false;
+            }
+            out.push(d.clone());
+            at = n.right;
         }
-        let n = self.node(s);
-        let d = self.divisor(n.key);
-        if d < from {
-            return self.up_from(n.right, from, more, out);
-        }
-        if !self.up_from(n.left, from, more, out) {
-            return false;
-        }
-        if !more(d) {
-            return false;
-        }
-        out.push(d.clone());
-        self.up_from(n.right, from, more, out)
     }
 
     /// The divisors of `s` from `to` down, in reverse order, while `more` holds of them.
@@ -384,22 +507,26 @@ impl Sets {
         more: &impl Fn(&Lin) -> bool,
         out: &mut Vec<Lin>,
     ) -> bool {
-        if s == EMPTY {
-            return true;
+        let (mut stack, mut at) = (Vec::new(), s);
+        loop {
+            while at != EMPTY {
+                let n = self.node(at);
+                if self.divisor(n.key) > to {
+                    at = n.left;
+                } else {
+                    stack.push(at);
+                    at = n.right;
+                }
+            }
+            let Some(s) = stack.pop() else { return true };
+            let n = self.node(s);
+            let d = self.divisor(n.key);
+            if !more(d) {
+                return false;
+            }
+            out.push(d.clone());
+            at = n.left;
         }
-        let n = self.node(s);
-        let d = self.divisor(n.key);
-        if d > to {
-            return self.down_from(n.left, to, more, out);
-        }
-        if !self.down_from(n.right, to, more, out) {
-            return false;
-        }
-        if !more(d) {
-            return false;
-        }
-        out.push(d.clone());
-        self.down_from(n.left, to, more, out)
     }
 }
 

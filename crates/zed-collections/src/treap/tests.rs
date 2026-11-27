@@ -477,7 +477,10 @@ fn preorder(t: &Tree<P>) -> Vec<Option<u64>> {
         };
         assert_eq!(n.len, 1 + len(&n.left) + len(&n.right));
         assert_eq!(n.sum, n.item.0 + sum(&n.left) + sum(&n.right));
-        for c in [n.left.as_deref(), n.right.as_deref()].into_iter().flatten() {
+        for c in [n.left.as_deref(), n.right.as_deref()]
+            .into_iter()
+            .flatten()
+        {
             assert!(!above(c, n), "heap order");
         }
         out.push(Some(n.item.0));
@@ -525,7 +528,13 @@ fn the_in_place_operations_take_a_path_of_any_depth() {
             // Key 2i of priority 2|i - M| + 2, the middle one's the highest: below the root, the
             // keys under the middle make a path to the right and those above it a path to the
             // left, each of M nodes.
-            let prio = |i: u64| if i == M { u64::MAX } else { 2 * i.abs_diff(M) + 2 };
+            let prio = |i: u64| {
+                if i == M {
+                    u64::MAX
+                } else {
+                    2 * i.abs_diff(M) + 2
+                }
+            };
             let items: Vec<P> = (0..=2 * M).map(|i| P(2 * i, prio(i))).collect();
             let prios: Vec<u64> = items.iter().map(|p| p.1).collect();
             let mut t: Tree<P> =

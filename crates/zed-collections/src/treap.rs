@@ -633,6 +633,37 @@ where
 // 0.25% to 1.0% more instructions (l42, 2026-11-26). Tested by
 // `treap::tests::the_in_place_operations_give_the_persistent_trees`, which also checks that
 // copies taken before a change are left as they were.
+//
+// The depth is only expected, not bounded: whenever the draw of priorities is known
+// (`ZED_TREAP_SEED`, which every bench run sets to 0), keys chosen against it make a path, and
+// a recursion one call a node of it overflows the stack (FAIL-treap-inplace-recursion-depth).
+// So each recursion counts its calls, one count shared by `insert_at` and the `split_mut` it
+// calls and by `remove_at` and its `join_mut`, and at [`DEEP`] calls hands the subtree it has
+// reached to a loop ([`split_loop`], [`join_loop`], [`insert_loop`], [`remove_loop`]) that keeps
+// the path in vectors on the heap. A chain of calls is then at most `DEEP` frames deep for
+// every tree. The loops do what the recursions do, node for node: each takes the children out
+// of the nodes it passes (made this tree's alone first, by `own`, as the recursions do),
+// pushes the nodes on its vectors, and on the way back puts the new children in and refreshes
+// the node; so the trees, and the copies another tree shares, are the same, and no node is
+// freed but the one `remove` takes out, whose children are taken from it first. They do not
+// fall back on the persistent `split` and `join`: those make the path again, and the old path,
+// freed when the last handle to it goes, is freed by the compiler's drop, a recursion as deep
+// as the path (STACK-treap-drop-depth). Tested by
+// `treap::tests::the_in_place_operations_take_a_path_of_any_depth`, on paths of 100,000 and 200,000
+// nodes in a thread of a 1 MiB stack.
+
+/// The calls of one in-place recursion before it hands its subtree to a loop. Why 256: the
+/// value changes only the cost, never a tree, since the loops do what the recursions do; the
+/// loops are slower by the allocations of their vectors (the comment above measured that cost),
+/// so the value is set where random trees do not reach. Module [`crate::priority`] proves a
+/// node's expected depth `O(log n)`, at most `T0 + n(n - 1)/p + 2c H_n`, with no value for `c`;
+/// for priorities drawn independently `c = 1` (the exact expected depth of a node of a random
+/// binary search tree is below `2 H_n`, about `2 ln n`), 56 at `n = 2^40`, so 256 is more than
+/// four times that (inferred for the 5-wise draw, whose `c` is not known). The stack it
+/// allows, 256 frames of these small functions, is far under the 2 MiB of a thread; the test
+/// above runs them in 1 MiB, unoptimized. The treaps of other crates that recurse to the same
+/// depth use it too (zedc-preimage's `divisors::Sets::union`).
+pub const DEEP: usize = 256;
 
 /// The node `n` made this tree's alone, copied if another tree shares it, to change in place.
 #[inline]
@@ -654,25 +685,28 @@ fn refresh<I: Item>(n: &mut Node<I>) {
 }
 
 /// The items of `t` before `key` and those after it, `t` holding no item of `key`: `split` in
-/// place.
+/// place, `depth` calls below the walk's first.
 #[inline]
-fn split_mut<I: Item>(t: Tree<I>, key: &I::Key) -> (Tree<I>, Tree<I>)
+fn split_mut<I: Item>(t: Tree<I>, key: &I::Key, depth: usize) -> (Tree<I>, Tree<I>)
 where
     I::Sum: Clone,
 {
+    if depth >= DEEP {
+        return split_loop(t, key);
+    }
     let Some(mut n) = t else {
         return (None, None);
     };
     let m = own(&mut n);
     match m.item.key().cmp(key) {
         Ordering::Less => {
-            let (below, above) = split_mut(m.right.take(), key);
+            let (below, above) = split_mut(m.right.take(), key, depth + 1);
             m.right = below;
             refresh(m);
             (Some(n), above)
         }
         Ordering::Greater => {
-            let (below, above) = split_mut(m.left.take(), key);
+            let (below, above) = split_mut(m.left.take(), key, depth + 1);
             m.left = above;
             refresh(m);
             (below, Some(n))
@@ -681,28 +715,107 @@ where
     }
 }
 
-/// The items of `a` and of `b`, every key of `a` before every key of `b`: `join` in place.
-#[inline]
-fn join_mut<I: Item>(a: Tree<I>, b: Tree<I>) -> Tree<I>
+/// [`split_mut`] by a loop: the nodes below the key kept on one vector and those above on
+/// another, root first, each with the child on the key's side taken out; then each side made
+/// up from its bottom.
+fn split_loop<I: Item>(t: Tree<I>, key: &I::Key) -> (Tree<I>, Tree<I>)
 where
     I::Sum: Clone,
 {
+    let (mut lefts, mut rights) = (Vec::new(), Vec::new());
+    let mut cur = t;
+    while let Some(mut n) = cur {
+        let m = own(&mut n);
+        match m.item.key().cmp(key) {
+            Ordering::Less => {
+                cur = m.right.take();
+                lefts.push((n, false));
+            }
+            Ordering::Greater => {
+                cur = m.left.take();
+                rights.push((n, true));
+            }
+            Ordering::Equal => unreachable!("split_loop is given a tree without the key"),
+        }
+    }
+    (up_mut(lefts, None), up_mut(rights, None))
+}
+
+/// The tree made up from a path of nodes of this tree alone, root first, each with the child on
+/// the path's side taken out (`true` for the left), and `bottom`, the subtree below the last:
+/// each node given its child back, from the bottom, and refreshed. The in-place [`up`].
+fn up_mut<I: Item>(path: Vec<(Arc<Node<I>>, bool)>, mut bottom: Tree<I>) -> Tree<I>
+where
+    I::Sum: Clone,
+{
+    for (mut n, left) in path.into_iter().rev() {
+        let m = own(&mut n);
+        if left {
+            m.left = bottom;
+        } else {
+            m.right = bottom;
+        }
+        refresh(m);
+        bottom = Some(n);
+    }
+    bottom
+}
+
+/// The items of `a` and of `b`, every key of `a` before every key of `b`: `join` in place,
+/// `depth` calls below the walk's first.
+#[inline]
+fn join_mut<I: Item>(a: Tree<I>, b: Tree<I>, depth: usize) -> Tree<I>
+where
+    I::Sum: Clone,
+{
+    if depth >= DEEP {
+        return join_loop(a, b);
+    }
     match (a, b) {
         (None, x) | (x, None) => x,
         (Some(mut x), Some(mut y)) => {
             if above(&x, &y) {
                 let m = own(&mut x);
-                m.right = join_mut(m.right.take(), Some(y));
+                m.right = join_mut(m.right.take(), Some(y), depth + 1);
                 refresh(m);
                 Some(x)
             } else {
                 let m = own(&mut y);
-                m.left = join_mut(Some(x), m.left.take());
+                m.left = join_mut(Some(x), m.left.take(), depth + 1);
                 refresh(m);
                 Some(y)
             }
         }
     }
+}
+
+/// [`join_mut`] by a loop: the spine walked down, the higher root taken each time with the
+/// child on the other tree's side taken out and kept with that side, then the spine made up
+/// from its bottom.
+fn join_loop<I: Item>(a: Tree<I>, b: Tree<I>) -> Tree<I>
+where
+    I::Sum: Clone,
+{
+    // Each node of the spine, and whether the joined tree below it is its left child.
+    let mut spine: Vec<(Arc<Node<I>>, bool)> = Vec::new();
+    let (mut a, mut b) = (a, b);
+    let bottom = loop {
+        match (a, b) {
+            (None, x) | (x, None) => break x,
+            (Some(mut x), Some(mut y)) => {
+                if above(&x, &y) {
+                    a = own(&mut x).right.take();
+                    b = Some(y);
+                    spine.push((x, false));
+                } else {
+                    b = own(&mut y).left.take();
+                    a = Some(x);
+                    spine.push((y, true));
+                }
+            }
+        }
+    };
+    up_mut(spine, bottom)
 }
 
 /// The item of `key`, to change, if the tree has it: one walk down, the nodes passed that another
@@ -735,21 +848,30 @@ where
     I::Sum: Clone,
 {
     let prio = item.priority();
-    insert_at(t, item, prio);
+    insert_at(t, item, prio, 0);
 }
 
 /// [`insert_mut`] of `item`, of priority `prio`, into the subtree `t`: the walk of `insert`, down
-/// while the nodes stand above the new one.
+/// while the nodes stand above the new one, `depth` calls below the walk's first.
 #[inline]
-fn insert_at<I: Item>(t: &mut Tree<I>, item: I, prio: u64)
+fn insert_at<I: Item>(t: &mut Tree<I>, item: I, prio: u64, depth: usize)
 where
     I::Sum: Clone,
 {
+    if depth >= DEEP {
+        *t = insert_loop(t.take(), item, prio);
+        return;
+    }
     match t {
         Some(n) if (n.prio, n.item.key()) > (prio, item.key()) => {
             let left = item.key() < n.item.key();
             let m = own(n);
-            insert_at(if left { &mut m.left } else { &mut m.right }, item, prio);
+            insert_at(
+                if left { &mut m.left } else { &mut m.right },
+                item,
+                prio,
+                depth + 1,
+            );
             refresh(m);
         }
         Some(n) if n.item.key() == item.key() => {
@@ -760,10 +882,41 @@ where
         // The subtree split never holds the key: the proof is at `insert`, and `split_mut`
         // checks it.
         _ => {
-            let (l, r) = split_mut(t.take(), item.key());
+            let (l, r) = split_mut(t.take(), item.key(), depth);
             *t = Some(node(item, prio, l, r));
         }
     }
+}
+
+/// [`insert_at`] by a loop: the nodes above the new one kept on a vector, each with the child on
+/// the key's side taken out, then the tree made up again ([`up_mut`]).
+fn insert_loop<I: Item>(t: Tree<I>, item: I, prio: u64) -> Tree<I>
+where
+    I::Sum: Clone,
+{
+    let mut path = Vec::new();
+    let mut cur = t;
+    let bottom = loop {
+        match cur {
+            Some(mut n) if (n.prio, n.item.key()) > (prio, item.key()) => {
+                let left = item.key() < n.item.key();
+                let m = own(&mut n);
+                cur = if left { m.left.take() } else { m.right.take() };
+                path.push((n, left));
+            }
+            Some(mut n) if n.item.key() == item.key() => {
+                let m = own(&mut n);
+                m.item = item;
+                refresh(m);
+                break Some(n);
+            }
+            rest => {
+                let (l, r) = split_loop(rest, item.key());
+                break Some(node(item, prio, l, r));
+            }
+        }
+    };
+    up_mut(path, bottom)
 }
 
 /// Takes the item of `key` out of `t`, if it has one: [`remove`] in place. A tree without the key
@@ -775,35 +928,75 @@ where
     I::Sum: Clone,
 {
     if get(t, key).is_some() {
-        remove_at(t, key);
+        remove_at(t, key, 0);
     }
 }
 
-/// [`remove_mut`] of `key` from the subtree `t`, which holds it.
+/// The children of `n`, the node [`remove_at`] takes out. It is not copied: its children are
+/// taken from it if this tree alone holds it, and shared with the other tree otherwise.
+fn children<I: Item>(n: &mut Arc<Node<I>>) -> (Tree<I>, Tree<I>) {
+    match Arc::get_mut(n) {
+        Some(m) => (m.left.take(), m.right.take()),
+        None => (n.left.clone(), n.right.clone()),
+    }
+}
+
+/// [`remove_mut`] of `key` from the subtree `t`, which holds it, `depth` calls below the walk's
+/// first.
 #[inline]
-fn remove_at<I: Item, Q: Ord + ?Sized>(t: &mut Tree<I>, key: &Q)
+fn remove_at<I: Item, Q: Ord + ?Sized>(t: &mut Tree<I>, key: &Q, depth: usize)
 where
     I::Key: Borrow<Q>,
     I::Sum: Clone,
 {
+    if depth >= DEEP {
+        *t = remove_loop(t.take(), key);
+        return;
+    }
     let n = t.as_mut().expect("remove_mut found the key above");
     match key.cmp(n.item.key().borrow()) {
         Ordering::Equal => {
-            // The node taken out is not copied: its children are taken from it if this tree
-            // alone holds it, and shared with the other tree otherwise.
-            let (l, r) = match Arc::get_mut(n) {
-                Some(m) => (m.left.take(), m.right.take()),
-                None => (n.left.clone(), n.right.clone()),
-            };
-            *t = join_mut(l, r);
+            let (l, r) = children(n);
+            *t = join_mut(l, r, depth);
         }
         side => {
             let left = side == Ordering::Less;
             let m = own(n);
-            remove_at(if left { &mut m.left } else { &mut m.right }, key);
+            remove_at(
+                if left { &mut m.left } else { &mut m.right },
+                key,
+                depth + 1,
+            );
             refresh(m);
         }
     }
+}
+
+/// [`remove_at`] by a loop: the nodes above the key kept on a vector, each with the child on the
+/// key's side taken out, then the tree made up again ([`up_mut`]).
+fn remove_loop<I: Item, Q: Ord + ?Sized>(t: Tree<I>, key: &Q) -> Tree<I>
+where
+    I::Key: Borrow<Q>,
+    I::Sum: Clone,
+{
+    let mut path = Vec::new();
+    let mut cur = t;
+    let bottom = loop {
+        let mut n = cur.expect("remove_mut found the key above");
+        match key.cmp(n.item.key().borrow()) {
+            Ordering::Equal => {
+                let (l, r) = children(&mut n);
+                break join_loop(l, r);
+            }
+            side => {
+                let left = side == Ordering::Less;
+                let m = own(&mut n);
+                cur = if left { m.left.take() } else { m.right.take() };
+                path.push((n, left));
+            }
+        }
+    };
+    up_mut(path, bottom)
 }
 
 pub mod lazy;
