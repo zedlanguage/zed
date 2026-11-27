@@ -1886,7 +1886,7 @@ impl<A: Literal> Part<A> {
     /// 4. So a round has a pin exactly when an orthogonal pair exists: with none, no trial
     ///    succeeds and nothing changes; with one, either a pin comes first or the trial of that
     ///    `s_i` comes with nothing pinned, and pins `s_i = true`. ([`Pins::Cut`] gives the pins
-    ///    of [`Pins::Carried`].)
+    ///    of `Pins::Carried`.)
     /// 5. On a YES instance `settle` does not return the part: the first pin is some
     ///    `s_i = true`, and at the value with `s_i` false, every other `s_l` true and every atom
     ///    true, the part is `false` before the substitution and `true` after it; later pins only
