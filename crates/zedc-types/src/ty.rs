@@ -26068,7 +26068,9 @@ impl Sig {
     ///    needs together, is written as its arrows: `(k) -> r` for a lookup and `(a1, ..., an)
     ///    -> r` for a call, `r` the need's result, and the meet of the arrows for several
     ///    uses. `h(positional p) = p[0] + 1` prints `(0 -> U) -> U for U in ...`, and
-    ///    `n(positional fn) = fn(1)` prints `(1 -> T) -> T`.
+    ///    `n(positional fn) = fn(1)` prints `(1 -> T) -> T`. An application whose types
+    ///    reach a part with a variable twice ([`written_once`]) counts as a use of another
+    ///    kind, since its arrow's text could be exponentially larger than its types.
     /// 2. Applied to every such variable at once, the variables a rewrite holds rewritten in
     ///    turn: `h(positional p) = p[1](p[0])` prints `((1 -> T -> U) & (0 -> T)) -> U`, the
     ///    result `U1` of `p[1]` being itself called at `p[0]`'s result.
@@ -26114,6 +26116,20 @@ impl Sig {
     // l01_29_repairs_and_printing/printed.rs reads every printed text back to the type
     // recorded with it, which is the rewritten signature.
     pub fn uses_written(&self, kept: &HashSet<&Arc<str>>) -> Cow<'_, Sig> {
+        // A forward ([`NeedKind::Fwd`]) holds its needs compact, and the same signature may be
+        // held flat (the checker's two encodings, compared by zedc-check's r10_tests): the
+        // rewrites read the decoded needs, so both encodings print one text. With no rewrite
+        // the signature is itself, forward and all.
+        if self.has_fwd_needs() {
+            let (needs, own) = self.decoded_needs_and_own();
+            let mut flat = self.clone();
+            flat.needs = needs.into_owned().into();
+            flat.own = own.into_owned();
+            return match flat.uses_written(kept) {
+                Cow::Borrowed(_) => Cow::Borrowed(self),
+                Cow::Owned(s) => Cow::Owned(s),
+            };
+        }
         let needs = self.needs.as_slice();
         if needs.is_empty() {
             return Cow::Borrowed(self);
@@ -26169,6 +26185,7 @@ impl Sig {
                 ) if named.is_empty() => Some((positional.clone(), r.clone())),
                 _ => None,
             };
+            let app = app.filter(|(args, r)| written_once(args.iter().chain([r])));
             let l = applied.entry(v.clone()).or_insert_with(|| Some(Vec::new()));
             match (app, l.as_mut()) {
                 (Some((args, r)), Some(list)) => {
@@ -26254,6 +26271,47 @@ impl Sig {
         };
         Sig::one(vec![p; args.len()], args, r)
     }
+}
+
+/// Whether the printer writes `tys` with each part that holds a variable once: no tuple row,
+/// payload shape or function that holds a variable is reached twice from `tys`. The printer
+/// writes a part with no variable by reference and one with a variable in full at each place
+/// it stands ([`Shared::of`]), so a part reached twice by the same address in each of d nested
+/// levels, `t40 = (t39, t39)`, is written 2^d times. [`Sig::uses_written`] writes an
+/// application as its arrow only where this holds, so the text it gives is no larger than the
+/// types of the needs it replaces; elsewhere the variable keeps its `_`, as before the rewrite
+/// (zedc-check's r10_tests, `r10_rows_shared_at_40_levels_holding_side_sum_variables_agree_with_e`,
+/// ran past 60 s and 94 GB without it). A part met twice in one small type, `f((x, y), (x, y))`
+/// with the row shared, also keeps the `_`: the test is by address, not by size.
+// Complexity: one walk with its own stack, each part that holds a variable entered once (the
+// walk stops at the first met again), so O(the distinct parts), whatever the paths to them.
+fn written_once<'a>(tys: impl Iterator<Item = &'a Ty>) -> bool {
+    let mut seen: HashSet<usize> = HashSet::new();
+    let mut stack: Vec<&Ty> = tys.collect();
+    while let Some(t) = stack.pop() {
+        for r in t.tuples.iter().filter(|r| r.holds_vars()) {
+            if !seen.insert(Arc::as_ptr(&r.0) as usize) {
+                return false;
+            }
+            stack.extend(r.iter());
+        }
+        for s in t.payload_shapes().filter(|s| s.holds_vars()) {
+            if !seen.insert(Arc::as_ptr(&s.0) as usize) {
+                return false;
+            }
+            stack.extend(s.items.iter().chain(s.fields.values()));
+        }
+        for f in t.fns.iter().filter(|f| !f.holds_no_var()) {
+            if !seen.insert(Arc::as_ptr(f) as *const u8 as usize) {
+                return false;
+            }
+            for a in &f.arrows {
+                stack.extend(&a.params);
+                stack.push(&a.result);
+            }
+        }
+    }
+    true
 }
 
 /// The rewrites `arrows` closed under themselves ([`Sig::uses_written`], point 2): each with
