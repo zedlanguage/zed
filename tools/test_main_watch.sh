@@ -66,7 +66,10 @@ logs=$1 kind=$2
 shift 2
 mkdir -p "$logs"
 names=()
-for n in "$@"; do [ "$n" = BUILD ] || names+=("$n"); done
+# MW_HASH: each piece is a unit test of a library, named toylib-<hash>::<piece> with a new hash
+# at each run, as a rebuild of a library gives its binary another hash; it is selected by its
+# name without the hash, as tools/run_tests.sh --only selects one.
+for n in "$@"; do [ "$n" = BUILD ] || names+=("${n#toylib::}"); done
 echo "$(git rev-parse --short=9 HEAD) $kind ${*:-all}" >>"$MW_STATE/runs.log"
 # MW_LEAK: each run leaves a process behind, as a test binary or a fresh child can.
 if [ -n "${MW_LEAK:-}" ]; then
@@ -119,7 +122,7 @@ for n in "${names[@]}"; do
     [ "$(wc -l <"$MW_STATE/first3")" -gt 3 ] || r=1
   fi
   if [ "$n" = t_flaky ] && [ ! -e "$MW_STATE/flaky-ran" ]; then : >"$MW_STATE/flaky-ran"; r=1; fi
-  echo "$n rc=$r 1ms load=0 limit=20s wait=0ms"
+  echo "${MW_HASH:+toylib-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')::}$n rc=$r 1ms load=0 limit=20s wait=0ms"
   [ "$r" = 0 ] || rc=1
 done
 exit "$rc"
@@ -210,7 +213,7 @@ EOF
     MAIN_WATCH_PUBLISH=$t/bin/publish \
     MAIN_WATCH_FIXER=$t/bin/fix MAIN_WATCH_TEMPLATE=$t/template MAIN_WATCH_POLL=0 MAIN_WATCH_POLLS=2 \
     MAIN_WATCH_FARM=local MW_STATE=$t/state
-  unset MW_FIX MW_FIX_BREAK MAIN_WATCH_ZRUN MW_LEAK MAIN_WATCH_QUEUE MAIN_WATCH_MIN MW_SEGV MW_FIRST3 MW_DIRTY MW_RUNKILL MW_LIST
+  unset MW_FIX MW_FIX_BREAK MAIN_WATCH_ZRUN MW_LEAK MAIN_WATCH_QUEUE MAIN_WATCH_MIN MW_SEGV MW_FIRST3 MW_DIRTY MW_RUNKILL MW_LIST MW_HASH
 }
 
 # land <n> [<commits>] [<i>:<piece>]: landing n, pushed from the dev clone, of <commits> commits
@@ -681,6 +684,30 @@ test:t_delta TEST-row-known" "$(cat "$k")"
     check "$1: nothing filed as FAIL-main" 0 "$(cat "$q" "$k" "$t/home/main-red.log" 2>/dev/null | command grep -a -c FAIL-main)"
     check "$1: no culprit" "" "$(opened)"
     ;;
+  hash | hashold)
+    # As known, but each piece is a library's unit test, named with its binary's build hash, which
+    # changes at each run (MW_HASH; MAINWATCH-lib-piece-hash). hash: the known line names the
+    # piece without the hash, toylib::t_delta; hashold: with the hash of an older build. Either
+    # way the failure is the known one: no culprit, and the head is checked. Before unhash, the
+    # failure was read as toylib-<hash>::t_delta, matched no known line and was bisected.
+    setup t_delta
+    export MW_HASH=1
+    local kl=test:toylib::t_delta
+    [ "$1" = hash ] || kl=test:toylib-0123456789abcdef::t_delta
+    echo "$kl TEST-row-known" >"$t/home/main-watch-known.txt"
+    for n in $(seq 1 15); do land "$n"; done
+    watch
+    check "$1: exit 0" 0 "$rc"
+    check "$1: the pieces were named with a hash" yes \
+      "$(command grep -a -q -E '^toylib-[0-9a-f]{16}::t_delta rc=1 ' "$t"/home/main-watch-runs/*/*-test.out 2>/dev/null && echo yes || echo no)"
+    check "$1: no culprit" "" "$(opened)"
+    check "$1: no fixer ran" 0 "$(cat "$t/state/fixer.log" 2>/dev/null | wc -l)"
+    check "$1: the head is checked, with the failure known by its name without the hash" \
+      "$(head_of) test:toylib::t_delta=TEST-row-known" "$(cut -d' ' -f1,4 "$t/home/main-watch.checked")"
+    check "$1: the running log names the failure and its row" 1 \
+      "$(command grep -a -c 'known failures at .*test:toylib::t_delta (TEST-row-known)' "$t/home/running-log.md")"
+    check "$1: nothing filed as FAIL-main" 0 "$(cat "$t/home/main-watch-known.txt" "$t/home/main-red.log" 2>/dev/null | command grep -a -c FAIL-main)"
+    ;;
   queuedup)
     # A piece listed by hand while the watcher bisects it (TOOLS-push-tests-cleanup): in queue
     # mode fix puts the culprit's pieces on the known list with known_add, so the list holds the
@@ -854,7 +881,7 @@ bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
   esac
 }
 
-all_cases="two farm zrun fixbreak failfix nofix segv runkill nottwice nobisect setuperr clean few old oldqueue spec specold known fixedby fixedbyfail fixedbyrace queuedup oldknown oldknownlog skip queue reap build controls"
+all_cases="two farm zrun fixbreak failfix nofix segv runkill nottwice nobisect setuperr clean few old oldqueue spec specold known hash hashold fixedby fixedbyfail fixedbyrace queuedup oldknown oldknownlog skip queue reap build controls"
 for c in ${@:-$all_cases}; do run_case "$c"; done
 echo "checks failed: $fails"
 [ "$fails" = 0 ]
