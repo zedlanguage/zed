@@ -1014,10 +1014,10 @@ fn taking_a_shared_part_out_keeps_the_holes_of_a_projection() {
 /// when the part was taken out, `b` in [-1, inf) against (-inf, inf) as written, until each
 /// round of the probe read its parts in the order of their content
 /// (PROOF-probe-order-independent): since then the solver alone gives the exact [-1, inf) both
-/// ways, so the same. With the exact cover both writings give the exact sets, so the same. No
-/// formula is known now whose projection narrows when a part is taken out of a negation
-/// (PRES-negation-narrow-case); formula 14 above narrows where the formula as written is
-/// refused.
+/// ways, so the same. With the exact cover both writings give the exact sets, so the same.
+/// Other formulas still narrow under the solver alone when the part is taken out of a negation
+/// ([`a_shared_part_taken_out_of_a_negation_narrows_under_the_solver_alone`]); formula 14 above
+/// narrows where the formula as written is refused.
 ///
 /// Formula 9 of the same seed, `2 c >= -4 && !(...)`, was this test's case until
 /// `project_each` renamed every question by its structure (PRES-project-each-naming), and is
@@ -1040,6 +1040,26 @@ fn a_shared_part_taken_out_of_a_negation_gives_the_same_projection() {
     let c = solver_alone(|| factoring_loses_no_precision([(9, f.clone())]));
     assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
     let c = factoring_loses_no_precision([(9, f)]);
+    assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
+}
+
+/// PRES-negation-narrow-case: formula 489 of seed 71925 (0x5f5b + 6 * 7919) of
+/// `random_tiers`, `2 c == 2 d && !((2 c <= 1 && 2 c <= 1 && u) || (2 c >= 1 && u))` with the
+/// shared part `u = a <= 4 && a >= 2 && a >= 1`. The inner disjunction `2 c <= 1 || 2 c >= 1`
+/// holds at every point, so the formula is `!u` and `a` is exactly in (-inf, 1] u [5, inf).
+/// Taken out, `!(u && true)` is `!u`, and the solver alone gives that set; as written it gives
+/// `a` in (-inf, inf), since it does not see that the negated disjunction holds at every point.
+/// So the solver alone still narrows here when the part is taken out, after
+/// PROOF-probe-order-independent made formula 2161 the same both ways; with the cover, the
+/// default, both writings give the exact set. A search of 80 seeds (0x5f5b + k * 7919, 600
+/// formulas each) found 56 such formulas, each with its part in a negation, each passing every
+/// check of [`factoring_loses_no_precision`].
+#[test]
+fn a_shared_part_taken_out_of_a_negation_narrows_under_the_solver_alone() {
+    let f = tiers_formula(71925, 489);
+    let c = solver_alone(|| factoring_loses_no_precision([(489, f.clone())]));
+    assert_eq!((c.same, c.narrower, c.answered), (0, 1, 0), "{c:?}");
+    let c = factoring_loses_no_precision([(489, f)]);
     assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
 }
 
