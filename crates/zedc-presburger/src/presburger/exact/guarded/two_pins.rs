@@ -909,21 +909,30 @@ fn u_values(a: i128, b: i128, halves: &[Form], work: &mut Work) -> Result<Option
         uw.push(row);
     }
     let h = halves.len() as u64;
+    // A unit for each 16 pairs of half-planes the three shadows meet, not `PIECE` (16) a pair:
+    // a pair costs about 2 ns, and `PIECE` is fit to the 0.6 to 0.8 µs pieces of
+    // `exact::residues` (PRES-two-pin-charge-fit; measured at the site's own benchmark case,
+    // `exact::tests::bench`, `sides`: 1.0 ms for 3 names at h = 240, 536,000 pairs).
+    let shadows = (3 * h * h + h).div_ceil(16);
     if !TWO_PIN_LINE_OFF.get()
         && let Some(line) = on_line(&uw)
     {
         // A unit a row, as [`u_runs`] charges for each value it tries: [`on_line`] makes four
         // passes over the rows, where that made one for each value of the line. Its time a
-        // unit is measured by `exact::tests::bench`, `sides on a line`.
-        work.charge(h)?;
+        // unit is measured by `exact::tests::bench`, `sides on a line`. Charged at most
+        // `shadows`: the reading it replaces charges `shadows` and then `h` for each value it
+        // tries, so at least `shadows`, and this charge, `min(h, shadows)`, is never more.
+        // `shadows < h` only at h = 2 and 3 (1 and 2 units): `⌈(3·h² + h) / 16⌉ < h` needs
+        // `3·h² + h <= 16·(h - 1)`, that is `3·h² - 15·h + 16 <= 0`, whose roots are about 1.54
+        // and 3.46. Test: `exact::tests::a_two_pin_region_on_a_line_is_read_by_its_equation`,
+        // case `1·q == 3·p + 2, p in 0..=0` (390 units with `h` charged, 387 before: one more
+        // for each of its three names). The time of [`on_line`] at h <= 3 is not measured; it
+        // bears on no per-unit bound, which is measured at h = 34,000.
+        work.charge(h.min(shadows))?;
         return Ok(Some(line));
     }
     let wu: Vec<Row> = uw.iter().map(|&(e, d, c)| (d, e, c)).collect();
-    // A unit for each 16 pairs of half-planes the three shadows meet, not `PIECE` (16) a pair:
-    // a pair costs about 2 ns, and `PIECE` is fit to the 0.6 to 0.8 µs pieces of
-    // `exact::residues` (PRES-two-pin-charge-fit; measured at the site's own benchmark case,
-    // `exact::tests::bench`, `sides`: 1.0 ms for 3 names at h = 240, 536,000 pairs).
-    work.charge((3 * h * h + h).div_ceil(16))?;
+    work.charge(shadows)?;
     let (Some(real), Some(dark), Some(across)) =
         (shadow(&uw, false), shadow(&uw, true), shadow(&wu, false))
     else {

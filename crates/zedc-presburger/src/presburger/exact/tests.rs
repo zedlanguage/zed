@@ -5251,8 +5251,10 @@ fn a_two_pin_region_on_a_line_is_read_by_its_equation() {
 
 /// The square `0 <= p, q <= n` with `y == p + 2·q` where `q >= n`, else `y == 2·p + q`: the
 /// first arm's guard cuts the square to its edge `q == n` (`Cut::Face`, whose rows hold the
-/// guard both ways), the values of `y` there tried one by one before
-/// PERF-cover-union-of-classes-listed.
+/// guard both ways), read by its equation since PERF-cover-union-of-classes-listed. Before,
+/// it was read the narrower way of `two_pins::u_runs` (each integer `w` of the edge, measured
+/// constant: 1656 units at n 2000 and at n 16000, local run, 2026-11-27), so the equation reads
+/// it for fewer units but did not change how its cost grows.
 fn face(n: i64) -> Formula {
     Formula::And(Shared::new(vec![
         ge(&[("p", 1)], 0),

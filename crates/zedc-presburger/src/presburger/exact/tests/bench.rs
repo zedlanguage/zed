@@ -123,24 +123,28 @@ fn the_two_pin_reading_takes_a_bounded_time_per_unit_of_work() {
 /// the face a leaf choice's guard cuts out of a square ([`super::face`], `q == n` with `p` in
 /// `0..=n`) are read by their equation (`two_pins::on_line`), O(h) a name for h half-planes,
 /// so they cost the same at 8n, in units and in instructions. The red control,
-/// [`TWO_PIN_LINE_OFF`] (each value tried alone, as before), grows with n: over the limit of
-/// a constant.
+/// [`TWO_PIN_LINE_OFF`], is the line's values tried one by one, as before: it grows with n,
+/// over the limit of a constant. The face has no red control: before, it was read the narrower
+/// way of `two_pins::u_runs`, whose cost did not grow with n either (1656 units at n 2000 and
+/// 16000, local run, 2026-11-27); its control is printed only.
 #[test]
 fn the_two_pin_reading_of_a_line_costs_the_same_at_8n() {
     let syms: Vec<Atom> = ["p", "q", "y"].iter().map(|s| a(s)).collect();
-    type Case = (&'static str, fn(i64) -> Formula);
-    let cases: [Case; 2] = [("line", line), ("face", super::face)];
-    for (what, f) in cases {
+    type Case = (&'static str, fn(i64) -> Formula, bool);
+    let cases: [Case; 2] = [("line", line, true), ("face", super::face, false)];
+    for (what, f, red_control) in cases {
         let units = |n: i64| read(&f(n), &syms);
         TWO_PIN_LINE_OFF.set(true);
         let (small, large) = (units(2_000), units(16_000));
         TWO_PIN_LINE_OFF.set(false);
         let red = large as f64 / small.max(1) as f64;
         println!("{what}, line off: {small} and {large} units, {red:.2} times at 8n");
-        assert!(
-            red > crate::scaling::limit(0),
-            "the control must fail the limit: {red:.2}"
-        );
+        if red_control {
+            assert!(
+                red > crate::scaling::limit(0),
+                "the control must fail the limit: {red:.2}"
+            );
+        }
         let (small, large) = (units(2_000), units(16_000));
         println!("{what}: {small} and {large} units");
         crate::scaling::hold(
