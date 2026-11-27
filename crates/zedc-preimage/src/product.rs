@@ -10848,9 +10848,9 @@ impl Scope {
     /// and the projections of their stars and its own.
     ///
     /// The stars settled are `name`'s and those of the bound names whose term reads `name`
-    /// ([`Scope::with_readers`]): the eager scope projects such a binder's star at the test
+    /// (`Scope::with_readers`): the eager scope projects such a binder's star at the test
     /// that makes it, and when that narrows the binder, reads its term back into `name`
-    /// ([`Scope::read_back_terms`]); settling `name`'s own stars alone left `name` wider than
+    /// (`Scope::read_back_terms`); settling `name`'s own stars alone left `name` wider than
     /// the eager scope has it (FAIL-lazy-hubs-seed-3066150143192435835: `a1` bound to `a0`'s
     /// product, `a1` then a leaf of the hubs `n` and `m`; `a0` in [-11, inf) eager and
     /// [-18, inf) lazy; FAIL-lazy-scope-seed-17799186487984213239 likewise). Test:
