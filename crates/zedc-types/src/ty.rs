@@ -20130,10 +20130,11 @@ fn arrow_text_naming(
         // An unbounded variable that stands twice or more is written as the mark of its root,
         // `VAR<root>` ([`Ty::write_vars`]); the capture is taken in the first walk, and the
         // second pushes the same variables in the same order and joins them alike, so the
-        // root here is the plan's. ([`arrow_sig`] keeps no needs, so no two are joined here
-        // and the root is `k`; the root is still the key the mark is written with.) One that
-        // stands once is printed `_` and has no mark: the key is set only when the text holds
-        // the mark, so that a mention is written only after a type region (zedc-check
+        // root here is the plan's: what a failed test leaves of `v` is joined to it
+        // ([`arrow_sig`] keeps the needs that join them), and a mention of either is written
+        // with the key of the pair's root, as the arrow writes both. One that stands once is
+        // printed `_` and has no mark: the key is set only when the text holds the mark, so
+        // that a mention is written only after a type region (zedc-check
         // `holds_lay_out_mark`). Cost: one pass over the text.
         Some(VarSlot::Free(k)) => {
             let key = scope.root(k).to_string();
@@ -20178,11 +20179,57 @@ fn arrow_text_naming(
 }
 
 /// The signature of the arrow `a` of `s` alone, with the bounds and own variables of `s` that
-/// it holds ([`arrow_text`]).
+/// it holds ([`arrow_text`]), and the needs of `s` that its printing reads.
+///
+/// Why the arrow then prints as it does in `s` (PRINT-arrow-sig-keeps-needs; before, it kept
+/// no needs, and `r else 0` quoted as `_ -> _` where `s` prints `T -> 0 | T`). The printer
+/// reads only the [`Narrow`] needs between two variables ([`Scope::open`]: the joins of a
+/// leftover to its variable, and the sets a test removes). (1) A join or a removed set is
+/// made only between two unbounded own variables, or two of one slot, so a bounded variable
+/// of `s` ends every chain of them: its slot is a mark of its own, which a Free slot is
+/// never joined to and no other bounded one equals. (2) So the needs kept are those reached
+/// from the arrow's variables through unbounded own variables, the middle ones of a chain
+/// (`(r else 0) else 1`, whose first leftover the arrow does not hold) added to `own` as
+/// well: they stand nowhere in the text, and are opened only to join along the chain. (3) A
+/// need with an end that is no own variable of `s` names a variable of a signature around,
+/// which has the same slot here as for `s`, so it is kept too. The needs not kept are those
+/// whose printing reads nothing the arrow holds, or that the printer does not read at all.
+/// Tests: `a_quoted_arrow_prints_what_a_test_leaves_as_its_signature_does` (a leftover and a
+/// chain, red before), `a_mention_of_an_unbounded_variable_names_it_as_the_arrow_does`.
+/// Cost: one pass over the needs to index the leftovers, and a search of them from the
+/// arrow's variables with a visited set (P207), O(needs + variables).
 fn arrow_sig(s: &Sig, a: &Arrow) -> Sig {
     let mut vs = Vars::default();
     a.params.iter().for_each(|p| p.vars_in(&mut vs));
     a.result.vars_in(&mut vs);
+    let lefts: Vec<(&Arc<str>, &Arc<str>, &Need)> = (s.needs.iter())
+        .filter_map(|n| match (&n.kind, &n.result) {
+            (NeedKind::Narrow(_), Some(left)) => Some((n.on.as_var()?, left.as_var()?, n)),
+            _ => None,
+        })
+        .collect();
+    let through = |v: &Arc<str>| s.own.contains(v) && !s.bounds.contains_key(v);
+    let mut next: HashMap<&Arc<str>, Vec<&Arc<str>>> = HashMap::new();
+    for &(on, left, _) in &lefts {
+        if through(on) && through(left) {
+            next.entry(on).or_default().push(left);
+            next.entry(left).or_default().push(on);
+        }
+    }
+    let mut reach: HashSet<&Arc<str>> = vs.order.iter().collect();
+    let mut todo: Vec<&Arc<str>> = vs.order.iter().filter(|v| through(v)).collect();
+    while let Some(v) = todo.pop() {
+        for &w in next.get(v).into_iter().flatten() {
+            if reach.insert(w) {
+                todo.push(w);
+            }
+        }
+    }
+    let kept = |v: &Arc<str>| reach.contains(v) || !s.own.contains(v);
+    let needs: Needs = (lefts.iter())
+        .filter(|&&(on, left, _)| kept(on) && kept(left))
+        .map(|&(_, _, n)| n.clone())
+        .collect();
     let mut one = Sig {
         params: s.params.clone(),
         arrows: vec![a.clone()],
@@ -20193,12 +20240,10 @@ fn arrow_sig(s: &Sig, a: &Arrow) -> Sig {
         dense: s.dense,
         keys: s.keys.clone(),
         word: None,
-        needs: Needs::new(),
-        own: vs
-            .order
-            .iter()
-            .filter(|v| s.own.contains(*v))
-            .cloned()
+        needs,
+        own: (reach.iter())
+            .filter(|v| s.own.contains(**v))
+            .map(|&v| v.clone())
             .collect(),
         held: BTreeSet::new(),
         named: s.named,
@@ -26976,32 +27021,81 @@ mod tests {
         Sig::one(vec![x], vec![t], result)
     }
 
+    /// `g(positional r) = r else k`, or a chain of such tests, as a signature: the parameter
+    /// is the first variable of `steps`' first pair, each pair `(on, left)` a test that leaves
+    /// `left` of `on` ([`Narrow`]), and the result `k | ` the last `left`.
+    fn left_of(steps: &[(&str, &str)], k: i64) -> Sig {
+        let (first, last) = (steps[0].0, steps[steps.len() - 1].1);
+        let result = Ty::lit(&Value::Int(k)).union(&Ty::var(last.into()));
+        let mut s = one_of(Ty::var(first.into()), result);
+        s.own = (steps.iter())
+            .flat_map(|&(on, left)| [on.into(), left.into()])
+            .collect();
+        for &(on, left) in steps {
+            s.needs.push(Need {
+                on: Ty::var(on.into()),
+                kind: NeedKind::Narrow(Narrow::Loose),
+                result: Some(Ty::var(left.into())),
+                span: Span { start: 0, end: 1 },
+                alike: Arc::from([]),
+                via: CallPath::default(),
+            });
+        }
+        s.note_held();
+        s
+    }
+
+    /// PRINT-arrow-sig-keeps-needs: an arrow quoted alone ([`arrow_text`]) prints as the
+    /// signature of that one arrow does, what a failed test leaves of a variable printed as
+    /// that variable, also along a chain of leftovers whose middle one the arrow does not hold.
+    /// Red before: [`arrow_sig`] kept no needs, and both quoted as `_ -> _`.
+    #[test]
+    fn a_quoted_arrow_prints_what_a_test_leaves_as_its_signature_does() {
+        for s in [
+            left_of(&[("A", "L")], 0),
+            left_of(&[("A", "M"), ("M", "L")], 1),
+        ] {
+            let whole = s.to_string();
+            assert!(
+                whole.starts_with("T -> ") && whole.ends_with(" | T"),
+                "{whole}"
+            );
+            assert_eq!(arrow_text(&s, &s.arrows[0], &[]), whole);
+        }
+    }
+
     /// PRINT-headline-note-same-name, the [`VarSlot::Free`] case of [`arrow_text_naming`]: an
     /// unbounded own variable `A` that stands twice is printed by a mark, named apart from the
     /// words of the message, so a mention of it must be named by that mark too, not written as
     /// the program's `A`; one that stands once is printed `_`, holds no mark, and the mention
-    /// writes `A`. Red before: the mention of the variable standing twice wrote `A`.
+    /// writes `A`. What a failed test leaves of `A`, `L`, is joined to it and written as the
+    /// mark of the pair's root, so a mention of either is named as the pair is. Red before:
+    /// the mention of the variable standing twice wrote `A`; the joined pair, before
+    /// PRINT-arrow-sig-keeps-needs, was not joined in the quoted arrow at all (`_ -> _`).
     #[test]
     fn a_mention_of_an_unbounded_variable_names_it_as_the_arrow_does() {
-        let a: Arc<str> = "A".into();
+        let (a, l): (Arc<str>, Arc<str>) = ("A".into(), "L".into());
         let mut twice = one_of(Ty::var(a.clone()), Ty::var(a.clone()));
         twice.own = [a.clone()].into_iter().collect();
         let mut once = one_of(Ty::var(a.clone()), Ty::lit(&Value::Int(0)));
         once.own = [a.clone()].into_iter().collect();
+        let left = left_of(&[("A", "L")], 0);
         let cases = [
-            (&twice, "T -> T", "T", "U -> U with U"),
-            (&once, "_ -> 0", "A", "_ -> 0 with A"),
+            (&twice, &a, "T -> T", "T", "U -> U with U"),
+            (&once, &a, "_ -> 0", "A", "_ -> 0 with A"),
+            (&left, &a, "T -> 0 | T", "T", "U -> 0 | U with U"),
+            (&left, &l, "T -> 0 | T", "T", "U -> 0 | U with U"),
         ];
-        for (s, alone, named, in_message) in cases {
+        for (s, v, alone, named, in_message) in cases {
             // Alone: the arrow is finished here, and the mention with it.
-            let (text, m) = arrow_text_naming(s, &s.arrows[0], &[], &a);
-            assert_eq!((text.as_str(), m.text(0).as_str()), (alone, named));
+            let (text, m) = arrow_text_naming(s, &s.arrows[0], &[], v);
+            assert_eq!((text.as_str(), m.text(0).as_str()), (alone, named), "{v}");
             // In a message, which writes `T`: the arrow's variable skips it, the mention too.
             let _on = defs::collect();
-            let (text, m) = arrow_text_naming(s, &s.arrows[0], &[], &a);
+            let (text, m) = arrow_text_naming(s, &s.arrows[0], &[], v);
             let mut message = format!("{text} with {}", m.text(0));
             defs::name_vars(&mut message, 0, &|w| w == "T");
-            assert_eq!(message, in_message);
+            assert_eq!(message, in_message, "{v}");
         }
     }
 
@@ -27014,18 +27108,7 @@ mod tests {
         // say the result takes every value; and [`Sig::standing_twice`] must name `L` either
         // way, since `zedc-check`'s `sig_text` reads it for a variable it prints with the
         // kept names (found by proofdoc4c, checking `standing_twice` against 9ff4e6673).
-        let zero = Ty::lit(&Value::Int(0));
-        let mut s = one_of(Ty::var("A".into()), zero.union(&Ty::var("L".into())));
-        s.own = ["A".into(), "L".into()].into_iter().collect();
-        s.needs.push(Need {
-            on: Ty::var("A".into()),
-            kind: NeedKind::Narrow(Narrow::Loose),
-            result: Some(Ty::var("L".into())),
-            span: Span { start: 0, end: 1 },
-            alike: Arc::from([]),
-            via: CallPath::default(),
-        });
-        s.note_held();
+        let s = left_of(&[("A", "L")], 0);
         assert_eq!(s.to_string(), "T -> 0 | T");
         let kept: [(Arc<str>, Arc<str>); 1] = [("A".into(), "T".into())];
         let around = Around {
