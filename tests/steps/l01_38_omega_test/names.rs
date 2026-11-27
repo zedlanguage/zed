@@ -1117,8 +1117,7 @@ fn tied_pivots_that_a_swap_maps_onto_itself_are_defined() {
             .iter()
             .map(|i| Atom::Sym(Arc::from(format!("v{i}"))))
             .collect();
-        let (each, skipped) =
-            project_each(&f, &syms).unwrap_or_else(|e| panic!("{perm:?}: {e:?}"));
+        let (each, skipped) = project_each(&f, &syms).unwrap_or_else(|e| panic!("{perm:?}: {e:?}"));
         assert!(skipped.is_empty(), "{perm:?}: {skipped:?}");
         let got: Vec<String> = each
             .into_iter()

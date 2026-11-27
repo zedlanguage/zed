@@ -1219,7 +1219,10 @@ fn a_slack_row_with_no_disjunction_beside_a_forest_is_exact() {
     let syms = [sym("x1"), sym("y0"), sym("z")];
     let (each, skipped) = project_each(&f, &syms).expect("projected");
     assert!(skipped.is_empty(), "{skipped:?}");
-    let got: Vec<String> = each.into_iter().map(|h| h.expect("a set").to_string()).collect();
+    let got: Vec<String> = each
+        .into_iter()
+        .map(|h| h.expect("a set").to_string())
+        .collect();
     assert_eq!(got, [runs(&[0, 1]), runs(&[0, 1]), runs(&[0, 3])]);
 }
 
@@ -1495,8 +1498,8 @@ fn answers_match_enumeration(
     }
     let f = Formula::and(fs);
     let syms: Vec<Atom> = (0..atoms).map(|v| sym(&format!("v{v}"))).collect();
-    let (each, skipped) = project_each(&f, &syms)
-        .unwrap_or_else(|e| panic!("case {case}: {f} is refused: {e:?}"));
+    let (each, skipped) =
+        project_each(&f, &syms).unwrap_or_else(|e| panic!("case {case}: {f} is refused: {e:?}"));
     assert!(skipped.is_empty(), "case {case}: {skipped:?}");
     for (v, (h, s)) in each.into_iter().zip(&mut seen).enumerate() {
         zed_collections::sorted::sort_dedup(s);
