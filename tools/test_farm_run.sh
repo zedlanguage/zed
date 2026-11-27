@@ -259,8 +259,21 @@ done <"$tests"
 JOB
 chmod +x "$colab/pool.sh" "$colab/job.sh"
 # farm_run.sh --commands finds the doc check's changes with the checkout's own script, against its
-# origin/main (case cmd-docs); a job's command that runs this test gives none here.
-cp tools/check_changed_docs.sh "$toy/tools/" || exit 2
+# origin/main (case cmd-docs); a job's command that runs this test gives none here. Given a file of
+# changes that names no changed file, as here, it passes without calling cargo. The toy's
+# tools/check_changed_docs.sh runs that copy, except that with STUB_DOC_FAIL every check (not
+# --changes) fails as a failed rustdoc build does (case doc-fail).
+cp tools/check_changed_docs.sh "$toy/tools/check_changed_docs-real.sh" || exit 2
+cat >"$toy/tools/check_changed_docs.sh" <<'DOCS'
+#!/bin/bash
+if [ -n "${STUB_DOC_FAIL:-}" ] && [ "${1-}" != --changes ]; then
+  echo "error: public documentation for \`f\` links to private item \`g\`"
+  echo "DOC FAILED: toy (alone, with its own default features)."
+  exit 1
+fi
+exec bash "$(dirname "$0")/check_changed_docs-real.sh" "$@"
+DOCS
+chmod +x "$toy/tools/check_changed_docs.sh" || exit 2
 unset ZED_DOC_CHANGES ZED_DOC_CHECKED
 git -C "$toy" init -q && git -C "$toy" add -A && git -C "$toy" -c user.name=t -c user.email=t commit -qm toy &&
   git -C "$toy" update-ref refs/remotes/origin/main HEAD || exit 2
@@ -543,6 +556,18 @@ o=$ws/case-$n-share-docs-caller.out
 [ "$(command grep -a -c '^docs: ' "$o")" -ge 2 ] &&
   [ "$(command grep -a '^docs: ' "$o" | command grep -a -c -v -x 'docs: checked=the caller changes=none')" = 0 ] ||
   { fail=$((fail + 1)); echo "FAIL share-docs-caller: a share did not name the caller's run ($o)"; }
+has share-docs-caller '^farm: share [0-9]+ of [0-9]+: the doc check of the changed packages passed$' 0
+# Share 1 does the doc check itself after its list call (FARM-share-doc-check-only-with-short),
+# here with no short-addresses piece in any share (--except), as in a direct farm_run.sh run such as
+# tools/main_watch.sh's. Before the fix only run_tests.sh's --only run of a share's short-addresses
+# pieces checked, so doc-fail passed with exit 0 and `pieces: 7, failed: 0`; the stub
+# run_tests.sh does no check, so the check these cases see is vm_side's alone.
+STUB_DOC_FAIL=1 case_ doc-fail 1 "pieces: 3, failed: 0" "p2 p4 p6" -- --owner t --vms 2 --except '^short-'
+has doc-fail '^farm: FAILED: share 1 of 2 .* ran no piece \(exit 1\): vm_side: the doc check of the changed packages failed; ' 1
+has doc-fail '^DOC FAILED: toy ' 1
+case_ doc-pass 0 "pieces: 7, failed: 0" "p1 p2 p3 p4 p5 p6 p7" -- --owner t --vms 2 --except '^short-'
+has doc-pass '^farm: share 1 of 2: the doc check of the changed packages passed$' 1
+has doc-pass '^farm: share [0-9]+ of [0-9]+: the doc check' 1
 # A line job.sh ran again after a dylib retry (FARM-merge-check-first-row-rc): summary.tsv has the
 # retry row, exit 1, before the final row, and only the final row is the line's exit. Before the
 # fix a share read row 1 and failed with every piece passed, and --commands counted both rows.

@@ -399,6 +399,20 @@ vm_side() {
     cat "$w/list.out"
     return "$rc"
   fi
+  # The doc check, when this share got the changes (share 1 when the caller did no check), done
+  # here and not left to run_tests.sh (FARM-share-doc-check-only-with-short): run_tests.sh checks
+  # in no --list or --pieces run, so before this only the --only run of the share's
+  # short-addresses pieces, below, did it, and a share 1 with none passed with no doc check
+  # (tools/test_farm_run.sh doc-fail). It runs after the list call, so a failed build is named
+  # first, and before the empty-list case below, which returns. The later runs of the share then
+  # name this check (ZED_DOC_CHECKED) and do not document the packages again.
+  if [ -n "${ZED_DOC_CHANGES-}" ]; then
+    tools/check_changed_docs.sh "$w/doc-changed.log" >"$w/doc.out" 2>&1 ||
+      { cat "$w/doc.out"; echo "vm_side: the doc check of the changed packages failed"; return 1; }
+    echo "farm: share $k of $n: the doc check of the changed packages passed"
+    unset ZED_DOC_CHANGES
+    export ZED_DOC_CHECKED="share $k of this farm run"
+  fi
   # An empty list is only right for --skip-other-kind with nothing of this kind selected, which
   # run_tests.sh says in those words; any other empty list ran nothing silently.
   if [ ! -s "$w/list/latest/pieces" ]; then
