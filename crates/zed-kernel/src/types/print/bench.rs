@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use super::super::Type;
-use super::tests::{decision_list, doubled, part_ring, three_carriers};
+use super::tests::{decision_list, doubled, parity, part_ring, three_carriers};
 use crate::scaling;
 
 /// Small instances: `the_text_of_a_decision_list_has_a_connective_between_each_two_literals`.
@@ -28,6 +28,25 @@ fn the_text_of_a_long_decision_list_scales() {
             );
         },
     );
+}
+
+/// Plan row TYPE-display-shared: the parity of `m` tuple types, built before the timing (its
+/// building is `parity_built_a_literal_at_a_time_scales` in `bdd/bench.rs`), prints in at most
+/// `2m` definitions and `128m` bytes, in work linear in `m` (the printer visits each node of the
+/// diagram once, `print.rs`), where its clauses are `2^(m-1)`. Small instances:
+/// `the_parity_of_c_tuple_types_prints_in_o_c_definitions`.
+#[test]
+fn the_parity_of_c_tuple_types_prints_in_linear_text() {
+    let n = 1_000;
+    let built: BTreeMap<usize, Type> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, parity(m as u64)))
+        .collect();
+    scaling::check("the text of the parity of n tuple types", n, |m| {
+        let s = built[&m].surface();
+        assert!(s.defs.len() <= 2 * m);
+        assert!(s.to_string().len() <= 128 * m);
+    });
 }
 
 /// QUESTIONS A5, answer A (row A5-print): a tuple doubled to depth `m` holds `2^m` copies of

@@ -627,15 +627,21 @@ holes). The diagrams are built and walked as follows:
   over the paths below when it holds (`Bdd::walk` with `prune`): refusing more atoms only
   removes values. So two disjoint tuple types taken on one path end it.
 - The products of a tuple clause are split with no cap.
-- A type's display lists every clause.
+- A type's display writes each diagram node and each kept expression once: a node used
+  twice or more gets a definition `type PartK = …;` (`types/print.rs`, DESIGN "Types in a
+  message"), so the text is linear in the nodes, not in the paths.
 
 Emptiness of Boolean combinations of tuple types is coNP-hard, which is why the check above
 is not complete; a complete one (a split in every component, or a SAT solver) would take
 time exponential in the tuple types written. The memory is one path and one
 split at a time. Running out of time or memory is a failed build, never a different
 answer. A diagram of `O(C)` nodes, such as the parity of `C` tuple types, has `2^(C-1)`
-paths, so its display can be exponential in what was written; showing the diagram's nodes
-with shared subdiagrams named would bound it by the nodes, and is not built.
+paths, and a display that listed its clauses would be exponential in what was written; the
+display names the shared nodes instead, so the parity prints in at most `2C` definitions and
+`128C` bytes (plan row TYPE-display-shared:
+`types::print::tests::the_parity_of_c_tuple_types_prints_in_o_c_definitions`, the benchmark
+`the_parity_of_c_tuple_types_prints_in_linear_text` at 1,000 and 8,000 atoms, and the
+read-back `l01_29_diagnostics::shared_parts::the_parity_of_tuple_types_reads_back_from_its_definitions`).
 
 | Candidate | Measured | Score | Reasoning |
 |---|---|---|---|

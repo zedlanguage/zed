@@ -209,6 +209,47 @@ fn the_text_of_a_decision_list_has_a_connective_between_each_two_literals() {
     }
 }
 
+/// The exclusive or of the one-tuples `(0,)` to `(c - 1,)`, built a literal at a time as
+/// `f & !x | !f & x`: the tuples with an odd number of the `c` atoms, whose clauses as a sum of
+/// products are the `2^(c-1)` odd subsets (docs/thresholds.md, the display of type diagrams).
+pub(super) fn parity(c: u64) -> Type {
+    let f = (0..c).fold(Part::leaf(false), |f, i| {
+        let x = Part::literal(Row::new(vec![lit(i)]));
+        let left = f.zip(&x.not(), Op::And);
+        left.zip(&f.not().zip(&x, Op::And), Op::Or)
+    });
+    Type::with(|p| {
+        p.tuples.lens.insert(1, f);
+    })
+}
+
+/// Plan row TYPE-display-shared: the parity of `c` tuple types, whose diagram has `2^(c-1)`
+/// paths, prints in at most `2c` definitions and in text of at most `128c` bytes, so it does not
+/// list its clauses: at `c = 16` they would be 32,768. It prints the counts for the record. The
+/// benchmark `the_parity_of_c_tuple_types_prints_in_linear_text` in `bench.rs` checks the
+/// work at 1,000 and 8,000 atoms, and `l01_29_diagnostics::shared_parts::
+/// the_parity_of_tuple_types_reads_back_from_its_definitions` that the text reads back as the
+/// same type.
+#[test]
+fn the_parity_of_c_tuple_types_prints_in_o_c_definitions() {
+    for c in [1u64, 2, 3, 4, 5, 8, 16, 64] {
+        let s = parity(c).surface();
+        let text = s.to_string();
+        println!(
+            "parity of {c}: {} definitions, {} bytes",
+            s.defs.len(),
+            text.len()
+        );
+        assert!(s.exact, "{c}: {text}");
+        assert!(s.defs.len() as u64 <= 2 * c, "{c}: {text}");
+        assert!(
+            text.len() as u64 <= 128 * c,
+            "{c}: {} bytes: {text}",
+            text.len()
+        );
+    }
+}
+
 /// `R1 = R0 \ Never` with `R0 = (#a0, #a0 | (#a1, #a1 | … (#a{k-1}, #a{k-1} | R0)))`.
 /// Written by name, `R1` unfolds once, and so does each part `#ai | …` kept unevaluated,
 /// whose unfolding holds the next and the last of which holds the first again: a cycle of

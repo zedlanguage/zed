@@ -34,6 +34,27 @@ fn a_doubled_tuple_reads_back_from_its_definitions() {
     }
 }
 
+/// Plan row TYPE-display-shared: the parity of the `c` overlapping one-tuples `(int \ i,)`, `i`
+/// in `0..c`, built a literal at a time as `f & !x | !f & x`, whose clauses are `2^(c-1)`,
+/// prints in at most `2c` definitions (`types::print::tests::the_parity_of_c_tuple_types_prints_in_o_c_definitions`),
+/// and the text, definitions included, reads back as the same type.
+#[test]
+fn the_parity_of_tuple_types_reads_back_from_its_definitions() {
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    for c in [1usize, 2, 3, 5, 9] {
+        let t = (0..c).fold(Type::empty(), |f, i| {
+            let x = Type::tuple(vec![&Type::int() - &lit(i as i64)]);
+            &(&f & &!&x) | &(&!&f & &x)
+        });
+        let s = t.surface();
+        assert!(s.exact, "{s}");
+        assert!(s.defs.len() <= 2 * c, "{c}: {s}");
+        let back = parse_type(&s.to_string()).unwrap_or_else(|e| panic!("{s}: {e}"));
+        assert!(back.subtype(&Ty::set(t.clone())), "{s}");
+        assert!(Ty::set(t.clone()).subtype(&back), "{s}");
+    }
+}
+
 /// A message names a part with a `type PartK` definition only where the message writes the
 /// part more than once (row MSG-part-alias-written-once): a call of `f(x: int | rat)` with an
 /// argument of a third carrier writes `int | rat` in place where it writes it once, and names
