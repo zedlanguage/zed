@@ -2022,6 +2022,8 @@ pub(super) fn random_hulls_are_those_of_the_points(name: &str, cases: usize) {
         .map(|n| Atom::Sym((*n).into()))
         .collect();
     let (mut exact, mut caused, mut refused, mut empty) = (0, 0, 0, 0);
+    let mut wider = 0;
+    let mut kinds: BTreeSet<String> = BTreeSet::new();
     for case in 0..cases {
         let depth = 1 + rng.below(3);
         let f = random_three_atom_formula(&mut rng, depth, &names);
@@ -2037,8 +2039,21 @@ pub(super) fn random_hulls_are_those_of_the_points(name: &str, cases: usize) {
             for &v in want {
                 assert!(s.contains(v as i64), "{}: {v} left out of {s:?}", at(i));
             }
+            let hull = match (want.first(), want.last()) {
+                (Some(&lo), Some(&hi)) => IntervalSet::of(lo as i64, hi as i64),
+                _ => IntervalSet::empty(),
+            };
             if !causes.is_empty() {
+                // Counted, with the causes printed (TESTS-audit-battery-gaps: these were
+                // only counted, so a set wider with no need went unseen).
                 caused += 1;
+                wider += usize::from(s.hull() != hull);
+                kinds.insert(
+                    format!("{:?}", causes[0])
+                        .chars()
+                        .take(60)
+                        .collect::<String>(),
+                );
                 continue;
             }
             exact += 1;
@@ -2058,7 +2073,8 @@ pub(super) fn random_hulls_are_those_of_the_points(name: &str, cases: usize) {
     }
     eprintln!(
         "{name}: {cases} formulas, {empty} with no point; sets: {exact} hulls exact, \
-         {caused} wider for a cause, {refused} refused"
+         {caused} with a cause ({wider} of them wider than the hull; causes {kinds:?}), \
+         {refused} refused"
     );
     assert!(exact > 0 && empty > 0 && empty < cases, "{exact}, {empty}");
 }
