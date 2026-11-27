@@ -1125,3 +1125,87 @@ fn a_labeled_let_held_as_the_body_of_a_let_is_written_with_its_label() {
         .to_vec();
     reads_back_the_same(&t, &shown(&t), &inputs);
 }
+
+/// Gemini D.1, Claude D-3: a parameter bound again after the first block of the body has
+/// ended (at a name bound twice, or at a binder a binding above reads from outside) is bound
+/// in a nested block already, so the body takes no more braces; bound again in the first
+/// block, it does.
+#[test]
+fn a_parameter_bound_again_after_the_first_block_ends_takes_no_more_braces() {
+    let cases = [
+        lam_x(let_(
+            "y",
+            lit(1i64),
+            let_(
+                "y",
+                lit(2i64),
+                let_("x", lit(3i64), add(var("x"), var("y"))),
+            ),
+        )),
+        lam_x(let_(
+            "y",
+            add(var("x"), lit(1i64)),
+            let_("x", lit(5i64), add(var("y"), var("x"))),
+        )),
+        lam_x(let_(
+            "y",
+            lit(1i64),
+            let_("x", add(var("y"), lit(2i64)), var("x")),
+        )),
+    ];
+    let texts: Vec<String> = cases.iter().map(|t| written(t, |x| x, &none)).collect();
+    for (t, text) in cases.iter().zip(&texts) {
+        reads_back_the_same(t, text, &ints());
+        reads_back_the_same(t, &shown(t), &ints());
+    }
+    // Written by hand from the rules, not from a run. The first block ends at the second `y`
+    // and in the second case at `x = 5`, which `y = x + 1` reads from outside, so `x = 3` and
+    // `x = 5` are in nested blocks and the body takes no more braces; in the third `x = y + 2`
+    // is in the first block, which shares its scope with the parameter, so the body is
+    // nested once more. Read by eye, in block scope: 3 + 2 = 5, x + 1 + 5, and 1 + 2 = 3, as
+    // the terms.
+    assert_eq!(
+        texts,
+        [
+            "x -> { y = 1; { y = 2; x = 3; x + y } }",
+            "x -> { y = x + 1; { x = 5; y + x } }",
+            "x -> { { y = 1; x = y + 2; x } }",
+        ]
+    );
+}
+
+/// The walk of `Pieces::lambda` stops at a labeled body as the block does: a parameter bound
+/// again inside the labeled part is in the part's own block, so the body takes no more braces.
+#[test]
+fn a_parameter_bound_again_inside_a_labeled_body_takes_no_more_braces() {
+    // 15 nodes, so the part held in 2 places is written once (`dag::choose` needs 11).
+    let l = Shared::new(let_(
+        "w",
+        lit(1i64),
+        let_(
+            "z",
+            add(var("w"), lit(1i64)),
+            let_(
+                "u",
+                add(var("z"), lit(2i64)),
+                add(add(var("z"), var("u")), lit(3i64)),
+            ),
+        ),
+    ));
+    let t = Term::Lam(
+        vec!["c".into(), "w".into()],
+        Shared::new(Term::Let("a".into(), l.clone(), l)),
+    );
+    // Written by hand from the rules, not from a run: the block of `a` ends at the labeled
+    // body, written `#1#`, and the walk of the lambda ends there too, so `w = 1`, inside the
+    // part's own block, does not nest the body. Read by eye, `#1#` replaced by the text
+    // after `#1=`: `a = 9`, then 9, as the term.
+    assert_eq!(
+        format!("{t}"),
+        "(c, w) -> { a = #1={ w = 1; z = (w + 1); u = (z + 2); ((z + u) + 3) }; #1# }"
+    );
+    let inputs: Vec<Vec<Value>> = [(true, 3i64), (false, -1)]
+        .map(|(c, w)| vec![Value::Bool(c), Value::Int(w)])
+        .to_vec();
+    reads_back_the_same(&t, &shown(&t), &inputs);
+}

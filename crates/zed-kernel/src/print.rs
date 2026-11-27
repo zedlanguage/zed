@@ -880,10 +880,11 @@ impl<'a> Pieces<'a> {
     /// scope", and `x -> { { x = 1; x } }` binds it in a nested block, where it shadows the
     /// parameter (PRINT-let-reading-its-own-name). The walk stops where the body's block ends,
     /// as the `Term::Let` case of [`Pieces::lay_out`] ends it: at a second binder of a name, at
-    /// a binder an earlier binding reads ([`Pieces::above`]), or at a binding that reads its own
-    /// name ([`Pieces::own`]); what follows is in a nested block or a call's lambda already, so
-    /// `x -> { y = x + 1; { x = 5; y + x } }` needs no more braces. O(the chain's length + the
-    /// parameters), each chain read by the one lambda right above it.
+    /// a binder an earlier binding reads ([`Pieces::above`]), at a binding that reads its own
+    /// name ([`Pieces::own`]), or at a labeled body ([`Pieces::labeled`]); what follows is in a
+    /// nested block or a call's lambda already, so `x -> { y = x + 1; { x = 5; y + x } }` needs
+    /// no more braces. O(the chain's length + the parameters), each chain read by the one lambda
+    /// right above it.
     fn lambda(&mut self, params: &[&str], body: &'a Term) -> &mut Self {
         let head = match params {
             [p] => format!("{p} -> "),
@@ -906,6 +907,9 @@ impl<'a> Pieces<'a> {
                 }
                 bound.insert(x);
                 t = rest;
+                if self.labeled(t) {
+                    break;
+                }
             }
         }
         match rebinds {
