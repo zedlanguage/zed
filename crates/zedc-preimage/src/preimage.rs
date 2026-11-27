@@ -5500,26 +5500,45 @@ impl<'a> Normal<'a> {
 /// sound.
 ///
 /// Time of the functions' bodies, each part once (the terms share parts), and of the joins
-/// ([`unite`]).
-fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<str>> {
+/// ([`unite`]): worst case, deterministic, O(T + N + s + (n + j) log(2 + f + n) + n log(2 + n))
+/// for T terms and N names numbered in `tx`, f functions, n parameters, j joins and s parts
+/// of the bodies, a part counted once with each of its children (the terms share parts).
+/// Proof, step by step: (1) `by_name`, `by_param` and `seen` are vectors indexed by name and
+/// term number, made in O(N + T), and each look-up or update is O(1); (2) the first loop
+/// updates f names and n parameters; (3) the walk marks each part in `seen` at most once and
+/// pushes the children only of a part it marks, so it pops at most s parts; (4) a call,
+/// walked once, looks up its callee once and each argument once, at most s look-ups in all;
+/// (5) `owner` is a binary search of `first` (f + 1 entries), called twice a join in the
+/// `retain` and twice a parameter at the end; (6) [`unite`] costs O(f + (n + j) log(2 + n))
+/// (its proof below); (7) the end inserts at most n atoms into the `BTreeMap` `out`, each
+/// O(log n), each name's length aside. The step runs once a transfer, on the `Tx` that
+/// [`Scoped::new`] has just made of the program's `let`s, whose numbering already took
+/// O(T + N) ([`Terms::add`]), so the vectors add no more than a constant factor to it.
+// Complexity tradeoff: naive, `HashMap` and `HashSet` (SipHash with a random key): O(1)
+// expected a look-up, so the step had only an expected bound. Used: vectors indexed by the
+// numbers, deterministic and O(1) a look-up, at the cost of O(T + N) memory for the call
+// (row CLASSES-identity-hash, from cross-review XR-join-disjoint round 3, finding F1). The
+// result stays a map, now a `BTreeMap`: its keys are (body, place) pairs, and [`Tx::class`]
+// reads it at O(log n) a look-up in the worst case.
+fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> BTreeMap<(Tid, usize), Arc<str>> {
     // Each function by its name, each parameter by its name, and the first node of each
     // function's parameters. A name bound twice is left out: its calls are not followed.
-    let mut by_name: HashMap<Name, Option<usize>> = HashMap::new();
-    let mut by_param: HashMap<Name, Option<(usize, usize)>> = HashMap::new();
+    // By id: `None` for a name not bound here, `Some(None)` for one bound twice.
+    let names = tx.terms.names.len();
+    let mut by_name: Vec<Option<Option<usize>>> = vec![None; names];
+    let mut by_param: Vec<Option<Option<(usize, usize)>>> = vec![None; names];
+    fn once<V>(e: &mut Option<Option<V>>, v: V) {
+        *e = Some(e.is_none().then_some(v));
+    }
     let mut first = Vec::with_capacity(lams.len() + 1);
     first.push(0);
     for (k, &(n, l)) in lams.iter().enumerate() {
         let Node::Lam(ps, _) = tx.node(l) else {
             unreachable!("a lambda")
         };
-        by_name
-            .entry(n)
-            .and_modify(|e| *e = None)
-            .or_insert(Some(k));
+        once(&mut by_name[n as usize], k);
         for i in 0..ps.len() {
-            (by_param.entry(tx.param(ps, i)))
-                .and_modify(|e| *e = None)
-                .or_insert(Some((k, i)));
+            once(&mut by_param[tx.param(ps, i) as usize], (k, i));
         }
         first.push(first[k] + ps.len());
     }
@@ -5527,11 +5546,11 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
     // passes another argument. Each part once (`seen`).
     let mut joins: Vec<(usize, usize)> = Vec::new();
     let mut moved = vec![false; lams.len()];
-    let mut seen: HashSet<Tid> = HashSet::new();
+    let mut seen = vec![false; tx.terms.nodes.len()];
     for (k, &(_, l)) in lams.iter().enumerate() {
         let mut todo = vec![l];
         while let Some(t) = todo.pop() {
-            if !seen.insert(t) {
+            if std::mem::replace(&mut seen[t as usize], true) {
                 continue;
             }
             let kids = |s: Span| (0..s.len()).map(move |i| tx.arg(s, i));
@@ -5541,7 +5560,7 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
                     todo.push(f);
                     todo.extend(kids(args));
                     let callee = match tx.node(f) {
-                        Node::Var(g) => by_name.get(&g).copied().flatten(),
+                        Node::Var(g) => by_name[g as usize].flatten(),
                         _ => None,
                     };
                     let Some(c) = callee else { continue };
@@ -5553,7 +5572,7 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
                     }
                     for j in 0..args.len() {
                         let own = match tx.node(tx.arg(args, j)) {
-                            Node::Var(v) => by_param.get(&v).copied().flatten(),
+                            Node::Var(v) => by_param[v as usize].flatten(),
                             _ => None,
                         };
                         match own {
@@ -5580,7 +5599,7 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
     joins.retain(|&(a, b)| !moved[owner(a)] && !moved[owner(b)]);
     let (root, joined) = unite(&first, &joins);
     // Each class of two or more parameters named by its root.
-    let mut out = HashMap::new();
+    let mut out = BTreeMap::new();
     for (v, &r) in root.iter().enumerate() {
         if !joined[r] {
             continue;
@@ -5665,8 +5684,8 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 /// root by a swap of two vectors' entries, O(1), and the one function is inserted, O(log n) (or
 /// a set of two is built). There are at most n - 1 merges, so O(n log n) for them. In total
 /// O(f + n log n + j log n), within O(f + (n + j) log(2 + n)); `unite` itself does no hashing
-/// and has no expected bound (its caller [`identity_classes`] uses `HashMap` and `HashSet`, an
-/// expected cost, row CLASSES-identity-hash).
+/// and has no expected bound, nor has its caller [`identity_classes`], whose maps are ordered
+/// (row CLASSES-identity-hash).
 // Complexity tradeoff: the exact rule (refuse exactly when the classes share a function) is
 // what LOAD-affine-join built and LOAD-join-disjoint measured at Θ(n^1.5) on the fixtures
 // `tests::bench::many_multi_owner_functions_can_refuse_the_same_cross_pairs_scale` and
@@ -6098,7 +6117,7 @@ struct Tx<'t> {
     /// The atom of each parameter, by its lambda's body and its place, that one class of
     /// parameters passed as they are shares ([`identity_classes`]); a parameter of no class
     /// has its canonical atom ([`Tx::canonical`]).
-    classes: HashMap<(Tid, usize), Arc<str>>,
+    classes: BTreeMap<(Tid, usize), Arc<str>>,
     /// How the body of a lambda reads the parameter of that name ([`Walk::reads`]). It depends
     /// on the terms alone, and a term's number is never reused ([`Terms`]), so it outlives the
     /// body being read. Proof that a number keeps its node (proofdoc4b): [`Terms`] only
@@ -6223,7 +6242,7 @@ impl<'t> Tx<'t> {
             },
             fresh: None,
             lets: Lets::new(),
-            classes: HashMap::new(),
+            classes: BTreeMap::new(),
             reads: HashMap::new(),
             split_meets: RefCell::new(None),
             unbuilt: false,
