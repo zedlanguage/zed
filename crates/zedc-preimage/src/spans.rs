@@ -10,8 +10,9 @@
 //! another at that member cost `Θ(k·m)`. An index by `l` alone, or by `h` alone, visits each
 //! live span that starts (or ends) inside the run, `Θ(k·m)` again. Used: a treap (Seidel and
 //! Aragon, "Randomized search trees", Algorithmica 16, 1996, doi:10.1007/BF01940876; the full
-//! comment is in module [`zed_collections::priority`]) ordered by `(l, h)` with a
-//! priority drawn at random once per run ([`priority`]), each node holding the least `h` below
+//! comment is in module [`zed_collections::priority`]), the generic one of
+//! [`zed_collections::treap`] (plan row DRY-persistent-structures-rest), ordered by `(l, h)` with a
+//! priority drawn at random once per run ([`priority`]), each node's summary the least `h` below
 //! it, as McCreight's priority search tree answers a three-sided query ("Priority search
 //! trees", SIAM J. Comput. 14, 1985, doi:10.1137/0214021, cited in this crate's `lib.rs`,
 //! References; read 2026-11-21, PDF, LibGen, verification only: the abstract, operation (4),
@@ -28,52 +29,69 @@
 //! insertion and deletion in logarithmic time on a balanced tree with a constant number of
 //! rotations per update, and no rebuilding. The cost of a McCreight tree here is the extra
 //! code for those rotations, not a rebuild. Test
-//! `l01_39_scope_relations::xst::s4::scaling::holes_cut_one_at_a_time_scale`.
-
-use std::sync::Arc;
+//! `l01_39_scope_relations::xst::s4::bench::holes_cut_one_at_a_time_scale`.
 
 use zed_collections::priority::Priorities;
+use zed_collections::treap::{self, Item, Tree};
 use zedc_lattice::interval::Num;
 
 use crate::address::Address;
 
-type Link = Option<Arc<Node>>;
-
-#[derive(Debug, PartialEq, Eq)]
-struct Node {
-    l: Num,
-    h: Num,
+/// A span `[l, h]`, its key `(l, h)`, with the tests kept under it; the summary of a subtree is
+/// its least `h`.
+#[derive(Clone, PartialEq, Eq)]
+struct Span {
+    key: (Num, Num),
     at: imbl::OrdSet<Address>,
-    priority: u64,
-    /// The least `h` of this node's subtree.
-    least_h: Num,
-    left: Link,
-    right: Link,
+}
+
+impl Item for Span {
+    type Key = (Num, Num);
+    type Sum = Num;
+
+    fn key(&self) -> &(Num, Num) {
+        &self.key
+    }
+
+    fn priority(&self) -> u64 {
+        priority(&self.key.0, &self.key.1)
+    }
+
+    fn sum(&self, left: Option<&Num>, right: Option<&Num>) -> Num {
+        let mut least = &self.key.1;
+        for c in [left, right].into_iter().flatten() {
+            if c < least {
+                least = c;
+            }
+        }
+        least.clone()
+    }
 }
 
 /// A persistent set of spans, each with the tests kept under it.
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default)]
 pub(crate) struct Spans {
-    root: Link,
+    root: Tree<Span>,
 }
+
+/// The same spans, each with the same tests: in a run one set has one shape, so this is the
+/// equality of the trees as values.
+impl PartialEq for Spans {
+    fn eq(&self, other: &Spans) -> bool {
+        treap::len(&self.root) == treap::len(&other.root)
+            && treap::iter(&self.root).eq(treap::iter(&other.root))
+    }
+}
+
+impl Eq for Spans {}
 
 /// The spans in order, each with its tests: the shape, which depends on the run's draw of
 /// priorities, is left out.
 impl std::fmt::Debug for Spans {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut list = f.debug_list();
-        let mut stack: Vec<&Node> = Vec::new();
-        let mut cur = self.root.as_deref();
-        loop {
-            while let Some(n) = cur {
-                stack.push(n);
-                cur = n.left.as_deref();
-            }
-            let Some(n) = stack.pop() else { break };
-            list.entry(&(&n.l, &n.h, &n.at));
-            cur = n.right.as_deref();
-        }
-        list.finish()
+        f.debug_list()
+            .entries(treap::iter(&self.root).map(|s| (&s.key.0, &s.key.1, &s.at)))
+            .finish()
     }
 }
 
@@ -112,111 +130,10 @@ fn end_key(n: &Num) -> Result<i128, i8> {
     n.to_i128().ok_or_else(|| n.signum())
 }
 
-/// Whether `a` goes above `b` in the heap of priorities: the higher priority, ties by key.
-fn above(a: &Node, b: &Node) -> bool {
-    (a.priority, &a.l, &a.h) > (b.priority, &b.l, &b.h)
-}
-
-fn node(n: &Node, left: Link, right: Link, at: imbl::OrdSet<Address>) -> Arc<Node> {
-    let mut least_h = n.h.clone();
-    for c in [&left, &right].into_iter().flatten() {
-        if c.least_h < least_h {
-            least_h = c.least_h.clone();
-        }
-    }
-    Arc::new(Node {
-        l: n.l.clone(),
-        h: n.h.clone(),
-        at,
-        priority: n.priority,
-        least_h,
-        left,
-        right,
-    })
-}
-
-/// The spans of `t` below `(l, h)` and those above it; `(l, h)` is not in `t`.
-fn split(t: &Link, l: &Num, h: &Num) -> (Link, Link) {
-    let Some(n) = t else {
-        return (None, None);
-    };
-    if (&n.l, &n.h) < (l, h) {
-        let (a, b) = split(&n.right, l, h);
-        (Some(node(n, n.left.clone(), a, n.at.clone())), b)
-    } else {
-        let (a, b) = split(&n.left, l, h);
-        (a, Some(node(n, b, n.right.clone(), n.at.clone())))
-    }
-}
-
-/// The spans of `a` and of `b`, each of `a`'s below each of `b`'s.
-fn merge(a: &Link, b: &Link) -> Link {
-    match (a, b) {
-        (None, t) | (t, None) => t.clone(),
-        (Some(x), Some(y)) if above(x, y) => {
-            Some(node(x, x.left.clone(), merge(&x.right, b), x.at.clone()))
-        }
-        (Some(_), Some(y)) => Some(node(y, merge(a, &y.left), y.right.clone(), y.at.clone())),
-    }
-}
-
-fn insert(t: &Link, new: &Node) -> Arc<Node> {
-    match t {
-        None => node(new, None, None, new.at.clone()),
-        Some(n) if (&n.l, &n.h) == (&new.l, &new.h) => node(
-            n,
-            n.left.clone(),
-            n.right.clone(),
-            n.at.clone().union(new.at.clone()),
-        ),
-        // A span already in the tree has the priority of `new`, so it is not below `n`.
-        Some(n) if above(new, n) => {
-            let (a, b) = split(t, &new.l, &new.h);
-            node(new, a, b, new.at.clone())
-        }
-        Some(n) if (&new.l, &new.h) < (&n.l, &n.h) => {
-            node(n, Some(insert(&n.left, new)), n.right.clone(), n.at.clone())
-        }
-        Some(n) => node(n, n.left.clone(), Some(insert(&n.right, new)), n.at.clone()),
-    }
-}
-
-/// Whether the subtree of `n` holds the span `[l, h]`.
-fn holds(n: &Node, l: &Num, h: &Num) -> bool {
-    let mut t = Some(n);
-    while let Some(n) = t {
-        match (l, h).cmp(&(&n.l, &n.h)) {
-            std::cmp::Ordering::Equal => return true,
-            std::cmp::Ordering::Less => t = n.left.as_deref(),
-            std::cmp::Ordering::Greater => t = n.right.as_deref(),
-        }
-    }
-    false
-}
-
-fn remove(t: &Link, l: &Num, h: &Num, k: &Address) -> Link {
-    let n = t.as_ref()?;
-    Some(match (l, h).cmp(&(&n.l, &n.h)) {
-        std::cmp::Ordering::Less => {
-            node(n, remove(&n.left, l, h, k), n.right.clone(), n.at.clone())
-        }
-        std::cmp::Ordering::Greater => {
-            node(n, n.left.clone(), remove(&n.right, l, h, k), n.at.clone())
-        }
-        std::cmp::Ordering::Equal => {
-            let at = n.at.without(k);
-            if at.is_empty() {
-                return merge(&n.left, &n.right);
-            }
-            node(n, n.left.clone(), n.right.clone(), at)
-        }
-    })
-}
-
 /// Adds to `out` the tests of the spans of `t` with `l` above `after` and at most `upto`, and
 /// `h` below `before`; `None` is no bound.
 fn within(
-    t: &Link,
+    t: &Tree<Span>,
     after: Option<&Num>,
     upto: Option<&Num>,
     before: Option<&Num>,
@@ -225,19 +142,21 @@ fn within(
     let Some(n) = t else {
         return;
     };
-    if before.is_some_and(|b| n.least_h >= *b) {
+    if before.is_some_and(|b| n.sum() >= b) {
         return;
     }
-    let past = after.is_none_or(|a| n.l > *a);
-    let short = upto.is_none_or(|u| n.l <= *u);
-    if past && short && before.is_none_or(|b| n.h < *b) {
-        out.extend(n.at.iter().cloned());
+    let s = n.item();
+    let (l, h) = (&s.key.0, &s.key.1);
+    let past = after.is_none_or(|a| l > a);
+    let short = upto.is_none_or(|u| l <= u);
+    if past && short && before.is_none_or(|b| h < b) {
+        out.extend(s.at.iter().cloned());
     }
     if past {
-        within(&n.left, after, upto, before, out);
+        within(n.left(), after, upto, before, out);
     }
     if short {
-        within(&n.right, after, upto, before, out);
+        within(n.right(), after, upto, before, out);
     }
 }
 
@@ -246,25 +165,29 @@ impl Spans {
         self.root.is_none()
     }
 
-    /// Adds the test `k` under the span `[l, h]`. `O(log k)` expected.
+    /// Adds the test `k` under the span `[l, h]`. `O(log k)` expected: a walk to find the span,
+    /// and [`treap::insert_mut`], which puts the span with its new tests in place of the old.
     pub(crate) fn insert(&mut self, l: &Num, h: &Num, k: &Address) {
-        let new = Node {
-            l: l.clone(),
-            h: h.clone(),
-            at: imbl::OrdSet::unit(k.clone()),
-            priority: priority(l, h),
-            least_h: h.clone(),
-            left: None,
-            right: None,
+        let key = (l.clone(), h.clone());
+        let at = match treap::get(&self.root, &key) {
+            Some(s) => s.at.update(k.clone()),
+            None => imbl::OrdSet::unit(k.clone()),
         };
-        self.root = Some(insert(&self.root, &new));
+        treap::insert_mut(&mut self.root, Span { key, at });
     }
 
     /// Takes the test `k` from the span `[l, h]`, and the span when no test is left under it.
-    /// `O(log k)` expected.
+    /// `O(log k)` expected. A span without `k`, or no span, leaves the tree as it is.
     pub(crate) fn remove(&mut self, l: &Num, h: &Num, k: &Address) {
-        if self.root.as_deref().is_some_and(|n| holds(n, l, h)) {
-            self.root = remove(&self.root, l, h, k);
+        let key = (l.clone(), h.clone());
+        let Some(s) = treap::get(&self.root, &key).filter(|s| s.at.contains(k)) else {
+            return;
+        };
+        let at = s.at.without(k);
+        if at.is_empty() {
+            treap::remove_mut(&mut self.root, &key);
+        } else {
+            treap::insert_mut(&mut self.root, Span { key, at });
         }
     }
 
@@ -299,24 +222,24 @@ mod tests {
     }
 
     /// The tree's shape and its least ends hold, and the heap order of the priorities.
-    fn check(t: &Link) -> usize {
+    fn check(t: &Tree<Span>) -> usize {
         let Some(n) = t else {
             return 0;
         };
-        let mut least = n.h.clone();
-        for c in [&n.left, &n.right].into_iter().flatten() {
-            assert!(!above(c, n));
-            least = least.min(c.least_h.clone());
+        let mut least = n.item().key.1.clone();
+        for c in [n.left(), n.right()].into_iter().flatten() {
+            assert!(c.rank() < n.rank());
+            least = least.min(c.sum().clone());
         }
-        if let Some(c) = &n.left {
-            assert!((&c.l, &c.h) < (&n.l, &n.h));
+        if let Some(c) = n.left() {
+            assert!(c.item().key < n.item().key);
         }
-        if let Some(c) = &n.right {
-            assert!((&c.l, &c.h) > (&n.l, &n.h));
+        if let Some(c) = n.right() {
+            assert!(c.item().key > n.item().key);
         }
-        assert_eq!(least, n.least_h);
-        assert!(!n.at.is_empty());
-        1 + check(&n.left).max(check(&n.right))
+        assert_eq!(&least, n.sum());
+        assert!(!n.item().at.is_empty());
+        1 + check(n.left()).max(check(n.right()))
     }
 
     /// Random inserts, removals and queries agree with a list; one set built in two orders is
