@@ -283,13 +283,16 @@ mod tests {
 
     // RT-sites-push: a send is named by its value's node, which a copy of the send shares, so
     // dropping one copy keeps the site for the other; dropping the last frees the node and its
-    // address, and a send built later at that address must not take the old site.
+    // address, and a send built later at that address must not take the old site. That holds
+    // because the table keeps no entry at the freed name (the third `assert`) and a send that
+    // was never marked or copied gets none (the loop), whatever address it is given, so the
+    // test does not depend on the allocator giving the freed memory back to one of the later
+    // sends (FAIL-sites-freed-address-whole-binary: with the other tests of the binary running
+    // beside it, none of 1000 later sends took the freed address).
     #[test]
     fn a_send_keeps_its_site_while_its_value_lives_and_leaves_none_at_its_address() {
         let recorder = Recorder::start(&Sites::default());
         let span = Span { start: 3, end: 9 };
-        // Made before the drops below, so that no growth of it takes the freed node's memory.
-        let mut later = Vec::with_capacity(1000);
         let first = send("p", "v");
         let k = key(&first).expect("a send has a name");
         mark(&first, span, &mut HashSet::new());
@@ -299,17 +302,16 @@ mod tests {
         assert_eq!(site(k), Some(span), "the copy keeps the site");
         drop(copy);
         assert_eq!(site(k), None, "the value's node is gone, and its site");
-        // The allocator gives the freed memory to a later node of the same size: glibc's
-        // per-thread cache hands out the chunk of a size freed last first. Each send is kept
-        // alive, so each takes a new address until one takes the freed one.
-        while later.len() < 1000 && later.last().and_then(key) != Some(k) {
-            later.push(send("q", "w"));
+        // Sends built after the drop, each kept alive so each has an address of its own; any
+        // of them may take the freed one.
+        let later: Vec<Term> = (0..1000).map(|_| send("q", "w")).collect();
+        for s in &later {
+            let at = key(s).expect("a send has a name");
+            assert_eq!(site(at), None, "a later send has no site");
         }
-        let again = later.last().expect("a send was built");
-        assert_eq!(key(again), Some(k), "no later send took the freed address");
-        assert_eq!(site(k), None, "the later send has no site");
+        assert_eq!(site(k), None, "nothing took the freed name's site back");
         let sites = recorder.freeze(later.iter());
-        assert_eq!(sites.of(again), None);
+        assert!(later.iter().all(|s| sites.of(s).is_none()));
     }
 
     // The node a send names is freed with no drop at its address when its term is moved out
