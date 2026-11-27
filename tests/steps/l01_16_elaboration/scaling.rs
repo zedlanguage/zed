@@ -21,11 +21,18 @@ pub(super) fn chain(k: usize) -> String {
 }
 
 /// The term of `main` in the elaborated chain of defaults is short: a call holds no copy of
-/// a default.
+/// a default. The term is `{ x@j = hk$x@j(); hk(x@j) }` with `j = k + 1`: 22 characters and
+/// five numbers of at most the digits of `k + 1` each, so its length is at most
+/// `22 + 5 digits(k + 1)` (27 at `k = 3`, 42 at `k = 1000`). A copy of a default would double
+/// the term with each function. The chain of `k` functions has `k + 2` definitions, `h0` to
+/// `hk` and `main`.
 pub(super) fn defaults_stay_short(u: &Checked) {
     let u = u.elab();
     let main = u.defs.iter().find(|d| d.name == "main").unwrap();
-    assert!(main.term.to_string().len() < 40, "{}", main.term);
+    let k = u.defs.len() - 2;
+    let bound = 22 + 5 * (k + 1).to_string().len();
+    let term = main.term.to_string();
+    assert!(term.len() <= bound, "{} characters, over {bound}: {term}", term.len());
 }
 
 #[test]
