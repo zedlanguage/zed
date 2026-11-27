@@ -196,6 +196,7 @@ fixed_of() { awk '{ for (i = 3; i < NF; i++) if ($i == "fixed-by") { print $(i +
 # makes `merge-base --is-ancestor` exit 128, so the line stays in force (known, never dropped), and
 # check says so at each check. Cost: one awk and at most one git process per line, O(n) in the
 # list's n lines (a few dozen at most); it runs once per check and once per run of every piece.
+# Each line is printed with its piece's build hash taken off (unhash), as the names of a run are.
 known_lines() {
   local c=$1 want=$2 line f set
   [ -s "$known_file" ] || return 0
@@ -205,7 +206,7 @@ known_lines() {
     set=in
     [ -n "$f" ] && git -C "$repo" merge-base --is-ancestor "$f" "$c" 2>/dev/null && set=fixed
     [ "$set" != "$want" ] || printf '%s\n' "$line"
-  done <"$known_file"
+  done <"$known_file" | unhash
 }
 
 # Runs the pieces "$3"... of kind $2 (test or bench) in the current directory, a worktree, with
@@ -312,16 +313,36 @@ run() {
   reap "$(cat "$o.sid" 2>/dev/null)" "$o.out" >&2
   echo "$o.out"
 }
-# The pieces of kind $2 that failed, or passed, in the output $1, as <kind>:<piece>, one a line;
-# a failed build is <kind>:BUILD.
+# unhash: each line on stdin with the build hash of cargo's form (- and 16 hexadecimal digits)
+# taken off the first name of its first field, `<kind>:<binary>-<hash>[::<path>]`, so
+# test:zed_kernel-647156406bbd16e1::x becomes test:zed_kernel::x; a line without `<kind>:` is
+# taken as a bare piece name. A library's unit tests and benchmarks are named after their
+# binary, hash and all, and the hash changes with each build of the library: the same piece had
+# one name at the head and another at a bisect step or in a known line, so a known failure
+# written without the hash, as FAIL-main-escape-tied-true's was, was never matched
+# (MAINWATCH-lib-piece-hash, 2026-11-27). Every name the watcher reads from a run goes through
+# this, and so does every known line, so the names it compares, stores and passes on are
+# without the hash; tools/run_tests.sh --only and --except select a piece by its name with the
+# hash taken off (`selected` and the --except loop there), so a name without it runs the same
+# piece. No group, step or test name holds a - followed by 16 hexadecimal digits before `::`
+# (tools/run_tests.sh, at --only), so nothing else is changed. Test: tools/test_main_watch.sh
+# case hash.
+unhash() { sed -E 's/^(([a-z]+:)?[A-Za-z0-9_]+)-[0-9a-f]{16}(::| |$)/\1\3/'; }
+# The pieces of kind $2 that failed, or passed, in the output $1, as <kind>:<piece>, one a line,
+# without the build hash (unhash); a failed build is <kind>:BUILD.
 failed_in() {
-  command grep -a -o -E '^[^ ]+ rc=[1-9][0-9]* ' "$1" | cut -d' ' -f1 | sed "s/^/$2:/"
+  command grep -a -o -E '^[^ ]+ rc=[1-9][0-9]* ' "$1" | cut -d' ' -f1 | sed "s/^/$2:/" | unhash
   command grep -a -q 'BUILD FAILED' "$1" && echo "$2:BUILD"
   return 0
 }
-passed_in() { command grep -a -o -E '^[^ ]+ rc=0 ' "$1" | cut -d' ' -f1 | sed "s/^/$2:/"; }
-# The summary line of piece $2 (<kind>:<piece>) in the output $1.
-line_of() { command grep -a -m 1 -E "^${2#*:} rc=" "$1"; }
+passed_in() { command grep -a -o -E '^[^ ]+ rc=0 ' "$1" | cut -d' ' -f1 | sed "s/^/$2:/" | unhash; }
+# The summary line of piece $2 (<kind>:<piece>, without the hash) in the output $1, where the
+# piece's first name may carry its binary's hash.
+line_of() {
+  local n=${2#*:} rest=
+  [[ $n != *::* ]] || rest=::${n#*::}
+  command grep -a -m 1 -E "^${n%%::*}(-[0-9a-f]{16})?$rest rc=" "$1"
+}
 # Items of the list "$1" (one a line) that are in the list "$2".
 inter() { [ -n "$1" ] && [ -n "$2" ] && command grep -a -x -F -f <(printf '%s\n' "$2") <<<"$1"; return 0; }
 minus() { if [ -z "$2" ]; then printf '%s' "$1"; else command grep -a -v -x -F -f <(printf '%s\n' "$2") <<<"$1"; fi; return 0; }
@@ -423,7 +444,7 @@ landing_of() {
 known_add() {
   local p
   for p in $2; do
-    [ -s "$known_file" ] && awk -v p="$p" '$1 == p { f = 1 } END { exit !f }' "$known_file" && continue
+    [ -s "$known_file" ] && unhash <"$known_file" | awk -v p="$p" '$1 == p { f = 1 } END { exit !f }' && continue
     echo "$p $1" >>"$known_file"
   done
 }
@@ -465,7 +486,7 @@ known_edit() {
       old=$(cat /dev/fd/9) || return 0
       new=$(while IFS= read -r line; do
         f=$(fixed_of "$line")
-        if [ -n "$f" ] && [ -n "$(inter "${line%% *}" "$items")" ] && git -C "$repo" merge-base --is-ancestor "$f" "$c" 2>/dev/null; then
+        if [ -n "$f" ] && [ -n "$(inter "$(unhash <<<"${line%% *}")" "$items")" ] && git -C "$repo" merge-base --is-ancestor "$f" "$c" 2>/dev/null; then
           [ "$how" = drop ] || sed -E 's/ +fixed-by +[^ ]+//g' <<<"$line"
         else
           printf '%s\n' "$line"
@@ -1072,7 +1093,7 @@ check() {
     # landed, so a run at the head again would find the same; the head is checked with them as
     # known failures.
     if [ -n "$queue" ]; then
-      for p in $items; do known+="$p ($(awk -v p="$p" '$1 == p { r = $2 } END { print r }' "$known_file")) "; done
+      for p in $items; do known+="$p ($(unhash <"$known_file" | awk -v p="$p" '$1 == p { r = $2 } END { print r }')) "; done
       checked_head "$c0" "$known"
       return 0
     fi
