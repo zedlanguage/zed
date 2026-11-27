@@ -8242,9 +8242,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         s.uses_written(&kept).text_around(around.get())
     }
 
-    /// [`Self::sig_text_with`] with no `written` and no `kept`, each variable of `marked` printed by a name
-    /// the message gives wherever it stands and not replaced by the types of its uses, and
-    /// followed by the words `then` writes ([`Sig::text_around_then`]).
+    /// [`Self::sig_text_with`] with no `written` and no `kept`, each variable of `marked`
+    /// printed by a name the message gives wherever it stands and not replaced by the types of
+    /// its uses, and followed by the words `then` writes ([`Sig::text_around_then`]).
     fn sig_text_then(
         &self,
         s: &Sig,
