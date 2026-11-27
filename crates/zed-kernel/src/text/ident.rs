@@ -88,9 +88,15 @@ pub fn fresh(base: &str, free: impl Fn(&str) -> bool) -> String {
 /// that gives several names of one base passes the `k` after the last one it got, so each
 /// suffix is tried once: k names then cost O(k + u) lookups for the u taken names of the form
 /// `{base}` and a number, not the O(k²) of trying from 1 each time.
+///
+/// A `'` may only end a name, so where `base` ends with primes the number goes before them:
+/// `x'` gives `x2'`, not `x'2`, which is no name (Gemini C-2 of round 3 of
+/// XR-lazy-and-kernel-batch-1). The names stay distinct for distinct `k`, and none is `base`.
 pub fn numbered(base: &str, from: usize, free: impl Fn(&str) -> bool) -> (usize, String) {
+    let stem = base.trim_end_matches('\'');
+    let primes = &base[stem.len()..];
     (from..)
-        .map(|k| (k, format!("{base}{k}")))
+        .map(|k| (k, format!("{stem}{k}{primes}")))
         .find(|(_, name)| free(name))
         .expect("finitely many names are taken, so some suffix is free")
 }
@@ -145,6 +151,24 @@ mod tests {
         assert_eq!(fresh("y", free), "y");
         assert_eq!(numbered("y", 1, free), (1, "y1".to_string()));
         assert_eq!(numbered("y", 2, free), (3, "y3".to_string()));
+    }
+
+    /// A `'` may only end a name ([`name_end`]), so the number goes before it: `x'` gives
+    /// `x2'`, never `x'2`, which is the name `x'` and a number (round 3 of
+    /// XR-lazy-and-kernel-batch-1, Gemini C-2).
+    #[test]
+    fn a_numbered_name_puts_the_number_before_a_final_prime() {
+        let taken = ["x'", "x2'", "y'"];
+        let free = |n: &str| !taken.contains(&n);
+        assert_eq!(fresh("z'", free), "z'");
+        assert_eq!(fresh("x'", free), "x3'");
+        assert_eq!(fresh("y'", free), "y2'");
+        assert_eq!(numbered("x'", 1, free), (1, "x1'".to_string()));
+        assert_eq!(numbered("x'", 2, free), (3, "x3'".to_string()));
+        for (base, from) in [("x'", 2), ("y'", 1), ("_a'", 0), ("x", 2)] {
+            let (_, name) = numbered(base, from, free);
+            assert!(is_name(&name), "{name}");
+        }
     }
 
     #[test]

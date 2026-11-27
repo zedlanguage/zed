@@ -467,6 +467,82 @@ fn an_update_setting_two_slots_written_alike_reads_back() {
     reads_back_the_same(&t, &text, &bools());
 }
 
+fn pairs() -> Vec<Vec<Value>> {
+    [(9i64, 2i64), (-2, 7)]
+        .map(|(a, b)| vec![Value::Int(a), Value::Int(b)])
+        .to_vec()
+}
+
+fn lam(xs: &[&str], body: Term) -> Term {
+    Term::Lam(xs.iter().map(|&x| x.into()).collect(), Shared::new(body))
+}
+
+// Round 3 of XR-lazy-and-kernel-batch-1, part C.
+
+/// Codex C2.1, Gemini C-1: two parameters of one lambda written alike, in either order, the body
+/// reading one of them or neither. The text `(x, x) -> …` is refused, a name declared twice, so
+/// the later of the two takes a new name whatever the body reads. Before the fix a body reading
+/// the later parameter, or none, gave `(x, x) -> …`.
+#[test]
+fn a_parameter_written_as_an_earlier_one_takes_a_new_name_read_or_not() {
+    let cases = [
+        (lam(&["x@1", "x@2"], var("x@2")), "(x, x2) -> x2"),
+        (lam(&["x@1", "x@2"], lit(1i64)), "(x, x2) -> 1"),
+        (lam(&["x@2", "x@1"], var("x@1")), "(x, x2) -> x2"),
+        (lam(&["x@2", "x@1"], var("x@2")), "(x, x2) -> x"),
+        (lam(&["x@1", "x@2"], var("x@1")), "(x, x2) -> x"),
+    ];
+    for (t, want) in &cases {
+        assert_eq!(message(t), *want);
+        reads_back_the_same(t, want, &pairs());
+    }
+}
+
+/// Codex C2.2: a free read of a kernel name whose binders take a new name keeps the name the
+/// program wrote; only the binders and the reads they bind are respelled. Read back under a
+/// parameter `x` given 47: before the fix the free read was written `x2` (or `x3`), which the
+/// text does not bind.
+#[test]
+fn a_free_read_of_a_name_respelled_at_its_binders_keeps_its_written_name() {
+    // `y -> (x@1 -> { x@2 = 5; x@1 })(y) + x@2`, the last `x@2` free.
+    let f = lam(&["x@1"], let_("x@2", lit(5i64), var("x@1")));
+    let call_f = Term::App(Shared::new(f), vec![var("y")]);
+    let a = lam(&["y"], add(call_f, var("x@2")));
+    // `x@1 -> x@2 + { x@2 = 5; x@1 + x@2 }`: the free read is under the binder of `x@1`, so
+    // that binder is respelled and the free read is written `x`; the inner binder keeps `x`,
+    // as no read of another `x` is under it once `x@1` is `x2`. The block is on the right: on
+    // the left of `+` at the start of a body the printer writes it bare, and the parser ends
+    // the body at its `}`.
+    let b = lam(
+        &["x@1"],
+        add(
+            var("x@2"),
+            let_("x@2", lit(5i64), add(var("x@1"), var("x@2"))),
+        ),
+    );
+    for (t, text, want) in [
+        (&a, "y -> (x -> { x2 = 5; x })(y) + x", 9 + 47),
+        (&b, "x2 -> x + { x = 5; x2 + x }", 47 + 9 + 5),
+    ] {
+        assert_eq!(message(t), text);
+        let src = format!("g = x -> {text};\n");
+        let unit = elab(&src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let g = unit.defs.iter().find(|d| d.name == "g").expect("`g`");
+        let given = Term::App(Shared::new((*g.term).clone()), vec![lit(47i64)]);
+        assert_eq!(call(&given, &[Value::Int(9)]), Value::Int(want), "{text}");
+    }
+}
+
+/// Gemini C-2: a binder written `x'` that takes a new name is numbered before the prime, `x2'`;
+/// `x'2` is the name `x'` and the number 2. The text is not read back: the resolver of this step
+/// refuses every primed name as a form of a later step (`Resolver::primed`, crates/zedc-resolve
+/// resolve.rs), so no text with a primed binder reads back here.
+#[test]
+fn a_primed_binder_takes_a_new_name_with_the_number_before_the_prime() {
+    let t = lam(&["x'@1"], let_("x'@2", lit(5i64), var("x'@1")));
+    assert_eq!(message(&t), "x' -> { x2' = 5; x' }");
+}
+
 /// A part named in the text does not take a name the term writes: a parameter `part1` moves
 /// the part to `part2`, and a name `env1` moves the env to `env2`.
 #[test]

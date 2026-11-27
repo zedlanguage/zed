@@ -454,6 +454,8 @@ impl<'a> Builder<'a, '_> {
         let mut mark = |b: &mut Self, x: &Arc<str>| {
             let i = b.slot[x];
             if b.set_to[i].is_some() {
+                #[cfg(test)]
+                super::tests::SET_ALREADY.with_borrow_mut(|s| s.push(x.clone()));
                 return;
             }
             b.set_to[i] = Some(x.clone());
@@ -476,6 +478,8 @@ impl<'a> Builder<'a, '_> {
             && let Some((above, x)) = self.made_by[from].clone()
         {
             mark(self, &x);
+            #[cfg(test)]
+            super::tests::PASSED.with_borrow_mut(|p| p.push(from));
             self.passed[from] = true;
             from = above;
         }

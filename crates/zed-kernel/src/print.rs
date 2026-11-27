@@ -25,13 +25,16 @@
 
 mod dag;
 pub mod level;
+#[cfg(test)]
+mod tests;
 
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::sync::Arc;
 
-use crate::term::walk::{Binds, Kid, kids};
+use crate::term::walk::{Binds, Built, Kid, kids, rebuild};
 use crate::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
 use crate::text::ident::numbered;
 use crate::types::defs;
@@ -43,7 +46,7 @@ use crate::value::Value;
 #[derive(Clone, Copy)]
 struct Names<'a> {
     written: Option<fn(&str) -> &str>,
-    fresh: Option<&'a HashMap<&'a str, String>>,
+    fresh: Option<&'a HashMap<String, String>>,
 }
 
 /// Each name as it is.
@@ -117,7 +120,9 @@ pub fn pretty_in(t: &Term, width: usize, resolves: Resolves<'_>) -> String {
 pub fn written(t: &Term, name: fn(&str) -> &str, resolves: Resolves<'_>) -> String {
     let local = defs::local();
     let (t, labels) = form(t, Some(resolves), Some(name));
-    let fresh = respelled(&t, name);
+    debug_assert!(labels.is_empty(), "a scoped term has no label");
+    let (freed, fresh) = respelled(&t, name);
+    let t = freed.map_or(t, Cow::Owned);
     let names = Names {
         written: Some(name),
         fresh: Some(&fresh),
@@ -149,25 +154,44 @@ pub fn written(t: &Term, name: fn(&str) -> &str, resolves: Resolves<'_>) -> Stri
 /// binder, as in `t`. The binder respelled is the one that would capture, the inner, so the
 /// names the program wrote stay where they can.
 ///
+/// Two binders of one group written alike, the parameters `x@1` and `x@2` of one lambda, would
+/// be one name twice, which the resolver refuses, read or not: each one after the first whose
+/// spelling an earlier one of the group has is respelled, `(x, x2) -> x2` (round 3: Codex C2.1,
+/// Gemini C-1). The stacks then hold no two binders of one group with one spelling, and the
+/// argument above holds as for binders one inside another.
+///
+/// The new spellings are keyed by kernel name, and a read of `k` that no binder of `k` is
+/// around (a free read, as of `x@2` in `y -> (x@1 -> { x@2 = 5; x@1 })(y) + x@2`, the body of
+/// a lambda shown alone) names no binder: it keeps the spelling `name` gives it, and every
+/// binder of its spelling around it is respelled, so it reads no binder in the text either
+/// (round 3: Codex C2.2). Where `k` is also respelled at its binders, the free reads of `k`
+/// are given a kernel name of their own that the term holds nowhere, spelled `name(k)`, in the
+/// term returned; otherwise the term is `t` and none is returned.
+///
 /// What this cannot tell apart: two names `t` does not bind with one spelling, `x@1` and
 /// `x@2` both free, are one name in the text; elaboration binds every name it renames, so a
 /// whole program's term has none.
 // Complexity tradeoff: checking each read against every binder around it is O(n d) for n
 // reads under d binders; with a stack for each spelling, each binder is pushed once and taken
 // off once, so the walk is O(text) with O(1) expected hash work a node, as the text itself.
-fn respelled<'t>(t: &'t Term, name: fn(&str) -> &str) -> HashMap<&'t str, String> {
+// The second walk, giving free reads their own names, is O(text) too and is taken only where
+// a free read's kernel name is respelled, which no whole program's term has.
+fn respelled(t: &Term, name: fn(&str) -> &str) -> (Option<Term>, HashMap<String, String>) {
     enum Step<'t> {
         Term(&'t Term),
         Bind(&'t str, usize),
         Unbind(&'t str, usize),
     }
-    // For each spelling, its binders in scope, innermost last, each with a number.
-    let mut stacks: HashMap<&'t str, Vec<(&'t str, usize)>> = HashMap::new();
-    // For each kernel name, how many of its binders are on the stacks.
-    let mut live: HashMap<&'t str, usize> = HashMap::new();
-    let mut taken: HashSet<&'t str> = HashSet::new();
-    let mut marked: HashSet<&'t str> = HashSet::new();
-    let mut order: Vec<&'t str> = Vec::new();
+    // For each spelling, its binders in scope not respelled, innermost last, each with a
+    // number.
+    let mut stacks: HashMap<&str, Vec<(&str, usize)>> = HashMap::new();
+    // For each kernel name, how many of its binders are in scope, respelled or not.
+    let mut scope: HashMap<&str, usize> = HashMap::new();
+    let mut taken: HashSet<&str> = HashSet::new();
+    let mut kernel: HashSet<&str> = HashSet::new();
+    let mut free: HashSet<&str> = HashSet::new();
+    let mut marked: HashSet<&str> = HashSet::new();
+    let mut order: Vec<&str> = Vec::new();
     let mut binders = 0;
     let mut todo = vec![Step::Term(t)];
     while let Some(step) = todo.pop() {
@@ -176,14 +200,18 @@ fn respelled<'t>(t: &'t Term, name: fn(&str) -> &str) -> HashMap<&'t str, String
                 if let Term::Var(k) = u {
                     let k: &str = k;
                     taken.insert(name(k));
-                    if !marked.contains(k) {
-                        let bound = live.get(k).is_some_and(|&n| n > 0);
+                    kernel.insert(k);
+                    // A free read is written `name(k)` whether `k` is respelled or not.
+                    let unbound = scope.get(k).is_none_or(|&n| n == 0);
+                    if unbound {
+                        free.insert(k);
+                    }
+                    if unbound || !marked.contains(k) {
                         let stack = stacks.entry(name(k)).or_default();
                         while let Some(&(top, _)) = stack.last()
-                            && (!bound || top != k)
+                            && (unbound || top != k)
                         {
                             stack.pop();
-                            *live.get_mut(top).expect("counted at its binder") -= 1;
                             if marked.insert(top) {
                                 order.push(top);
                             }
@@ -196,6 +224,19 @@ fn respelled<'t>(t: &'t Term, name: fn(&str) -> &str) -> HashMap<&'t str, String
                     let mut xs = Vec::new();
                     binds.each(|x| xs.push((&**x, binders + xs.len())));
                     binders += xs.len();
+                    if xs.len() > 1 {
+                        // The kernel name of the first binder of each spelling in the group.
+                        let mut first: HashMap<&str, &str> = HashMap::new();
+                        for &(x, _) in &xs {
+                            if marked.contains(x) {
+                                continue;
+                            }
+                            let y = *first.entry(name(x)).or_insert(x);
+                            if y != x && marked.insert(x) {
+                                order.push(x);
+                            }
+                        }
+                    }
                     todo.extend(xs.iter().map(|&(x, i)| Step::Unbind(x, i)));
                     todo.push(Step::Term(part));
                     todo.extend(xs.iter().rev().map(|&(x, i)| Step::Bind(x, i)));
@@ -203,19 +244,20 @@ fn respelled<'t>(t: &'t Term, name: fn(&str) -> &str) -> HashMap<&'t str, String
             }
             Step::Bind(x, i) => {
                 taken.insert(name(x));
+                kernel.insert(x);
+                *scope.entry(x).or_default() += 1;
                 if !marked.contains(x) {
                     stacks.entry(name(x)).or_default().push((x, i));
-                    *live.entry(x).or_default() += 1;
                 }
             }
             Step::Unbind(x, i) => {
+                *scope.get_mut(x).expect("counted at its binder") -= 1;
                 // Off the stack already if respelled since (then it is not on top), or never
                 // put on (respelled before its binder was reached).
                 if let Some(stack) = stacks.get_mut(name(x))
                     && stack.last().is_some_and(|&(_, j)| j == i)
                 {
                     stack.pop();
-                    *live.get_mut(x).expect("counted at its binder") -= 1;
                 }
             }
         }
@@ -224,15 +266,106 @@ fn respelled<'t>(t: &'t Term, name: fn(&str) -> &str) -> HashMap<&'t str, String
     let mut next: HashMap<&str, usize> = HashMap::new();
     let mut given: HashSet<String> = HashSet::new();
     let mut out = HashMap::with_capacity(order.len());
+    // For each kernel name respelled that is also read free, the kernel name of its free reads:
+    // `k#i` for the least `i` that no kernel name of `t` and no earlier one is. Two are never
+    // one: the part after the last `#` of each is its number, so `k#i = k'#j` gives `k = k'`.
+    let mut own: HashMap<&str, Arc<str>> = HashMap::new();
     for k in order {
         let base = name(k);
         let from = next.get(base).copied().unwrap_or(2);
         let (n, s) = numbered(base, from, |s| !taken.contains(s) && !given.contains(s));
         next.insert(base, n + 1);
         given.insert(s.clone());
-        out.insert(k, s);
+        out.insert(k.to_string(), s);
+        if free.contains(k) {
+            let f = (0..)
+                .map(|i| format!("{k}#{i}"))
+                .find(|f| !kernel.contains(f.as_str()) && !out.contains_key(f))
+                .expect("finitely many names are taken");
+            out.insert(f.clone(), base.to_string());
+            own.insert(k, f.into());
+        }
     }
-    out
+    let freed = (!own.is_empty()).then(|| free_reads_renamed(t, &own));
+    (freed, out)
+}
+
+/// `t` with each read of a kernel name `k` of `own` that no binder of `k` is around, a free
+/// read, renamed `own[k]` (`respelled`), binders and the other reads as they are. A node with
+/// no such read below it is held as it is.
+// Complexity tradeoff: the walk goes over `t` as its text is written, as `respelled` does, so
+// it is O(text); a node met at two places may hold a free read at one and a bound read at the
+// other, so no node's result is kept for another place.
+fn free_reads_renamed(t: &Term, own: &HashMap<&str, Arc<str>>) -> Term {
+    // A node being rebuilt: its parts, the next to walk, and each walked part's new term, if
+    // it has one.
+    struct Frame<'t> {
+        term: &'t Term,
+        parts: Vec<(Kid<'t>, Binds<'t>)>,
+        new: Vec<Option<Term>>,
+    }
+    // For each kernel name of `own`, how many of its binders are around the node walked.
+    let mut scope: HashMap<&str, usize> = HashMap::new();
+    let mut frames: Vec<Frame<'_>> = Vec::new();
+    // The node to walk next, and the new term of the node walked last, if it has one.
+    let mut next = Some(t);
+    let mut done: Option<Term> = None;
+    loop {
+        // Whether a node was finished, its new term in `done`, or one entered, its frame on top.
+        let finished = match next.take() {
+            Some(Term::Var(k)) => {
+                done = own
+                    .get(&**k)
+                    .filter(|_| scope.get(&**k).is_none_or(|&n| n == 0))
+                    .map(|f| Term::Var(f.clone()));
+                true
+            }
+            Some(u) => {
+                let mut parts = Vec::new();
+                kids(u, |kid, binds| parts.push((kid, binds)));
+                frames.push(Frame {
+                    term: u,
+                    parts,
+                    new: Vec::new(),
+                });
+                false
+            }
+            None => {
+                let f = frames.pop().expect("a node is being rebuilt");
+                done = f.new.iter().any(Option::is_some).then(|| {
+                    let parts =
+                        (f.parts.iter().zip(f.new)).map(|(&(kid, _), new)| match (new, kid) {
+                            (Some(n), _) => Built::Term(n),
+                            (None, Kid::Shared(s)) => Built::Shared(s.clone()),
+                            (None, Kid::Inline(u)) => Built::Term(u.clone()),
+                        });
+                    rebuild(f.term, parts)
+                });
+                true
+            }
+        };
+        // A node finished is the root or the part of the node on top walked last.
+        let Some(f) = frames.last_mut() else {
+            return done.unwrap_or_else(|| t.clone());
+        };
+        if finished {
+            let (_, b) = f.parts[f.new.len()];
+            b.each(|x| {
+                if own.contains_key(&**x) {
+                    *scope.get_mut(&**x).expect("counted at its binder") -= 1;
+                }
+            });
+            f.new.push(done.take());
+        }
+        if let Some(&(kid, b)) = f.parts.get(f.new.len()) {
+            b.each(|x| {
+                if own.contains_key(&**x) {
+                    *scope.entry(&**x).or_default() += 1;
+                }
+            });
+            next = Some(kid.term());
+        }
+    }
 }
 
 /// `text`, a term or pattern written while `local` collected the definitions of the types in
@@ -597,6 +730,8 @@ impl<'a> LetReads<'a> {
     /// one's bound term reads its own name (then its body is a lambda's) or the block ends at
     /// it, as the printer writes them.
     fn walk(&mut self, root: &'a Term, names: Names<'a>) {
+        #[cfg(test)]
+        tests::WALKED_FROM.with_borrow_mut(|w| w.push(std::ptr::from_ref(root)));
         // A part to read, in the block with that index if it is a `let` in one; a binder's
         // names bound or unbound; or a `let` whose bound term, begun at that time, is read.
         enum Step<'a> {
