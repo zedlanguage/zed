@@ -283,6 +283,14 @@ test("a label with no attempt is a line of its item, and bookkeeping draws no bo
   assert.equal(nodes.get("Y")!.state, "active");
 });
 
+test("every spelling of work under way makes a node active", () => {
+  const spellings = ["progress", "in progress", "in-progress", "working", "assigned", "launched", "part-done"];
+  const led = spellings.map((s, i) => JSON.stringify({ id: `W${i}`, state: s, title: `w${i}` })).join("\n") + "\n";
+  const nodes = by(buildNodes(inputs("", led + '{"id":"U","state":"queued","title":"u"}\n')));
+  for (const [i, s] of spellings.entries()) assert.equal(nodes.get(`W${i}`)!.state, "active", s);
+  assert.equal(nodes.get("U")!.state, "unstarted");
+});
+
 test("a ledger line carries edges too, and a bare string is one id", () => {
   const nodes = by(buildNodes(inputs(
     "",

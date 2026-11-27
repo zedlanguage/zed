@@ -503,7 +503,11 @@ export function buildGraph(inp: Inputs): BoardState {
     // new attempt; "ready" (a branch handed to the orchestrator to merge) waits on the merge.
     else if (ls === "open" || ls === "queued" || ls === "unsolved" || ls === "todo") s = "unstarted";
     else if (ls === "ready") s = "waiting";
+    // Agents also write the work-under-way state in these other spellings; without them such rows
+    // showed as unstarted while an agent owned them, and check-live listed them as owned, not active.
     else if (ls === "running" || ls === "started" || ls === "active") s = "active";
+    else if (ls === "progress" || ls === "in progress" || ls === "in-progress" || ls === "working") s = "active";
+    else if (ls === "assigned" || ls === "launched" || ls === "part-done") s = "active";
     else if (lines.some((l) => l.entry.role === "merge" && /\bon main\b|merged/.test(l.entry.text))) s = "done";
     else if (lines.length > 0) s = "active";
     // An unanswered author question holds an item that is not yet done or under way.
