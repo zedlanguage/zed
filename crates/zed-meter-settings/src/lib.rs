@@ -118,7 +118,18 @@ pub const ZED_METER_UNDER_DRRUN: &str = "ZED_METER_UNDER_DRRUN";
 /// limit (merge check of b22-meter1). The slowdown and how the count compares with the hardware's
 /// are in the comment at `zed_tests::scaling`.
 pub fn start_under_dynamorio() {
-    imp::start_under_dynamorio()
+    imp::start_under_dynamorio(false)
+}
+
+/// The variable [`attach_dynamorio`] passes, with [`ZED_METER_UNDER_DRRUN`], to the process it
+/// starts again under `drrun` as its fallback, which keeps it, so that the process and those it
+/// starts can tell the fallback ran ([`fell_back_to_drrun`]).
+pub const ZED_METER_FELL_BACK: &str = "ZED_METER_FELL_BACK";
+
+/// Whether this process, or one it descends from, was started again under `drrun` by the
+/// fallback of [`attach_dynamorio`] ([`ZED_METER_FELL_BACK`] is set).
+pub fn fell_back_to_drrun() -> bool {
+    std::env::var_os(ZED_METER_FELL_BACK).is_some_and(|v| !v.is_empty())
 }
 
 /// The variable DynamoRIO reads its options from when a process starts it itself
@@ -127,6 +138,11 @@ pub fn start_under_dynamorio() {
 /// [`start_under_dynamorio`] does not pass it to `drrun`, which sets the options of the process
 /// it starts itself.
 pub const DYNAMORIO_OPTIONS: &str = "DYNAMORIO_OPTIONS";
+
+/// The variable that, set and not empty, makes [`attach_dynamorio`] take its fallback, the start
+/// again under `drrun` ([`start_under_dynamorio`]), as when its trial start in a child process
+/// fails, so that a test runs that path where the trial succeeds.
+pub const ZED_METER_NO_ATTACH: &str = "ZED_METER_NO_ATTACH";
 
 /// Whether [`attach_dynamorio`] may start DynamoRIO in this process: the conditions of
 /// [`start_under_dynamorio`] (both variables named, `--exact`, no count of the client yet, not
@@ -160,6 +176,32 @@ pub fn can_attach_dynamorio() -> bool {
 ///   of the test binary) starts natively and starts DynamoRIO itself at its own first run, where
 ///   by default DynamoRIO would follow its `execve` and run its whole set-up under DynamoRIO;
 /// - `-client_lib <client>;0;`: the client, with id 0 and no options.
+///
+/// The start inside the process is tried first in a child, made by `fork` from the calling
+/// thread with a second thread waiting, as the test harness's main thread waits for the test's
+/// thread; where the child does not exit 0 with the client answering, or
+/// [`ZED_METER_NO_ATTACH`] is set, the process starts again under `drrun` instead
+/// ([`start_under_dynamorio`], the path before batch b29), which runs the test from its start
+/// under the client. The fallback is chosen by what fails, not by a list of processors, since
+/// the cause of the first failure below is not known. Two failures seen (batch b29, jobs j23 to
+/// j26):
+/// - On Colab VM l42 (Intel Xeon family 6 model 85, Cascade Lake, with AVX-512 and FSGSBASE;
+///   kernel 6.6.159, glibc 2.39, DynamoRIO 11.3.0), 98 of 102 metered benchmarks ended by
+///   SIGSEGV within a second of their start (FAIL-meter-attach-segfault-l42): gdb shows
+///   DynamoRIO taking over the other thread (`os_thread_take_over`, `os_thread_re_take_over`,
+///   `safe_read_tls_magic` reading `%gs:0x60`) when the process died. The same benchmarks pass on
+///   the same VM under `drrun`, and on hm VMs with the start inside the process. A C program
+///   that starts DynamoRIO in the same way from a second thread does not fail there.
+/// - On a thread with a stack of 2^32 bytes (`zed_tests::scaling::on_a_stack(1 << 32)`, four
+///   benchmarks of l01_33), DynamoRIO stops the process with exit status 40 at its start,
+///   printing "Restartable sequence behavior is not supported: struct rseq is not in static
+///   thread-local storage" (FAIL-meter-attach-rseq-4gib-stack), also with `-disable_rseq` and,
+///   for the first failure, also with glibc's `glibc.pthread.rseq=0`.
+///
+/// The child fails the same way in both cases (job j27 on l42: the trial ended by SIGSEGV after
+/// 950 ms, and by exit status 40 after 3.2 ms on the 2^32-byte stack), and the six benchmarks
+/// that failed there count with the fallback. Cost of the trial: no instruction of the count,
+/// which starts in this process after the trial, at the client's first read; in time, @@HM@@.
 ///
 /// Counting is off until the client's first read, as under `drrun` (tools/icount/zed_icount.c),
 /// so what the process does between the start and that read is not counted. An error names the
@@ -625,6 +667,73 @@ mod imp {
                 super::ZED_METER_ICOUNT
             ));
         }
+        let forced = std::env::var_os(super::ZED_METER_NO_ATTACH).is_some_and(|v| !v.is_empty());
+        if forced || !starts_in_a_child() {
+            // Returns only where it does not start the process again.
+            start_under_dynamorio(true);
+            return Err(format!(
+                "DynamoRIO {} in a child of this process, and the process did not start again \
+                 under {} (start_under_dynamorio)",
+                if forced {
+                    format!("was not tried ({} is set)", super::ZED_METER_NO_ATTACH)
+                } else {
+                    "did not start".to_owned()
+                },
+                super::ZED_METER_DRRUN
+            ));
+        }
+        start_here()
+    }
+
+    /// Whether DynamoRIO starts, and its client answers, in a child of this process made by
+    /// `fork`, with a second thread waiting in it (see [`super::attach_dynamorio`]). The child
+    /// has only the calling thread (fork(2)); the second thread stands for the others, waiting
+    /// as the harness's main thread waits in `pthread_join`. Gives false where the child does not
+    /// exit 0 within 20 s, and kills it then. The parent waits with `waitpid` polled each
+    /// millisecond, since a blocking wait could not end at the time limit.
+    fn starts_in_a_child() -> bool {
+        // SAFETY: fork has no preconditions. The child of a process with several threads may
+        // call only async-signal-safe functions until it calls `execve` (fork(2)); this child
+        // calls others (it starts a thread, opens DynamoRIO, which calls malloc). glibc's fork
+        // resets the locks of malloc and of the dynamic loader in the child, so these do not
+        // wait for a thread that does not exist; a lock of another library held by another
+        // thread at the fork would make the child wait, and the time limit below then ends it,
+        // which only takes the fallback.
+        let child = unsafe { libc::fork() };
+        if child == 0 {
+            let (tx, rx) = std::sync::mpsc::channel::<()>();
+            let waiting = std::thread::spawn(move || rx.recv());
+            let ok = start_here().is_ok() && zed_alloc_count::os::software_instructions().is_some();
+            drop(tx);
+            let _ = waiting.join();
+            // SAFETY: _exit ends the child at once, running no handlers of the parent's state.
+            unsafe { libc::_exit(if ok { 0 } else { 1 }) };
+        }
+        if child < 0 {
+            return false;
+        }
+        let start = std::time::Instant::now();
+        let mut status: c_int = 0;
+        loop {
+            // SAFETY: `child` is this process's child, and `status` is a valid int.
+            let r = unsafe { libc::waitpid(child, &mut status, libc::WNOHANG) };
+            if r == child {
+                return libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0;
+            }
+            if r < 0 || start.elapsed() > std::time::Duration::from_secs(20) {
+                // SAFETY: kill and waitpid of this process's own child.
+                unsafe {
+                    libc::kill(child, libc::SIGKILL);
+                    libc::waitpid(child, &mut status, 0);
+                }
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    /// Starts DynamoRIO in this process (see [`super::attach_dynamorio`]), with no trial first.
+    fn start_here() -> Result<(), String> {
         let drrun = std::env::var_os(super::ZED_METER_DRRUN).unwrap_or_default();
         let lib = std::path::Path::new(&drrun)
             .parent()
@@ -678,8 +787,9 @@ mod imp {
         }
     }
 
-    /// See [`super::start_under_dynamorio`].
-    pub(super) fn start_under_dynamorio() {
+    /// See [`super::start_under_dynamorio`]; `fell_back` passes [`super::ZED_METER_FELL_BACK`] to
+    /// the new image.
+    pub(super) fn start_under_dynamorio(fell_back: bool) {
         let var = |name: &str| {
             std::env::var_os(name)
                 .filter(|v| !v.is_empty())
@@ -728,6 +838,9 @@ mod imp {
                 .expect("no NUL"),
         );
         env.push(CString::new(format!("{}=1", super::ZED_METER_UNDER_DRRUN)).expect("no NUL"));
+        if fell_back {
+            env.push(CString::new(format!("{}=1", super::ZED_METER_FELL_BACK)).expect("no NUL"));
+        }
         let mut ptrs: Vec<*const c_char> = env.iter().map(|c| c.as_ptr()).collect();
         ptrs.push(std::ptr::null());
         let mut dargs = vec![drrun, c"-c".to_owned(), client, c"--".to_owned(), exe];
@@ -952,7 +1065,7 @@ mod imp {
         None
     }
 
-    pub(super) fn start_under_dynamorio() {}
+    pub(super) fn start_under_dynamorio(_fell_back: bool) {}
 
     pub(super) fn can_attach_dynamorio() -> bool {
         false

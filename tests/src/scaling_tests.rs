@@ -967,27 +967,35 @@ fn a_benchmark_run_with_other_tests_counts_instructions() {
 const WHERE_DYNAMORIO_RUNS: &str = "zed-test-dynamorio-runs";
 
 /// Run alone by [`dynamorio_starts_at_the_meters_first_read`]: prints whether this process
-/// runs under DynamoRIO's client after its meter is made and after the meter's first read, and
-/// the meter's unit. Run with other tests it prints the same line, and nothing is held to it.
+/// runs under DynamoRIO's client after its meter is made and after the meter's first read, the
+/// meter's unit, and whether the process was started again under `drrun` by the fallback of
+/// `zed_meter_settings::attach_dynamorio`. Run with other tests it prints the same line, and
+/// nothing is held to it.
 #[test]
 fn reports_where_dynamorio_runs() {
     let mut meter = Meter::new();
     let made = zed_alloc_count::os::software_instructions().is_some();
     meter.read();
     let read = zed_alloc_count::os::software_instructions().is_some();
-    println!("{WHERE_DYNAMORIO_RUNS}\t{made}\t{read}\t{}", meter.unit());
+    let fell_back = zed_meter_settings::fell_back_to_drrun();
+    println!(
+        "{WHERE_DYNAMORIO_RUNS}\t{made}\t{read}\t{}\t{fell_back}",
+        meter.unit()
+    );
 }
 
-/// A test run alone, with `--exact`, where the hardware has no counter and DynamoRIO and its
-/// client are named, runs natively until its meter's first read, the start of its first
-/// measured run, and under DynamoRIO's client from then on (BENCH-icount-attach-at-run), so its
-/// set-up before that run runs natively. Red on origin/main d0ab2c950 on a Colab VM: the process
-/// started again under `drrun` as its meter was made, so it ran under the client before the
-/// first read. Where the hardware counts, or DynamoRIO is not named, the process never runs
-/// under the client.
-#[cfg(target_os = "linux")]
+/// [`reports_where_dynamorio_runs`] on a thread with a stack of 2^32 bytes, as four benchmarks
+/// of l01_33 run (`on_a_stack(1 << 32)`).
 #[test]
-fn dynamorio_starts_at_the_meters_first_read() {
+fn reports_where_dynamorio_runs_on_a_4_gib_stack() {
+    on_a_stack(1 << 32, reports_where_dynamorio_runs);
+}
+
+/// The fields of the line `test` (one of the two above) prints, run alone with `--exact` in a
+/// new process of this test binary, with the variables `vars` set; whether the hardware counts
+/// instructions; and whether DynamoRIO and its client are named. The process must exit 0.
+#[cfg(target_os = "linux")]
+fn where_dynamorio_runs(test: &str, vars: &[(&str, &str)]) -> (Vec<String>, bool, bool) {
     let named = |var: &str| std::env::var_os(var).is_some_and(|v| !v.is_empty());
     let hardware = Meter::open(
         perf_event::events::Hardware::INSTRUCTIONS,
@@ -1000,37 +1008,91 @@ fn dynamorio_starts_at_the_meters_first_read() {
     let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
         .args([
             "--exact",
-            "scaling_tests::reports_where_dynamorio_runs",
+            &format!("scaling_tests::{test}"),
             "--nocapture",
             "--test-threads=1",
         ])
+        .envs(vars.iter().copied())
         .output()
         .expect("running this test binary");
     let out = String::from_utf8_lossy(&run.stdout);
     let err = String::from_utf8_lossy(&run.stderr);
-    assert!(run.status.success(), "{out}\n{err}");
+    assert!(run.status.success(), "{}\n{out}\n{err}", run.status);
     // With `--nocapture` the harness writes `test <name> ... ` and then the test's own output on
     // the same line, so the report is found where it starts in a line, not at its start.
     let line = out
         .lines()
         .find_map(|l| l.split_once(WHERE_DYNAMORIO_RUNS).map(|(_, r)| r))
         .unwrap_or_else(|| panic!("no line {WHERE_DYNAMORIO_RUNS} in:\n{out}\n{err}"));
-    let fields: Vec<&str> = line.split('\t').skip(1).collect();
-    let expected = if software && !hardware {
-        ["false", "true"]
-    } else {
-        ["false", "false"]
+    let fields = line.split('\t').skip(1).map(str::to_owned).collect();
+    (fields, hardware, software)
+}
+
+/// Holds the report of `test` run with `vars` (see [`where_dynamorio_runs`]): where the
+/// hardware has no counter and DynamoRIO is named, the process runs natively until its meter's
+/// first read and under the client from then on, or, where the fallback ran, under the client
+/// from its start again, and the meter counts the client's instructions; elsewhere it never runs
+/// under the client. Gives whether the fallback ran, and whether the client counts here.
+#[cfg(target_os = "linux")]
+fn holds_where_dynamorio_runs(test: &str, vars: &[(&str, &str)]) -> (bool, bool) {
+    let (fields, hardware, software) = where_dynamorio_runs(test, vars);
+    let fell_back = fields.get(3).is_some_and(|f| f == "true");
+    let expected = match (software && !hardware, fell_back) {
+        (true, false) => ["false", "true"],
+        (true, true) => ["true", "true"],
+        (false, _) => ["false", "false"],
     };
     assert_eq!(
         fields[..2],
         expected,
         "under the client after the meter was made, and after its first read; hardware \
-         counter: {hardware}; DynamoRIO named: {software}; unit: {:?}",
+         counter: {hardware}; DynamoRIO named: {software}; fell back to drrun: {fell_back}; \
+         unit: {:?}",
         fields.get(2)
     );
     if software && !hardware {
-        assert!(fields[2].contains("zed_icount"), "{line}");
+        assert!(fields[2].contains("zed_icount"), "{fields:?}");
     }
+    (fell_back, software && !hardware)
+}
+
+/// A test run alone, with `--exact`, where the hardware has no counter and DynamoRIO and its
+/// client are named, runs natively until its meter's first read, the start of its first
+/// measured run, and under DynamoRIO's client from then on (BENCH-icount-attach-at-run), so its
+/// set-up before that run runs natively. Red on origin/main d0ab2c950 on a Colab VM: the process
+/// started again under `drrun` as its meter was made, so it ran under the client before the
+/// first read. Where the start inside the process fails in its trial in a child, the process
+/// starts again under `drrun` at that read instead (`zed_meter_settings::attach_dynamorio`).
+/// Where the hardware counts, or DynamoRIO is not named, the process never runs under the
+/// client.
+#[cfg(target_os = "linux")]
+#[test]
+fn dynamorio_starts_at_the_meters_first_read() {
+    holds_where_dynamorio_runs("reports_where_dynamorio_runs", &[]);
+}
+
+/// The same on a thread with a stack of 2^32 bytes. Red on origin/main ed5523214 on Colab VMs:
+/// DynamoRIO stopped the process at its start inside it, with exit status 40 and "Restartable
+/// sequence behavior is not supported: struct rseq is not in static thread-local storage"
+/// (FAIL-meter-attach-rseq-4gib-stack); the trial in a child fails the same way, and the
+/// process starts again under `drrun`.
+#[cfg(target_os = "linux")]
+#[test]
+fn dynamorio_counts_on_a_4_gib_stack() {
+    holds_where_dynamorio_runs("reports_where_dynamorio_runs_on_a_4_gib_stack", &[]);
+}
+
+/// The fallback, forced by `ZED_METER_NO_ATTACH`, starts the process again under `drrun` at the
+/// meter's first read, where the meter counts the client's instructions from the process's
+/// start, so that the path stays tested where the start inside the process works.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_fallback_under_drrun_counts() {
+    let (fell_back, in_software) = holds_where_dynamorio_runs(
+        "reports_where_dynamorio_runs",
+        &[(zed_meter_settings::ZED_METER_NO_ATTACH, "1")],
+    );
+    assert_eq!(fell_back, in_software);
 }
 
 /// The variable naming, for [`bench::a_spin_whose_phase_at_8n_is_read`], the file of the
