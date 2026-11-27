@@ -215,7 +215,7 @@ impl MinAdd {
             hi < n,
             "MinAdd::for_each_at_most over items {lo}..={hi} of a tree of {n} items"
         );
-        self.each_at(1, 0, n - 1, lo, hi, bound, &mut f);
+        self.each_at(1, 0, n - 1, lo, hi, i128::from(bound), &mut f);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -226,17 +226,20 @@ impl MinAdd {
         nr: usize,
         lo: usize,
         hi: usize,
-        bound: i64,
+        bound: i128,
         f: &mut impl FnMut(usize),
     ) {
-        if hi < nl || nr < lo || self.min[v] > bound {
+        if hi < nl || nr < lo || i128::from(self.min[v]) > bound {
             return;
         }
         if nl == nr {
             f(nl);
             return;
         }
-        let below = bound.saturating_sub(self.add[v]);
+        // Exact, as in `first_at`: a later addition can bring a bound outside the i64 range
+        // back into it. No overflow in either search: a path has at most 64 nodes (4n nodes,
+        // n a usize), each subtracting one i64, so |bound| stays below 65 * 2^63 < 2^127.
+        let below = bound - i128::from(self.add[v]);
         let mid = nl + (nr - nl) / 2;
         self.each_at(2 * v, nl, mid, lo, hi, below, f);
         self.each_at(2 * v + 1, mid + 1, nr, lo, hi, below, f);
