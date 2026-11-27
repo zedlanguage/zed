@@ -24181,6 +24181,8 @@ struct Scope {
     /// The variables of [`Scope::left`] each open signature added, innermost last, so that
     /// [`Scope::close`] takes out exactly those.
     left_opened: Vec<Vec<Arc<str>>>,
+    /// The number of the next mark [`Scope::mark`] makes.
+    marks: usize,
 }
 
 /// What a message knows of the type variables around a text it prints (DESIGN.md
@@ -24255,6 +24257,7 @@ impl Default for Scope {
             kept: HashMap::new(),
             left: HashMap::new(),
             left_opened: Vec::new(),
+            marks: 0,
         }
     }
 }
@@ -24303,12 +24306,40 @@ impl Scope {
         let Some(name) = name else {
             return self.free();
         };
-        if let Some(u) = self.unions.last_mut() {
-            u.insert(name.clone());
+        VarSlot::Name(self.mark(Some(name)))
+    }
+
+    /// The printed name of a variable a signature being opened binds by name, a bounded one or
+    /// a kept one ([`Scope::open`]): a mark, `VAR b<k>`, which [`defs::name_vars`] names in
+    /// the order of the first places of the variables of its type, as it names the unbounded
+    /// ones, so that what bounds a variable does not change the order of the names (DESIGN.md
+    /// sec:diagnostics, "Types in a message": "A variable is named in the order in which the
+    /// names first occur in the printed text, left to right, whatever bounds it"; before, plan
+    /// row UNDERSCORE-print-followups, such a variable was given its name here, when its
+    /// signature opened, and `(T, T) -> ((U) -> (V) -> (U, V), T)` printed as `(V, V) -> ((T)
+    /// -> (U) -> (T, U), V)`). With `want`, the name a declaration wrote for it, the mark is
+    /// `VAR b<k>:want` ([`defs::WRITTEN`]), printed `want` unless a variable before it in its
+    /// type kept that name; `want` is then printed around the signature while it is open
+    /// ([`Scope::printed`]), so no signature inside it keeps it too. The marks are written as
+    /// members of a union ([`Ty::write_vars`]) or as a union alone ([`put_name`]), and
+    /// [`write_text`] encloses a text that holds one in [`defs::VARS`]. Cost: one string of
+    /// the length of the name.
+    fn mark(&mut self, want: Option<Arc<str>>) -> Arc<str> {
+        let mut mark = String::new();
+        mark.push(defs::VAR);
+        mark.push('b');
+        mark.push_str(&self.marks.to_string());
+        self.marks += 1;
+        if let Some(name) = want {
+            mark.push(defs::WRITTEN);
+            mark.push_str(&name);
+            if let Some(u) = self.unions.last_mut() {
+                u.insert(name.clone());
+            }
+            self.printed.insert(name.clone());
+            self.bound.insert(name);
         }
-        self.printed.insert(name.clone());
-        self.bound.insert(name.clone());
-        VarSlot::Name(name)
+        Arc::from(mark)
     }
 
     /// The root of the tree of the unbounded variable `k`, halving the path to it.
@@ -24316,10 +24347,10 @@ impl Scope {
         self.same.find(k)
     }
 
-    /// Opens the variables `sig` binds, giving each bounded one a printed name, and returns
-    /// them with their masks, in the order of `sig.bounds`. A name not printed around the
-    /// signature is kept; otherwise the next of `T`, `U`, … not yet tried that is neither
-    /// printed around it nor a name of its own nor one the program binds ([`fresh_name`]).
+    /// Opens the variables `sig` binds, giving each bounded one a printed name, a mark that
+    /// [`defs::name_vars`] names in order of first place ([`Scope::mark`]), and returns them
+    /// with their masks, in the order of `sig.bounds`. A written name ([`Scope::kept`]) not
+    /// printed around the signature is the mark's first choice.
     /// What a failed test leaves of an unbounded variable (`r else #a -> 0`, [`Narrow`]) is
     /// printed by the name of that variable, with what the test removes, where the removed part
     /// is a kernel set: `g(r) = r else #a -> 0` is `(r: T) -> (T \ #a) | 0` ([`Scope::left`],
@@ -24332,8 +24363,9 @@ impl Scope {
     /// program that writes `T` (DESIGN.md sec:diagnostics, "Types in a message", plan row
     /// MSG-type-vars-printed-renamed). Why the text means what the signature does: (1) the
     /// name is put in [`Scope::printed`] while the signature is open, so no signature inside it
-    /// takes it (a bounded one takes a fresh name, an unbounded one a [`VarSlot::Free`] slot,
-    /// which `defs` names apart from every word of the message); (2) a name printed around it
+    /// keeps it (a bounded one is a mark with no written name, an unbounded one a
+    /// [`VarSlot::Free`] slot, which `defs` names apart from every word of the message and
+    /// every written name of its type, [`defs::name_vars`]); (2) a name printed around it
     /// (one bound outside the text, [`Around::taken`], or by a signature around) is refused,
     /// and the variable is printed as one with no written name, so the name never means two
     /// variables at one place of the text; (3) two own variables of one signature with one
@@ -24355,20 +24387,10 @@ impl Scope {
             let union = self.unions.last().filter(|_| hoisted);
             let taken =
                 |name: &str| printed.contains(name) || union.is_some_and(|u| u.contains(name));
-            let want = self.kept.get(v).unwrap_or(v);
-            let name = if taken(want) {
-                fresh_name(Names::Variables, &mut self.fresh, |name| {
-                    taken(name) || sig.bounds.contains_key(name)
-                })
-            } else {
-                want.clone()
-            };
-            if let Some(u) = self.unions.last_mut() {
-                u.insert(name.clone());
-            }
-            self.printed.insert(name.clone());
-            self.bound.insert(name.clone());
-            self.written.get_mut().remove(&name);
+            // Only a written name is kept: the checker's own name for a variable says nothing
+            // of its first place ([`Scope::mark`]).
+            let want = self.kept.get(v).filter(|w| !taken(w)).cloned();
+            let name = self.mark(want);
             self.names
                 .entry(v.clone())
                 .or_default()
@@ -24542,7 +24564,9 @@ impl Scope {
         for v in sig.bounds.keys().chain(own) {
             let names = self.names.get_mut(v).expect("opened");
             if let Some(VarSlot::Name(name)) = names.pop() {
-                self.printed.remove(&name);
+                // A mark's written name ([`Scope::mark`]), or a name given as it is.
+                let wrote = name.split_once(defs::WRITTEN).map_or(&*name, |(_, w)| w);
+                self.printed.remove(wrote);
             }
         }
         for v in self.left_opened.pop().into_iter().flatten() {
@@ -25055,7 +25079,7 @@ impl Ty {
                 out.push('(');
             }
             match k {
-                LeftKey::Name(n) => out.push_str(&n),
+                LeftKey::Name(n) => put_name(out, &n),
                 LeftKey::Mark(r) => {
                     // One mark alone in a union, which [`defs::name_vars`] names as the marks
                     // of [`Ty::write_vars`].
@@ -25100,6 +25124,8 @@ impl Ty {
     ) {
         let mut names: Vec<&Arc<str>> = Vec::new();
         let mut marks = Vec::new();
+        // The variables printed by a mark of [`Scope::mark`], named with the free ones.
+        let mut named_marks: Vec<&Arc<str>> = Vec::new();
         let mut blank = self.dynamic;
         let at = walk.occ.len();
         // The variables [`Ty::write_lefts`] wrote as differences, kept in the bookkeeping below
@@ -25123,8 +25149,10 @@ impl Ty {
                     ) {
                         named.push((k, v.clone()));
                     }
-                    if !covered[i] {
-                        names.push(name);
+                    match (covered[i], name.starts_with(defs::VAR)) {
+                        (true, _) => {}
+                        (false, true) => named_marks.push(name),
+                        (false, false) => names.push(name),
                     }
                 }
                 (Some(&VarSlot::Free(k)), None) => walk.occ.push(k),
@@ -25139,16 +25167,22 @@ impl Ty {
             .ends
             .last_mut()
             .expect("a type's variables are in the type");
-        end.named = !names.is_empty() || left_named;
+        end.named = !names.is_empty() || !named_marks.is_empty() || left_named;
         end.blank = blank;
         end.occ = at..walk.occ.len();
         names.sort_unstable_by(|a, b| order::name_cmp(a, b));
+        named_marks.sort_unstable();
+        named_marks.dedup();
         // The names before the named set, then the set, then the others with the marks; or,
         // when the set is named `T` or after and there are marks, the set in their union.
         // In the union, the names before it are those before `T`, so before every mark too.
-        let joins =
-            matches!(&string, Some((.., name)) if !marks.is_empty() && name.as_str() >= "T");
+        // A mark of [`Scope::mark`] may be named by a written name before `T` (`A`), so with
+        // one every name and the set go in the union, which [`defs::name_vars`] sorts.
+        let marked = !marks.is_empty() || !named_marks.is_empty();
+        let joins = matches!(&string, Some((.., name))
+            if marked && (name.as_str() >= "T" || !named_marks.is_empty()));
         let split = match &string {
+            _ if !named_marks.is_empty() => 0,
             Some((.., name)) => names.partition_point(|n| {
                 let bound = if joins { "T" } else { name.as_str() };
                 order::cmp(&order::Member::Named(n), &order::Member::Named(bound)).is_lt()
@@ -25172,17 +25206,17 @@ impl Ty {
                 true => in_union = Some((set, place, apart)),
             }
         }
-        match marks.is_empty() {
-            true => {
+        match marked {
+            false => {
                 for name in after {
                     walk.sep(out);
                     out.push_str(name);
                 }
             }
-            false => {
+            true => {
                 walk.sep(out);
                 zed_collections::sorted::sort_dedup(&mut marks);
-                let marks_len = marks.len();
+                let marks_len = marks.len() + named_marks.len();
                 out.push(defs::UNION);
                 for name in after {
                     out.push_str(name);
@@ -25200,6 +25234,10 @@ impl Ty {
                 for r in marks {
                     out.push(defs::VAR);
                     out.push_str(&r.to_string());
+                    out.push(defs::NEXT);
+                }
+                for m in named_marks {
+                    out.push_str(m);
                     out.push(defs::NEXT);
                 }
                 out.pop();
@@ -25925,13 +25963,14 @@ fn write_text<'a>(
     shared: &Shared,
 ) -> (bool, bool) {
     let base = out.len();
-    let (fresh, opened) = (scope.fresh, scope.same.len());
+    let (fresh, opened, marks) = (scope.fresh, scope.same.len(), scope.marks);
     let mut walk = Walk::default();
     let mut kernel = walk_parts(start.clone(), out, scope, &mut walk, shared);
     let mut marked = false;
     if let Some(plan) = walk.plan(scope) {
         out.truncate(base);
         scope.fresh = fresh;
+        scope.marks = marks;
         scope.same.truncate(opened);
         marked = plan.count.iter().any(|&c| c >= 2);
         if marked {
@@ -25974,6 +26013,14 @@ fn write_text<'a>(
             from = at;
         }
         out.push_str(&rest[from..]);
+    }
+    // A text whose only marks are those of the variables printed by name ([`Scope::mark`]) is
+    // a type of its own for [`defs::name_vars`] too. Put in after the kernel sets, whose
+    // places it would move. Cost: one pass over the text.
+    if !marked && out[base..].contains(defs::VAR) {
+        out.insert(base, defs::VARS);
+        out.push(defs::VARS_END);
+        marked = true;
     }
     (marked, !kernel.sets.is_empty())
 }
@@ -26053,7 +26100,7 @@ fn walk_parts<'a>(
                 let used = bounds.iter().filter(|(v, _)| written.contains(v));
                 for (i, (v, m)) in used.enumerate() {
                     out.push_str(if i == 0 { " for " } else { ", " });
-                    out.push_str(v);
+                    put_name(out, v);
                     out.push_str(" in ");
                     out.push_str(&mask_text(*m));
                 }
@@ -26074,7 +26121,7 @@ fn walk_parts<'a>(
                 for (v, m) in hoisted.filter(|(v, _)| written.contains(v)) {
                     out.push_str(if first { " for " } else { ", " });
                     first = false;
-                    out.push_str(&v);
+                    put_name(out, &v);
                     out.push_str(" in ");
                     out.push_str(&mask_text(m));
                 }
@@ -26114,6 +26161,20 @@ struct Kernel {
     apart: Vec<bool>,
     /// Where a `(` goes before a union written as an arrow's key or a bound ([`Ty::write_end`]).
     opens: Vec<usize>,
+}
+
+/// Writes the printed name `name` of a variable to `out` where it stands alone, as in a bounds
+/// clause: a mark of [`Scope::mark`] as a union of it alone, which [`defs::name_vars`] names as
+/// it names the members of [`Ty::write_vars`], and any other name as it is.
+fn put_name(out: &mut String, name: &str) {
+    match name.starts_with(defs::VAR) {
+        true => {
+            out.push(defs::UNION);
+            out.push_str(name);
+            out.push(defs::UNION_END);
+        }
+        false => out.push_str(name),
+    }
 }
 
 /// Pushes `sep` to `parts` before every item but the first, which `first` tells.
