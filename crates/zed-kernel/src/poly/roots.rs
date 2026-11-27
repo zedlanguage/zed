@@ -694,6 +694,12 @@ fn horner_units(d: u64, t: usize) -> u64 {
 /// one sign, the constant term among them, so not 0). Ruffini's scheme: pass `i` adds `u` times
 /// each coefficient into the one below it, from the top down to `i`, and leaves the `i`-th
 /// coefficient of `p(u + y)` final, so the test stops at the first of the wrong sign.
+/// The test is the case of no sign variation of Descartes' rule of signs, applied to `p(u + y)`:
+/// Li and Paulson, arXiv:1811.11093 §3.2, Theorem 3.8 (`descartes_sign`, proved in
+/// Isabelle/HOL), the positive roots counted by "the number of sign variations of the
+/// coefficient sequence of P" and at most that count (verification/bib.md, LiPaulson). The
+/// paper supports only this test; the synthetic division above and the trigger and cap of
+/// [`horner_bound`] are proved here.
 /// `D (D + 1) / 2` products of a coefficient by `u` at most; every number is a partial sum of
 /// `sum |c_k| (1 + u)^k`, of at most `B + D bits(u + 1) + bits(t)` bits for coefficients of `B`
 /// bits.
@@ -723,7 +729,9 @@ fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
 /// the cap: the powers of 2 from 2 up to the first that passes, then the bisection between it
 /// and the one before (the test passes at every point above one where it passes: `p(u' + y) =
 /// p(u + ((u' - u) + y))`, a polynomial of coefficients of one sign taken at a shift `u' - u >=
-/// 0`, keeps them so). Each root of `p` above 1 is then at most `u - 1`. At most `2 bits(u)`
+/// 0`, keeps them so). Every real root of `p` is then below `u`, so `u - 1` bounds the integers
+/// searched, not the real roots: `(2x - 5)(x + 1)` passes at `u = 3`, and its root 5/2 lies
+/// above 2 (Codex, cross-review XR-lazy-and-kernel-batch-1 round 2, B1). At most `2 bits(u)`
 /// tests, each charged [`horner_units`] to `spent`.
 ///
 /// The cap: a test at `u` is run only where `D bits(u) <= 2 B`, `B` the most bits of a
@@ -733,7 +741,8 @@ fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
 /// proof of [`positive_roots`]'s bound holds with these units in its count. Without the cap a
 /// root near `2^B` (as in `(x - 2^B)(x^(D - 1) + 1)`) would make the shifted coefficients of `D
 /// B` bits. The decision's cap read `D bits(u) <= B`; on `(x - 2) … (x - 65)` that refuses the
-/// test at 66 (`64 * 7 = 448 > 306`), so the factor is 2, the least power of 2 that admits it.
+/// test at 66 (`64 * 7 = 448 > 305`, `B` 305 bits there, as Codex's check computed), so the
+/// factor is 2, the least power of 2 that admits it.
 fn horner_bound(p: &[(u64, BigInt)], hi: &BigInt, spent: &mut u64) -> Option<BigInt> {
     let d = p.last().map_or(0, |(d, _)| *d);
     let b = p.iter().map(|(_, c)| c.bits()).max().unwrap_or(0);
