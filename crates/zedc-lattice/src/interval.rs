@@ -316,9 +316,9 @@ fn members(n: &Node) -> &Option<Num> {
 ///     every difference `s - s'`.
 /// (b) `G(S)` is the gcd of the consecutive differences `s_{i+1} - s_i` of `S` in sorted
 ///     order. Write `D` for their gcd. Each consecutive difference is one of the differences,
-///     all of which `G(S)` divides, so `G(S) | D`; and each difference `s_j - s_i`, `i < j`, is the sum of the consecutive
-///     ones from `i` to `j`, each a multiple of `D`, so `D | G(S)`. Both are at least 0, so
-///     they are equal.
+///     all of which `G(S)` divides, so `G(S) | D`; and each difference `s_j - s_i`, `i < j`,
+///     is the sum of the consecutive ones from `i` to `j`, each a multiple of `D`, so
+///     `D | G(S)`. Both are at least 0, so they are equal.
 /// (c) A node holds, in order, its left subtree `L`, its piece, and its right subtree `R`, and
 ///     every member of `L` is below the piece and every member of `R` above it. When the
 ///     piece is one point `v`, the consecutive differences of the subtree are those of `L`,

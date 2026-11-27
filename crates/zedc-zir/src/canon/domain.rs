@@ -59,8 +59,9 @@ impl Domain {
     /// 2. The class is the least class holding `S`, a function of `S` alone. When every piece
     ///    is one point, `reduce_congruence` gives `v mod g`, with `g` the gcd of the
     ///    differences, the least class holding those points (proved at it; before
-    ///    FAIL-lazy-join-random-seed this module walked the points itself). Otherwise some piece `[a, b]` has `a < b`
-    ///    (or an infinite end), both finite ends members of `m`'s class, so `a` and `a + m`
+    ///    FAIL-lazy-join-random-seed this module walked the points itself). Otherwise some
+    ///    piece `[a, b]` has `a < b` (or an infinite end), both finite ends members of `m`'s
+    ///    class, so `a` and `a + m`
     ///    are both in `S`; a class holding them has a modulus dividing `m`, and every
     ///    difference in `S` is a multiple of `m`, so `m` is the gcd and the class is least.
     ///    The class is built by `Congruence::new`, which takes the modulus by its magnitude
