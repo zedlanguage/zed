@@ -878,10 +878,12 @@ impl<'a> Pieces<'a> {
     /// the statements of a body block (zedc-resolve, resolve.rs: "so `f(x) { x = 1; }`
     /// rebinds `x`"), so `x -> { x = 1; x }` is refused with "`x` is already bound in this
     /// scope", and `x -> { { x = 1; x } }` binds it in a nested block, where it shadows the
-    /// parameter (PRINT-let-reading-its-own-name). The walk stops at a binding that reads its
-    /// own name, written as a call whose lambda holds the rest of the chain
-    /// ([`Pieces::own`]). O(the chain's length + the parameters), each chain read by the one
-    /// lambda right above it.
+    /// parameter (PRINT-let-reading-its-own-name). The walk stops where the body's block ends,
+    /// as the `Term::Let` case of [`Pieces::lay_out`] ends it: at a second binder of a name, at
+    /// a binder an earlier binding reads ([`Pieces::above`]), or at a binding that reads its own
+    /// name ([`Pieces::own`]); what follows is in a nested block or a call's lambda already, so
+    /// `x -> { y = x + 1; { x = 5; y + x } }` needs no more braces. O(the chain's length + the
+    /// parameters), each chain read by the one lambda right above it.
     fn lambda(&mut self, params: &[&str], body: &'a Term) -> &mut Self {
         let head = match params {
             [p] => format!("{p} -> "),
@@ -891,16 +893,18 @@ impl<'a> Pieces<'a> {
         let mut rebinds = false;
         if let Term::Let(..) = body {
             let params: HashSet<&str> = params.iter().copied().collect();
+            let mut bound = HashSet::new();
             let mut t = body;
             while let Term::Let(x, _, rest) = t {
-                if self.own(t) {
+                let x = self.name(x);
+                if bound.contains(x) || self.above(body, t) || self.own(t) {
                     break;
                 }
-                let x = self.name(x);
                 if params.contains(x) {
                     rebinds = true;
                     break;
                 }
+                bound.insert(x);
                 t = rest;
             }
         }

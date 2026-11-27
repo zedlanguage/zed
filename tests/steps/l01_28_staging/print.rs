@@ -18,7 +18,7 @@
 use zed_kernel::print::{pretty_in, written};
 use zed_kernel::term::build::{lit, var};
 use zed_kernel::text::ident::written_name;
-use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World};
+use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World};
 use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 
 fn prim(p: Prim, args: Vec<Term>) -> Term {
@@ -864,7 +864,120 @@ fn a_binding_reading_a_name_its_block_binds_reads_back_with_the_same_value() {
         texts,
         [
             "x -> (x -> x)(x + 1)",
-            "x -> { { y = x + 1; { x = 5; y + x } } }"
+            "x -> { y = x + 1; { x = 5; y + x } }"
+        ]
+    );
+}
+
+/// `L = { a = x + 1; { x = 5; a + x } }`, a `let` held in two places: in the block of `y = 1`
+/// in the `then` arm, and first of a block in the `else` arm. The printer meets the `then` arm
+/// first, so the walk of `y = 1` reads `L` inside that block; `L` first of a block needs its own
+/// walk, or its block does not end at `x = 5`, which `a = x + 1` reads from outside
+/// (`{ a = (x + 1); x = 5; (a + x) }` is refused: "used above its definition").
+#[test]
+fn a_shared_let_first_of_a_block_at_one_place_and_in_a_block_at_another_reads_back() {
+    let sh = |t: Term| Shared::new(t);
+    let add = |a: Term, b: Term| prim(Prim::Add, vec![a, b]);
+    let inner = Term::Let("x".into(), sh(lit(5i64)), sh(add(var("a"), var("x"))));
+    let l = sh(Term::Let(
+        "a".into(),
+        sh(add(var("x"), lit(1i64))),
+        sh(inner),
+    ));
+    let then = sh(Term::Let("y".into(), sh(lit(1i64)), l.clone()));
+    let t = Term::Lam(
+        vec!["x".into(), "c".into()],
+        sh(Term::If(sh(var("c")), then, l)),
+    );
+    let inputs: Vec<Vec<Value>> = [(3i64, true), (3, false), (-1, true)]
+        .map(|(x, c)| vec![Value::Int(x), Value::Bool(c)])
+        .to_vec();
+    let texts = [
+        shown(&t),
+        pretty_in(&t, 20, &none),
+        written(&t, |x| x, &none),
+    ];
+    for text in &texts {
+        reads_back_the_same(&t, text, &inputs);
+    }
+    assert_eq!(
+        texts[0],
+        "(x, c) -> if c { { y = 1; a = (x + 1); { x = 5; (a + x) } } } \
+         else { { a = (x + 1); { x = 5; (a + x) } } }"
+    );
+}
+
+/// The other binders of the kernel against the rule of a block's scope: a `match` arm's
+/// pattern and `fam`'s key, written as a lambda. Each binds `x` over a chain of `let`s that
+/// binds `x` again, reading it or not, or reads it before a later `let` binds it. Only a
+/// function's or a lambda's body block shares the scope of what binds it (zedc-resolve,
+/// resolve.rs, the `Task::Function` case); an arm's or an `else`'s value that is a block has a
+/// scope of its own (the `ExprKind::Block` case), where it shadows the pattern's names, so the arm is
+/// written as any other `let` chain and `fam`'s lambda takes the extra block of
+/// [`lambda`](zed_kernel::print).
+#[test]
+fn a_binding_reading_or_rebinding_a_name_a_pattern_or_fam_binds_reads_back() {
+    let sh = |t: Term| Shared::new(t);
+    let add = |a: Term, b: Term| prim(Prim::Add, vec![a, b]);
+    let let_ = |x: &str, e: Term, b: Term| Term::Let(x.into(), sh(e), sh(b));
+    let bodies = || {
+        [
+            let_("x", add(var("x"), lit(1i64)), var("x")),
+            let_("x", lit(1i64), add(var("x"), lit(2i64))),
+            let_(
+                "y",
+                add(var("x"), lit(1i64)),
+                let_("x", lit(5i64), add(var("y"), var("x"))),
+            ),
+        ]
+    };
+    let x = || Pattern::Bind("x".into());
+
+    // `n -> match n { 0 -> 7, x -> body }`. zedc refuses every `match` ("not supported by
+    // this version of zedc"), so these texts are checked as written, not read back.
+    let matches: Vec<String> = bodies()
+        .into_iter()
+        .map(|body| {
+            let arms = vec![(Pattern::Lit(Value::Int(0)), lit(7i64)), (x(), body)];
+            shown(&Term::Lam(
+                vec!["n".into()],
+                sh(Term::Match(sh(var("n")), arms)),
+            ))
+        })
+        .collect();
+    assert_eq!(
+        matches,
+        [
+            "n -> match n { 0 -> 7, x -> (x -> x)((x + 1)) }",
+            "n -> match n { 0 -> 7, x -> { x = 1; (x + 2) } }",
+            "n -> match n { 0 -> 7, x -> { y = (x + 1); { x = 5; (y + x) } } }",
+        ]
+    );
+
+    // An `else` pattern binds no name in this zedc: `#err(n) else #err(x) -> …` is refused ("a
+    // struct, name, `_` or tuple pattern is … not supported"), so no term elaborated from one
+    // has a binder there.
+
+    // `(n, d) -> fam(d, x -> body)`. zedc refuses the prelude word `fam` ("not supported by
+    // this version of zedc"), so these are checked as written too; the lambda is the one
+    // [`a_binding_reading_a_name_its_block_binds_reads_back_with_the_same_value`] reads back.
+    let fams: Vec<String> = bodies()
+        .into_iter()
+        .map(|body| {
+            let fam = Term::Fam {
+                domain: sh(var("d")),
+                var: "x".into(),
+                body: sh(body),
+            };
+            shown(&Term::Lam(vec!["n".into(), "d".into()], sh(fam)))
+        })
+        .collect();
+    assert_eq!(
+        fams,
+        [
+            "(n, d) -> fam(d, x -> (x -> x)((x + 1)))",
+            "(n, d) -> fam(d, x -> { { x = 1; (x + 2) } })",
+            "(n, d) -> fam(d, x -> { y = (x + 1); { x = 5; (y + x) } })",
         ]
     );
 }
