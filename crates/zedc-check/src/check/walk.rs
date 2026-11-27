@@ -446,6 +446,18 @@ pub(super) enum Frame<'a> {
     Tests(Box<ScopeF<'a>>),
     /// The status of row `usize` of `main`'s table, the expression given ([`Ck::main_rows`]).
     MainStatus(Box<ScopeF<'a>>, &'a Function, usize, &'a Expr),
+    /// The value of the clause `p = e` of the function's tables, checked against the port's
+    /// type, with the place of the next clause and the number of errors before it
+    /// ([`Ck::test_ports`]).
+    TestPort(
+        Box<ScopeF<'a>>,
+        &'a Function,
+        Arc<Sig>,
+        (usize, usize),
+        &'a zedc_syntax::ast::PortValue,
+        Ty,
+        usize,
+    ),
     TestArgs(Box<TestF<'a>>),
     TestWant(Box<TestF<'a>>, Ty),
     /// A binding, with the number of errors before its value is checked.
@@ -2004,6 +2016,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.row_status(status, &a.ty);
                 self.main_rows(m, s, f, row + 1);
             }
+            Frame::TestPort(s, f, sig, next, p, ty, before) => {
+                let a = m.take_arg();
+                // A lambda refused while it was fitted to the port's type is not refused again
+                // as a value outside it.
+                if self.errors.len() == before {
+                    let what = format!("`{}`", self.code(Some(p.port.span())).unwrap_or("port"));
+                    self.passes_into(&a.ty, &ty, &what, None, p.value.span);
+                }
+                self.test_ports(m, s, f, sig, next);
+            }
             Frame::TestArgs(s) => self.test_args(m, s),
             Frame::TestWant(s, result) => {
                 let want = m.take_arg();
@@ -2414,13 +2436,59 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(sig) = self.info.sigs.get(&id).cloned() else {
                 continue;
             };
-            if f.main.is_some() {
-                return self.main_rows(m, s, f, 0);
-            }
-            m.k(Frame::Tests(s));
-            return self.test_case(m, f, sig, 0);
+            return self.test_ports(m, s, f, sig, (0, 0));
         }
         self.export(m, s.export);
+    }
+
+    /// The values the clauses `test with p = e, …` of `f`'s tables give, from the `k`-th on in
+    /// written order, then `f`'s rows. "*What `e` is.* A value of the type of what it
+    /// replaces, checked as a binding of that type is: … `main::files` as a function from path
+    /// to contents", and "a function given there answers only values of `V`, never
+    /// `#notFound` for a key it lacks" (DESIGN.md sec:ports, "A test table gives a port its
+    /// values", and the row `f(x) = e test { … }` of the syntax table; plan row
+    /// PORT-clause-value-unchecked). So the value is checked as an argument of the port's
+    /// type: a lambda is fitted to it, and one that answers `#notFound` gets the row
+    /// "Function value that answers outside a partial map's value type"
+    /// ([`Self::answers_miss`]); any other value is passed into it ([`Self::passes_into`]).
+    /// Before, no clause value was checked, and `main::files = q -> if q == "a" { 5 } else {
+    /// #notFound }` was accepted and failed only when its row ran.
+    /// The ports checked are `main::files` and `main::env`, the two whose clause value DESIGN
+    /// gives as the port's own type. `main::stdin` and `main::args` are given as text, the
+    /// lines split as a `Lines` input is (the row's key record, same table row), and the
+    /// runner reads them so; the name of any other port the resolver has refused already.
+    /// Cost: one check of each clause value, as of an argument. The next clause is found by
+    /// its table and its place in the table, `(g, j)`, O(1) a step: a step that counted the
+    /// clauses from the first would cost O(clauses²) for `main` with a table per input, as
+    /// `bench::scaling::checking_tables_with_clauses_scales` times.
+    fn test_ports(
+        &mut self,
+        m: &mut M<'a>,
+        s: Box<ScopeF<'a>>,
+        f: &'a Function,
+        sig: Arc<Sig>,
+        (mut g, mut j): (usize, usize),
+    ) {
+        while let Some(table) = f.given.get(g) {
+            let Some(p) = table.ports.get(j) else {
+                (g, j) = (g + 1, 0);
+                continue;
+            };
+            j += 1;
+            let ty = match &p.port {
+                zedc_syntax::ast::PortName::Main(n, _) if n == "files" => port(Carrier::Str, true),
+                zedc_syntax::ast::PortName::Main(n, _) if n == "env" => port(Carrier::Str, false),
+                _ => continue,
+            };
+            let want = Want::of(&ty);
+            m.k(Frame::TestPort(s, f, sig, (g, j), p, ty, self.errors.len()));
+            return m.job(Job::Arg(&p.value, want));
+        }
+        if f.main.is_some() {
+            return self.main_rows(m, s, f, 0);
+        }
+        m.k(Frame::Tests(s));
+        self.test_case(m, f, sig, 0)
     }
 
     /// The expected exit statuses of the rows of `main`, `f`, from row `row` on, then the
