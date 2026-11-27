@@ -97,11 +97,12 @@ fn a_main_row_gives_the_arguments_one_per_line() {
         "\"\" -> \"-+-\\n\", (\"\", 3) -> \"\" }",
     );
     let got = checks(&src);
-    // The rejection, then each of the four rows as not run.
+    // Each of the four rows as not run, and the rejection, at the key item of the last row,
+    // after that row's start.
     assert_eq!(got.len(), 5, "{got:?}");
-    assert!(got[0].contains("`main::args` does not take 3"), "{got:?}");
+    assert!(got[4].contains("`main::args` does not take 3"), "{got:?}");
     assert!(
-        (got.iter().skip(1)).all(|g| g.ends_with("not run, since the unit is rejected")),
+        (got.iter().take(4)).all(|g| g.ends_with("not run, since the unit is rejected")),
         "{got:?}"
     );
 }

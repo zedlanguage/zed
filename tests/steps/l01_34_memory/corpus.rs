@@ -52,8 +52,12 @@ fn every_row_passes_through_the_machine() {
         // ELSE-explicit-atoms: their chains `e else #a -> d else #b -> d` add 16 writes in all
         // unfused and none fused). Each of config.zed's three rows evaluates the `""` it gives
         // standard input and the command line, which its `main` does not read (QUESTIONS Q51).
-        let want = if fuse { 199 } else { 241 };
-        assert_eq!((runs.get(), cells.get(), writes.get()), (115, 195, want));
+        // Its rows give the environment and the files as displays, and the read error as the
+        // payload a file port gives, since a key item is checked against its port's type (plan
+        // row PORT-main-key-values-unchecked): 16 cells and 15 fused writes more than the
+        // lambdas they replace.
+        let want = if fuse { 214 } else { 256 };
+        assert_eq!((runs.get(), cells.get(), writes.get()), (115, 211, want));
     }
 }
 

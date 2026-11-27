@@ -283,7 +283,15 @@ fn a_key_item_outside_its_inputs_type_is_rejected() {
     let main = "main(m: MainArgs) {\n  \
                 m.stdout <- (main::files[\"a\"] else #ioError -> \"io\" else #notFound -> \"none\") \
                 ++ (m.env(\"A\") else #notFound -> \"-\");\n}\n";
-    let row = |key: &str| rejected(&format!("{main}test {{ {key} -> \"x\" }}\n"));
+    // The error is at the key item, after the row's own "not run" note, which is at the
+    // row's start: so the one message that is no such note is taken, not the first.
+    let row = |key: &str| {
+        let got = checks(&format!("{main}test {{ {key} -> \"x\" }}\n"));
+        let (notes, errors): (Vec<&String>, Vec<&String>) =
+            (got.iter()).partition(|g| g.ends_with("not run, since the unit is rejected"));
+        assert!(errors.len() == 1 && notes.len() == 1, "{got:?}");
+        errors[0].clone()
+    };
     let got = row("(\"\", \"\", (n -> #notFound))");
     assert!(got.contains("answers `#notFound`"), "{got}");
     let got = row("(\"\", \"\", {}, (p -> if p == \"a\" { \"x\" } else { #notFound }))");

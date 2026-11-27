@@ -2553,7 +2553,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                     m.k(Frame::MainKey(s, f, (row, k), e, ty, self.errors.len()));
                     return m.job(Job::Arg(e, want));
                 }
-                k = MAIN_KEY_PORTS.len();
             }
             if let ExprKind::Tuple(items) = &want.kind
                 && let [_, _, status] = items.as_slice()
