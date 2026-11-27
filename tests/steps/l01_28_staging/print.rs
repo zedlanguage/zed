@@ -68,7 +68,7 @@ pub(super) fn lets(d: usize) -> Term {
 /// node `B = { z1 = { q = Q; (q, 1) }; …; zm = { q = Q; (q, m) }; (z1, …, zm) }` and the `m`
 /// blocks one node `Q = x1 + … + xk`: `Q` reads `k` names each bound in two places, and is
 /// held in `m` places, each under a binder of `q`, which is bound in `m` places too.
-fn wide(k: usize, m: usize) -> Term {
+pub(super) fn wide(k: usize, m: usize) -> Term {
     let x = |i: usize| format!("x{i}");
     let q = (2..=k).fold(Term::Var(x(1).into()), |s, i| {
         prim(Prim::Add, vec![s, Term::Var(x(i).into())])
@@ -189,10 +189,9 @@ fn nested_ifs_over_one_part_read_back_with_the_same_value() {
 fn a_part_reading_a_name_bound_at_each_place_reads_it_from_the_env() {
     assert_eq!(
         shown(&lets(2)),
-        "{ env2 = (0, 0); (y0, c) -> { part1 = env4 -> if c { { y2 = (env4[0] + 1); \
-         env5 = (env4[0], y2); env5[1] } } else { { y2 = (env4[0] + 2); env6 = (env4[0], y2); \
-         env6[1] } }; if c { { y1 = (y0 + 1); env1 = (y1, env2[1]); part1(env1) } } else { \
-         { y1 = (y0 + 2); env3 = (y1, env2[1]); part1(env3) } } } }"
+        "{ env2 = (0, 0); (y0, c) -> { part1 = env4 -> if c { { y2 = (env4[0] + 1); y2 } } \
+         else { { y2 = (env4[0] + 2); y2 } }; if c { { y1 = (y0 + 1); env1 = (y1, env2[1]); \
+         part1(env1) } } else { { y1 = (y0 + 2); env3 = (y1, env2[1]); part1(env3) } } } }"
     );
     let inputs: Vec<Vec<Value>> = [(0i64, true), (0, false), (5, true), (-3, false)]
         .map(|(x, c)| vec![Value::Int(x), Value::Bool(c)])

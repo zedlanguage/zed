@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use zed_kernel::Term;
 use zed_tests::scaling::{self, FACTOR};
 
-use crate::print::{arms, lets, shown};
+use crate::print::{arms, lets, shown, wide};
 
 /// The text's length at `d` and at `FACTOR * d` is held to a constant over the factor (a
 /// logarithm included), and the time to the order check.
@@ -59,6 +59,23 @@ fn writing_nested_lets_whose_part_reads_a_name_bound_twice_scales() {
         "Display on d nested ifs binding a name over one part",
         400,
         lets,
+        |t| t.to_string(),
+    );
+}
+
+/// Plan row STAGE-scaling-10_5, back from the deferred tests (TESTS-defer-failing, 2026-11-13:
+/// 11.5 times the instructions from 50 to 400 on main cdf07ac4f, as each read of `Q` wrote its
+/// path in the env and each binder rebuilt one). The text is now linear in the term (the
+/// comments on `Builder::read` and `Builder::update` in `crates/zed-kernel/src/print/dag.rs`):
+/// 8.08 times the instructions from 800 to 6400. Sized as its siblings, 400, not the deferred
+/// 50.
+#[test]
+fn writing_a_part_reading_many_names_bound_twice_scales() {
+    scales("pretty_in on wide(n, n)", 400, |n| wide(n, n), shown);
+    scales(
+        "Display on wide(n, n)",
+        400,
+        |n| wide(n, n),
         |t| t.to_string(),
     );
 }

@@ -276,12 +276,30 @@ struct Builder<'a, 'r> {
     /// The rebound names in the order of their slots in the env.
     slots: Vec<Arc<str>>,
     slot: HashMap<Arc<str>, usize>,
+    /// The pairs and slots of the env, numbered in preorder ([`env_tree`]): for each but the
+    /// root (0), the pair it is an item of and which item.
+    up: Vec<(usize, bool)>,
+    /// The number in that order of each slot.
+    leaf: Vec<usize>,
+    /// For the update being written: the numbers on the paths to the slots it sets, and the
+    /// name each such slot is set to; cleared after each update.
+    touched: Vec<bool>,
+    set_to: Vec<Option<Arc<str>>>,
     /// The names that resolve where the term is written; `None` when no scope is given, and a
     /// part that reads a rebound name is then written once and labeled.
     resolves: Option<&'r dyn Fn(&str) -> bool>,
     written: HashSet<&'a str>,
     /// The name of each env, given when it is first read; an env never read is not written.
     envs: Vec<Option<Arc<str>>>,
+    /// For an env set at a binder: the env it is set from and the name whose slot it sets.
+    made_by: Vec<Option<(usize, Arc<str>)>>,
+    /// The number of envs set from each env so far.
+    children: Vec<u32>,
+    /// The name of each pair read inside an env, by the env and the number of the pair; each is
+    /// written once, `envM = envN[b]`, just inside the definition of its env.
+    prefixes: HashMap<(usize, usize), Arc<str>>,
+    /// The definitions of those names for each env, each after the one it reads.
+    prefix_defs: Vec<Vec<(Arc<str>, Term)>>,
     env_count: usize,
     /// The text of a node held in two places built in `Ctx::Free`.
     memo: Vec<Option<Term>>,
@@ -293,41 +311,66 @@ struct Builder<'a, 'r> {
 impl<'a> Builder<'a, '_> {
     fn new_env(&mut self) -> usize {
         self.envs.push(None);
+        self.made_by.push(None);
+        self.children.push(0);
+        self.prefix_defs.push(Vec::new());
         self.envs.len() - 1
+    }
+
+    /// The pair numbered `p` inside env `e`: env `e` itself for the root, else a name for it,
+    /// defined once (in [`Builder::prefix_defs`]) from the pair above it.
+    fn pair(&mut self, e: usize, p: usize) -> Term {
+        if p == 0 {
+            return Term::Var(self.env_name(e));
+        }
+        if let Some(name) = self.prefixes.get(&(e, p)) {
+            return Term::Var(name.clone());
+        }
+        let (above, b) = self.up[p];
+        let def = index(self.pair(e, above), b);
+        let name = self.fresh_env_name();
+        self.prefix_defs[e].push((name.clone(), def));
+        self.prefixes.insert((e, p), name.clone());
+        Term::Var(name)
+    }
+
+    /// The item numbered `p` of env `e`: the env itself for the root, else `envM[b]`, `envM`
+    /// the pair above it.
+    fn item(&mut self, e: usize, p: usize) -> Term {
+        match p {
+            0 => Term::Var(self.env_name(e)),
+            _ => {
+                let (above, b) = self.up[p];
+                index(self.pair(e, above), b)
+            }
+        }
+    }
+
+    /// `t` inside the definitions of the pairs read in env `e`.
+    fn with_prefixes(&mut self, e: usize, mut t: Term) -> Term {
+        for (name, def) in std::mem::take(&mut self.prefix_defs[e]).into_iter().rev() {
+            t = Term::Let(name, Shared::new(def), Shared::new(t));
+        }
+        t
     }
 
     /// The name of env `e`, given now if it has none: the first `envN` not written in the term.
     fn env_name(&mut self, e: usize) -> Arc<str> {
         if self.envs[e].is_none() {
-            let name = loop {
-                self.env_count += 1;
-                let name = format!("env{}", self.env_count);
-                if !self.written.contains(name.as_str()) {
-                    break name;
-                }
-            };
-            self.envs[e] = Some(name.into());
+            self.envs[e] = Some(self.fresh_env_name());
         }
         self.envs[e].clone().expect("named above")
     }
 
-    /// The steps from the env to the slot of `x`: at each pair, the first item (`false`) or the
-    /// second. The env is a balanced tree of pairs over the slots `[lo, hi)`, split at
-    /// `(lo + hi) / 2`, a single slot its value itself.
-    fn path(&self, x: &str) -> Vec<bool> {
-        let i = self.slot[x];
-        let (mut lo, mut hi) = (0, self.slots.len());
-        let mut steps = Vec::new();
-        while hi - lo > 1 {
-            let mid = lo.midpoint(hi);
-            steps.push(i >= mid);
-            if i < mid {
-                hi = mid;
-            } else {
-                lo = mid;
+    /// The first `envN` not written in the term and not given yet.
+    fn fresh_env_name(&mut self) -> Arc<str> {
+        loop {
+            self.env_count += 1;
+            let name = format!("env{}", self.env_count);
+            if !self.written.contains(name.as_str()) {
+                return name.into();
             }
         }
-        steps
     }
 
     /// The env at the root over the slots `[lo, hi)`: each name that resolves there, and `0` in
@@ -345,50 +388,105 @@ impl<'a> Builder<'a, '_> {
         Term::Prim(Prim::Tuple, vec![self.tree(lo, mid), self.tree(mid, hi)])
     }
 
-    /// The value of `x` read from env `e`: `envN[i][j]…`, one index for each pair on the path.
+    /// The value of `x` read from env `e`: `x` itself where `e` is set at a binder of `x`, as
+    /// that binder is written just above in the same text; else `envM[b]`, `envM` the pair
+    /// above the slot ([`Builder::pair`]), each pair named once however many reads pass it.
+    // Complexity tradeoff: writing the path at each read, `envN[i][j]…`, costs O(log k) text per
+    // read and O(r log k) for r reads; with each pair named once the reads of an env cost the
+    // pairs on the union of their paths, at most 2k, and O(1) more each.
     fn read(&mut self, e: usize, x: &str) -> Term {
-        let mut t = Term::Var(self.env_name(e));
-        for b in self.path(x) {
-            t = index(t, b);
+        if let Some((_, y)) = &self.made_by[e]
+            && **y == *x
+        {
+            return Term::Var(y.clone());
         }
-        t
+        let p = self.leaf[self.slot[x]];
+        self.item(e, p)
     }
 
-    /// The definitions that write env `u.to`: a name for each pair on the path to the slot of
-    /// `u.x` but the last, each read from the one before it, then the new env, the path rebuilt
-    /// around `u.x` with the other item of each pair read from those names.
+    /// The definition of env `u.to`: the path to the slot of `u.x` rebuilt around `u.x`, the
+    /// other item of each pair read from the env it is set from through the names of its pairs
+    /// ([`Builder::pair`]), with the slots of a chain of envs no text reads set too (below).
     // Complexity tradeoff: rebuilding the env in full at each binder writes all k slots, O(k)
     // per binder and O(n k) in all; along the path it writes O(log k), each pair beside the path
     // read through the names before it, so no index is written twice. Layer L2's `with` would
     // write one slot of a record in O(1); this layer has none (plan row STAGE-print-with).
-    fn update(&mut self, u: &Update) -> Vec<(Arc<str>, Term)> {
-        let path = self.path(&u.x);
+    //
+    // Chains: the env an update is set from may be one no text has read, set at the binder just
+    // above (`x1 = 1; x2 = 1; …; part(envK)` sets k envs and reads only the last). Such an env,
+    // when it has no other env set from it, is passed over: the update is written from the
+    // nearest env above it that is named or has two envs set from it (the root or a parameter
+    // at the latest, which no binder sets), with the slot of each name passed set, the inner
+    // binder of a name kept. Why that means the env of the chain: an env passed over is set at
+    // a binder above this one in the same text, and every binder of a name with a slot between
+    // them, under an env, sets the next env of the chain, so each name passed resolves here to
+    // the binder that set its slot last. An env passed over and named later, by a text built
+    // after this one, is written by its own binder all the same, as is an env passed over by
+    // none. Cost: a walk passes an env only while one env is set from it, and that count never
+    // falls, so two walks passing one env would both come up through its one child, and the
+    // first to start would be named, which stops the second: each env is passed once, O(envs)
+    // in all. A chain of c names costs the pairs on the union of their paths and the pairs
+    // beside them, in text and in time (marked up to the first pair marked already, and no
+    // sort), at most 2k and at most 2 (c log k + 1), so never more than the c updates written
+    // one by one.
+    fn update(&mut self, u: &Update) -> (Arc<str>, Term) {
         let to = self.envs[u.to].clone().expect("an env written is read");
-        if path.is_empty() {
-            return vec![(to, Term::Var(u.x.clone()))];
+        // The slots set and the numbers on their paths, marked from each slot up to the first
+        // number marked already, so the marks cost the union of the paths; of two binders of
+        // one name the inner, marked first, is kept.
+        let mut marked = Vec::new();
+        let mut slots_set = Vec::new();
+        let mut mark = |b: &mut Self, x: &Arc<str>| {
+            let i = b.slot[x];
+            if b.set_to[i].is_some() {
+                return;
+            }
+            b.set_to[i] = Some(x.clone());
+            slots_set.push(i);
+            let mut p = b.leaf[i];
+            while !b.touched[p] {
+                b.touched[p] = true;
+                marked.push(p);
+                if p == 0 {
+                    break;
+                }
+                p = b.up[p].0;
+            }
+        };
+        mark(self, &u.x);
+        let mut from = u.from;
+        while self.envs[from].is_none()
+            && self.children[from] == 1
+            && let Some((above, x)) = self.made_by[from].clone()
+        {
+            mark(self, &x);
+            from = above;
         }
-        let mut defs = Vec::with_capacity(path.len());
-        let mut on = vec![Term::Var(self.env_name(u.from))];
-        for &b in &path[..path.len() - 1] {
-            let e = self.new_env();
-            let name = self.env_name(e);
-            defs.push((
-                name.clone(),
-                index(on.last().expect("one at least").clone(), b),
-            ));
-            on.push(Term::Var(name));
+        let t = self.set_slots(from, 0, 0, self.slots.len());
+        for p in marked {
+            self.touched[p] = false;
         }
-        let mut t = Term::Var(u.x.clone());
-        for (b, at) in path.iter().zip(on).rev() {
-            let other = index(at, !b);
-            let pair = match b {
-                false => vec![t, other],
-                true => vec![other, t],
-            };
-            t = Term::Prim(Prim::Tuple, pair);
+        for i in slots_set {
+            self.set_to[i] = None;
         }
-        defs.push((to, t));
-        defs
+        (to, t)
+    }
+
+    /// The item numbered `p` over the slots `[lo, hi)` of env `from`, with each slot marked in
+    /// [`Builder::set_to`] set to its name: the item of `from` itself where no slot in the range
+    /// is marked. The pairs are numbered in preorder, so the first item of `p` is `p + 1` and
+    /// the second `p + 2 (mid - lo)`, after the `2 (mid - lo) - 1` numbers of the first.
+    fn set_slots(&mut self, from: usize, p: usize, lo: usize, hi: usize) -> Term {
+        if !self.touched[p] {
+            return self.item(from, p);
+        }
+        if hi - lo == 1 {
+            return Term::Var(self.set_to[lo].clone().expect("a slot marked is set"));
+        }
+        let mid = lo.midpoint(hi);
+        let zero = self.set_slots(from, p + 1, lo, mid);
+        let one = self.set_slots(from, p + 2 * (mid - lo), mid, hi);
+        Term::Prim(Prim::Tuple, vec![zero, one])
     }
 
     /// Whether a part `c` of a node built in `ctx` is built with the env.
@@ -444,6 +542,8 @@ impl<'a> Builder<'a, '_> {
                     });
                     for x in xs {
                         let to = self.new_env();
+                        self.made_by[to] = Some((e, x.clone()));
+                        self.children[e] += 1;
                         updates.push(Update { x, from: e, to });
                         e = to;
                     }
@@ -505,9 +605,9 @@ impl<'a> Builder<'a, '_> {
                 let mut t = part.term();
                 for u in updates.iter().rev() {
                     if self.envs[u.to].is_some() {
-                        for (name, e) in self.update(u).into_iter().rev() {
-                            t = Term::Let(name, Shared::new(e), Shared::new(t));
-                        }
+                        t = self.with_prefixes(u.to, t);
+                        let (name, e) = self.update(u);
+                        t = Term::Let(name, Shared::new(e), Shared::new(t));
                     }
                 }
                 part = Built::Term(t);
@@ -519,6 +619,7 @@ impl<'a> Builder<'a, '_> {
             && self.envs[e].is_some()
         {
             let name = self.env_name(e);
+            t = self.with_prefixes(e, t);
             t = Term::Let(
                 name,
                 Shared::new(self.tree(0, self.slots.len())),
@@ -532,6 +633,7 @@ impl<'a> Builder<'a, '_> {
                 Some(e) => {
                     // A parameter no text reads is named too: `_ ->` is not a lambda.
                     let param = self.env_name(e);
+                    let text = self.with_prefixes(e, text);
                     Term::Lam(vec![param], Shared::new(text))
                 }
             };
@@ -554,6 +656,33 @@ impl<'a> Builder<'a, '_> {
         };
         vals.push(out);
     }
+}
+
+/// The shape of an env of `k` slots, a balanced tree of pairs over the slots `[lo, hi)` split at
+/// `(lo + hi) / 2`, a single slot its value itself, numbered in preorder from 0 at the root: for
+/// each number the pair it is an item of and which item (`false` the first), the root's unused;
+/// and the number of each slot.
+fn env_tree(k: usize) -> (Vec<(usize, bool)>, Vec<usize>) {
+    let mut up = Vec::with_capacity(2 * k);
+    let mut leaf = vec![0; k];
+    // The ranges to number, each with its parent and item, taken in preorder; none for no
+    // slots, where no env is written.
+    let mut todo = match k {
+        0 => Vec::new(),
+        _ => vec![(0, k, 0, false)],
+    };
+    while let Some((lo, hi, parent, b)) = todo.pop() {
+        let p = up.len();
+        up.push((parent, b));
+        if hi - lo == 1 {
+            leaf[lo] = p;
+        } else {
+            let mid = lo.midpoint(hi);
+            todo.push((mid, hi, p, true));
+            todo.push((lo, mid, p, false));
+        }
+    }
+    (up, leaf)
 }
 
 /// `t[b]`, the first item of a pair for `false` and the second for `true`.
@@ -590,7 +719,9 @@ pub(super) struct Form {
 /// is passed the env of its place, so inside it the same holds by induction on the nesting of
 /// parts. An env no text reads is not written, but for a parameter, which is named. Each
 /// part that reads no rebound name is defined as before. A text written with the env costs
-/// O(log k) per name read and per binder, `k` the rebound names.
+/// O(1) per name read and per binder, plus each pair of an env it reads named once and
+/// O(log k) for an update written alone, `k` the rebound names ([`Builder::read`],
+/// [`Builder::update`]).
 ///
 /// Without `resolves` (`Display` and `Debug`, which have no scope), a part that reads a
 /// rebound name is written in place at its first place, labeled `#n=`, and `#n#` at each other
@@ -702,6 +833,7 @@ pub(super) fn shared_form(
     }
 
     let n = nodes.len();
+    let (up, leaf) = env_tree(slots.len());
     let mut b = Builder {
         nodes: &nodes,
         named,
@@ -709,11 +841,19 @@ pub(super) fn shared_form(
         needs,
         at,
         names,
+        touched: vec![false; up.len()],
+        set_to: vec![None; slots.len()],
+        up,
+        leaf,
         slots,
         slot,
         resolves,
         written,
         envs: Vec::new(),
+        made_by: Vec::new(),
+        children: Vec::new(),
+        prefixes: HashMap::new(),
+        prefix_defs: Vec::new(),
         env_count: 0,
         memo: (0..n).map(|_| None).collect(),
         shared: (0..n).map(|_| None).collect(),
