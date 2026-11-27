@@ -1,0 +1,13 @@
+---
+source: tests/steps/l01_38_presburger/canonical.rs
+expression: got
+---
+1 variables, 1 systems: 1 classes 1
+2 variables, 13 systems: 1 classes 1, 2 classes 12
+3 variables, 99 systems: 2 classes 3, 3 classes 96
+4 variables, 69 systems: 4 classes 69
+5 variables, 91 systems: 3 classes 1, 4 classes 5, 5 classes 85
+6 variables, 80 systems: 6 classes 80
+7 variables, 50 systems: 6 classes 1, 7 classes 49
+8 variables, 17 systems: 7 classes 1, 8 classes 16
+12 of 420 systems have a tie

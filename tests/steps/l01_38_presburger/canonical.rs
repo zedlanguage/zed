@@ -476,14 +476,43 @@ fn the_census_of_the_color_classes_of_420_systems() {
     }
     let got = census(&systems, |s| distinct(&colors(s)));
     let classes_of = |m: BTreeMap<Atom, Atom>| m.values().collect::<BTreeSet<_>>().len();
-    let one_round = census(&systems, |s| classes_of(plain_refinement(s, 1)));
-    assert_ne!(
-        one_round, got,
-        "one round of refinement gives the census too"
-    );
-    assert_eq!(
-        census(&systems, |s| classes_of(plain_refinement(s, usize::MAX))),
-        got
+    let refined = |s: &[Con]| classes_of(plain_refinement(s, usize::MAX));
+    assert_eq!(census(&systems, refined), got);
+    // Controls: colorings that lose one part of the rows, each the full refinement of the
+    // systems with that part erased. Each gives another census, so the snapshot sees the loss.
+    // (One round of refinement is no control: on these systems it gives this census too.)
+    let erased = |erase: fn(&mut Con)| {
+        let changed: Vec<Vec<Con>> = (systems.iter())
+            .map(|s| {
+                (s.iter().cloned())
+                    .map(|mut c| {
+                        erase(&mut c);
+                        c
+                    })
+                    .collect()
+            })
+            .collect();
+        census(&changed, refined)
+    };
+    let controls = [
+        ("the constants", erased(|c| c.lin.constant = 0.into())),
+        ("the relations", erased(|c| c.rel = Rel::Ge)),
+        (
+            "the sizes of the coefficients",
+            erased(|c| {
+                for k in c.lin.terms.values_mut() {
+                    *k = (if k.is_negative() { -1 } else { 1 }).into();
+                }
+            }),
+        ),
+    ];
+    let blind: Vec<&str> = (controls.iter())
+        .filter(|(_, c)| *c == got)
+        .map(|(what, _)| *what)
+        .collect();
+    assert!(
+        blind.is_empty(),
+        "a coloring blind to {blind:?} gives the census too: {got}\n{controls:#?}"
     );
     insta::assert_snapshot!(got);
 }
