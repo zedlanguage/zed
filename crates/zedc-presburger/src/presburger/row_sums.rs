@@ -1468,33 +1468,69 @@ fn span_mask((lo, hi): (i64, i64), blk: i64) -> u64 {
 // most `ΣB`, so it has at most `⌈ΣB/64⌉ + 1` words. So every table of the group's forward
 // pass has O(t·U/64) words whatever its number of atoms, where t is the number of atoms
 // needed to make the core B.
+// A table kept to its window (PRES-c12-proof, part 2). [`Plan::step`] keeps the table of the
+// first t atoms to the keys whose top digit is in `[a_t, b_t]` ([`Group::window`]), with
+// `a_t = top.0 - (last - top_t)` and `b_t = min(top.1, top_t)`, `top_t` the greatest top digit
+// of the first t atoms. Claim: the table is exactly `T_t ∩ W_t`, the sums of the first t atoms
+// whose top digit is in the window. By induction on t from `T_0 = {0}`: a kept key is a sum,
+// so `⊆`; for `y` in `T_t ∩ W_t`, `y = x` or `y = x + v` with `x` in `T_(t-1)` and `v` atom
+// t's key; its top digit is at most y's, so at most `b_(t-1)` (`top_(t-1)` is the greatest of
+// `T_(t-1)`), and at least y's less atom t's top digit `δ`, and `a_(t-1) = a_t - δ` since
+// `top_t = top_(t-1) + δ`; so `x` is in `T_(t-1) ∩ W_(t-1)`, kept, and y is made from it.
+// So a table is a contiguous cut of `T_t` in its top digit, and with one digit a cut of `T_t`.
+//
 // For the family `coefficients_one_and_two` (and `overlap_rows`) of
-// `l01_38_omega_test::disj_groups`, `w_i = 1000 + (37·i² mod 991)`: the groups are `y_0 ..`
-// (step 1, values `w_i`), the shared atoms of each parity (step 2, values `w_i`), and the
-// second sum's own atoms (step 1, values `(1 + i mod 2)·w_i`). Every shared atom has the
-// signature of both sums, so by signature they are one group; the two parity groups are the
-// halves into which [`Plan::halves`] splits it by the ratio of the second sum's coefficient
-// to the first's (1 for the even atoms, 2 for the odd), in a plan made with fused pairs
-// (item 6 of the module's notes). The odd half has the coefficient 2 in the second sum, but
-// its values there are `w_i`, not `2·w_i`: [`Groups::push`] divides each row of a group by
-// the gcd of its coefficients on the group's atoms (the `prim` vectors, the factor kept in
-// `of_row`), and in the odd half every such coefficient is 2, so the gcd is 2. (Had the
-// values been `2·w_i`, the table would hold only even sums and no full word; the lemma then
-// holds for the values divided by their gcd, `T(g·A) = g·T(A)`.) In a plan made without
-// pairs (where [`Plan::fused`] does not keep the pair), the shared atoms stay one group, and
-// its row of the second sum has the primitive vector of 1s and 2s: two classes, so two
-// digits, which this lemma of one digit does not cover. The test below checks the values of
-// each kind and reads no `Plan`: the grouping is read from the code, not tested.
-// The values of t atoms from a
-// start index s depend on s only through `s mod 1982` (`w` has period 991 in i, the factor
-// period 2), so a check of every start residue covers every k: `tests::the_group_tables_of_
-// coefficients_one_and_two_have_a_dense_core` finds the core within `CORE_ATOMS` atoms from
-// every start, for each kind of group. Not proved here (the open part of PRES-c12-proof): the
-// words of the layers of the join and of the fused images (`Fused::s`, `Fused::q`, and the
-// `d` that `lattice` gives back), which are sums and maps of these tables; and that each group
-// takes its atoms in the order of their index (`Plan::rest` steps through `g.atoms` in their
-// order, which is not traced here to the order of the rows). The test cannot catch a fault in
-// how a group's table is built: it checks the sums of the values, not the tables of `Plan`.
+// `l01_38_omega_test::disj_groups`, `y_i` in `{0, w_i}`, `w_i = 1000 + (37·i² mod 991)`, the
+// first sum `y_0 + .. + y_(a-1)` and the second `Σ_(b <= i < k) (1 + i mod 2)·y_i`,
+// a = 2k/3, b = k/3. The plan (part 2). [`Plan::build`] sorts the atoms by signature, so the
+// groups go `y_0 .. y_(b-1)` (the first sum alone), `y_b .. y_(a-1)` (both), `y_a ..` (the
+// second alone). [`Plan::of`] takes the build with pairs wherever it gives a plan, and for
+// k >= 6 the shared group meets every test of [`Plan::halves`] and [`Plan::fused`]: at it the
+// first sum r is open (its group before) and the second s is not, r is an equation, and the
+// ratio s/r is 1 on the even atoms and 2 on the odd, both present as `a - b >= 2`; so the
+// halves are the even atoms (group i = 1) and the odd (i = 2). Layer 1 holds r alone, layer 3
+// s alone (r closes at group 2, s is still open for `y_a ..`), and `last[r] = 2 = i + 1`. In
+// the even half both rows have the coefficients 1, one primitive vector, one class; in the odd
+// half r has 1s and s 2s, which [`Groups::push`] divides by their gcd 2 (the factor kept in
+// `of_row`), one class again. So both halves have one digit, `λ_rE = λ_sE = λ_rO = 1` and
+// `λ_sO = 2 = 2·λ_sE·λ_rE·λ_rO`. The size test `x.size + h <= LIMIT` and the maps' constants
+// are sums of at most k weights below 2000, far below [`LIMIT`] = 2^62 at any k a test
+// reaches. Every group of the plan then has one digit (the two groups of one sum alone have
+// one row each). Checked on the plan the code makes at k = 12, 16, 64, 512 and 1800, with the
+// other tests of `build` (keys within [`LIMIT`], sums within `i128`), which this proof does
+// not follow: `tests::the_tables_of_coefficients_one_and_two_are_an_interval_and_a_few_words`.
+// The odd half's values are `w_i`, not `2·w_i`, by the gcd above. (Had they been `2·w_i`, the
+// table would hold only even sums and no full word; the lemma then holds for the values divided
+// by their gcd, `T(g·A) = g·T(A)`.)
+// The order. [`Plan::build`] sorts a group's atoms by their span, least first (the atoms
+// projected onto last), and [`Plan::halves`] keeps that order in each half; the span of `y_i`
+// is `w_i`, so each table is the sums of the group's t lightest atoms, and the core B is the
+// first t atoms of that order. No argument by start index covers that order for every k: past
+// k = 991 the values repeat, and the lightest come first, so how many atoms the core needs can
+// grow with k (inferred, not measured past k = 1800). The test finds the core on the plan's
+// own order and checks the bound on the plan's own tables: every table from the core on has
+// at most `⌈ΣB/64⌉ + 4` items (the lemma's words outside the interval, and the interval). By
+// the claim above each table is a cut `T_t ∩ W_t`, whose words outside the interval are a
+// part of those of `T_t` and whose part of the interval is one interval, so the bound holds
+// for the cut too.
+// Two digits, without pairs (part 3). Where [`Plan::fused`] declines the pair, [`Plan::of`]
+// builds again without pairs, and the shared atoms are one group with two classes: `d0` the
+// first sum's (coefficients 1) and `d1` the second's (coefficients 1 and 2), its key
+// `d0 + R·d1` with `R = Σ w_i + 1` over the group. Lower bound: the table of its first t atoms,
+// t below its number n of atoms, has at least one item for each value of `d1` in the sums of
+// those atoms within the window. Proof: by the claim the table holds every such sum; the keys
+// of one value of `d1` lie in `[R·d1, R·d1 + Σ_(first t) w]`, and `Σ_(first t) w <= R - 1001`
+// for t < n (every weight is at least 1000), so the keys of two values are more than 1000
+// apart: no word (64 keys) and no interval holds keys of both. The values of `d1` are the
+// subset sums of `(1 + i mod 2)·w_i`, from 0 to about `1.5·t·W̄`; by the lemma for those
+// values, all but `O(ΣB)` of them once the first atoms make a core. So without pairs a table
+// holds `Θ(t·W)` items where the fused plan's hold `O(1 + ΣB/64)`, and the forward pass over
+// the n atoms `Θ(n²·W)`: the near-linear work of the join on this family rests on the fused
+// plan. Test: `tests::without_pairs_the_shared_group_of_coefficients_one_and_two_holds_an_
+// item_per_value`, which checks the lower bound on the plan's own tables at k = 64 and 128.
+// Not proved here (the open part of PRES-c12-proof): the words of the layers of the join and
+// of the fused images (`Fused::s`, `Fused::q`, and the `d` that `lattice` gives back), which
+// are sums and maps of these tables; and a core within a bounded number of atoms at every k.
 #[derive(Clone, Default)]
 struct Set {
     lit: Lits,
@@ -4441,44 +4477,152 @@ mod tests {
         }
     }
 
-    /// PRES-c12-proof, part 1 (the lemma at [`Set`]): for each kind of group of
-    /// `l01_38_omega_test::disj_groups::coefficients_one_and_two`, from every start index modulo
-    /// the period of its values, the sums of at most `CORE_ATOMS` atoms hold an interval of at
-    /// least U keys, U the greatest value of that kind. It looks for `⌈U/64⌉ + 1` full words in
-    /// a row, which hold such an interval (a stronger test, so it proves no more than the
-    /// lemma needs). The values are those of the family's `weights`: `w_i = 1000 + (37·i² mod
-    /// 991)`. Every start is checked, also for the group `y_0 ..`, which starts at 0 only.
+    /// The rows of `l01_38_omega_test::disj_groups::coefficients_one_and_two(k)`, atom `a_i` its
+    /// `y_i` in `{0, w_i}`, `w_i = 1000 + (37·i² mod 991)`: `y_0 + .. + y_(a-1)` equal to the
+    /// sum of the even-numbered weights below a = 2k/3, and `Σ_(b <= i < k) (1 + i mod 2)·y_i`
+    /// equal to its value where the even-numbered atoms from b = k/3 take their weights.
+    fn coefficients_one_and_two(k: usize) -> Rows {
+        let w = |i: usize| 1000 + (37 * (i * i) as i128) % 991;
+        let c = |i: usize| 1 + (i % 2) as i128;
+        let (a, b) = (2 * k / 3, k / 3);
+        let t1: i128 = (0..a).filter(|i| i % 2 == 0).map(w).sum();
+        let t2: i128 = (b..k).filter(|i| i % 2 == 0).map(|i| c(i) * w(i)).sum();
+        rows_of(
+            (0..k).map(|i| vec![(0, 0), (w(i), w(i))]).collect(),
+            vec![
+                ((0..a).map(|i| (i, 1)).collect(), -t1, true),
+                ((b..k).map(|i| (i, c(i))).collect(), -t2, true),
+            ],
+        )
+    }
+
+    /// PRES-c12-proof, parts 1 and 2 (the lemma and the plan at [`Set`]), on the plan the code
+    /// makes for [`coefficients_one_and_two`] at the sizes of its tests and benchmarks: (1)
+    /// [`Plan::of`] gives a plan with a fused pair, and every group of it one digit; (2) for each
+    /// group, in the order the plan adds its atoms, where the sums of the first t atoms hold
+    /// `⌈U/64⌉ + 1` full words in a row (an interval of at least U keys, U the group's greatest
+    /// value), every one of the plan's own tables from t on ([`Plan::prefixes`], kept to their
+    /// windows) has at most `⌈ΣB/64⌉ + 4` items, words and intervals, ΣB the sum of those t
+    /// values. So a fault that adds items in how a table is built, kept or settled fails it, as
+    /// would a lemma wrong for these values. (3) At k = 512 and 1800 every group has its core
+    /// within `CORE_ATOMS` atoms; below, a group of a few atoms may have none, and its tables are
+    /// then not bounded here. It does not check the layers of the join (the open part).
     #[test]
-    fn the_group_tables_of_coefficients_one_and_two_have_a_dense_core() {
+    fn the_tables_of_coefficients_one_and_two_are_an_interval_and_a_few_words() {
         const CORE_ATOMS: usize = 64;
-        let w = |i: usize| 1000 + 37 * (i * i) as i64 % 991;
-        let twice = |i: usize| (1 + (i % 2) as i64) * w(i);
-        // The step between the indices of a group's atoms, the value of atom i, and the
-        // period of the values in the start index.
-        type Value<'a> = &'a dyn Fn(usize) -> i64;
-        let kinds: [(usize, Value, usize); 3] = [(1, &w, 991), (2, &w, 991), (1, &twice, 1982)];
         let mut most = 0;
-        for (kind, &(step, value, period)) in kinds.iter().enumerate() {
-            let top = (0..1982).map(value).max().expect("1982 values");
-            let need = (top as usize).div_ceil(64) + 1;
-            for s in 0..period {
-                let mut bits = vec![0u64; CORE_ATOMS * top as usize / 64 + 2];
+        for k in [12, 16, 64, 512, 1800] {
+            let rows = coefficients_one_and_two(k);
+            let plan = Plan::of(&rows, &vec![false; k]).expect("a plan");
+            let pair = (0..plan.len()).any(|i| matches!(plan.join(i).fuse, Some(Fuse::First(_))));
+            assert!(pair, "k {k}: the plan has no fused pair");
+            let prefix = (plan.prefixes(&rows, &mut Work::new(u64::MAX))).expect("the tables");
+            for i in 0..plan.len() {
+                let g = plan.group(i);
+                assert_eq!(g.digits.len(), 1, "k {k}, group {i}: its digits");
+                // Each atom's key at its value w; at its least value, 0, the key is 0.
+                let values: Vec<usize> = (0..g.atoms.len())
+                    .map(|t| {
+                        let s = g.steps[t];
+                        assert!(s.base == 0 && s.delta > 0, "k {k}, group {i}, atom {t}");
+                        usize::try_from(s.delta * rows.domains[g.atoms[t]][1].0).expect("a key")
+                    })
+                    .collect();
+                let u = *values.iter().max().expect("a group has atoms");
+                let need = u.div_ceil(64) + 1;
+                let mut bits = vec![0u64; values.iter().sum::<usize>() / 64 + 2];
                 bits[0] = 1;
-                let found = (0..CORE_ATOMS).position(|m| {
-                    shift_or(&mut bits, value(s + step * m) as usize);
+                let (mut sum, mut core) = (0, None);
+                for t in 0..=values.len() {
+                    if let Some((sb, _)) = core {
+                        let items = prefix[plan.table(i) + t].words();
+                        let bound = (sb as u64).div_ceil(64) + 4;
+                        assert!(
+                            items <= bound,
+                            "k {k}, group {i}, table {t}: {items} items, past {bound}"
+                        );
+                    }
+                    if t == values.len() {
+                        break;
+                    }
+                    shift_or(&mut bits, values[t]);
+                    sum += values[t];
                     let mut run = 0;
-                    bits.iter().any(|&x| {
+                    let dense = bits.iter().any(|&x| {
                         run = if x == u64::MAX { run + 1 } else { 0 };
                         run >= need
-                    })
-                });
-                let t = found.unwrap_or_else(|| {
-                    panic!("kind {kind}, start {s}: no dense core within {CORE_ATOMS} atoms")
-                });
-                most = most.max(t + 1);
+                    });
+                    if core.is_none() && dense {
+                        core = Some((sum, t + 1));
+                    }
+                }
+                match core {
+                    Some((_, t)) => most = most.max(t),
+                    None => assert!(
+                        k < 512,
+                        "k {k}, group {i}: no dense core in its {} atoms",
+                        values.len()
+                    ),
+                }
+                if k >= 512 {
+                    let t = core.map_or(usize::MAX, |c| c.1);
+                    assert!(t <= CORE_ATOMS, "k {k}, group {i}: the core needs {t} atoms");
+                }
             }
         }
-        eprintln!("the dense core of every group needs at most {most} atoms");
+        eprintln!("the dense core of every group of k = 512 and 1800 needs at most {most} atoms");
+    }
+
+    /// PRES-c12-proof, part 3 (the lower bound at [`Set`]): in the plan made without pairs
+    /// ([`Plan::build`] with `fuse` false, which [`Plan::of`] makes where [`Plan::fused`]
+    /// declines the pair), the shared atoms of [`coefficients_one_and_two`] are one group of two
+    /// digits, the second sum's the top one, and each of its tables of the first t < n atoms has
+    /// at least one item for each value of the top digit in the sums of those atoms within the
+    /// table's window, counted here by its own subset sums of `(1 + i mod 2)·w_i`. It prints the
+    /// largest table's items, `Θ(t·W)`, against the bound of the fused plan's tables.
+    #[test]
+    fn without_pairs_the_shared_group_of_coefficients_one_and_two_holds_an_item_per_value() {
+        for k in [64, 128] {
+            let rows = coefficients_one_and_two(k);
+            let mut split = false;
+            let plan = (Plan::build(&rows, &vec![false; k], false, &mut split)).expect("a plan");
+            assert!(!split, "k {k}: a group split in a plan without pairs");
+            let prefix = (plan.prefixes(&rows, &mut Work::new(u64::MAX))).expect("the tables");
+            let i = (0..plan.len())
+                .find(|&i| plan.group(i).sig.len() == 2)
+                .expect("the shared group");
+            let g = plan.group(i);
+            assert_eq!(g.digits.len(), 2, "k {k}: the shared group's digits");
+            assert_eq!(g.of_row[1].0, 1, "k {k}: the second sum is the top digit");
+            let top: Vec<usize> = (g.atoms.iter())
+                .map(|&j| (1 + j % 2) * usize::try_from(rows.domains[j][1].0).expect("a weight"))
+                .collect();
+            let mut sums = vec![false; top.iter().sum::<usize>() + 1];
+            sums[0] = true;
+            let (m, mut largest) = (g.digits[1].mult, 0);
+            for (t, &v) in top.iter().enumerate() {
+                // The window's keys hold the top digits `lo / m ..= hi / m`; none where empty.
+                let (lo, hi) = g.window(t);
+                let values = match (usize::try_from(lo / m), usize::try_from(hi / m)) {
+                    (Ok(a), Ok(b)) if lo <= hi => {
+                        (a..=b.min(sums.len() - 1)).filter(|&d| sums[d]).count() as u64
+                    }
+                    _ => 0,
+                };
+                let items = prefix[plan.table(i) + t].words();
+                assert!(
+                    items >= values,
+                    "k {k}, table {t}: {items} items for {values} values of the top digit"
+                );
+                largest = largest.max(items);
+                for d in (0..sums.len() - v).rev() {
+                    if sums[d] {
+                        sums[d + v] = true;
+                    }
+                }
+            }
+            eprintln!("k {k}: without pairs the shared group's largest table has {largest} items");
+        }
     }
 
     /// [`lattice`] on random sets of words and intervals, with `d` given and not, against the
