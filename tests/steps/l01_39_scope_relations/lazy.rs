@@ -211,6 +211,14 @@ mod a_lazy_scope_settles_each_name_to_the_eager_product {
     }
 
     #[test]
+    fn seed_17799186487984213239() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-scope-seed-17799186487984213239): `a1` in
+        // [0, 20] eager and [-20, 20] lazy. Its steps:
+        // `a_name_a_bound_term_reads_is_settled_through_the_binding`.
+        run(&start(), [17799186487984213239], test);
+    }
+
+    #[test]
     fn seed_19_leaves_a_name_unsettled() {
         let (stale, _, _, _) = run(&start(), [19], test);
         assert!(stale > 0, "the lazy scope settled every name at once");
@@ -245,12 +253,121 @@ mod a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product {
     }
 
     #[test]
+    fn seed_3066150143192435835() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-hubs-seed-3066150143192435835): `a0` in
+        // [-11, inf) eager and [-18, inf) lazy. Its steps:
+        // `a_name_a_bound_term_reads_is_settled_through_the_binding`.
+        run(&bounded_hubs(), [3066150143192435835], wide);
+    }
+
+    #[test]
     fn seed_2_holds_a_star_of_two_related_hubs() {
         let (stale, two, related, _) = run(&bounded_hubs(), [2], wide);
         assert!(stale > 0, "the lazy scope settled every name at once");
         assert!(two > 0, "no state held a star of two hubs");
         assert!(related > 0, "no state held a star of two related hubs");
     }
+}
+
+/// A step of [`replay`]: a test and its outcome, or `x` bound to the product of `y`.
+enum Step {
+    Assume(Term, bool),
+    Bind(&'static str, &'static str),
+}
+
+/// Runs `steps` from `start`, eagerly and lazily, and checks after each that the lazy scope
+/// settles every name to what the eager one holds ([`same`]). Returns the number of names
+/// the lazy scope held unsettled over all steps.
+fn replay(start: &Scope, steps: &[Step]) -> usize {
+    let p = Premises::new();
+    let all = names(&["n", "m", "a0", "a1", "a2", "a3", "a4"]);
+    let name = |x: &str| all.iter().find(|n| &***n == x).expect("a name").clone();
+    let (mut eager, mut lazy) = (start.clone(), start.clone().lazy());
+    let mut trace = Vec::new();
+    let mut stale = 0;
+    for step in steps {
+        match step {
+            Step::Assume(t, outcome) => {
+                trace.push(format!("assume {t:?} is {outcome}"));
+                eager = eager.assume(t, *outcome, &p);
+                lazy = lazy.assume(t, *outcome, &p);
+            }
+            Step::Bind(x, y) => {
+                trace.push(format!("bind {x} to the product of {y}"));
+                let (x, y) = (name(x), name(y));
+                let e = Shared::new(Term::Var(y.clone()));
+                let (pe, pl) = (eager.get(&y), lazy.settled(&y));
+                eager.bind(&x, pe, &e);
+                lazy.bind(&x, pl, &e);
+            }
+        }
+        stale += same(&eager, &lazy, &all, &trace);
+    }
+    stale
+}
+
+#[test]
+fn a_name_a_bound_term_reads_is_settled_through_the_binding() {
+    // A name `y` that a bound name `x`'s term reads (`x` bound to the product of `y`, its term
+    // `y`), where a test then relates `x` to the hubs: the eager scope projects `x`'s star,
+    // and the projection narrows `x`, whose term the eager scope reads back into `y`
+    // (`Scope::read_back_terms`). The lazy scope leaves `x`'s star stale, and settling `y`
+    // settled only `y`'s own stars, so `y` kept the wider bound: `Scope::settled` must settle
+    // the stale stars of the bindings whose term reads `y` too, and settling must read back
+    // what it narrowed. Leaving out the binding, the disjunction or the last test makes the
+    // two scopes agree before the fix. Seed 3066150143192435835 of [`wide`]: `a0` in
+    // [-11, inf) eager and [-18, inf) lazy (FAIL-lazy-hubs-seed-3066150143192435835).
+    let nm = || prim(Prim::Add, var("n"), var("m"));
+    let ge = |x: Term, y: Term, c: i64| prim(Prim::Ge, prim(Prim::Sub, x, y), int(c));
+    let steps = [
+        Step::Assume(ge(var("a2"), var("m"), 0), true),
+        Step::Assume(ge(var("a2"), nm(), 2), true),
+        Step::Bind("a1", "a0"),
+        Step::Assume(prim(Prim::Ge, var("m"), int(4)), true),
+        Step::Assume(or(ge(var("a1"), nm(), -2), ge(var("a1"), var("m"), 1)), true),
+        Step::Assume(ge(var("a1"), var("n"), -3), true),
+        Step::Assume(prim(Prim::Le, var("m"), int(10)), false),
+    ];
+    let stale = replay(&bounded_hubs(), &steps);
+    assert!(stale > 0, "the lazy scope settled every name at once");
+    // Seed 17799186487984213239 of [`test`], in boxed names: `a0` bound to the product of
+    // `a1`, then `a0 - n >= -1` and `n - a4 >= -2`; `a1` in [0, 20] eager and [-20, 20] lazy
+    // (FAIL-lazy-scope-seed-17799186487984213239).
+    let steps = [
+        Step::Assume(
+            and(
+                diff_ge("a3", "m", 2),
+                and(prim(Prim::Ge, var("m"), int(12)), diff_ge("a0", "n", 1)),
+            ),
+            true,
+        ),
+        Step::Assume(prim(Prim::Ge, var("a4"), int(3)), true),
+        Step::Assume(
+            and(
+                diff_ge("a0", "m", 2),
+                or(prim(Prim::Le, var("n"), int(11)), diff_ge("n", "a0", 0)),
+            ),
+            true,
+        ),
+        Step::Assume(prim(Prim::Ge, var("m"), int(12)), true),
+        Step::Assume(
+            or(
+                diff_ge("n", "a3", 0),
+                or(
+                    prim(Prim::Le, var("a0"), int(0)),
+                    prim(Prim::Ge, var("m"), int(-9)),
+                ),
+            ),
+            true,
+        ),
+        Step::Bind("a0", "a1"),
+        Step::Assume(diff_ge("a0", "n", -1), true),
+        Step::Assume(diff_ge("n", "a4", -2), true),
+    ];
+    replay(
+        &boxed(&["n", "m", "a0", "a1", "a2", "a3", "a4"], 20),
+        &steps,
+    );
 }
 
 #[test]
@@ -340,6 +457,14 @@ mod a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_prod
             kept > 0,
             "no star of two hubs stood beside a satellite of them"
         );
+    }
+
+    /// Seed 132839571965928555 (FAIL-lazy-satellites-seed-132839571965928555): `a1` bound to
+    /// `a4`'s product, then narrowed to (-inf, -5] by `a1 < n + m` and `n + m <= -4`; the
+    /// eager scope reads that back to `a4`, and the lazy scope settled `a4` to (-inf, 39].
+    #[test]
+    fn seed_132839571965928555_reads_a_narrowed_binder_back_to_the_name_it_reads() {
+        run(&bounded_hubs(), [132839571965928555], satellites);
     }
 }
 
