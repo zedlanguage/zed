@@ -27021,6 +27021,11 @@ mod tests {
         // below `'` (SPEC-union-order-recursive).
         let primed = Ty::set(list("L")).union(&v("L'"));
         assert_eq!(primed.text_named(false, &plain, &names), "L(int) | L'");
+        // A run of digits compares as a number, `T5` before `T10` (NAME-cmp-digit-runs).
+        let digits: [(Arc<str>, Arc<str>); 2] =
+            [("T10".into(), "T10".into()), ("T5".into(), "T5".into())];
+        let runs = v("T10").union(&v("T5"));
+        assert_eq!(runs.text_named(false, &plain, &digits), "T5 | T10");
         // Beside two marks, the own variables of a signature that stand twice each, named
         // between them in order of first place.
         let mut marked = one_of(
