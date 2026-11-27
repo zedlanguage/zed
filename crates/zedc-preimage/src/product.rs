@@ -11289,9 +11289,22 @@ impl Scope {
     fn with_readers(&self, name: &Arc<str>) -> Vec<Arc<str>> {
         let readers = self.read_by.get(name).into_iter().flatten();
         let bound = readers.filter(|y| self.bindings.get(*y).is_some_and(|b| b.term.is_some()));
-        std::iter::once(name.clone())
+        let mut out: Vec<Arc<str>> = std::iter::once(name.clone())
             .chain(bound.cloned())
-            .collect()
+            .collect();
+        let blocks = self.relation.blocks();
+        for g in self.relation.mentioning(name) {
+            for z in conjuncts::names(g) {
+                let reads = self
+                    .bindings
+                    .get(&z)
+                    .is_some_and(|b| b.term.is_some() && !b.reads.is_empty());
+                if reads && *z != **name && self.relation.star(&z) == blocks.of(g) {
+                    out.push(z);
+                }
+            }
+        }
+        out
     }
 
     /// The names before a fresh binding or unbinding, for [`Scope::seen_fresh`]: the exact map
