@@ -1742,9 +1742,10 @@ fn chain_cells(q: &[(u64, BigInt)], below: &[BigInt], a: &BigInt, hi: &BigInt) -
 /// NEWREFINE ([`refine`]) on the exact values of `q` and `q'`, so a search takes at most the
 /// bits of `hi - lo` steps, and `O(log log)` of the bracket over the cluster's size at a
 /// cluster of roots at an end of a stretch (plan row ROOTS-fallback-worst-case; the proof at
-/// [`refine`]). Before those steps, while `hi > 4 max(lo, 1)`, the bracket is cut at the power of 2 whose
-/// exponent is the mean of its ends' bits, so a root far below the end Newton's method starts
-/// from is reached in O(log B) steps for ends of B bits. Once the cuts end, [`doubling`] gives
+/// [`refine`]). Before those steps, while `hi > 4 max(lo, 1)`, the bracket is cut at the power
+/// of 2 whose exponent is the mean of its ends' bits, so a root far below the end Newton's
+/// method starts from is reached in O(log B) steps for ends of B bits. Once the cuts end,
+/// [`doubling`] gives
 /// a guess from the top bits of the bracket at doubling precision, and an exact evaluation
 /// there, one Newton step from it and its neighbor, three evaluations at full precision, close
 /// the bracket; the steps above go on from the bracket left where they do not (plan row
