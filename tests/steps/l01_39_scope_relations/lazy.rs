@@ -261,6 +261,14 @@ mod a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product {
     }
 
     #[test]
+    fn seed_8994332253420488859() {
+        // A second case of FAIL-lazy-hubs-seed-3066150143192435835 (b30-check, run seed
+        // 8994332253420488853): `a3` bound to `a0`'s product; `a0` in [-6, inf) eager and
+        // [-9, inf) lazy.
+        run(&bounded_hubs(), [8994332253420488859], wide);
+    }
+
+    #[test]
     fn seed_892430831927573369() {
         // A fresh seed of `random_seeds` (FAIL-lazy-hubs-seed-892430831927573367, run seed
         // 892430831927573367 in merge_check of wt/xr-hole-2 762bc2898): the two scopes settled
