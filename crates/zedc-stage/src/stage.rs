@@ -3162,9 +3162,8 @@ impl Mixer {
     // (counted by structure at d = 1 to 32), and the node count is 3 times that plus 7d - 3, so
     // it is within a constant factor of what the output needs. Tests:
     // `l01_28_staging::dag::mixing_lets_of_composed_functions_over_one_body_gives_what_the_tree_gives`,
-    // `l01_28_staging::dag::mixing_lets_of_composed_functions_over_one_body_scales` (at d and
-    // 8d; deferred to plan row STAGE-scaling-10_5 in
-    // wt/scratch/deferred-tests/STAGE-scaling-10_5.rs),
+    // `l01_28_staging::bench::dag::mixing_lets_of_composed_functions_over_one_body_scales`
+    // (at d and 8d),
     // `l01_28_staging::dag::a_call_at_minus_zero_is_answered_apart_from_zero`,
     // `l01_28_staging::differential::a_part_calling_a_function_at_a_float_zero_gives_each_functions_value`
     // (one part under two functions, keyed by what each gives at `0.0`),
