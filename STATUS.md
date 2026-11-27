@@ -1801,6 +1801,18 @@ LR4 added 27 tests (`lr4_assoc.rs` in `l01_08_parser`) and 23 bracketing cases t
   the old layout of its build directory (`[unstable] build-dir-new-layout = false`), which the
   build tools read; BUILD-new-layout moves them to the new one.
 - Cargo's target directory is `build/cargo`, set in `.cargo/config.toml`.
+- What a new worktree's own builds write (BUILD-fresh-tree-size, measured 2026-11-27): on
+  2026-11-11 the first build in a fresh worktree wrote about 3.6 GB. Now a worktree is seeded
+  from the central build (seed-build.sh; zrun mounts it under the worktree's build/upper) and
+  the tests and builds run on Colab VMs, so a worktree writes only what it builds locally.
+  `du -s --block-size=1M` of build/upper over the 34 worktrees under /home/luke/Work/wt/trees:
+  19 hold 1 MB or less (no local build), the other 15 64 to 707 MB. The largest, b22-eqsrest8,
+  707 MB: debug/incremental 505, debug/deps 48, doc about 150 (zedc 24, zedc_presburger 23,
+  zedc_check 19, zedc_preimage 15, src 34). Decision: no change. Turning off incremental
+  builds for crates rarely edited (the fix suggested on 2026-11-11) would save at most the
+  incremental share of a few hundred MB per worktree that builds, and slow the rebuild of a
+  crate that is edited; seeding more of a tree is already done. Measure again with the du above
+  if local builds come back.
 - Language tests: `tests/steps/<step>/`, all in one test binary. Unit tests of internal
   functions: `#[cfg(test)]` beside the code.
 - Fences and grammar (SPEC-copies-out, 2026-11-17, author P371 and P375; supersedes
