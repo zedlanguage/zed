@@ -8876,7 +8876,8 @@ impl<'m, 't> Walk<'m, 't> {
         }
         if p == Mul {
             // A product of several factors: each distinct factor's power, then their product
-            // ([`Tx::factors`]), so no partial product's set is made (PERF-alternating-product-bytes).
+            // ([`Tx::factors`]), so no partial product's set is made
+            // (PERF-alternating-product-bytes).
             // Sound: integer products are exact and associative, so regrouping the factors
             // gives the same values, each set holds every value of its factor's power or
             // product, the set of a power is that of one
