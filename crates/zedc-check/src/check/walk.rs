@@ -30080,6 +30080,104 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// Reports, at the call `span` of the one-arrow signature `sig`, that its bounded variable
+    /// `v` meets two carriers: that of the literal passed at the one parameter that is `v`,
+    /// whose class could not take `rest`, and `rest`, of one other carrier, which a need of the
+    /// body on another parameter gave `v` when the call met it. So for `g(positional m, positional y) = m.any(x -> x > y);`,
+    /// `g(["a"], 1)` reads "`g` does not take (0 -> "a", 1): `m.any(x -> x > y)` in its body
+    /// uses a value of `m` and `y` at one type, and here they are "a" : String and 1 : int",
+    /// with the repair "pass `y` a value of String, or `m` values of int" (plan row
+    /// MSG-level-need-at-call-names-the-comparison). Before it the headline named `g`'s
+    /// arguments alone ("no arrow of `g` takes these types"), and no note named the use.
+    ///
+    /// Why the use named is the one: `v` is bound at the call only from its parameters and
+    /// from the needs met there, and every parameter that is `v` itself is the literal's (the
+    /// one position), so `rest` came from a need; the need named is the first on another
+    /// parameter, the one the body met first (`Sig::needs` keeps the body's order). Where the
+    /// body has two such needs, the first may not be the one that gave `rest`: the headline
+    /// then names a use of that parameter that the reader can check, and the values and types
+    /// are exact either way. Where any of this does not hold (two arrows, a trial, no literal
+    /// at `v`, `v` at two parameters, `rest` of more than one carrier or of none, or no need
+    /// on another parameter), it reports nothing and the caller's message stands.
+    ///
+    /// Returns whether it reported the error. Complexity tradeoff: O(p + n) for p parameters
+    /// and n needs, on the error path only; the naive way, recording at each need which
+    /// variable it bound, costs O(1) on every need met, error or not.
+    #[allow(clippy::too_many_arguments)]
+    fn met_at_one_type(
+        &mut self,
+        what: &str,
+        sig: &Sig,
+        k: usize,
+        v: &Arc<str>,
+        rest: &Ty,
+        args: &[Option<Arg<'a>>],
+        span: Span,
+    ) -> bool {
+        if self.trying || sig.arrows.len() != 1 {
+            return false;
+        }
+        let arrow = &sig.arrows[k];
+        let at: Vec<usize> = (arrow.params.iter().zip(args).enumerate())
+            .filter(|(_, (p, a))| a.is_some() && p.as_var() == Some(v))
+            .map(|(i, _)| i)
+            .collect();
+        let [i] = at[..] else { return false };
+        let Some((arg, l)) = args[i].as_ref().and_then(|a| Some((a, a.lit.as_ref()?))) else {
+            return false;
+        };
+        // The literal's own carrier, `int` for `1`: the class it joined still takes every
+        // carrier the literal may adopt, and `rest`'s carrier is none of them (the flow failed).
+        let yc = lit_carrier(&l.value);
+        let mut pieces = rest.pieces().into_iter();
+        let (Some(Some(mc)), None) = (pieces.next().map(|p| p.carrier()), pieces.next()) else {
+            return false;
+        };
+        let found = sig.needs.iter().find_map(|n| {
+            let w = n.on.as_var()?;
+            let j = (arrow.params.iter()).position(|p| p.as_var() == Some(w))?;
+            (j != i).then_some((j, n.span))
+        });
+        let Some((j, use_at)) = found else {
+            return false;
+        };
+        let (Some(y), Some(m), Some(code), Some(lit)) = (
+            sig.params.get(i).map(|p| p.name.clone()),
+            sig.params.get(j).map(|p| p.name.clone()),
+            self.operand_text(Some(use_at)),
+            self.operand_text(arg.at),
+        ) else {
+            return false;
+        };
+        let (yt, mt) = (self.text(&Ty::carrier(yc)), self.text(&Ty::carrier(mc)));
+        let got = self.text(rest);
+        // The arguments as [`Ck::message_of`] shows them, their literals as written.
+        let spans = || args.iter().filter_map(|a| a.as_ref()?.at);
+        let near = (spans().map(|s| s.start).min())
+            .zip(spans().map(|s| s.end).max())
+            .map(|(start, end)| Span { start, end });
+        let shown: Vec<String> = self.near(near, |ck| {
+            (args.iter())
+                .map(|a| match a {
+                    Some(a) => ck.show(ck.open_carriers(a).as_ref().unwrap_or(&a.ty)),
+                    None => "_".into(),
+                })
+                .collect()
+        });
+        let shown = shown.join(", ");
+        self.error_offering(
+            span,
+            format!(
+                "{what} does not take ({shown}): `{code}` in its body uses a value of `{m}` and \
+                 `{y}` at one type, and here they are {got} : {mt} and {lit} : {yt}"
+            ),
+            [format!(
+                "repair: pass `{y}` a value of {mt}, or `{m}` values of {yt}"
+            )],
+        );
+        true
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn apply_one(
         &mut self,
@@ -30804,6 +30902,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 && kinds != 0
                 && !self.flow(c, &rest, what, span, span)
             {
+                if self.met_at_one_type(what, sig, k, v, &rest, args, span) {
+                    return Ok((Ty::empty(), Vec::new()));
+                }
                 return fail(self);
             }
             // The carriers this call gives the variable, for the widening pass
