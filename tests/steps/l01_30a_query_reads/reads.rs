@@ -4,7 +4,7 @@ use zedc::query::{Db, Query, Read};
 use zedc::testing::test_in;
 use zedc::unit::load;
 
-use super::{chain, files, names, read_count, records, reverse_entries};
+use super::{files, names, read_count, records, reverse_entries, tree};
 
 /// `g` calls `f`; `h` calls nothing. Each has a table of one row.
 const CALLS: &str = "\
@@ -62,7 +62,7 @@ fn two_runs_from_scratch_record_the_same() {
     let run = || {
         let mut db = Db::new();
         test_in(&mut db, CALLS);
-        test_in(&mut db, &chain(20));
+        test_in(&mut db, &tree(20));
         records(&db)
     };
     let first = run();
@@ -71,12 +71,11 @@ fn two_runs_from_scratch_record_the_same() {
 }
 
 #[test]
-fn a_chain_records_one_read_per_definition_and_one_reverse_entry_per_read() {
+fn a_tree_of_calls_records_one_read_per_definition_and_one_reverse_entry_per_read() {
     let n = 50;
     let mut db = Db::new();
-    test_in(&mut db, &chain(n));
-    let want: Vec<String> = (0..n).map(|i| format!("d{i}")).collect();
-    let mut want = want;
+    test_in(&mut db, &tree(n));
+    let mut want: Vec<String> = (0..n).map(|i| format!("d{i}")).collect();
     want.sort();
     assert_eq!(rows(&db), [want]);
     assert_eq!(read_count(&db), n);
