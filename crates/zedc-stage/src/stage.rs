@@ -3346,6 +3346,23 @@ impl Mixer {
                         unreachable!("a leaf")
                     };
                     let (kept, names) = (l.kept, l.names);
+                    // A part that asks of no name asked nothing: its leaf's `names` holds the
+                    // name of each `Item::One` in `asked` (`record`) and the `names` of each
+                    // `Item::Part` there (`record_part`), the only two writes of `said` and
+                    // `names`, so by induction on the order the leaves were made, `names`
+                    // empty means no question in `asked` or in any part under it. Its tree
+                    // then has no `Node::Ask`, so recalling the part reaches its leaf under
+                    // any bindings, and recording it would add to this part's tree a node
+                    // with one way on, which recalling this part needs no answer to take.
+                    // Not skipped, such parts were recorded again by each part above them: in
+                    // the l01_28 bench of lets of composed functions over one body, a part's
+                    // `said` held up to 2d items (191 at d = 96), 590,334 part records in all,
+                    // and the mix took 86.5 times the bytes from d = 12 to 96; skipped, each
+                    // `said` there holds at most 2 items and the bytes grow 66.1 times (local
+                    // job dv115, STAGE-scaling-10_5).
+                    if names == EMPTY {
+                        continue;
+                    }
                     if kept && self.outside(names) {
                         self.record_part(at);
                     } else if opened.insert(at) {

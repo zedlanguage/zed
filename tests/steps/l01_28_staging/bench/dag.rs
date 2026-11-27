@@ -94,6 +94,12 @@ fn mixing_nested_lets_of_one_built_value_over_one_body_scales() {
 #[test]
 fn mixing_nested_lets_of_two_built_values_over_one_body_scales() {
     // The mixed term has a node for each value of `x` at each level, d(d + 7)/2 in all.
+    // That size is forced, so power 2: with a = 1 and b = 2, level k has k + 1 values of
+    // `x` (`nodes` in `dag.rs` counts them), and two distinct values give two distinct mixed
+    // subterms, as their smallest leaf differs, so a shared term has at least sum(k + 1) =
+    // Theta(d^2) nodes. The mix made d(d + 1) evaluations (1260 at 35, 78680 at 280, local
+    // job dv115), each of one `let` and no stub; that each costs O(1) is measured, not proved
+    // (BENCH-stage-mix-two-values-limit: 62.44 times the evaluations, 62.59 the instructions).
     // At d = 50 and 400 this took 19 s alone at load 45 (TEST-bench-move-l0125).
     let n = 35;
     let apart = scaling::inputs(n, |d| built(d, 1, 2, true));
@@ -114,7 +120,8 @@ fn mixing_nested_lets_of_two_built_values_over_one_body_scales() {
 /// term has `(3d^2 + 17d - 6) / 2` nodes, not `2^d`. The quadratic is the output's own: it
 /// holds `d(d + 1) / 2` distinct `if`s (the argument is at `Mixer::eval`), so the test allows
 /// power 2. Plan row STAGE-scaling-10_5, back from the deferred tests (TESTS-defer-failing,
-/// 2026-11-13: 84.6 times the bytes from 12 to 96 on main cdf07ac4f).
+/// 2026-11-13: 84.6 times the bytes from 12 to 96 on main cdf07ac4f), under the limit since
+/// `Mixer::take` skips the parts that ask nothing (86.5 times before, 66.1 after, locally).
 #[test]
 fn mixing_lets_of_composed_functions_over_one_body_scales() {
     let n = 12;
