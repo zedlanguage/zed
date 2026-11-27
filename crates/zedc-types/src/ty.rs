@@ -26004,12 +26004,328 @@ fn between<'a>(parts: &mut Vec<Print<'a>>, first: &mut bool, sep: &'a str) {
     *first = false;
 }
 
+/// For each variable a need of `needs` is on, the meet of the closed types of its
+/// [`NeedKind::Into`] needs while every need on it is one, and `None` once a need of another
+/// kind is on it or a forward names it ([`NeedKind::Fwd`] holds only uses of other kinds).
+/// Why the meet: each `Into { ty }` need on `v` is met at a call exactly when the argument
+/// given for `v` is within `ty` (`passes_into` at the call, zedc-check's check/walk.rs,
+/// `Ck::meet`), so with every use of that kind the arguments accepted are those within every
+/// `ty`, their meet (the argument at zedc-check's `Ck::sig_text`). Read by
+/// [`Sig::uses_written`] and zedc-check's `Ck::passed_type`, so that the type printed and the
+/// type a call passes atoms by are one.
+// Complexity: one pass over the needs with a hash map by variable, O(needs) and a meet per
+// `Into` need after the first of a variable; equal types are not met again.
+pub fn into_types(needs: &[Need]) -> HashMap<Arc<str>, Option<Ty>> {
+    use std::collections::hash_map::Entry as Slot;
+    let mut passed: HashMap<Arc<str>, Option<Ty>> = HashMap::new();
+    for n in needs {
+        if let NeedKind::Fwd(fwd) = &n.kind {
+            for t in &fwd.on_vars {
+                if let Some(v) = t.as_var() {
+                    passed.insert(v.clone(), None);
+                }
+            }
+            continue;
+        }
+        let Some(v) = n.on.as_var() else { continue };
+        let into = match &n.kind {
+            NeedKind::Into { ty, .. } => Some(ty),
+            _ => None,
+        };
+        match passed.entry(v.clone()) {
+            Slot::Vacant(e) => {
+                e.insert(into.cloned());
+            }
+            Slot::Occupied(mut e) => {
+                let b = e.get_mut();
+                *b = match (into, b.take()) {
+                    (Some(ty), Some(b)) if b == *ty => Some(b),
+                    (Some(ty), Some(b)) => Some(b.meet(ty)),
+                    _ => None,
+                };
+            }
+        }
+    }
+    passed
+}
+
+impl Sig {
+    /// It with each variable whose uses state its type written as that type, the one rule of
+    /// a printed signature (DESIGN.md sec:diagnostics, "Types in a message": a printed type
+    /// writes `_` only where `_` is every value and for a variable that stands in one place;
+    /// a parameter the body uses only by application at fixed arguments prints as the map
+    /// type of those arguments, since lookup is application, sec:values_morphisms). Both the
+    /// text of a message (zedc-check's `Ck::sig_text_with`, with the variables a declaration
+    /// wrote in `kept`) and [`Sig`]'s `Display` (with none kept) print what this gives, so the
+    /// two texts agree (plan rows PRINT-hidden-var, PRINT-no-underscore-rest). Three rewrites,
+    /// none of a variable a declaration wrote (`kept`), a forward names or a carrier bound
+    /// bounds:
+    ///
+    /// 1. A variable every need of which is an application at fixed arguments, a lookup
+    ///    `v[k]` at a key `k` that holds no variable ([`NeedKind::Component`]) or a call
+    ///    `v(a1, ..., an)` by position only, with no named argument and no `...`
+    ///    ([`NeedKind::Call`]), and which stands in at most one place of the text and the
+    ///    needs together, is written as its arrows: `(k) -> r` for a lookup and `(a1, ..., an)
+    ///    -> r` for a call, `r` the need's result, and the meet of the arrows for several
+    ///    uses. `h(positional p) = p[0] + 1` prints `(0 -> U) -> U for U in ...`, and
+    ///    `n(positional fn) = fn(1)` prints `(1 -> T) -> T`.
+    /// 2. Applied to every such variable at once, the variables a rewrite holds rewritten in
+    ///    turn: `h(positional p) = p[1](p[0])` prints `((1 -> T -> U) & (0 -> T)) -> U`, the
+    ///    result `U1` of `p[1]` being itself called at `p[0]`'s result.
+    /// 3. A variable every need of which is an argument at a parameter of a closed type
+    ///    ([`NeedKind::Into`]) and which stands in one place of the text after 1 and 2 is
+    ///    written as the meet of those types ([`into_types`]), with its carrier bound where it
+    ///    has one that holds carriers only ([`OTHER`]).
+    ///
+    /// Why 1 and 2 are exact, not a widening: (a) such a variable `v` is constrained by its
+    /// application needs alone (any need of another kind leaves it out); (b) a lookup need at
+    /// key `k` of result `r` holds at a call exactly where the argument answers at `k` with a
+    /// value of `r`, and a call need where the argument, called with arguments of those
+    /// types, gives a value of `r`: the checker meets both by applying the argument
+    /// (zedc-check's check/walk.rs, `Ck::replay_one`: `at_index` for a lookup, `call_found`
+    /// for a call), which is what the arrow admits; (c) several needs hold together, which is
+    /// the meet of their arrows; (d) `v` stands in at most one place of the text and of the
+    /// other needs counted together, so no other part links to it and replacing it there
+    /// loses no link. A result `r` now stands in the arrow's place as well as where it stood,
+    /// so where it stood once it now prints by a name, `(0 -> U) -> U`, the link that gives
+    /// `h([1, 2])` the type `int`. The count of (d) is the printer's count of the text
+    /// ([`Sig::standing_twice`]) plus the places in the needs: a need's type that is the
+    /// variable itself counts one, and one that holds it inside counts two, an upper bound
+    /// that keeps the variable's name rather than lose a link it may make there. A variable
+    /// that stands only in the needs (as `U1` above, in `p`'s lookup) is rewritten where it
+    /// stands once there, and the replacement puts its arrows where it stood. Variables whose
+    /// rewrites hold each other in a cycle, which no text place reaches (each has its one
+    /// place in the other's need), are cut at the first one met again, which keeps its name
+    /// and its needs.
+    // Complexity: O(N) for the needs' places and the applications, with one hash per need
+    // type; the printer's count ([`Sig::standing_twice`], O(n log n) in the text) once before
+    // and once after, only when a variable may be rewritten; the rewrites closed in one walk
+    // over them with an explicit stack, each rewrite replaced once in O(its size) with the
+    // closed rewrites of the variables it holds put in by reference (a replacement is not
+    // walked again, [`Ty::replace`]), so a chain `p[0][0]...[0]` of depth d costs O(d), not
+    // the O(d^2) of replacing the whole signature once per level; and one replacement of the
+    // signature, O(its size). The needs of a rewritten variable are dropped before that
+    // replacement, which would copy the n arrows into each of its n needs, O(n^2) (the bench
+    // `printing_a_parameter_of_many_lookups_scales` measured a ratio of 24.8 at 200 and 1600
+    // lookups with them kept). A signature with no need is itself, O(1).
+    // Tests: tests/steps/l01_29_diagnostics/tyvars.rs (each rewrite, the chain, the cycle,
+    // the count of (d), and Display agreeing with the message); tests/steps/
+    // l01_26a_generic_literals/tuple_arg_pair.rs `not_a_function` (rewrite 2);
+    // l01_29_repairs_and_printing/printed.rs reads every printed text back to the type
+    // recorded with it, which is the rewritten signature.
+    pub fn uses_written(&self, kept: &HashSet<&Arc<str>>) -> Cow<'_, Sig> {
+        let needs = self.needs.as_slice();
+        if needs.is_empty() {
+            return Cow::Borrowed(self);
+        }
+        let mut passed = into_types(needs);
+        passed.retain(|v, b| b.is_some() && !kept.contains(v));
+        // For each variable, the (arguments, result) of each application at fixed arguments,
+        // while every use of it is one; `None` after a use of another kind. A set, so that an
+        // application written twice, `p[0] + p[0]`, is one arrow, in O(1) each.
+        type Uses = Option<Vec<(Vec<Ty>, Ty)>>;
+        let mut applied: HashMap<Arc<str>, Uses> = HashMap::new();
+        let mut seen: HashSet<(Arc<str>, Vec<Ty>, Ty)> = HashSet::new();
+        // The places of each variable in the needs, `.on` aside (point (d) above).
+        let mut in_needs: HashMap<Arc<str>, usize> = HashMap::new();
+        for n in needs {
+            for t in n.every_ty().into_iter().skip(1) {
+                match t.as_var() {
+                    Some(v) => *in_needs.entry(v.clone()).or_default() += 1,
+                    None if t.holds_vars() => {
+                        let mut vs = Vars::default();
+                        t.vars_in(&mut vs);
+                        for v in vs.order {
+                            *in_needs.entry(v).or_default() += 2;
+                        }
+                    }
+                    None => {}
+                }
+            }
+            if let NeedKind::Fwd(fwd) = &n.kind {
+                for v in fwd.held_outer.iter().chain(&fwd.held_classes) {
+                    *in_needs.entry(v.clone()).or_default() += 2;
+                }
+                for t in &fwd.on_vars {
+                    if let Some(v) = t.as_var() {
+                        applied.insert(v.clone(), None);
+                    }
+                }
+                continue;
+            }
+            let Some(v) = n.on.as_var() else { continue };
+            let app = match (&n.kind, &n.result) {
+                (NeedKind::Component { key, .. }, Some(r)) if !key.holds_vars() => {
+                    Some((vec![key.clone()], r.clone()))
+                }
+                (
+                    NeedKind::Call {
+                        positional,
+                        named,
+                        curry: false,
+                        ..
+                    },
+                    Some(r),
+                ) if named.is_empty() => Some((positional.clone(), r.clone())),
+                _ => None,
+            };
+            let l = applied.entry(v.clone()).or_insert_with(|| Some(Vec::new()));
+            match (app, l.as_mut()) {
+                (Some((args, r)), Some(list)) => {
+                    if seen.insert((v.clone(), args.clone(), r.clone())) {
+                        list.push((args, r));
+                    }
+                }
+                _ => *l = None,
+            }
+        }
+        applied.retain(|v, l| {
+            l.as_ref().is_some_and(|l| !l.is_empty())
+                && !kept.contains(v)
+                && !self.bounds.contains_key(v)
+        });
+        if passed.is_empty() && applied.is_empty() {
+            return Cow::Borrowed(self);
+        }
+        let twice = self.standing_twice();
+        let mut shown = Vars::default();
+        for a in &self.arrows {
+            a.params.iter().for_each(|t| t.vars_in(&mut shown));
+            a.result.vars_in(&mut shown);
+        }
+        let places = |v: &Arc<str>| match twice.contains(v) {
+            true => 2,
+            false => usize::from(shown.contains(v)) + in_needs.get(v).copied().unwrap_or(0),
+        };
+        let arrows: HashMap<Arc<str>, Ty> = (applied.into_iter())
+            .filter(|(v, _)| places(v) <= 1)
+            .filter_map(|(v, l)| {
+                let mut l = l?.into_iter();
+                let mut sig = Sig::applied_at(l.next()?);
+                for app in l {
+                    sig.add_arrows_of(&Sig::applied_at(app));
+                }
+                Some((v, Ty::func(Arc::new(sig))))
+            })
+            .collect();
+        let (s, twice) = match arrows.is_empty() {
+            true => (Cow::Borrowed(self), twice),
+            false => {
+                let binds = closed_rewrites(arrows);
+                let mut s = self.clone();
+                s.needs = (needs.iter())
+                    .filter(|n| !n.on.as_var().is_some_and(|v| binds.contains_key(v)))
+                    .cloned()
+                    .collect();
+                // A rewrite puts each result in a second place, the arrow's, so a result that
+                // stood once now stands twice and keeps its name: the places are counted
+                // again on the rewritten type, once.
+                let s = s.replace(&binds);
+                let twice = s.standing_twice();
+                (Cow::Owned(s), twice)
+            }
+        };
+        // A variable bounded by carriers, `for V in int | f64`, takes the values of its type
+        // in those carriers; a bound that lets other values in ([`OTHER`]) bounds nothing.
+        let binds: Binds = (passed.into_iter())
+            .filter(|(v, _)| !twice.contains(v))
+            .filter_map(|(v, b)| {
+                let b = b?;
+                Some(match s.bounds.get(&v) {
+                    Some(&m) if m & OTHER == 0 => (v, b.meet(&Ty::of_mask(m))),
+                    _ => (v, b),
+                })
+            })
+            .collect();
+        match binds.is_empty() {
+            true => s,
+            false => Cow::Owned(s.replace(&binds)),
+        }
+    }
+
+    /// The one arrow `(a1, ..., an) -> r` of an application at the fixed arguments `args`
+    /// with result `r` ([`Sig::uses_written`]), each parameter positional and unnamed.
+    fn applied_at((args, r): (Vec<Ty>, Ty)) -> Sig {
+        let p = SParam {
+            name: "".into(),
+            positional: true,
+            default: None,
+            range: None,
+        };
+        Sig::one(vec![p; args.len()], args, r)
+    }
+}
+
+/// The rewrites `arrows` closed under themselves ([`Sig::uses_written`], point 2): each with
+/// the rewritten variables it holds replaced by their own closed rewrites. A variable met
+/// again while its own rewrite is being closed, which only a cycle of rewrites does, is cut:
+/// it is left out, so it keeps its name and its needs, and the rewrites that hold it hold its
+/// name.
+// Complexity: one depth-first walk with an explicit stack (a chain of rewrites is as deep as
+// the program), each rewrite entered once, its variables listed once, O(its size), and
+// replaced once by the closed rewrites of those it holds, put in by reference.
+fn closed_rewrites(arrows: HashMap<Arc<str>, Ty>) -> Binds {
+    let inner: HashMap<&Arc<str>, Vec<Arc<str>>> = (arrows.iter())
+        .map(|(v, t)| {
+            let mut vs = Vars::default();
+            t.vars_in(&mut vs);
+            vs.order.retain(|w| arrows.contains_key(w));
+            (v, vs.order)
+        })
+        .collect();
+    let mut done: HashMap<Arc<str>, Ty> = HashMap::new();
+    let mut open: HashSet<&Arc<str>> = HashSet::new();
+    let mut cut: HashSet<&Arc<str>> = HashSet::new();
+    for root in arrows.keys() {
+        if done.contains_key(root) || cut.contains(root) {
+            continue;
+        }
+        let mut stack: Vec<(&Arc<str>, usize)> = vec![(root, 0)];
+        open.insert(root);
+        while let Some(top) = stack.last_mut() {
+            let (v, i) = (top.0, top.1);
+            let held = &inner[v];
+            if let Some(w) = held.get(i) {
+                top.1 += 1;
+                if done.contains_key(w) || cut.contains(w) {
+                    continue;
+                }
+                match open.contains(w) {
+                    true => {
+                        cut.insert(w);
+                    }
+                    false => {
+                        open.insert(w);
+                        stack.push((w, 0));
+                    }
+                }
+                continue;
+            }
+            stack.pop();
+            open.remove(v);
+            if cut.contains(v) {
+                continue;
+            }
+            let sub: Binds = (held.iter())
+                .filter_map(|w| Some((w.clone(), done.get(w)?.clone())))
+                .collect();
+            let t = match sub.is_empty() {
+                true => arrows[v].clone(),
+                false => arrows[v].replace(&sub),
+            };
+            done.insert(v.clone(), t);
+        }
+    }
+    done.into_iter().collect()
+}
+
 impl fmt::Display for Sig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self.uses_written(&HashSet::new());
         let mut text = String::new();
-        self.write(&mut text, &mut Scope::default());
+        s.write(&mut text, &mut Scope::default());
         #[cfg(feature = "printed-types")]
-        printed::record(&Ty::func(Arc::new(self.clone())), &text);
+        printed::record(&Ty::func(Arc::new(Sig::clone(&s))), &text);
         f.write_str(&text)
     }
 }
@@ -26658,6 +26974,43 @@ mod tests {
         assert_eq!(s.text_around(around), "T -> 0 | T");
         let twice = s.standing_twice();
         assert!(twice.contains("L"), "{twice:?}");
+    }
+
+    /// Two variables no text place reaches, each the result of a lookup on the other, are
+    /// rewrites of each other ([`Sig::uses_written`], point 2): the walk ends, cutting one of
+    /// the cycle, which keeps its name and its need, and the need's result is the other's
+    /// rewrite, the arrow back to the cut name (PRINT-no-underscore-rest). No program the
+    /// checker reads makes such needs; the cycle guard is for a signature built otherwise.
+    #[test]
+    fn a_cycle_of_rewrites_is_cut_at_one_variable() {
+        let at = |on: &str, result: &str| Need {
+            on: Ty::var(on.into()),
+            kind: NeedKind::Component {
+                i: Some(0),
+                key: Ty::lit(&Value::Int(0)),
+                site: Span { start: 0, end: 1 },
+            },
+            result: Some(Ty::var(result.into())),
+            span: Span { start: 0, end: 1 },
+            alike: Arc::from([]),
+            via: CallPath::default(),
+        };
+        let mut s = one_of(Ty::var("A".into()), Ty::var("A".into()));
+        s.own = ["A".into()].into_iter().collect();
+        s.needs.push(at("V", "W"));
+        s.needs.push(at("W", "V"));
+        let w = s.uses_written(&HashSet::new());
+        assert_eq!(w.needs.len(), 1, "{:?}", w.needs.as_slice());
+        let kept = &w.needs.as_slice()[0];
+        let cut = kept
+            .on
+            .as_var()
+            .expect("the need on the cut variable")
+            .clone();
+        let mut held = Vars::default();
+        kept.result.as_ref().expect("its result").vars_in(&mut held);
+        assert_eq!(held.order, vec![cut], "the arrow back to the cut name");
+        assert_eq!(s.to_string(), "T -> T");
     }
 
     /// A compact forward of `need_count` results, with exits at the offsets `exits` (each an

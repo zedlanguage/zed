@@ -12244,6 +12244,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             x.ty = t;
         }
+        // A stopping read of a range with no upper end, the prelude's word: proved to end or
+        // warned at once the walk is done (plan row RANGE-open-ending-warn).
+        if !matches!(self.t.res.uses.get(&member), Some(Ref::Bound(_)))
+            && named.is_empty()
+            && !curry
+        {
+            self.note_open_read(of, name, positional, span);
+        }
         match self.t.res.uses.get(&member) {
             Some(Ref::Bound(ids)) if ids.len() == 1 => {
                 let id = ids[0];
