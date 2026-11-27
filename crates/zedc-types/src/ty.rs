@@ -28064,6 +28064,44 @@ mod tests {
         }
     }
 
+    /// PRINT-arrow-sig-keeps-needs, (1) of [`arrow_sig`]: a bounded variable ends a chain of
+    /// leftovers. `A` is left `M`, bounded, and `M` is left `L`; the signature joins neither
+    /// pair (a bounded variable is a mark of its own), so `A` and `L` each stand once, `_` (and
+    /// `1 | _` is `_`), and the quoted arrow, which holds `A` and `L` and not `M`, must not join
+    /// them through `M`. Red against an [`arrow_sig`] that also searches through bounded
+    /// variables: `T -> 1 | T`.
+    #[test]
+    fn a_quoted_arrow_joins_no_leftovers_through_a_bounded_variable() {
+        let mut s = left_of(&[("A", "M"), ("M", "L")], 1);
+        s.bounds.insert("M".into(), 0b11);
+        s.note_held();
+        assert_eq!(arrow_text(&s, &s.arrows[0], &[]), "_ -> _");
+    }
+
+    /// PRINT-arrow-sig-keeps-needs, (3) of [`arrow_sig`]: a need with an end that is no own
+    /// variable of the signature. `O` and `P` are variables of a signature around the text,
+    /// both printed `T` ([`Around::named`]), and `P` is what `else #a` leaves of `O`; the
+    /// arrow holds `P` and not `O`. The signature prints `P` as the difference `T \ #a`
+    /// ([`Scope::removed`]), and so must the quoted arrow. Red against an [`arrow_sig`] that
+    /// keeps only the needs between variables it reached: `P` printed `T`.
+    #[test]
+    fn a_quoted_arrow_keeps_a_need_on_a_variable_named_around_it() {
+        let mut s = one_of(Ty::lit(&Value::Int(0)), Ty::var("P".into()));
+        s.needs.push(Need {
+            on: Ty::var("O".into()),
+            kind: NeedKind::Narrow(Narrow::Atom("a".into())),
+            result: Some(Ty::var("P".into())),
+            span: Span { start: 0, end: 1 },
+            alike: Arc::from([]),
+            via: CallPath::default(),
+        });
+        s.note_held();
+        let names: [(Arc<str>, Arc<str>); 2] = [("O".into(), "T".into()), ("P".into(), "T".into())];
+        let whole = s.text_named(&names);
+        assert!(whole.contains('\\'), "{whole}");
+        assert_eq!(arrow_text(&s, &s.arrows[0], &names), whole);
+    }
+
     /// PRINT-headline-note-same-name, the [`VarSlot::Free`] case of [`arrow_text_naming`]: an
     /// unbounded own variable `A` that stands twice is printed by a mark, named apart from the
     /// words of the message, so a mention of it must be named by that mark too, not written as
