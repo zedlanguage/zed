@@ -40,9 +40,10 @@ fn every_chain_in_the_fences_builds_or_names_its_step() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-    // 512 and 170 at step L1.9; later steps build more.
+    // 512 and 170 at step L1.9; later steps build more. The `main::files` of the sec:ports
+    // fence of creating and removing directories (STUDY-dir-edit) brings 1138.
     assert!(
-        built >= 512 && built + later == 1137,
+        built >= 512 && built + later == 1138,
         "built {built}, later {later}"
     );
 }

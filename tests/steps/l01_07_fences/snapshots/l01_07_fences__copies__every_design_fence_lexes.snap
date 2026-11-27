@@ -52,9 +52,12 @@ expression: "tokens_by_key(&fences::design())"
 == DESIGN.md [sec:ports] 1 L7
   1 | «type» IoReason = #notFound | #notAFile | #notADirectory | #denied | #exists | #busy | #noSpace | #limit | #tooLarge | #badName | #notExecutable | #refused | #unreachable | #lost | #deviceError | #unsupported | #other ( code : int ) ;
 == DESIGN.md [sec:ports] 2 L7
-  1 | made = fs :: dir [ str["out/logs"] ] <- #createParents ;
-  2 | @after ( made ) fs [ str["out/logs/run.txt"] ] <- str["started"] ;
-  3 | gone = fs :: dir [ str["tmp/cache"] ] <- #removeTree ;
+  1 | main ( m : MainArgs ) {
+  2 | fs = main :: files ;
+  3 | made = fs :: dir [ str["out/logs"] ] <- #createParents ;
+  4 | @after ( made ) fs [ str["out/logs/run.txt"] ] <- str["started"] ;
+  5 | gone = fs :: dir [ str["tmp/cache"] ] <- #removeTree ;
+  6 | }
 == DESIGN.md [sec:ports] 3 L7
   2 | main ( m : MainArgs ) -> int {
   3 | fs = main :: files ;

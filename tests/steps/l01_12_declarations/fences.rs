@@ -23,9 +23,10 @@ fn every_unit_builds_or_names_its_layer() {
     // `local` field (QUESTIONS A80) are the 213th and 214th; the two sec:ports fences of seeded
     // random numbers and of a foreign generator (SPEC-a108-interchangeable-ops) bring 216; the
     // sec:units fence of `buildFile` (SPEC-build-read-layers) and the two sec:ffi fences of a
-    // packed struct and of integer handles (SPEC-packed-align, SPEC-ffi-int-handles) bring 219.
+    // packed struct and of integer handles (SPEC-packed-align, SPEC-ffi-int-handles) bring 219;
+    // the sec:ports fence of creating and removing directories (STUDY-dir-edit) brings 220.
     assert!(
-        built >= 23 && built + later == 219,
+        built >= 23 && built + later == 220,
         "built {built}, later {later}"
     );
 }
