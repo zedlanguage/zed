@@ -672,7 +672,10 @@ fn needs_replayed_through_a_fan_of_calls_are_met_once() {
     // A small instance of the benchmark
     // `bench::scaling::needs_replayed_through_a_fan_of_calls_scale`.
     let s = sig_of(&fan(3), "g2");
-    assert_eq!(s.to_string(), "(0 -> U) -> U for U in int | f32 | f64 | rat");
+    assert_eq!(
+        s.to_string(),
+        "(0 -> U) -> U for U in int | f32 | f64 | rat"
+    );
     assert_eq!(s.needs.len(), 1, "one need, met once for both calls");
 }
 
