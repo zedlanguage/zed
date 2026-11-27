@@ -2729,7 +2729,8 @@ pub fn rem_cost(aw: usize, b: &BigUint) -> f64 {
 /// [`REM_PAST_LEAF_SCALE`]. The blocks [`rem`] reads for a quotient wider than `b` cost
 /// `newton_cost(qw, words(b))`, already one of the two `past_leaf_cost` takes the least of, so
 /// they are not computed again: [`newton_cost`], then through [`transform_cost`]'s choice of
-/// points (before PERF-div-wide-reciprocal-step), took 72% of `rem_cost`'s instructions and 41% of the whole estimate's when computed twice
+/// points (before PERF-div-wide-reciprocal-step), took 72% of `rem_cost`'s instructions and
+/// 41% of the whole estimate's when computed twice
 /// (callgrind, 2026-11-23, on 2, 4, .., 2^200 with `x` at half of the product).
 /// O(words(b)) for the nonzero words [`sparse_div_cost`] counts. `past_leaf_cost` is the lesser
 /// of [`sparse_div_cost`] and [`newton_cost`]; the latter is computed only when
