@@ -48,17 +48,20 @@ fn where_takes_a_function_giving_bool() {
 
 #[test]
 fn a_fold_of_rows_that_are_all_empty_needs_else() {
-    // A row that is always empty has no entries and no type of entry, so `r >< max` always
-    // fails, and the refusal is at the fold, not at the `+` after it (DESIGN sec:failure,
-    // limit (2); row FAIL-empty-literal-fold-always-fails). `(+)` on a row that may hold an
-    // `int` folds the empty one to its identity `0` (case `sum_of_an_empty_row_is_zero`). The
-    // same row in a map display, `{0 -> []}.map(…)`, is refused by `map` before the fold is
-    // checked, with a headline that does not name the fold (plan row
-    // MSG-map-display-row-fold-headline).
-    for (name, body) in [("empty_rows", "${[[], []].map(r -> (r >< max) + 1)}")] {
+    // `max` has no identity at `int` (DESIGN sec:reduction, "Identity as data"), so a row that
+    // is always empty folds to `#empty` alone, and `+` on a value that can only be an atom is
+    // an error (author's standing rule, 2026-11-09). `(+)` folds it to its identity `0` (case
+    // `sum_of_an_empty_row_is_zero`). Both forms are refused, rightly, but by `map`, and the
+    // headline does not name the fold that always fails (plan row
+    // MSG-map-display-row-fold-headline, which makes these assert "`r >< max` here always
+    // fails with `#empty`").
+    for (name, body) in [
+        ("empty_row", "${{0 -> []}.map(r -> (r >< max) + 1)}"),
+        ("empty_rows", "${[[], []].map(r -> (r >< max) + 1)}"),
+    ] {
         let e = refused(name, body);
         assert!(
-            e.contains("`r >< max` here always fails with `#empty`"),
+            e.contains("the function given to `map` does not take"),
             "{e}"
         );
     }
