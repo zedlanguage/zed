@@ -20,7 +20,7 @@ rows not run, `--mutate`, a refused staging, and a `--suppress` address left unm
 | A row that stops the evaluator; a wave that aborts | `tables.rs` `a_row_that_stops_the_evaluator_fails`, `a_wave_that_aborts_fails_its_row` | |
 | A row is a call: atoms pass by as in a call, tuple keys, merged atoms, inferred parameters | `rows_are_calls.rs` (seven tests) | |
 | `main` rows: port writes, an unpushed port, a files port, the exit status, a wrong shape, a key of more than four items, a wrong header reported once | `tables.rs` (seven tests) | |
-| Port clauses: files, arguments and environment, per row, a name that is no port, a port given twice, ports zedc has not | `ports.rs` (thirteen tests) | |
+| Port clauses: files, arguments and environment, per row, a name that is no port, a port given twice, ports zedc has not, a value of the port's type accepted and one outside it rejected (a lambda answering `#notFound` or a wrong value, a value that is no function) | `ports.rs` (fifteen tests); checking n tables with a clause each, `bench::scaling::checking_tables_with_clauses_scales` | |
 | A ✗ mark on the line of its diagnostic passes; off the line fails, and so does the mark | `marks.rs` `a_diagnostic_on_a_marked_line_passes`, `a_diagnostic_off_the_marked_line_fails_and_so_does_the_mark` | |
 | A mark in an accepted unit fails, and the unit's rows still run | `marks.rs` `a_mark_in_an_accepted_unit_fails`; `completeness.rs` `a_mark_in_an_accepted_unit_fails_and_its_rows_still_run` | |
 | A commented variant is no mark | `marks.rs` `a_commented_variant_is_no_mark_and_a_rejected_unit_fails_each_row_it_cannot_run`; `completeness.rs` `a_file_of_comments_alone_has_no_test_and_fails` | |

@@ -130,7 +130,7 @@ fn main_files_in_a_unit_without_main_names_the_programs_port() {
     // test table's clause gives the port to its rows, and a row of a table without the clause
     // fails at the read, naming the repair.
     let src = "size(positional p) = main::files[p] else #ioError -> \"none\" else #notFound -> \"none\"\n  \
-               test with main::files = q -> if q == \"a\" { \"x\" } else { #notFound } \
+               test with main::files = { \"a\" -> \"x\" } \
                { \"a\" -> \"x\", \"b\" -> \"none\", \"a\" -> \"y\" }\n  \
                test { \"a\" -> \"x\" }\n\
                show(positional p) = \"[${(main)::files[p] else #ioError -> \"-\" else #notFound -> \"-\"}]\"\n  \
@@ -138,9 +138,9 @@ fn main_files_in_a_unit_without_main_names_the_programs_port() {
     assert_eq!(
         checks(src),
         [
-            "2:73: ok",
-            "2:85: ok",
-            "2:100: `\"a\" -> \"y\"` of `size`: the result is \"x\"",
+            "2:44: ok",
+            "2:56: ok",
+            "2:71: `\"a\" -> \"y\"` of `size`: the result is \"x\"",
             "3:10: `\"a\" -> \"x\"` of `size`: the port `main::files` could not answer a read: \
              the table gives the row no files; repair: `test with main::files = p -> …` on the \
              table, a function from a path to its text",

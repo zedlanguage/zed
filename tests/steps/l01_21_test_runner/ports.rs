@@ -12,14 +12,14 @@ fn a_clause_gives_main_its_files() {
     // leave out reads `#notFound`, and a wrong expected value fails its row.
     let src = "main(m: MainArgs) {\n  \
                m.stdout <- main::files[m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\"] else #ioError -> \"0\" else #notFound -> \"0\";\n}\n\
-               test with main::files = p -> if p == \"7\" { \"12\" } else { #notFound } \
+               test with main::files = { \"7\" -> \"12\" } \
                { \"7\" -> \"12\\n\", \"8\" -> \"0\\n\", \"7\" -> \"13\\n\" }\n";
     assert_eq!(
         checks(src),
         [
-            "4:72: ok",
-            "4:87: ok",
-            "4:101: `\"7\" -> \"13\\n\"` of `main`: `m.stdout` writes \"12\\n\"",
+            "4:43: ok",
+            "4:58: ok",
+            "4:72: `\"7\" -> \"13\\n\"` of `main`: `m.stdout` writes \"12\\n\"",
         ]
     );
 }
@@ -45,13 +45,13 @@ fn a_clause_gives_the_arguments_and_the_environment() {
                m.stdout <- (m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") ++ (m.args[0] else #outOfBounds -> \"\");\n  \
                m.stderr <- m.env(\"HOME\") else #notFound -> \"none\";\n}\n\
                test with main::args = \"q\\n\", \
-               main::env = n -> if n == \"HOME\" { \"/h\" } else { #notFound } \
+               main::env = { \"HOME\" -> \"/h\" } \
                { \"a\" -> (\"aq\\n\", \"/h\\n\"), \"b\" -> (\"bq\\n\", \"none\\n\") }\n";
     assert_eq!(
         checks(src),
         [
-            "5:93: ok",
-            "5:118: `\"b\" -> (\"bq\\n\", \"none\\n\")` of `main`: `m.stderr` writes \"/h\\n\"",
+            "5:64: ok",
+            "5:89: `\"b\" -> (\"bq\\n\", \"none\\n\")` of `main`: `m.stderr` writes \"/h\\n\"",
         ]
     );
 }
@@ -65,13 +65,13 @@ fn a_row_that_writes_a_port_compares_its_writes_and_status() {
                m.stdout <- fs[\"a\"] else #ioError -> \"\" else #notFound -> \"\";\n  \
                m.stderr <- fs[\"b\"] else #ioError -> \"no b\" else #notFound -> \"no b\";\n  \
                if (fs[\"b\"] else #ioError -> \"\" else #notFound -> \"\") == \"\" { 1 } else { 0 }\n}\n\
-               test with main::files = (p -> if p == \"a\" { \"x\" } else { #notFound }) \
+               test with main::files = { \"a\" -> \"x\" } \
                { \"\" -> (\"x\\n\", \"no b\\n\", 1), \"\" -> (\"x\\n\", \"no b\\n\") }\n";
     assert_eq!(
         checks(src),
         [
-            "7:73: ok",
-            "7:101: `\"\" -> (\"x\\n\", \"no b\\n\")` of `main`: the run exits with status 1",
+            "7:42: ok",
+            "7:70: `\"\" -> (\"x\\n\", \"no b\\n\")` of `main`: the run exits with status 1",
         ]
     );
 }
@@ -206,21 +206,70 @@ fn a_clause_gives_another_function_its_files() {
     // its table's clause gives it; a wrong expected value fails its row, and a row of a table
     // without the clause fails at the read, naming the repair.
     let src = "size(positional p) = main::files[p] else #ioError -> \"none\" else #notFound -> \"none\"\n  \
-               test with main::files = q -> if q == \"a\" { \"x\" } else { #notFound } \
+               test with main::files = { \"a\" -> \"x\" } \
                { \"a\" -> \"x\", \"b\" -> \"none\", \"a\" -> \"y\" }\n  \
                test { \"a\" -> \"x\" }\n\
                main(m: MainArgs) {\n  m.stdout <- size(\"a\");\n}\n";
     assert_eq!(
         checks(src),
         [
-            "2:73: ok",
-            "2:85: ok",
-            "2:100: `\"a\" -> \"y\"` of `size`: the result is \"x\"",
+            "2:44: ok",
+            "2:56: ok",
+            "2:71: `\"a\" -> \"y\"` of `size`: the result is \"x\"",
             "3:10: `\"a\" -> \"x\"` of `size`: the port `main::files` could not answer a read: \
              the table gives the row no files; repair: `test with main::files = p -> …` on the \
              table, a function from a path to its text",
         ]
     );
+}
+
+#[test]
+fn a_clause_value_outside_the_ports_type_is_rejected() {
+    // "*What `e` is.* A value of the type of what it replaces, checked as a binding of that
+    // type is" (DESIGN.md sec:ports, "A test table gives a port its values"): `main::files`
+    // is `Path ->? Utf8String | #ioError` and `main::env` is `Utf8String ->? Utf8String`, so a
+    // function given there answers only their values, never `#notFound` for a key it lacks,
+    // and a value that is no such function is refused (plan row PORT-clause-value-unchecked).
+    // Before, each of these was accepted and failed, if at all, only when its row ran.
+    let size = "size(positional p) = main::files[p] else #ioError -> \"none\" else #notFound -> \"none\"\n  \
+                test with main::files = ";
+    let rows = " { \"a\" -> \"x\" }\n";
+    let got = rejected(&format!(
+        "{size}q -> if q == \"a\" {{ 5 }} else {{ #notFound }}{rows}"
+    ));
+    assert!(
+        got.contains("the lambda returns") && got.contains("5") && got.contains("String"),
+        "{got}"
+    );
+    let got = rejected(&format!(
+        "{size}q -> if q == \"a\" {{ \"x\" }} else {{ #notFound }}{rows}"
+    ));
+    assert!(got.contains("answers `#notFound`"), "{got}");
+    assert!(
+        got.contains("repair: give the keys present as a display, as `{ \"a\" -> \"x\" }`"),
+        "{got}"
+    );
+    let got = rejected(&format!("{size}5{rows}"));
+    assert!(got.contains("`main::files` does not take 5"), "{got}");
+    let got = rejected(
+        "main(m: MainArgs) {\n  m.stdout <- m.env(\"HOME\") else #notFound -> \"none\";\n}\n\
+         test with main::env = n -> #notFound { \"\" -> \"none\\n\" }\n",
+    );
+    assert!(got.contains("answers `#notFound`"), "{got}");
+}
+
+#[test]
+fn a_clause_value_of_the_ports_type_is_accepted() {
+    // A display, a total lambda, and a lambda that gives the port's own failure are values
+    // of the port's type.
+    let src = "size(positional p) = main::files[p] else #ioError -> \"none\" else #notFound -> \"none\"\n  \
+               test with main::files = { \"a\" -> \"x\" } { \"a\" -> \"x\", \"b\" -> \"none\" }\n  \
+               test with main::files = (q -> \"1\") { \"a\" -> \"1\" }\n  \
+               test with main::files = (q -> #ioError(op: \"read\", path: q, why: \"gone\")) { \"a\" -> \"none\" }\n\
+               main(m: MainArgs) {\n  m.stdout <- size(\"a\");\n}\n";
+    let got = checks(src);
+    assert_eq!(got.len(), 4, "{got:?}");
+    assert!(got.iter().all(|g| g.ends_with(": ok")), "{got:?}");
 }
 
 #[test]

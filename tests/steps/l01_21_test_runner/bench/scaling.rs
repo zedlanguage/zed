@@ -52,6 +52,18 @@ fn the_rows_of_a_rejected_unit_fail_in_linear_time() {
 }
 
 #[test]
+fn checking_tables_with_clauses_scales() {
+    // The checker checks each clause's value against its port's type (plan row
+    // PORT-clause-value-unchecked), finding the next clause by its table and place, O(1) a
+    // step: a step that counted the clauses from the first would be quadratic in the tables.
+    let n = 400;
+    let texts = inputs(n, |m| clause_tables(m, 1));
+    check("checking n tables with a clause each", n, |m| {
+        checked(&texts[&m]);
+    });
+}
+
+#[test]
 fn the_rows_of_tables_with_clauses_scale() {
     // Rows × clauses: elaborating `n` tables of one row each finds each row's clause by a
     // cursor that moves forward, and running `n` rows of one clause gives each row the clause's
