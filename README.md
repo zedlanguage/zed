@@ -1881,7 +1881,7 @@ Following only the `x` part, with `dt` = 1, `pos` starting at 0, `vel` at 1, `ac
 
 Both updates here read the old `pos`, so they don't race and their order doesn't matter. Each step writes each variable once, so a data race can't be written. Every read in a step sees the same snapshot of the previous step, so you need no temporary variables to keep a simultaneous update straight.
 
-The line `while t < maxSteps` is there because `history` reads `sim::frames`, and a loop whose history you read must have a limit on its number of steps that the compiler can prove. `until pos'.x > bound` ends the loop without saying after how many steps, so without the limit the compiler rejects the read and offers this limit, or `sim::framesFromEnd with bound(n)`, which keeps only the last `n` steps.
+The line `while t < maxSteps` is there because `history` reads `sim::frames`, and a loop whose history you read must have a limit on its number of steps that the compiler can prove. `until pos'.x > bound` ends the loop without saying after how many steps, so without the limit the compiler rejects the read and offers this limit, or `sim::frames with bound(n)`, which keeps only the last `n` steps.
 
 `sim::frames` is every step of the run, kept only if you read it. If you don't, the compiler keeps only the steps the loop still reads, so you never choose between a ring buffer and a full log by hand. Reading it is how you write undo:
 
