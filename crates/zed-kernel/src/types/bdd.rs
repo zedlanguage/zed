@@ -2036,6 +2036,11 @@ impl<A: Literal> Part<A> {
                 order.push(i);
             },
         );
+        // Each expression's place in Kahn's order, for the carry of an override.
+        let mut place = vec![0usize; exprs.len()];
+        for (k, &q) in order.iter().enumerate() {
+            place[q] = k;
+        }
         let operand_ids = |q: usize| {
             operands(&exprs[q])
                 .into_iter()
@@ -2097,6 +2102,22 @@ impl<A: Literal> Part<A> {
         // value cannot make the root `false`; with `req` (only [`Pins::Required`]), the carry
         // stops at a node given the value opposite the one `root = true` requires of it, and
         // reports the root `false`.
+        //
+        // Where `i` is unknown the trial only refines: each node goes from unknown to known at
+        // most once and then keeps its value (every operator is monotone in three-valued
+        // logic), so the stack carries each node up at most once, `O(N + E)`. Where `i` is
+        // known, `v` may override its value, and a node can change and change back: on a stack,
+        // one arm of a reconvergent pair reaches their join first, and what lies above reacts
+        // before the other arm undoes it, so the changes could double at each join (Codex's
+        // cascade of double-NOT XORs, cross-review XR-lazy-and-kernel-batch-1 round 2, B3,
+        // test `tests::a_known_probe_through_reconvergence_visits_each_arc_once`: 196,673 work
+        // at k = 12 and 3,145,829 at 16 before). So an override is carried in Kahn's order, the
+        // nodes taken least place first from a heap: a node is pushed only by an operand, of a
+        // lesser place, so the places taken rise, and each node is taken once, after every
+        // operand that changed has its last value; it is evaluated once and reads each of its
+        // parents once, `O((N + E) log N)`. The overlay is the same as the stack's: both end with
+        // each node reached the value of `step` on its operands' final values, by induction in
+        // Kahn's order.
         let carry = |i: usize,
                      v: bool,
                      known: &[Option<bool>],
@@ -2105,6 +2126,38 @@ impl<A: Literal> Part<A> {
                      req: &[Option<bool>]|
          -> DigestMap<usize, Option<bool>> {
             let mut changed = DigestMap::from_iter([(i, Some(v))]);
+            if known[i].is_some() {
+                type Heap = std::collections::BinaryHeap<std::cmp::Reverse<(usize, usize)>>;
+                let mut heap = Heap::new();
+                let mut queued: DigestSet<usize> = DigestSet::default();
+                let mut enqueue = |n: usize, heap: &mut Heap| {
+                    for &q in &parents[n] {
+                        settle_work(1);
+                        if !fixed[q] && queued.insert(q) {
+                            heap.push(std::cmp::Reverse((place[q], q)));
+                        }
+                    }
+                };
+                enqueue(i, &mut heap);
+                while let Some(std::cmp::Reverse((_, q))) = heap.pop() {
+                    settle_work(1);
+                    let now = step(&exprs[q], &|c| changed.get(&c).copied().unwrap_or(known[c]));
+                    if now != changed.get(&q).copied().unwrap_or(known[q]) {
+                        changed.insert(q, now);
+                        if let (Some(x), Some(r)) = (now, req.get(q).copied().flatten())
+                            && x != r
+                        {
+                            changed.insert(root, Some(false));
+                            return changed;
+                        }
+                        match (now, need) {
+                            (Some(x), Some(need)) if need[q] & bit(x) == 0 => {}
+                            _ => enqueue(q, &mut heap),
+                        }
+                    }
+                }
+                return changed;
+            }
             let mut work = vec![i];
             while let Some(n) = work.pop() {
                 for &q in &parents[n] {

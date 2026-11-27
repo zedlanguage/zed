@@ -3903,6 +3903,66 @@ fn gated_parities(
     (part, es[0].id())
 }
 
+/// Codex's cascade of double-NOT XORs (cross-review XR-lazy-and-kernel-batch-1, round 2, B3):
+/// `s = !true`, known `false`; stage `j` takes its input `x` (`s` first), builds `a = !!x` and
+/// `b = !!x` apart, and gives `(a | b) & !(a & b)`, built raw; the root is the last stage's
+/// output or an atom. `8k + 2` expressions and `11k + 1` arcs between them; `x`, `a` and `b` of
+/// each stage are shared, `3k` in all.
+fn double_not_xor_cascade(k: usize) -> Part<Row> {
+    let delay = |x: &Part<Row>| Part::not_expr(Part::not_expr(x.clone()));
+    let mut x = Part::not_expr(Part::Bdd(Bdd::Leaf(true)));
+    for _ in 0..k {
+        let (a, b) = (delay(&x), delay(&x));
+        let either = Part::connect(Op::Or, a.clone(), b.clone());
+        let both = Part::connect(Op::And, a, b);
+        x = Part::connect(Op::And, either, Part::not_expr(both));
+    }
+    Part::connect(Op::Or, x, Part::literal(atom(140_000)))
+}
+
+/// The trial `s = true` on [`double_not_xor_cascade`] overrides a known value, so it is no
+/// refinement. Carried on a stack (LIFO), both arms of each XOR are queued, one arm reaches the
+/// XOR first and turns it `true`, and the next stage reacts before the other arm turns it
+/// back, so each stage doubles the changes carried (Codex: 49,141 arc visits at k = 12 against
+/// 98 in Kahn's order). The round's work is held to `2 (N + E) (S + 1)`, `N` the nodes, `E`
+/// their arcs and `S` the shared expressions (two trials of at most `N + E` each per shared
+/// expression, and the walk and the passes in Kahn's order); the part is the scans' at small
+/// `k`. Every count is printed before any is checked. Measured in Kahn's order: 193, 415, 859,
+/// 1,303 and 1,747 work at k = 2, 4, 8, 12 and 16; on the stack 167, 761, 12,317, 196,673 and
+/// 3,145,829.
+#[test]
+fn a_known_probe_through_reconvergence_visits_each_arc_once() {
+    let mut over = Vec::new();
+    let mut at = DigestMap::default();
+    for k in [2usize, 4, 8, 12, 16] {
+        let p = double_not_xor_cascade(k);
+        SETTLE_WORK.with(|w| w.set(0));
+        let pins = p.pins();
+        let work = SETTLE_WORK.with(|w| w.get());
+        let (n, e, s) = (8 * k as u64 + 2, 11 * k as u64 + 1, 3 * k as u64);
+        let bound = 2 * (n + e) * (s + 1);
+        eprintln!("double-NOT XOR cascade k = {k}: work {work}, bound {bound}, pins {pins:?}");
+        if k <= 4 {
+            assert!(
+                p.settle() == p.settle_by_scans(),
+                "k = {k}: not the scans' part"
+            );
+        }
+        if work > bound {
+            over.push(format!("k = {k}: {work} over {bound}"));
+        }
+        at.insert(k, work);
+    }
+    // Each trial here dies out within a stage, so the round is linear in k (111 work a stage
+    // in Kahn's order; the stack's grew 255 times from k = 8 to 16).
+    let ratio = at[&16] as f64 / at[&8] as f64;
+    eprintln!("double-NOT XOR cascade: work at k = 16 over k = 8 is {ratio:.2}");
+    if ratio > 2.5 {
+        over.push(format!("k = 8 to 16: work grew {ratio:.2} times, over 2.5"));
+    }
+    assert!(over.is_empty(), "{over:?}");
+}
+
 /// The first round's pins of [`gated_parities`] on `pair`: `E_0 = true` by its id, and none
 /// where `E_0` is built twice (Codex's B5 of round 2: the pin is checked by id, not counted).
 fn first_pin_is_e0(pair: &dyn Fn(usize) -> (Part<Row>, Part<Row>), last: u64, m: usize) {
