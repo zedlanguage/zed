@@ -22552,8 +22552,12 @@ fn factored_or(g: &Formula, links: &AtomLinks, even: bool) -> Option<Formula> {
     // read with the base by the projection as written. Under an odd number of negations the
     // part is taken out still: there `!(u && true)` is `!u`, which the solver alone projected
     // narrower than the two disjunctions the formula as written gives (formula 9, then 2161, of
-    // seed 0x5f5b) until PROOF-probe-order-independent; no formula is known now where it is
-    // narrower (PRES-negation-narrow-case; test of the same sets on formula 2161:
+    // seed 0x5f5b) until PROOF-probe-order-independent, and still does for others: 56 of the
+    // 48,000 formulas of 80 seeds (PRES-negation-narrow-case), each where the negated
+    // disjunction holds a disjunction that holds at every point, which the solver alone does not
+    // see as written; the cover, the default, gives the exact sets both ways (test:
+    // `l01_38_presburger::shared::a_shared_part_taken_out_of_a_negation_narrows_under_the_solver_alone`;
+    // test of the same sets on formula 2161:
     // `l01_38_presburger::shared::a_shared_part_taken_out_of_a_negation_gives_the_same_projection`).
     // Complexity tradeoff (COMPLEXITY.md, FAIL-shared-part-precision-seed): the rests are
     // written one way once more here, O(r log r) for rests of r distinct parts, which the
