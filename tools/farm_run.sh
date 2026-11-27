@@ -330,8 +330,11 @@ vm_side() {
       { echo "vm_side: the doc changes are not gzipped base64 with a base line"; return 2; }
     export ZED_DOC_CHANGES=$w/doc-changes
   fi
-  cores=$(nproc)
-  [[ $cores =~ ^[1-9][0-9]*$ ]] || { echo "vm_side: nproc gave '$cores'"; return 2; }
+  # FARM_VM_CORES: the VM's cores as tools/test_farm_run.sh's fake VM states them, so that its
+  # cases do not depend on the cores this machine grants it (FAIL-test-farm-run-one-core: on 1
+  # core, jobs=1 and the stub stops no piece by its limit); nproc on a VM.
+  cores=${FARM_VM_CORES:-$(nproc)}
+  [[ $cores =~ ^[1-9][0-9]*$ ]] || { echo "vm_side: the cores are '$cores' (FARM_VM_CORES or nproc)"; return 2; }
   printf '%s\n' '#!/bin/bash' '# The scope options of run_tests.sh, then the command, run without a scope.' \
     'while [ $# -gt 0 ] && [ "${1#--}" != "$1" ]; do shift; done' 'exec "$@"' >"$w/bin/systemd-run" &&
     chmod +x "$w/bin/systemd-run" || { echo "vm_side: writing the systemd-run stub failed"; return 2; }

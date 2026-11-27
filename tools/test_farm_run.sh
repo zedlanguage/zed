@@ -290,6 +290,10 @@ export PATH=$ws/bin:$PATH
 # VM): low, so that no case but load-wait waits, whatever this machine's own load.
 echo '0.10 0.10 0.10 1/100 1' >"$ws/loadavg" || exit 2
 export FARM_VM_LOADAVG=$ws/loadavg
+# The fake VM's cores (FARM_VM_CORES, nproc on a VM): 2, so that a share run has jobs=2 as on a
+# VM, whatever cores this machine grants the test (FAIL-test-farm-run-one-core: on 1 core six
+# cases failed, since the stub stops a STUB_TIMEOUT piece only beside others).
+export FARM_VM_CORES=2
 # The build root vm_side binds each fake VM's checkout at, in a mount namespace of its own, and
 # the target directory it binds at its build/cargo (CARGO_TARGET_DIR, /content/target on a VM).
 export FARM_VM_BUILD_ROOT=$ws/build-root CARGO_TARGET_DIR=$ws/target
