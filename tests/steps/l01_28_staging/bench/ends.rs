@@ -2,12 +2,14 @@
 //! once, so the time grows with the term's distinct parts, not its places. Each term is built
 //! before the timing; `ends.rs` checks the answers at small sizes.
 
+use zed_kernel::term::build::var;
+use zed_kernel::{Prim, Shared, Term};
 use zed_tests::scaling;
 use zedc::stage::ends;
 
 use crate::ends::{
-    arms_calling_let_functions, built_into_freed_blocks, let_functions, mixed_levels_read,
-    shared_and_tree_terms_read_alike, shared_arms_read, shared_arms_terms,
+    app, arms_calling_let_functions, built_into_freed_blocks, let_functions, mixed_levels_read,
+    prim, shared_and_tree_terms_read_alike, shared_arms_read, shared_arms_terms,
 };
 
 #[test]
@@ -40,6 +42,44 @@ fn arms_that_call_different_let_functions_on_a_shared_part_are_read_in_time_near
             assert!(ends(&terms[&k]));
         },
     );
+}
+
+/// `pj = aj(p(j-1))`, `qj = bj(q(j-1))` and `pj + qj` for every j, with the names `a1, b1,
+/// a2, b2, …` read first so that their numbers interleave: each join is of two sets of j
+/// names whose tries differ everywhere, and only the pair joined one level down is shared.
+fn two_chains_joined(k: usize) -> Term {
+    let pushed = |t: &Shared| Term::Push("out".into(), t.clone());
+    let (mut p, mut q) = (Shared::new(var("n")), Shared::new(var("n")));
+    let mut sums = Vec::new();
+    for j in 1..=k {
+        p = Shared::new(app(var(&format!("a{j}")), vec![pushed(&p)]));
+        q = Shared::new(app(var(&format!("b{j}")), vec![pushed(&q)]));
+        sums.push(prim(Prim::Add, vec![pushed(&p), pushed(&q)]));
+    }
+    let names = (1..=k)
+        .flat_map(|j| [format!("a{j}"), format!("b{j}")])
+        .map(|x| app(var(&x), vec![]))
+        .collect();
+    sums.push(prim(Prim::Add, names));
+    prim(Prim::Add, sums)
+}
+
+/// Plan row STAGE-scaling-10_5, back from the deferred tests (TESTS-defer-failing,
+/// 2026-11-13: 10.5 times the bytes from 1000 to 8000 on main cdf07ac4f).
+#[test]
+fn two_chains_of_calls_joined_at_every_level_are_read_in_time_near_their_size() {
+    let n = 1000;
+    let terms = scaling::inputs(n, two_chains_joined);
+    scaling::check(
+        "stage::ends on two chains of k calls joined at every level",
+        n,
+        |k| {
+            assert!(ends(&terms[&k]));
+        },
+    );
+    let freed = |x: &str| Term::Lam(vec![x.into()], Shared::new(two_chains_joined(3)));
+    assert!(!ends(&freed("b2")));
+    assert!(ends(&freed("b4")));
 }
 
 #[test]

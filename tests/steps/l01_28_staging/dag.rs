@@ -379,7 +379,7 @@ pub(super) fn nodes(d: usize, same: bool) -> usize {
 /// `main = (c) -> let f = (y) -> y; nd` with `n0 = f(1)` and `nj = if c { let f = (y) -> f(y)
 /// + 1; n(j-1) } else { let f = (y) -> f(y) + 2; n(j-1) }`, the two `let`s holding one body
 /// node when `shared`. Each `f` is a function known at build, a different one on each path.
-fn composed(d: usize, shared: bool) -> Unit {
+pub(super) fn composed(d: usize, shared: bool) -> Unit {
     fn level(below: impl Fn() -> Shared) -> Term {
         let step = |k: i64, body: Shared| {
             let call = Term::App(Shared::new(var("f")), vec![var("y")]);
