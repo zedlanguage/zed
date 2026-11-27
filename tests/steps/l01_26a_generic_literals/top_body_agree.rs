@@ -1070,17 +1070,16 @@ fn a_rejection_kept_from_nested_calls_has_the_steps_of_each_call() {
         let src = format!("{pre}{line}\n");
         let (i, _) = info(&src);
         assert_eq!(i.errors.len(), 1, "{src}");
-        let mut notes: Vec<String> = i.errors[0]
+        // `first`'s result prints `T` at every depth: each type names its variables apart, and
+        // `add`'s `T`, bounded, is named in order of first place as `first`'s is (row
+        // UNDERSCORE-print-followups; before, `add`'s `T` was a name given when its signature
+        // opened, a word of the message, and `first`'s printed `(p: 0 -> U) -> U` inside calls of
+        // `add`).
+        let notes: Vec<String> = i.errors[0]
             .notes
             .iter()
             .map(|n| n.text.to_string())
             .collect();
-        // `first`'s result prints `T` at depth 0 and `U` inside calls of `add`, a name the
-        // checker kept (row UNDERSCORE-print-followups); before row PRINT-hidden-var it printed
-        // `_`, which hid the name. Either name is the same type.
-        if let Some(n) = notes.first_mut() {
-            *n = n.replace("(p: 0 -> U) -> U`", "(p: 0 -> T) -> T`");
-        }
         let want: Vec<&str> = match depth {
             0 => vec![first],
             _ => vec![first, add],
