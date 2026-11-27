@@ -1277,14 +1277,11 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "perf-event2",
- "rustix",
- "stacker",
  "zed-alloc-count",
  "zed-collections",
  "zed-hash",
- "zed-meter-settings",
  "zed-numtheory",
+ "zed-testkit",
 ]
 
 [[package]]
@@ -1314,13 +1311,10 @@ dependencies = [
  "hashbrown 0.17.1",
  "indexmap",
  "log",
- "perf-event2",
  "rustc-hash",
- "rustix",
- "stacker",
  "target-lexicon",
  "zed-alloc-count",
- "zed-meter-settings",
+ "zed-testkit",
 ]
 
 [[package]]
@@ -1329,13 +1323,10 @@ version = "0.0.0"
 dependencies = [
  "num-bigint",
  "num-integer",
- "perf-event2",
- "rustix",
- "stacker",
  "zed-alloc-count",
  "zed-hash",
- "zed-meter-settings",
  "zed-numtheory",
+ "zed-testkit",
 ]
 
 [[package]]
@@ -1351,12 +1342,9 @@ dependencies = [
 name = "zed-graph"
 version = "0.0.0"
 dependencies = [
- "perf-event2",
- "rustix",
- "stacker",
  "zed-alloc-count",
  "zed-hash",
- "zed-meter-settings",
+ "zed-testkit",
 ]
 
 [[package]]
@@ -1373,18 +1361,15 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "perf-event2",
- "rustix",
  "smallvec",
- "stacker",
  "zed-alloc-count",
  "zed-bignum",
  "zed-bignum-small",
  "zed-collections",
  "zed-graph",
  "zed-hash",
- "zed-meter-settings",
  "zed-numtheory",
+ "zed-testkit",
 ]
 
 [[package]]
@@ -1433,12 +1418,9 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "perf-event2",
- "rustix",
- "stacker",
  "zed-alloc-count",
  "zed-hash",
- "zed-meter-settings",
+ "zed-testkit",
 ]
 
 [[package]]
@@ -1447,15 +1429,24 @@ version = "0.0.0"
 dependencies = [
  "libc",
  "loom",
- "perf-event2",
  "psm",
- "rustix",
  "smallvec",
- "stacker",
  "zed-alloc-count",
  "zed-kernel",
- "zed-meter-settings",
  "zed-rt",
+ "zed-testkit",
+]
+
+[[package]]
+name = "zed-testkit"
+version = "0.0.0"
+dependencies = [
+ "perf-event2",
+ "rustix",
+ "stacker",
+ "zed-alloc-count",
+ "zed-hash",
+ "zed-meter-settings",
 ]
 
 [[package]]
@@ -1474,7 +1465,6 @@ dependencies = [
  "perf-event2",
  "rustc-hash",
  "rustix",
- "stacker",
  "target-lexicon",
  "unicode-normalization",
  "zed-alloc-count",
@@ -1488,6 +1478,7 @@ dependencies = [
  "zed-native",
  "zed-numtheory",
  "zed-rt",
+ "zed-testkit",
  "zed-tools",
  "zedc",
  "zedc-int",
@@ -1536,8 +1527,8 @@ name = "zedc-affine"
 version = "0.0.0"
 dependencies = [
  "zed-graph",
- "zed-hash",
  "zed-numtheory",
+ "zed-testkit",
  "zedc-int",
 ]
 
@@ -1560,15 +1551,12 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "perf-event2",
- "rustix",
- "stacker",
  "zed-alloc-count",
  "zed-collections",
  "zed-graph",
  "zed-kernel",
- "zed-meter-settings",
  "zed-numtheory",
+ "zed-testkit",
  "zedc-base",
  "zedc-check",
  "zedc-int",
@@ -1608,9 +1596,9 @@ dependencies = [
  "zed-bignum",
  "zed-collections",
  "zed-graph",
- "zed-hash",
  "zed-kernel",
  "zed-numtheory",
+ "zed-testkit",
 ]
 
 [[package]]
@@ -1621,9 +1609,9 @@ dependencies = [
  "num-traits",
  "zed-collections",
  "zed-graph",
- "zed-hash",
  "zed-kernel",
  "zed-numtheory",
+ "zed-testkit",
  "zedc-affine",
  "zedc-base",
  "zedc-int",
@@ -1636,16 +1624,13 @@ version = "0.0.0"
 dependencies = [
  "imbl",
  "num-bigint",
- "perf-event2",
- "rustix",
- "stacker",
  "zed-alloc-count",
  "zed-collections",
  "zed-graph",
  "zed-hash",
  "zed-kernel",
- "zed-meter-settings",
  "zed-numtheory",
+ "zed-testkit",
  "zedc-affine",
  "zedc-int",
  "zedc-lattice",
@@ -1662,16 +1647,13 @@ dependencies = [
  "imbl",
  "num-bigint",
  "num-traits",
- "perf-event2",
- "rustix",
- "stacker",
  "zed-alloc-count",
  "zed-collections",
  "zed-graph",
  "zed-hash",
  "zed-kernel",
- "zed-meter-settings",
  "zed-numtheory",
+ "zed-testkit",
  "zedc-affine",
  "zedc-int",
  "zedc-lattice",
@@ -1697,8 +1679,8 @@ version = "0.0.0"
 dependencies = [
  "zed-collections",
  "zed-graph",
- "zed-hash",
  "zed-kernel",
+ "zed-testkit",
  "zedc-affine",
  "zedc-int",
  "zedc-solvers",
@@ -1725,8 +1707,8 @@ dependencies = [
  "unicode-security",
  "unicode-width",
  "zed-collections",
- "zed-hash",
  "zed-kernel",
+ "zed-testkit",
  "zedc-base",
 ]
 
@@ -1735,16 +1717,13 @@ name = "zedc-types"
 version = "0.0.0"
 dependencies = [
  "imbl",
- "perf-event2",
- "rustix",
- "stacker",
  "zed-alloc-count",
  "zed-collections",
  "zed-graph",
  "zed-hash",
  "zed-kernel",
- "zed-meter-settings",
  "zed-numtheory",
+ "zed-testkit",
  "zedc-base",
  "zedc-syntax",
  "zedc-types",
