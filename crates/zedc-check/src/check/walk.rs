@@ -2476,10 +2476,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ([`Self::answers_miss`]); any other value is passed into it ([`Self::passes_into`]).
     /// Before, no clause value was checked, and `main::files = q -> if q == "a" { 5 } else {
     /// #notFound }` was accepted and failed only when its row ran.
-    /// The ports checked are `main::files` and `main::env`, the two whose clause value DESIGN
-    /// gives as the port's own type. `main::stdin` and `main::args` are given as text, the
-    /// lines split as a `Lines` input is (the row's key record, same table row), and the
-    /// runner reads them so; the name of any other port the resolver has refused already.
+    /// Each of `main`'s four inputs is checked with the type its field of a row's key has
+    /// ([`main_key_type`]): `main::files` and `main::env` as the port's own type, and
+    /// `main::stdin` and `main::args` as a String, the text the runner splits into lines as a
+    /// `Lines` input is (the row's key record, same table row). Before, a stdin or args value
+    /// was not checked, and `test with main::stdin = 3` was accepted and failed only when its
+    /// row ran, at the refusal in `zedc`'s `rows.rs` (plan row ROWS-unreachable-refusals). The
+    /// name of any other port the resolver has refused already.
     /// Cost: one check of each clause value, as of an argument. The next clause is found by
     /// its table and its place in the table, `(g, j)`, O(1) a step: a step that counted the
     /// clauses from the first would cost O(clauses²) for `main` with a table per input, as
@@ -2498,11 +2501,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             };
             j += 1;
-            let ty = match &p.port {
-                zedc_syntax::ast::PortName::Main(n, _) if n == "files" => port(Carrier::Str, true),
-                zedc_syntax::ast::PortName::Main(n, _) if n == "env" => port(Carrier::Str, false),
-                _ => continue,
+            let zedc_syntax::ast::PortName::Main(n, _) = &p.port else {
+                continue;
             };
+            let Some(input) =
+                (MAIN_KEY_PORTS.iter()).position(|q| q.strip_prefix("main::") == Some(n.as_str()))
+            else {
+                continue;
+            };
+            let ty = main_key_type(input);
             let want = Want::of(&ty);
             m.k(Frame::TestPort(s, f, sig, (g, j), p, ty, self.errors.len()));
             return m.job(Job::Arg(&p.value, want));
@@ -2529,7 +2536,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// String, the text the runner splits into lines ([`main_key_type`]). Before, no item was
     /// checked: `(n -> #notFound)` for `env` was accepted though it answers outside the port,
     /// and `("", 3)` failed only when its row ran, in `zedc`'s `rows.rs`, whose run-time
-    /// refusals of a stdin or args that is no String a checked program no longer reaches.
+    /// refusals of a stdin or args that is no String a checked program no longer reaches, by
+    /// a key here or by a clause ([`Self::test_ports`]).
     ///
     /// A row's value is the standard output, or `(stdout, stderr)`, or `(stdout, stderr,
     /// status)` (`zedc`'s `rows.rs`); the status is checked here ([`Ck::row_status`]) after

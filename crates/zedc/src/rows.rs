@@ -104,6 +104,15 @@ pub(crate) fn wave(
     // gives none of them (`zedc_elab`'s `test_case`).
     let (keyed, given) = t.args.split_at(t.args.len() - t.ports.len());
     let fields = MAIN_KEY.iter().zip(keyed).chain(t.ports.iter().zip(given));
+    // The refusals of a stdin or args that is no String below are not reached for a unit the
+    // checker accepted: it checks each key field and each clause value as the input's type,
+    // a String for these two (`zedc_check`'s `main_key_type`, read by its `main_rows` and
+    // `test_ports`; plan row ROWS-unreachable-refusals, test
+    // `l01_21_test_runner::ports::a_clause_stdin_or_args_that_is_no_string_is_refused`). They
+    // stay as errors, not `unreachable!`, since a mutant (`mutate.rs`) runs these rows with a
+    // changed definition that is not checked again; there the error fails the row, which
+    // counts the mutant as detected. No mutation of MUTATION.md section 6 is known to change
+    // a String value into another type, so this is not known to be reached at all.
     for (f, arg) in fields {
         match *f {
             "stdin" => match value(cones, swap, arg, map)? {
