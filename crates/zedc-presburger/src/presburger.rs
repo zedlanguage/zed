@@ -32830,13 +32830,14 @@ pub(super) mod tests {
     /// `hull_side` finds no least `c` and no greatest `d`; checking either asks [`unbounded`],
     /// whose question over the directions of the rays, `a' >= 0, b' >= 0, a' + b' == 2d', ...`, has
     /// `a'` and `b'` alike in every row, and the two share the rows of `a' + b' == 2d'`: no
-    /// structure tells them apart, so it is refused with Tie (the refusal's doc, `Refusal::Tie`).
-    /// That refusal is the documented one, and this test pins it; a tie like this one, a true
-    /// symmetry whose answer does not depend on the choice, is the case row PRES-tie-symmetry would
-    /// accept. The answer is still found: `a == 11, b == 4t - 19, c == -t, d == 5 + 2t` is a point
-    /// for every `t >= 0`, so `c` has no least value and `d` no greatest, as `hull_side` gives.
+    /// structure tells them apart. Until PRES-tie-symmetry the step on that equality tied `a'`
+    /// with `b'`, kept the equality as two rows, and a tie on kept rows was refused with Tie.
+    /// Swapping `a'` with `b'` maps every row and equality onto itself, so the step defines either
+    /// one and the answer does not depend on the choice (`Omega::equality`); [`unbounded`] answers.
+    /// The answer is the true one: `a == 11, b == 4t - 19, c == -t, d == 5 + 2t` is a point for
+    /// every `t >= 0`, so `c` has no least value and `d` no greatest, as `hull_side` gives.
     #[test]
-    fn a_hull_side_past_a_tie_is_refused() {
+    fn a_hull_side_past_a_symmetric_tie_is_answered() {
         let ge = |terms: &[(&str, i128)], k: i128| {
             Formula::Con(Con {
                 lin: lin(terms, k),
@@ -32856,10 +32857,7 @@ pub(super) mod tests {
         ];
         let whole = Formula::and(rows.clone());
         for (a, dir) in [("c", -1), ("d", 1)] {
-            assert!(
-                matches!(unbounded(&whole, &sym(a), dir), Err(Refusal::Tie(_))),
-                "{a} going {dir}"
-            );
+            assert_eq!(unbounded(&whole, &sym(a), dir), Ok(true), "{a} going {dir}");
         }
         let model = satisfiable_inner(&whole).unwrap().unwrap();
         assert_eq!(hull_side(&whole, &sym("c"), &model, -1), Ok(None));
@@ -32915,9 +32913,9 @@ pub(super) mod tests {
                 // (FAIL-hull-sides-small-shadows). Each of the three was found and shown to be
                 // the documented refusal (TEST-hull-skip-growth-tie): in 24,402 seeds, 59 sides
                 // skipped for Shadows, 2 for Growth (two seeds) and 2 for Tie (one seed, on two
-                // variables alike in every row)
+                // variables alike in every row, answered since PRES-tie-symmetry)
                 // (`a_hull_side_past_a_splinter_is_refused`, `a_hull_side_past_growth_is_refused`,
-                // `a_hull_side_past_a_tie_is_refused`).
+                // `a_hull_side_past_a_symmetric_tie_is_answered`).
                 match side_checked(whole, &a, dir, &side) {
                     Ok(()) => {}
                     Err(Refusal::Growth | Refusal::Shadows | Refusal::Tie(_)) => continue,
