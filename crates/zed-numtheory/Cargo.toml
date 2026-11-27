@@ -14,14 +14,15 @@ crate-type = ["rlib", "dylib"]
 
 [dependencies]
 num-bigint.workspace = true
+# The floor division of floorsum.rs (`Integer::div_mod_floor`); the tests check the word gcds
+# against its big gcd.
+num-integer.workspace = true
 num-traits.workspace = true
 # SIQS's xorshift64 (siqs.rs) and the fixed streams of bench.rs. zed-hash depends on no crate, so
 # this adds no cycle.
 zed-hash.workspace = true
 
 [dev-dependencies]
-# The big gcd the word routines are checked against.
-num-integer.workspace = true
 # The seed of the random tests, the fixed streams of examples/timing.rs and the scaling
 # benchmarks of bench.rs (zed_testkit), and the meter's `malloc` they measure with
 # (zed-alloc-count's `meter_entry_points!`). Neither depends on a library crate of the

@@ -3,8 +3,10 @@
 //! copies (DRY-affine-crate-2026-11-26, batch 4): the envelope from zedc-presburger's
 //! `presburger.rs`, which `extend`'s `hull_of`, `unit_interval` and `UpperHull` called, and the
 //! floor sum from zedc-solvers' `twovar`, whose lower envelope `least` now calls
-//! [`upper_envelope_by`] too in place of its own loop.
+//! [`upper_envelope_by`] too in place of its own loop. The floor sum itself is now
+//! zed-numtheory's (FLOORSUM-bits); [`floor_sum`] here takes it on `Int`.
 
+use zed_numtheory::floor_sum_i128;
 use zedc_int::int::Int;
 
 /// The upper envelope of `lines`, sorted by slope and within a slope by intercept, with
@@ -77,33 +79,19 @@ pub fn not_above(a: (&Int, &Int), b: (&Int, &Int), c: (&Int, &Int)) -> bool {
     &bx * &cy >= &by * &cx
 }
 
-/// `Σ ⌊(a·i + b) / m⌋` for `i` from 0 below `n`, with `m` above zero and `n` at least zero (the
-/// AtCoder Library's floor_sum): each round swaps the roles of `a` and `m` as in Euclid's
-/// algorithm, so the rounds are logarithmic in `m`.
+/// `Σ ⌊(a·i + b) / m⌋` for `i` from 0 below `n`, with `m` above zero and `n` at least zero:
+/// `zed_numtheory::floor_sum_i128` when the four fit in `i128` and no step overflows, else
+/// `zed_numtheory::floor_sum`, whose bit cost is stated there (FLOORSUM-bits).
+///
+/// # Panics
+///
+/// If `m <= 0` or `n < 0`.
 pub fn floor_sum(n: &Int, m: &Int, a: &Int, b: &Int) -> Int {
-    let two = Int::from(2);
-    let (mut n, mut m) = (n.clone(), m.clone());
-    let mut ans = Int::ZERO;
-    let pairs = |n: &Int| (n * &(n - &Int::ONE)).div_floor(&two);
-    ans = &ans + &(&pairs(&n) * &a.div_floor(&m));
-    let mut a = a.mod_floor(&m);
-    ans = &ans + &(&n * &b.div_floor(&m));
-    let mut b = b.mod_floor(&m);
-    loop {
-        if a >= m {
-            ans = &ans + &(&pairs(&n) * &a.div_floor(&m));
-            a = a.mod_floor(&m);
-        }
-        if b >= m {
-            ans = &ans + &(&n * &b.div_floor(&m));
-            b = b.mod_floor(&m);
-        }
-        let top = &(&a * &n) + &b;
-        if top < m {
-            return ans;
-        }
-        n = top.div_floor(&m);
-        b = top.mod_floor(&m);
-        std::mem::swap(&mut m, &mut a);
+    if let (Some(n), Some(m), Some(a), Some(b)) =
+        (n.to_i128(), m.to_i128(), a.to_i128(), b.to_i128())
+        && let Some(s) = floor_sum_i128(n, m, a, b)
+    {
+        return s.into();
     }
+    zed_numtheory::floor_sum(&n.big(), &m.big(), &a.big(), &b.big()).into()
 }

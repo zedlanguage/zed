@@ -13,7 +13,7 @@ crates/               the Rust-hosted toolchain, kept permanently as the bootstr
                       over nodes numbered before the search or as the walk meets them
   zed-numtheory/      number theory on words and big integers that every crate shares: gcds,
                       products and powers modulo a word and modulo 2^61 - 1, primality,
-                      factoring, sieves; below zed-kernel, depending only on num-bigint,
+                      factoring, sieves, the floor sum; below zed-kernel, depending only on num-bigint,
                       num-integer and num-traits
   zed-kernel/         kernel terms, the ZIR node inventory, the M0.9 reference evaluator
   zedc/               the compiler's top crate: the incremental queries, the run of a program,
@@ -131,7 +131,7 @@ types or ZIR. The libraries form a DAG; each sits as low as its dependencies all
 | Library | Depends on | Holds |
 |---|---|---|
 | zed-hash (new) | | splitmix64, FNV-1a, seeded test generators (xorshift, the two LCGs kept bit-exact) |
-| zed-numtheory | | word arithmetic: gcd, inverses (also mod 2^64), `add_mod`/`mul_mod`, CRT, primes, factoring, sieves, bit width (`BitLen`), mod 2^61-1 and 2^64-59 hashing |
+| zed-numtheory | | word arithmetic: gcd, inverses (also mod 2^64), `add_mod`/`mul_mod`, CRT, primes, factoring, sieves, bit width (`BitLen`), mod 2^61-1 and 2^64-59 hashing; the floor sum `floor_sum` (on `BigInt`) and `floor_sum_i128` |
 | zed-graph | | reach, SCC, Kahn, worklists (plain, priority, keyed), union-find, BFS paths, Knuth's least derivation, functional-graph cycles |
 | zed-alloc-count | | the counting allocator |
 | zed-collections | numtheory, hash | sorted lists (merge, merge with values, subset, disjoint, `sort_dedup`), intervals, interval ends with the infinities (`ext::Ext`), gallop search, interners, min-add segment tree, persistent treap with a lazy tag, join-based AVL, Patricia trie, priority search tree |
@@ -148,7 +148,7 @@ merge that drops zero coefficients (`add_term`, `add_scaled`, `scaled`), gcd-nor
 pairs and the dark shadow (`i128_pair`, `dark_gap`, `dark_exact`), and in `plane` the 2D
 geometry (`cross`, `dot`, `angle_cmp`, `angle_cmp_from`, `cramer`) and unimodular bases from
 Bezout (`Basis`), over `i128` and `Int` (depends also on zed-numtheory), and in `lines` the
-upper envelope of lines (`upper_envelope`, `upper_envelope_by`, `not_above`) and `floor_sum`,
+upper envelope of lines (`upper_envelope`, `upper_envelope_by`, `not_above`) and `floor_sum` on `Int` (zed-numtheory's),
 in `space` lattice reduction (`lll`), Babai's nearest plane (`nearest_plane`), unimodular
 completion (`complete`) and 3D vectors over `Q`, and in `equalities` the elimination of unit
 equalities (`eliminate_units`, over zed-graph's work list; zed-graph depends on no crate);

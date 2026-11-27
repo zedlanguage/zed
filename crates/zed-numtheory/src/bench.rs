@@ -15,12 +15,13 @@
 
 use std::hint::black_box;
 
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint};
 
 use crate::scaling;
 use crate::{
-    PrattCertificate, factor_u128, first_primes, gcd_big_u64, is_prime_u128, least_prime_factors,
-    m61, next_prime, odd_primes_below, pow_mod_big, rem_big_u64, shares_a_factor_by_table,
+    PrattCertificate, factor_u128, first_primes, floor_sum, floor_sum_i128, gcd_big_u64,
+    is_prime_u128, least_prime_factors, m61, next_prime, odd_primes_below, pow_mod_big,
+    rem_big_u64, shares_a_factor_by_table,
 };
 
 /// The `i`th of a sequence of numbers spread over `u64` (Fibonacci hashing: multiplication by
@@ -45,6 +46,79 @@ fn words(m: usize) -> BigUint {
 
 /// The size of the benchmarks over the words of a big integer.
 const WORDS: usize = 100_000;
+
+/// The `(n, m, a, b)` of the floor sum's benchmark: four numbers of `k` words each, from
+/// [`spread`] at four starts, the top word of each above 0.
+fn floor_sum_input(k: usize) -> [BigInt; 4] {
+    let one = |from: usize| {
+        let mut digits: Vec<u64> = (0..k).map(|i| spread(from + i + 1)).collect();
+        if let Some(top) = digits.last_mut() {
+            *top |= 1;
+        }
+        let halves: Vec<u32> = digits
+            .iter()
+            .flat_map(|&d| [d as u32, (d >> 32) as u32])
+            .collect();
+        BigInt::from(BigUint::from_slice(&halves))
+    };
+    [one(0), one(k), one(2 * k), one(3 * k)]
+}
+
+/// The size of the floor sum's benchmark: 65 words, about 1,252 decimal digits, and at 8n 520
+/// words, about 10,018 digits, the 10,000-digit modulus of plan row MOD-pre-width.
+const FLOOR_SUM_WORDS: usize = 65;
+
+/// O(d²) bit operations for numbers of `d` digits, power 2 (floorsum.rs, `floor_sum`). Small
+/// instances: `tests::floor_sums`.
+#[test]
+fn the_floor_sum_takes_d_squared() {
+    scaling::check_order_inputs(
+        "floor_sum of four numbers of n words",
+        FLOOR_SUM_WORDS,
+        2,
+        floor_sum_input,
+        |[n, m, a, b]: &[BigInt; 4]| {
+            black_box(floor_sum(black_box(n), m, a, b));
+        },
+    );
+}
+
+/// The reason for the word form `floor_sum_i128` beside `floor_sum`: on the small numbers of
+/// program text, the common case of zedc-affine's `lines::floor_sum`, it takes less time than
+/// `floor_sum`, which allocates each number it makes. Both run on the same 10,000 cases with
+/// `n` and `m` below 2^20 and `a` and `b` below 2^20 in magnitude; the least of 3 runs each is
+/// printed, and the word form must take less.
+#[test]
+fn the_word_floor_sum_takes_less_time_than_the_big_one_on_small_numbers() {
+    let cases: Vec<[i128; 4]> = (0..10_000)
+        .map(|i| {
+            let w = |k: usize| i128::from(spread(4 * i + k) >> 44);
+            [w(0), w(1) + 1, w(2) - (1 << 19), w(3) - (1 << 19)]
+        })
+        .collect();
+    let big: Vec<[BigInt; 4]> = cases.iter().map(|c| c.map(BigInt::from)).collect();
+    let (word_ns, word) = scaling::least_cpu_ns(3, || {
+        cases
+            .iter()
+            .map(|&[n, m, a, b]| floor_sum_i128(n, m, a, b).expect("fits"))
+            .sum::<i128>()
+    });
+    let (big_ns, sum) = scaling::least_cpu_ns(3, || {
+        big.iter()
+            .map(|[n, m, a, b]| floor_sum(n, m, a, b))
+            .sum::<BigInt>()
+    });
+    assert_eq!(BigInt::from(word), sum);
+    eprintln!(
+        "floor sums of 10,000 small cases: floor_sum_i128 {:.3} ms, floor_sum {:.3} ms",
+        word_ns as f64 / 1e6,
+        big_ns as f64 / 1e6
+    );
+    assert!(
+        word_ns < big_ns,
+        "the word form took {word_ns} ns, the big one {big_ns} ns"
+    );
+}
 
 /// O(n) for n words, nothing allocated. Small instances:
 /// `tests::the_big_remainder_and_gcd_by_a_word_agree_with_num_bigint`.

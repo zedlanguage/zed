@@ -4,8 +4,8 @@
 //! The greatest common divisor of words and of a
 //! big integer with a word, sums, products, powers and inverses modulo a word, arithmetic
 //! modulo the Mersenne prime `2^61 - 1` and modulo the prime `2^64 - 59`, the inverse modulo
-//! `2^64`, the bit length of a word ([`BitLen`]), primality, factoring, the next prime, and the
-//! sieves.
+//! `2^64`, the bit length of a word ([`BitLen`]), primality, factoring, the next prime, the
+//! sieves, and the floor sum `Σ ⌊(a·i + b) / m⌋` ([`floor_sum`]).
 //!
 //! The gcd, inverse and Bezout coefficients of big integers stay in zed-kernel (`num::gcd_uint`,
 //! `num::inverse_mod_uint`, `num::bezout_int`), since their half gcd is built on the kernel's
@@ -15,6 +15,7 @@ mod bits;
 mod ecm;
 mod factor;
 mod factored;
+mod floorsum;
 pub mod m64_59;
 mod pratt;
 mod siqs;
@@ -26,6 +27,7 @@ use num_bigint::BigUint;
 pub use bits::BitLen;
 pub use factor::{Montgomery64, divisors, factor, is_prime, prime_powers};
 pub use factored::{coprime_base_by_factoring, shares_a_factor_by_factoring};
+pub use floorsum::{floor_sum, floor_sum_i128};
 pub use pratt::{PSI_13, PrattCertificate, PrattError, PrattFactor};
 pub use wide::{factor_u128, is_prime_u128};
 pub use word::{
