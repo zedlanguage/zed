@@ -517,6 +517,41 @@ test("a log label alone makes no node, and one not written by the orchestrator i
   ]);
 });
 
+test("a log label naming items with spaces is a line of each; a note in parentheses and, in a list, a word that starts with a small letter are no items (DAG-problem-report-cleanup)", () => {
+  const ids = (label: string) => parseLog(`2026-11-04 00:14:14 | ${label} | started\n`).map((e) => e.id);
+  assert.deepEqual(ids("PROOF-a PROOF-b PROOF-c:impl#1"), ["PROOF-a", "PROOF-b", "PROOF-c"]);
+  assert.deepEqual(ids("PERF-a PREC-b"), ["PERF-a", "PREC-b"]);
+  assert.deepEqual(ids("LOOP-boundary-spec merge"), ["LOOP-boundary-spec"]);
+  assert.deepEqual(ids("ADDR-param-names agent"), ["ADDR-param-names"]);
+  // "+3": the label's item and three more, which it does not name.
+  assert.deepEqual(ids("FAIL-odd+3:scope-seeds:impl#1"), ["FAIL-odd"]);
+  assert.deepEqual(ids("units-value-names (P237)"), ["units-value-names"]);
+  assert.deepEqual(ids("PRES-a + KERNEL-b"), ["PRES-a", "KERNEL-b"]);
+  assert.deepEqual(ids("plan"), ["plan"]);
+});
+
+test("a ledger id naming items with spaces is a line of each, not an item of its own (DAG-problem-report-cleanup)", () => {
+  const g = buildGraph(inputs("", '{"id":"A LR2","state":"note","feeds":["C"]}\n{"id":"Done: B","state":"note","feeds":["C"]}\n'));
+  const nodes = by(g.nodes);
+  assert.deepEqual([...nodes.keys()].sort(), ["A", "B", "C", "LR2"]);
+  assert.deepEqual(nodes.get("C")!.needs, ["B", "A", "LR2"]);
+  assert.deepEqual(g.problems, []);
+});
+
+test("a log label that is an agent's name, as a ledger line's by, owner or agent field gives it, is not reported (DAG-problem-report-cleanup)", () => {
+  const g = buildGraph(inputs(
+    "2026-11-02 10:00:00 | kernel27:impl#1 | start\n2026-11-02 10:00:01 | walk-next | start\n" +
+      "2026-11-02 10:00:02 | tools4 | start\n2026-11-02 10:00:03 | plan | landed\n2026-11-02 10:00:04 | BATCH | merged\n",
+    '{"id":"A","state":"note","by":"kernel27:impl#1"}\n{"id":"A","state":"note","owner":"walk-next"}\n' +
+      '{"id":"A","state":"note","agent":"tools4"}\n{"id":"A","state":"note","by":"BATCH"}\n',
+  ));
+  // An agent's name starts with a small letter; a by field such as BATCH or DAG-overrides-retire names an item.
+  assert.deepEqual(g.problems, [
+    'LABEL WITH NO ITEM: plan (from "plan"; give it a ledger line)',
+    'LABEL WITH NO ITEM: BATCH (from "BATCH"; give it a ledger line)',
+  ]);
+});
+
 test("a ledger line without an id is reported, not fatal", () => {
   const g = buildGraph(inputs("", '{"name":"A","state":"ready","time":"2026-11-02T10:00:00Z"}\n{"id":"A","state":"open"}\n'));
   assert.equal(by(g.nodes).get("A")!.state, "unstarted");
