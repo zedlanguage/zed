@@ -772,6 +772,11 @@ fn stopping_reads_of_an_open_range_are_proved_to_end_or_warned() {
         "${(3 ..).find(x -> x > 10) else #none -> 0}",
         "${(n ..).first else #none -> 0}",
         "${(n ..).any(x -> x > n + 3)}",
+        // A remainder of the entry, whose box is not exact: the solver finds an entry, `-4`
+        // and `10` (l03_02 runs.rs, case the_first_of_a_stream_with_no_upper_end, ends).
+        "${(-10 ..).where(x -> x mod 7 == 3).first else #none -> 0}",
+        "${(3 ..).where(x -> x mod 7 == 3 && x mod 2 == 0).first else #none -> 0}",
+        "${(0 ..).any(x -> x mod 7 == 3)}",
     ] {
         let w = not_proved_to_end(body);
         if !w.is_empty() {
@@ -801,6 +806,12 @@ fn stopping_reads_of_an_open_range_are_proved_to_end_or_warned() {
             "${(0 ..).any(x -> x == n)}",
             "`(0 ..).any(x -> x == n)` is not proved to end: no entry of `(0 ..)` is shown to \
              make `x == n` true.",
+        ),
+        // No entry is both `1 mod 4` and even; the box of each conjunct alone is not empty.
+        (
+            "${(0 ..).any(x -> x mod 4 == 1 && x mod 2 == 0)}",
+            "`(0 ..).any(x -> x mod 4 == 1 && x mod 2 == 0)` is not proved to end: no entry of \
+             `(0 ..)` makes `x mod 4 == 1 && x mod 2 == 0` true.",
         ),
         (
             "${(n + 1 ..).any(x -> x > 7)}",

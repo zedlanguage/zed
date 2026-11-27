@@ -154,7 +154,7 @@ fn an_argument_forwarded_to_a_function_parameter_is_checked_against_its_range() 
       1 | ap(positional g, positional v) = g(v);
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [5]
         |                                  ^^^^ [4]
-  [5] 1:1: `ap` is declared here with no type written for `g`, `v` or its result; the type the checker found for `ap` is `(_, _) -> _`
+  [5] 1:1: `ap` is declared here with no type written for `g`, `v` or its result; the type the checker found for `ap` is `(T -> U, T) -> U`
   [6] 3:8: repair: pass a value in int[0..] where this call passes `-1`"#
     );
 }
