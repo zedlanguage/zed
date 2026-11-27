@@ -347,6 +347,25 @@ pub(super) const CLUSTERING_TWO_PARABOLAS: Input = clustering("clustering two pa
     )
 });
 
+/// Points (i, i²) and (i, -i²) in turn: two parabolas facing apart, interleaved in the input
+/// (M0-scaling-10_5). Timed at 4000 and 32000, not at the 1000 of the other clusterings: the
+/// work is n log n, but the pure n log n ratio at 1000 and 8000 is already 8·log 8000 / log
+/// 1000 = 10.41 of the 10.5 allowed, and the coordinates, up to n², take a little more work per
+/// predicate as n grows. Measured (b22-scale1, 2026-11-27, 8 local cores, instructions): the
+/// work over n·log2 n is 12909, 12924, 13051, 13121, 13177, 13222 and 13269 at 500 to 32000
+/// points by doublings, 2.8% more over a factor of 64, so 10.61 at 1000 and 8000 (10.66 in the
+/// benchmark) and 10.12 at 4000 and 32000, where pure n log n is 10.01.
+pub(super) const CLUSTERING_PARABOLAS_BY_TURNS: Input = Input {
+    n: 4000,
+    ..clustering("clustering parabolas by turns", |n| {
+        let point = |i: usize| {
+            let y = (i * i) as i64;
+            format!("{i} {}", if i % 2 == 1 { y } else { -y })
+        };
+        format!("1\n{}", lines(n, point))
+    })
+};
+
 /// A coordinate of `chunks` blocks of nine decimal digits, block j the hash of `(seed, j)`: the
 /// first blocks do not depend on `chunks`, so with more blocks the points scale up by a power of
 /// 10 and move by less than one unit of the shorter ones.
@@ -665,7 +684,7 @@ const OTHERS: [Input; 43] = [
 ];
 
 /// The clustering inputs of reference 14.
-const CLUSTERINGS: [Input; 9] = [
+const CLUSTERINGS: [Input; 10] = [
     CLUSTERING_NEAR_A_LINE,
     CLUSTERING_GRID,
     CLUSTERING_ROTATED_GRID,
@@ -674,6 +693,7 @@ const CLUSTERINGS: [Input; 9] = [
     CLUSTERING_ON_A_LINE,
     CLUSTERING_CIRCLE,
     CLUSTERING_TWO_PARABOLAS,
+    CLUSTERING_PARABOLAS_BY_TURNS,
     CLUSTERING_RANDOM_WIDE,
 ];
 

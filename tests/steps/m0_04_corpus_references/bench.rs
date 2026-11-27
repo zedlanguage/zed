@@ -195,6 +195,7 @@ benchmarks! {
     clustering_of_points_on_one_line CLUSTERING_ON_A_LINE;
     clustering_of_points_on_one_circle CLUSTERING_CIRCLE;
     clustering_of_two_parabolas_facing_apart CLUSTERING_TWO_PARABOLAS;
+    clustering_of_points_on_two_parabolas_by_turns CLUSTERING_PARABOLAS_BY_TURNS;
     clustering_of_random_points_with_wide_coordinates CLUSTERING_RANDOM_WIDE;
 }
 
