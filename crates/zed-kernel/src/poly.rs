@@ -2706,9 +2706,16 @@ fn pairs_charge(pairs: f64, square: bool, pair: f64) -> f64 {
     pairs * (PAIR + CHOICE_UNIT * (square_pair + pair))
 }
 
-/// The pairs drawn to estimate the size of a product's support ([`Poly::support_mul`]): the
-/// estimate only chooses a method, so its error costs time, never a wrong term.
-const SAMPLES: u32 = 32;
+/// The pairs drawn for each group mean of the estimate of a product's support size
+/// ([`SupportSetup::estimate`]): the estimate only chooses a method, so its error costs time,
+/// never a wrong term.
+const GROUP: u32 = 16;
+
+/// The groups whose means [`SupportSetup::estimate`] takes the median of. Odd, so the median
+/// is one group's mean. 9 groups of [`GROUP`] draw 144 pairs, 4.5 times the 32 drawn before
+/// POLY-support-cost-ranking; at `k = 350` in `crossover poly-support-units 16` that is about
+/// 101,000 units against the 3.64 M the rounds spent.
+const GROUPS: usize = 9;
 
 /// What the support product ([`Poly::support_mul`]) reads its two sides as
 /// ([`Poly::support_setup`]).
@@ -2730,9 +2737,9 @@ struct SupportSetup {
 }
 
 impl SupportSetup {
-    /// The units of the sampled estimate: [`SAMPLES`] merges of both sides.
+    /// The units of the sampled estimate: [`GROUPS`] times [`GROUP`] merges of both sides.
     fn sampling(&self) -> f64 {
-        SAMPLES as f64 * self.terms as f64
+        (GROUPS as f64) * f64::from(GROUP) * self.terms as f64
     }
 
     /// The units of the rounds for a support of `s` indices: about two rounds of each kind at
@@ -2755,21 +2762,60 @@ impl SupportSetup {
     ///
     /// Complexity tradeoff: the support's size `s` is not known before the sumset is found,
     /// and the sumset of sides whose pairs are all distinct costs more than the sparse product
-    /// of the same sides. A mean of `1 / count` over `SAMPLES` pairs drawn at random, `count`
-    /// the number of pairs on the drawn pair's index, estimates `s / (t1 t2)` in
-    /// `O(SAMPLES (t1 + t2))`, so such a product goes to the sparse one at once.
+    /// of the same sides. For a pair drawn at random, `Y = 1 / count`, `count` the number of
+    /// pairs on its index, has mean `s / (t1 t2)` exactly: an index of `c` pairs is drawn with
+    /// probability `c / (t1 t2)` and gives `1 / c`, so each index adds `1 / (t1 t2)`. So `t1 t2`
+    /// times a mean of draws of `Y` estimates `s`, in `O(GROUPS GROUP (t1 + t2))` (each `count`
+    /// is one merge, [`pairs_at`]), and a product whose pairs are all distinct goes to the
+    /// sparse one at once.
+    ///
+    /// The draws' median of means, not their mean (POLY-support-cost-ranking): `Y` is heavy
+    /// at its top. In the squares of `(x + y)^k + x` of `crossover poly-support`, the `2 (k +
+    /// 1)` pairs of `x` with the other side hold a third of the support's `3k + 3` indices,
+    /// two pairs each, while the `(k + 1)^2` others share `2k + 1`; so about `2 / k` of the
+    /// draws give `Y = 1 / 2` against a mean near `3 / k`. A mean of 32 draws then moved by a
+    /// factor of 3 to 4 on one or two such draws (b22-kernel14, 2026-11-24, `crossover
+    /// poly-support-units 16`: estimated over spent from 0.29 to 1.20 at k = 256 to 512). A
+    /// draw moves one group's mean, and the median of [`GROUPS`] means moves past a group's
+    /// usual range only when at least `(GROUPS + 1) / 2` groups are moved; at `q` the chance
+    /// a group holds such a draw (`q` about `GROUP 2 / k`, 0.09 at `k = 350`), that is at most
+    /// `C(9, 5) q^5`, below `10^(-3)` there. The cost of that: the median estimates the mean
+    /// of the bulk, so a support whose rare pairs hold many indices is estimated low, here by
+    /// up to a third. A low estimate costs the sumset more rounds ([`sumset`] doubles its
+    /// prime until its slots close), never a wrong term, and a steady bias is absorbed by
+    /// [`SUPPORT_COST`]'s fit; what the choice needs is that the estimate ranks the inputs.
+    ///
+    /// Source: G. Lugosi and S. Mendelson, "Mean estimation and regression under heavy-tailed
+    /// distributions: a survey", Found. Comput. Math. 19 (2019), arXiv:1906.04280, Section 2.1
+    /// (checked 2026-11-27 in the arXiv LaTeX source, lines 417-470, recorded in the spec
+    /// repository's verification/bib.md as GaborLugosi2019mean): the estimator "calls for
+    /// partitioning the data into k groups of roughly equal size, computing the empirical mean
+    /// in each group, and taking the median of the obtained values"; their Theorem 2: for `k`
+    /// groups of `m`, `P(|mu_hat - mu| > sigma sqrt(4 / m)) <= e^(-k / 8)`. Departure: that
+    /// bound is in `sigma`, which the rare draws themselves make large (`sigma^2 <= mu` as `Y
+    /// <= 1`, so the bound is a relative error of `2 sqrt(t1 t2 / (GROUP s))`, about 9 at `k =
+    /// 350`), so it proves little here; the argument above, on how many groups a rare draw
+    /// reaches, is what the choice uses, and it is not a proof of ranking. Measured by
+    /// `crossover poly-support-units` (estimated over spent, per `k`); tested by
+    /// `tests::the_support_estimate_is_near_the_support_of_the_bench_squares`, which fails on
+    /// the mean of 32 draws (k = 350 and 450) and cannot catch a shape it does not build.
     fn estimate(&self, rng: &mut u64) -> f64 {
         let (ta, tb) = (self.ra.len(), self.rb.len());
-        let mut inverse = 0.0;
-        for _ in 0..SAMPLES {
-            *rng = step(*rng, 1);
-            let i = (*rng % ta as u64) as usize;
-            *rng = step(*rng, 2);
-            let j = (*rng % tb as u64) as usize;
-            inverse += 1.0 / pairs_at(&self.ra, &self.rb, self.ra[i] + self.rb[j]) as f64;
+        let mut means = [0.0; GROUPS];
+        for mean in &mut means {
+            let mut inverse = 0.0;
+            for _ in 0..GROUP {
+                *rng = step(*rng, 1);
+                let i = (*rng % ta as u64) as usize;
+                *rng = step(*rng, 2);
+                let j = (*rng % tb as u64) as usize;
+                inverse += 1.0 / pairs_at(&self.ra, &self.rb, self.ra[i] + self.rb[j]) as f64;
+            }
+            *mean = inverse / f64::from(GROUP);
         }
+        let (_, median, _) = means.select_nth_unstable_by(GROUPS / 2, f64::total_cmp);
         let pairs = ta as f64 * tb as f64;
-        (pairs * inverse / SAMPLES as f64).max((self.terms - 1) as f64)
+        (pairs * *median).max((self.terms - 1) as f64)
     }
 }
 
