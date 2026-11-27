@@ -526,9 +526,7 @@ fn gdb_prints_the_value_of_a_name_bound_to_a_constant_that_is_not_a_word() {
     t = (1, 2);
     u = \"yo\";
     k = n + 1;
-    m.stdout <- \"${k}${s}\";
-    m.stdout <- String((k, t));
-    m.stdout <- \"${k}${u}\";
+    m.stdout <- String(k) ++ s ++ String(t) ++ u;
 }
 ";
     let (_, exe) = executable_of("shown", src);
@@ -566,7 +564,7 @@ fn gdb_prints_the_value_of_a_name_bound_to_a_constant_that_is_not_a_word() {
     for want in ["s = \"hi\"", "t = \"(1, 2)\"", "u = \"yo\""] {
         assert!(out.contains(want), "no local {want:?} in:\n{out}\n{named}");
     }
-    assert!(out.contains("6yo"), "{out}");
+    assert!(out.contains("6hi(1, 2)yo"), "{out}");
 }
 
 #[test]
