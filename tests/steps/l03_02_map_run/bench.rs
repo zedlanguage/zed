@@ -13,7 +13,7 @@ use zed_kernel::{Family, Prim, Term, Value, eval};
 use zed_tests::kernel::*;
 use zed_tests::scaling::{self, FACTOR, Meter, hold_linear};
 
-use super::program;
+use super::{not_proved, program};
 use zed_tests::step_helpers::l01_16_elaboration::errors;
 use zed_tests::step_helpers::l01_36a_executables::{built, dir, executable, interpreter};
 
@@ -379,9 +379,22 @@ fn a_walk_over_a_range_with_no_upper_end_runs_in_n_log_n_time() {
     let exe = d.join("open_walk");
     built(&src, &exe);
     let want = |k: usize| format!("{{0 -> {}, 1 -> true, 2 -> {k}}}\n", 2 * k.div_ceil(2));
+    // Each read tests the entry against `n`, a box the solver does not make exact, so each is
+    // warned at (RANGE-open-ending-warn) though each ends.
+    let warned = [
+        "`(0 ..).map(x -> x * 2).where(x -> x >= n).first` is not proved to end: no entry of \
+         `(0 ..).map(x -> x * 2).where(x -> x >= n)` is shown to be kept.",
+        "`(0 ..).any(x -> x == n)` is not proved to end: no entry of `(0 ..)` is shown to make \
+         `x == n` true.",
+        "`(0 ..).find(x -> x >= n)` is not proved to end: no entry of `(0 ..)` is shown to make \
+         `x >= n` true.",
+    ];
     let run = |k: usize| {
         let ran = interpreter(&src, &[], format!("{k}\n").as_bytes());
-        assert_eq!((ran.stderr.as_str(), ran.stdout), ("", want(k)));
+        assert_eq!(
+            (not_proved(&ran.stderr), ran.stdout),
+            (warned.to_vec(), want(k))
+        );
     };
     // Both run at the whole-path size: at the kernel size, 20,000 and 160,000, the
     // executable alone took 36 s (measured 2026-11-16, load 147).

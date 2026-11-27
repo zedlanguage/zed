@@ -10,7 +10,7 @@ use zed_kernel::{Family, Pattern, Prim, Term, Value, eval};
 use zed_tests::kernel::*;
 use zed_tests::step_helpers::l01_36a_executables::{built, dir, executable, interpreter};
 
-use super::{program, run};
+use super::{not_proved, program, run};
 
 fn i(n: i64) -> Value {
     Value::Int(n)
@@ -920,10 +920,26 @@ fn the_first_prime_from_n_read_from_stdin() {
         ]));
         let stdin = format!("{n}\n");
         let ran = interpreter(&src, &[], stdin.as_bytes());
+        // Each read is warned at (RANGE-open-ending-warn): three through the call `isPrime`,
+        // and the `.any`, whose test is not linear in the entry, is not proved by the solver.
         assert_eq!(
-            (ran.stderr.as_str(), ran.status),
-            ("", 0),
-            "zedc run at {n}"
+            (not_proved(&ran.stderr), ran.status),
+            (
+                vec![
+                    "`(n ..).where(isPrime).first` is not proved to end: no entry of \
+                     `(n ..).where(isPrime)` is shown to be kept.",
+                    "`(n ..).find(isPrime)` is not proved to end: no entry of `(n ..)` is shown \
+                     to make `isPrime` true.",
+                    "`(n ..).map(x -> x * x).where(x -> x mod 10 == 9).any(x -> x > 100)` is not \
+                     proved to end: no entry of `(n ..).map(x -> x * x).where(x -> x mod 10 == \
+                     9)` is shown to make `x > 100` true.",
+                    "`(n ..).where(isPrime).all(x -> x < n + 3)` is not proved to end: no entry \
+                     of `(n ..).where(isPrime)` is shown to make `x < n + 3` false.",
+                ],
+                0
+            ),
+            "zedc run at {n}: {}",
+            ran.stderr
         );
         assert_eq!(ran.stdout, want, "zedc run at {n}");
         let ran = executable(&exe, &[], stdin.as_bytes());
@@ -975,10 +991,20 @@ fn a_family_read_by_key_at_keys_from_stdin() {
         ]));
         let stdin = format!("{n}\n");
         let ran = interpreter(&src, &[], stdin.as_bytes());
+        // The `where` relates the entry's offset to `n` (`(n + j) mod 2`), a box the solver
+        // does not make exact, so the read is warned at (RANGE-open-ending-warn).
         assert_eq!(
-            (ran.stderr.as_str(), ran.status),
-            ("", 0),
-            "zedc run at {n}"
+            (not_proved(&ran.stderr), ran.status),
+            (
+                vec![
+                    "`(n ..).where(x -> x mod 2 == 0).find(x -> x >= n)` is not proved to end: \
+                     no entry of `(n ..).where(x -> x mod 2 == 0)` is shown to make `x >= n` \
+                     true."
+                ],
+                0
+            ),
+            "zedc run at {n}: {}",
+            ran.stderr
         );
         assert_eq!(ran.stdout, want, "zedc run at {n}");
         let ran = executable(&exe, &[], stdin.as_bytes());

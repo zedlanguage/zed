@@ -73,11 +73,12 @@ fn a_parameter_any_value_fits_is_printed_as_every_value() {
     assert_eq!(shown, "(0 -> int) -> int");
     writes_back(&shown);
     // The variable is still the signature's own, which each call binds: the need of `p[0]` is
-    // checked again at the call. The signature's own text, outside a message, is unchanged.
+    // checked again at the call. The signature's own text, outside a message, is the
+    // message's (PRINT-no-underscore-rest: one printer rule).
     let s = sig("h(positional p) = p[0] + int(1);\n", "h");
     assert_eq!(s.own.len(), 1);
     assert_eq!(s.needs.len(), 1);
-    assert_eq!(s.to_string(), "_ -> int");
+    assert_eq!(s.to_string(), "(0 -> int) -> int");
 }
 
 // PRINT-hidden-var (DESIGN.md sec:diagnostics, "Types in a message", spec 2238e22): a printed
@@ -134,9 +135,10 @@ fn a_parameter_with_a_use_other_than_lookup_keeps_its_printing() {
     // `p` stands in the result too, so it keeps a name: the map type would lose that link.
     let shown = lookup_declared("positional p", "(p, p[0])", "true");
     assert!(!shown.contains("0 ->"), "{shown}");
-    // `p` is also called: a call is no lookup at a fixed key.
+    // `p` is also called, at a key: a lookup is an application (DESIGN.md, "Types in a
+    // message"), so the call is one more arrow, and each result stands twice.
     let shown = lookup_declared("positional p", "(p[0], p(1))", "true");
-    assert!(!shown.contains("0 ->"), "{shown}");
+    assert_eq!(shown, "((0 -> T) & (1 -> U)) -> (T, U)");
 }
 
 #[test]
@@ -182,13 +184,14 @@ fn printing_a_parameter_of_many_lookups() {
 }
 
 #[test]
-fn a_variable_only_in_the_result_is_printed_as_every_value() {
-    // `fn(1)` gives what the call binds: a variable of the result alone.
+fn the_result_of_an_application_of_a_parameter_is_named_where_it_stands() {
+    // `fn(1)` gives what the call binds, the variable of the arrow `1 -> T` the parameter is
+    // printed as, so it stands twice and is named (PRINT-no-underscore-rest).
     let shown = declared("n(positional fn) = fn(1);\nm(positional k: int) = n(k);\n");
-    assert_eq!(shown, "_ -> _");
+    assert_eq!(shown, "(1 -> T) -> T");
     writes_back(&shown);
     let s = sig("first(p) = p[0];\n", "first");
-    assert_eq!(s.to_string(), "(p: _) -> _");
+    assert_eq!(s.to_string(), "(p: 0 -> T) -> T");
     let (param, result) = (&s.arrows[0].params[0], &s.arrows[0].result);
     assert_eq!(param.vars.len(), 1);
     assert_eq!(result.vars.len(), 1);
@@ -196,6 +199,67 @@ fn a_variable_only_in_the_result_is_printed_as_every_value() {
         param.vars, result.vars,
         "the result is the need's own variable"
     );
+}
+
+/// `h(positional p) = p[0][0]...[0];` with `d` lookups in a chain, refused at a call with
+/// `true`.
+pub(super) fn chain(d: usize) -> String {
+    format!(
+        "h(positional p) = p{};\nm(positional n: int) = h(true);\n",
+        "[0]".repeat(d)
+    )
+}
+
+/// The rejection of [`chain`]`(d)` shows `h` as one map of `d` arrows, `(0 -> ... -> 0 -> T)
+/// -> T`: each lookup's result is the next lookup's receiver, rewritten in turn.
+pub(super) fn chain_printed(src: &str, d: usize) {
+    let out = rejected(src);
+    let (_, rest) = out
+        .split_once("the type the checker found for `h` is `")
+        .unwrap_or_else(|| panic!("no declaration shown:\n{out}"));
+    let shown = &rest[..rest.find('`').expect("the end of the signature")];
+    assert_eq!(shown, format!("({}T) -> T", "0 -> ".repeat(d)));
+}
+
+#[test]
+fn an_application_of_an_application_s_result_is_written_inside_its_arrow() {
+    // Rewrite 2 of `Sig::uses_written`: `p[1]`'s result is called at `p[0]`'s.
+    let shown = lookup_declared("positional p", "p[1](p[0])", "true");
+    assert_eq!(shown, "((1 -> T -> U) & (0 -> T)) -> U");
+    writes_back(&shown);
+    for d in [1, 2, 3, 9] {
+        chain_printed(&chain(d), d);
+    }
+}
+
+#[test]
+fn a_parameter_that_stands_also_in_another_need_keeps_its_name() {
+    // `p` is the argument of `g`'s call, a place in a need: with its place in the text it
+    // stands twice, so its lookup is not written as a map, which would lose its link to `g`'s
+    // parameter (point (d) of `Sig::uses_written`). `g`, used only by that call, is its arrow.
+    let shown = lookup_declared("positional p, positional g", "(g(p), p[0])", "true, 1");
+    let (p, _) = shown[1..].split_once(", ").expect("two parameters");
+    assert!(!p.contains("->"), "{shown}");
+    assert!(shown.contains(&format!("{p} -> ")), "{shown}");
+    writes_back(&shown);
+}
+
+#[test]
+fn a_signature_prints_as_its_message_writes_it() {
+    // One printer rule (PRINT-no-underscore-rest): `Sig`'s own text is the text a rejection
+    // writes for the function declared with no type written.
+    for (decl, args) in [
+        ("h(positional p) = p[0] + int(1)", "true"),
+        ("h(positional p) = p[0] + 1", "true"),
+        ("h(positional p) = (p[0], p(1))", "true"),
+        ("h(positional p) = p[1](p[0])", "true"),
+        ("h(positional p) = p[0][0][0]", "true"),
+        ("h(positional p, positional g) = (g(p), p[0])", "true, 1"),
+        ("h(positional f, positional x) = f(f(x))", "true, 1"),
+    ] {
+        let shown = declared(&format!("{decl};\nm(positional n: int) = h({args});\n"));
+        assert_eq!(sig(&format!("{decl};\n"), "h").to_string(), shown, "{decl}");
+    }
 }
 
 #[test]
@@ -252,9 +316,10 @@ fn a_bounded_variable_inside_a_function_parameter_is_printed_in_its_own_clause()
         "(T -> T for T in int | rat, U, U) -> U for U in int | f32 | f64 | rat"
     );
     writes_back(&s.to_string());
-    // A higher-order parameter that is called: its type is `_`, and so is the call's result.
+    // A higher-order parameter that is called: each call is an arrow of its type, the inner
+    // call's result the outer call's argument, so each variable stands twice.
     let s = sig("twice(positional f, positional x) = f(f(x));\n", "twice");
-    assert_eq!(s.to_string(), "(_, _) -> _");
+    assert_eq!(s.to_string(), "((T -> U) & (U -> V), T) -> V");
     writes_back(&s.to_string());
 }
 
@@ -405,12 +470,12 @@ fn a_variable_that_stands_once_is_every_value() {
 
 #[test]
 fn every_value_in_a_union_absorbs_the_other_members() {
-    // The result of `f(0)` is a variable that stands once, so it prints `_`, and `int | _` is
-    // `_`: every value holds `int`.
+    // The result of `f(0)` stands in the arrow `0 -> T` that `f` is printed as and in the
+    // result, so it is named and the union keeps it.
     let src = "g(positional c, positional f) = if c { int(1) } else { f(0) };\n";
     let s = sig(src, "g");
     assert_eq!(s.arrows[0].result.vars.len(), 1);
-    assert_eq!(s.to_string(), "(bool, _) -> _");
+    assert_eq!(s.to_string(), "(bool, 0 -> T) -> int | T");
     writes_back(&s.to_string());
     // Written, `int | f64 | _` is read as a union with a variable that stands once.
     let t = parse_type("(int | f64 | _) -> int").unwrap();

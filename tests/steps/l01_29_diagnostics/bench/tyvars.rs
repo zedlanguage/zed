@@ -5,14 +5,27 @@ use zed_tests::scaling;
 use zed_tests::step_helpers::l01_26_type_resolution::sig_of as sig;
 
 use crate::tyvars::{
-    a_signature_of_many_variables_printed, each_twice, lookups, lookups_printed, many, nested,
-    nested_signatures_printed, variables_that_each_stand_twice_named,
+    a_signature_of_many_variables_printed, chain, chain_printed, each_twice, lookups,
+    lookups_printed, many, nested, nested_signatures_printed,
+    variables_that_each_stand_twice_named,
 };
+
+#[test]
+fn printing_a_chain_of_lookups_scales() {
+    // PRINT-no-underscore-rest: the d results of `p[0]...[0]` are rewritten in one walk
+    // (`closed_rewrites`), each put in by reference, so the text is O(d), not the O(d^2) of
+    // replacing the signature once per level; the time is the whole rejection.
+    let n = 200;
+    let srcs = scaling::inputs(n, chain);
+    scaling::check("printing a chain of n lookups as one map", n, |size| {
+        chain_printed(&srcs[&size], size);
+    });
+}
 
 #[test]
 fn printing_a_parameter_of_many_lookups_scales() {
     // PRINT-hidden-var: the n lookups of one parameter become n arrows, each found once
-    // (`Ck::lookups_as_maps`); the time is the whole rejection, checking included.
+    // (`Sig::uses_written`); the time is the whole rejection, checking included.
     let n = 200;
     let srcs = scaling::inputs(n, lookups);
     scaling::check("printing a parameter of n lookups as a map", n, |size| {

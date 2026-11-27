@@ -35,3 +35,14 @@ pub(crate) fn program(name: &str, body: &str) -> PathBuf {
 pub(crate) fn run(name: &str, body: &str) -> Ran {
     interpreter(&program(name, body), &[], &[])
 }
+
+/// The headlines of the warnings that a stopping read of a range with no upper end is not
+/// proved to end (plan row RANGE-open-ending-warn), as `zedc run` writes them to standard
+/// error, `file:line:col: message`: each from the message on, in the order written. A program
+/// meant to run may be warned so; the warning's notes are tested in `types`.
+pub(crate) fn not_proved(stderr: &str) -> Vec<&str> {
+    (stderr.lines())
+        .filter(|l| l.contains(" is not proved to end: "))
+        .map(|l| l.find(": `").map_or(l, |i| &l[i + 2..]))
+        .collect()
+}

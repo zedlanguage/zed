@@ -36,8 +36,9 @@ fn outcome(name: &str, def: &str, call: &str) -> String {
 
 /// The rejection of a call of a component that is not a function, for the value `shown`
 /// written as `arg` at `h(positional p) = p[1](p[0])`. `p`, used only by lookup at 1 and 0,
-/// prints as the meet of the maps of those keys (row PRINT-hidden-var); the `_` left in it,
-/// the results of the two lookups and of the call, is row PRINT-no-underscore-rest.
+/// prints as the meet of the maps of those keys (row PRINT-hidden-var); the results of the
+/// two lookups and of the call each stand twice, so each is named (row
+/// PRINT-no-underscore-rest): `p[0]` is `T`, `p[1]` applied to it gives `U`.
 fn not_a_function(shown: &str, arg: &str) -> String {
     let marks = "^".repeat(arg.len() + 3);
     format!(
@@ -48,7 +49,7 @@ fn not_a_function(shown: &str, arg: &str) -> String {
          \x20       | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [2]\n\
          \x20       |                   ^^^^^^^^^^ [1]\n\
          \x20 [2] 1:1: `h` is declared here with no type written for `p` or its result; the \
-         type the checker found for `h` is `((1 -> _) & (0 -> _)) -> _`\n\
+         type the checker found for `h` is `((1 -> T -> U) & (0 -> T)) -> U`\n\
          \x20 [3] 2:5: repair: call a function here, or write `p[1]` without the parentheses of the call \
          if its value is meant\n\
          \x20     2 | r = h({arg});\n\
