@@ -2,8 +2,9 @@
 //! grammars resolves, that no alternative of layer k requires a rule empty at ring k, that a
 //! `~` alternative's layer is not above its rule's lowest, that every bracket pair whose
 //! contents reach a `HEAD` test clears the head flag with `nest(…)`, and that the `desugar`
-//! fence has one rule per production. It then lexes and parses every ```` ```zed ```` fence of `DESIGN.md` and
-//! `EXAMPLES.md`, finds each fence's lowest ring, and checks that the parse tree is the same at
+//! fence has one rule per production. It then lexes and parses every ```` ```zed ```` fence of
+//! `DESIGN.md` and `EXAMPLES.md`, finds each fence's lowest ring, and checks that the parse tree
+//! is the same at
 //! every higher ring. FILE:LINE checks that fence only; a third argument lists every fence's
 //! ring.
 
