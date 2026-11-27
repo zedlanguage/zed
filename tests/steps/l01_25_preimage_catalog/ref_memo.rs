@@ -1039,7 +1039,11 @@ fn every_family_the_benchmarks_time_is_answered_soundly_at_small_sizes() {
 }
 
 /// The answers of [`answer_table`] as main gave them before REF-boundaries-gate (8376989a7),
-/// one line per family, size and case.
+/// one line per family, size and case. One line differs from that dump:
+/// `normal_named_modguard 16 0`, main's `1 false 4ea25024d336ecee`, made exact by
+/// PROOF-probe-order-independent (the probe reads each round's parts in the order of their
+/// content, and in that order it refutes a disjunct the written order kept); its new answer is
+/// checked at every input by [`the_answer_made_exact_by_the_probe_order_holds_at_every_input`].
 const ANSWERS: &str = include_str!("ref_memo_answers.txt");
 
 /// The sizes [`answer_table`] runs each family at; `output_grid` only from 8, where its four
@@ -1103,6 +1107,29 @@ fn every_family_keeps_main_s_answers_through_the_inverse_tree_changes() {
         got.len(),
         want.len()
     );
+}
+
+/// The one answer of [`ANSWERS`] that differs from main's dump, `normal_named_modguard` at 16,
+/// case 0, made exact by PROOF-probe-order-independent: `i` in [-1000, -3] u [-1, 1000], marked
+/// exact. The interpreter runs at each of the 2001 inputs of its domain [-1000, 1000]: each
+/// that meets the demand is in the box and, the box being exact, each in the box meets it
+/// (2000 do; `i == -2` alone fails). Main's answer, one piece, was inexact.
+#[test]
+fn the_answer_made_exact_by_the_probe_order_holds_at_every_input() {
+    let (t, ds, d) = family("normal_named_modguard", 16).remove(0);
+    let p = preimage(&t, &ds, &d);
+    assert!(p.exact, "{p:?}");
+    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+    let box_i = p.domains.get(&names[0]).expect("a box on `i`");
+    let mut met = 0;
+    for i in -1000i64..=1000 {
+        let pt = [Num::from(i)];
+        let m = meets(&t, &names, &pt, &d);
+        let hit = box_i.contains_end(&End::Fin(pt[0].clone()));
+        assert_eq!(m, hit, "{i}: meets the demand {m}, in the exact box {hit}");
+        met += m as usize;
+    }
+    assert_eq!(met, 2000);
 }
 
 /// The gcds `Boundaries::join` takes per link of the family `name` at `n` links
