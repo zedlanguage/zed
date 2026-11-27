@@ -34401,7 +34401,9 @@ mod probe_order {
     /// the formula, and the parts it leaves hold at exactly the points where the formula holds:
     /// a disjunct it removes covers no point that the other disjuncts do not. The LIN-probe
     /// change (keep without a test a disjunct held by a point found) was compared with the old
-    /// probe once, on 14,000+ calls; this checks the answers themselves.
+    /// probe once, on 14,000+ calls; this checks the answers themselves, and that no disjunct
+    /// that holds at a point of the formula is removed (TESTS-audit-battery-gaps: the points
+    /// alone allowed a removal another disjunct covers).
     fn probe_keeps_the_points_of_the_box(name: &str, cases: usize) {
         let (mut rng, seed) = Rng::fresh(name);
         let (mut asked, mut empty, mut kept_empty, mut refused, mut removed) = (0, 0, 0, 0, 0);
@@ -34415,6 +34417,7 @@ mod probe_order {
             }
             asked += 1;
             let before: usize = p.ors.iter().map(Vec::len).sum();
+            let p_ors = p.ors.clone();
             let all = box_points(n, b);
             let points: Vec<&Model> = all.iter().filter(|m| f.holds(m)).collect();
             if points.is_empty() {
@@ -34438,6 +34441,23 @@ mod probe_order {
                             q.holds(m),
                             "seed {seed:#x}, case {case}: at {m:?} the formula {f:?} and the \
                              parts the probe leaves differ"
+                        );
+                    }
+                    // Which disjuncts it removes (TESTS-audit-battery-gaps): never one that
+                    // holds at a point of the formula, since a removal needs a proof that the
+                    // disjunct has no point with the rest. A disjunction left with one
+                    // disjunct may have it merged into the parts, its rows among `q.cons`.
+                    let left: HashSet<u64> = q.ors.iter().flatten().map(|d| d.id()).collect();
+                    for d in p_ors.iter().flatten() {
+                        let held = points.iter().find(|m| d.holds(m));
+                        let kept = left.contains(&d.id())
+                            || (d.ors.is_empty() && d.cons.iter().all(|c| q.cons.contains(c)));
+                        assert!(
+                            held.is_none() || kept,
+                            "seed {seed:#x}, case {case}: the probe removed from {f:?} a \
+                             disjunct {:?} that holds at the point {:?}",
+                            d.cons,
+                            held
                         );
                     }
                     let after: usize = q.ors.iter().map(Vec::len).sum();
