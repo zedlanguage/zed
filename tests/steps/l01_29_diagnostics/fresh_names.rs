@@ -283,6 +283,26 @@ fn the_declared_step_and_the_note_print_the_written_name() {
     );
 }
 
+#[test]
+fn the_note_on_a_push_prints_the_types_the_call_binds() {
+    // DESIGN.md sec:diagnostics, "Types in a message": "the rejection of `h(x: "a", y: 5,
+    // out: m.stdout)` writes the note `this expression is (0 | 1 | 2) -> 5 | String`, not
+    // `(0 | 1 | 2) -> _`", while the declaration's type keeps `y: _`, "a type the parameter's
+    // uses decide" (plan rows MSG-untyped-signature-placeholder,
+    // MSG-signature-untyped-placeholder). The headline printed the bound type before; the
+    // note printed the body's.
+    let src = "h(x, y, out: Lines) { out <- [x, y, x.upper]; }\n\
+               main(m: MainArgs) { h(x: \"a\", y: 5, out: m.stdout); }\n";
+    let out = rejected(src);
+    assert!(
+        out.contains("this expression is (0 | 1 | 2) -> 5 | String"),
+        "{:?}\n{out}",
+        lines_with(&out, "this expression is")
+    );
+    assert!(!out.contains("-> _\n"), "{out}");
+    assert!(out.contains("y: _, out: Lines) -> ()`"), "{out}");
+}
+
 /// The step on the declaration of `k` in `out`, from "the type the checker found" to the end
 /// of its line.
 fn declared_k(out: &str) -> String {
