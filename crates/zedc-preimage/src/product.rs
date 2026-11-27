@@ -11289,7 +11289,9 @@ impl Scope {
     fn with_readers(&self, name: &Arc<str>) -> Vec<Arc<str>> {
         let readers = self.read_by.get(name).into_iter().flatten();
         let bound = readers.filter(|y| self.bindings.get(*y).is_some_and(|b| b.term.is_some()));
-        std::iter::once(name.clone()).chain(bound.cloned()).collect()
+        std::iter::once(name.clone())
+            .chain(bound.cloned())
+            .collect()
     }
 
     /// The names before a fresh binding or unbinding, for [`Scope::seen_fresh`]: the exact map
