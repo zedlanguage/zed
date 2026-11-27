@@ -543,6 +543,86 @@ fn a_primed_binder_takes_a_new_name_with_the_number_before_the_prime() {
     assert_eq!(message(&t), "x' -> { x2' = 5; x' }");
 }
 
+/// PRINT-block-left-operand-in-lambda-body: a lambda body or a match arm whose text starts with
+/// `{` but is not a block, as a block first on the left of an operator or as a receiver, is in
+/// parentheses. The grammar reads a `{` right after `->` as the body's block (sec:grammar,
+/// `Lambda` and `Arm`: `Block | !'{' Expr`), so `x -> { y = 5; y } + x` ends the body at its
+/// `}`, and the text is refused. Before the fix [`message`] wrote the block bare.
+#[test]
+fn a_body_starting_with_a_block_that_is_not_one_is_in_parentheses() {
+    let block = || let_("y", lit(5i64), var("y"));
+    let ints = [vec![Value::Int(9)], vec![Value::Int(-2)]];
+    let cases = [
+        (
+            lam(&["x"], add(block(), var("x"))),
+            "x -> ({ y = 5; y } + x)",
+        ),
+        (
+            lam(
+                &["x"],
+                add(prim(Prim::Mul, vec![block(), var("x")]), lit(1i64)),
+            ),
+            "x -> ({ y = 5; y } * x + 1)",
+        ),
+        (
+            lam(
+                &["x"],
+                prim(
+                    Prim::TupleGet,
+                    vec![
+                        let_("y", prim(Prim::Tuple, vec![var("x"), lit(1i64)]), var("y")),
+                        lit(0i64),
+                    ],
+                ),
+            ),
+            "x -> ({ y = (x, 1); y }[0])",
+        ),
+    ];
+    for (t, want) in &cases {
+        assert_eq!(message(t), *want);
+        reads_back_the_same(t, want, &ints);
+        // The other printers parenthesize every operator and every receiver that is not a
+        // primary, so their text starts with `(` already.
+        reads_back_the_same(t, &shown(t), &ints);
+    }
+    // A body that is a block stays one, with no parentheses.
+    assert_eq!(message(&lam(&["x"], block())), "x -> { y = 5; y }");
+    // A match arm: `match` is not read back at this step (see
+    // `a_binding_reading_or_rebinding_a_name_a_pattern_or_fam_binds_reads_back`), so its text
+    // is checked.
+    let arms = vec![
+        (Pattern::Lit(Value::Int(1)), add(block(), var("x"))),
+        (Pattern::Wild, lit(0i64)),
+    ];
+    let t = lam(&["x"], Term::Match(Shared::new(var("x")), arms));
+    assert_eq!(
+        message(&t),
+        "x -> match x { 1 -> ({ y = 5; y } + x), _ -> 0 }"
+    );
+}
+
+/// Claude C-2 of round 3 (PRINT-port-names-taken): a binder that takes a new name does not take
+/// the name of a port read or pushed under it. `port.read(p)` is a form of the printer only,
+/// which no program writes, so the text is not read back; written `x2`, the binder would read
+/// to a person as the port's argument.
+#[test]
+fn a_binder_taking_a_new_name_does_not_take_a_ports_name() {
+    let read = lam(
+        &["x@1"],
+        let_("x@2", lit(5i64), add(Term::Read("x2".into()), var("x@1"))),
+    );
+    assert_eq!(message(&read), "x -> { x3 = 5; port.read(x2) + x }");
+    let push = lam(
+        &["x@1"],
+        let_(
+            "x@2",
+            lit(5i64),
+            Term::Push("x2".into(), Shared::new(var("x@1"))),
+        ),
+    );
+    assert_eq!(message(&push), "x -> { x3 = 5; port.push(x2, x) }");
+}
+
 /// A part named in the text does not take a name the term writes: a parameter `part1` moves
 /// the part to `part2`, and a name `env1` moves the env to `env2`.
 #[test]

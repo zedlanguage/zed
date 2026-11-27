@@ -168,6 +168,10 @@ pub fn written(t: &Term, name: fn(&str) -> &str, resolves: Resolves<'_>) -> Stri
 /// are given a kernel name of their own that the term holds nowhere, spelled `name(k)`, in the
 /// term returned; otherwise the term is `t` and none is returned.
 ///
+/// The name of a port read or pushed, `port.read(p)`, is taken as a name the text writes: that
+/// form is the printer's, which no program writes and the resolver does not read, but a binder
+/// respelled `p` would read to a person as the port's argument (round 3: Claude C-2).
+///
 /// What this cannot tell apart: two names `t` does not bind with one spelling, `x@1` and
 /// `x@2` both free, are one name in the text; elaboration binds every name it renames, so a
 /// whole program's term has none.
@@ -197,6 +201,9 @@ fn respelled(t: &Term, name: fn(&str) -> &str) -> (Option<Term>, HashMap<String,
     while let Some(step) = todo.pop() {
         match step {
             Step::Term(u) => {
+                if let Term::Read(p) | Term::Push(p, _) = u {
+                    taken.insert(p);
+                }
                 if let Term::Var(k) = u {
                     let k: &str = k;
                     taken.insert(name(k));
@@ -1049,9 +1056,79 @@ impl<'a> Pieces<'a> {
         }
         match rebinds {
             true => self.block(body),
-            false => self.term(body),
+            false => self.body(body),
         };
         self.end()
+    }
+
+    /// `t` after a `->`, of a lambda or a match arm: in parentheses when its text starts with a
+    /// `{` and `t` is not a block ([`Pieces::starts_with_block`]), as `x -> ({ y = 5; y } + x)`.
+    /// The grammar reads a `{` right after `->` as the body's block (sec:grammar, `Lambda` and
+    /// `Arm`: `Block | !'{' Expr`), so `x -> { y = 5; y } + x` ends the body at its `}` and is
+    /// refused (PRINT-block-left-operand-in-lambda-body).
+    fn body(&mut self, t: &'a Term) -> &mut Self {
+        match self.starts_with_block(t) {
+            true => self.cat().text("(").term(t).text(")").end(),
+            false => self.term(t),
+        }
+    }
+
+    /// Whether the text of `t`, which is not a block itself, starts with a block's `{`: a block
+    /// first on the left of an operator, of a connective, or as a receiver, each written bare
+    /// in [`written`]'s text. The other printers parenthesize every operator and every receiver
+    /// that is not a primary ([`Piece::Operand`]), so their text never does. The walk follows
+    /// the left side as [`Pieces::lay_out`] writes it and stops at the first part written with
+    /// a parenthesis, a label, or a token that is not a `{`.
+    // Complexity tradeoff: O(the left spine of `t`), whose parts the text writes first, so each
+    // body adds at most its own text; the parts are then laid out as before.
+    fn starts_with_block(&mut self, t: &'a Term) -> bool {
+        if !self.minimal() || matches!(t, Term::Let(..)) {
+            return false;
+        }
+        let mut t = t;
+        loop {
+            if self.labeled(t) {
+                return false;
+            }
+            t = match t {
+                // A binding reading its own name is written as a call, `(x -> rest)(e)`.
+                Term::Let(..) => return !self.own(t),
+                // A receiver is parenthesized below its level, as a number is (`receiver_level`).
+                Term::Prim(Prim::TupleGet | Prim::Get | Prim::At | Prim::GetAtomKey, args)
+                    if args.len() == 2 =>
+                {
+                    if written_level(&args[0]) < receiver_level(&args[0]) {
+                        return false;
+                    }
+                    &args[0]
+                }
+                Term::Prim(Prim::Count | Prim::First | Prim::Last, args) if args.len() == 1 => {
+                    if written_level(&args[0]) < receiver_level(&args[0]) {
+                        return false;
+                    }
+                    &args[0]
+                }
+                Term::Prim(p, args) if args.len() == 2 && infix(*p).is_some() => {
+                    let (l, _) = level::operands(level::binary(*p).expect("an infix operator"));
+                    if written_level(&args[0]) < l {
+                        return false;
+                    }
+                    &args[0]
+                }
+                Term::If(c, a, b) => match connective(a, b) {
+                    Some((and, false, _)) => {
+                        let op = if and { Prim::And } else { Prim::Or };
+                        let (l, _) = level::operands(level::binary(op).expect("an infix operator"));
+                        if written_level(c) < l {
+                            return false;
+                        }
+                        &**c
+                    }
+                    _ => return false,
+                },
+                _ => return false,
+            };
+        }
     }
 
     fn evidence(&mut self, ev: &Evidence) -> &mut Self {
@@ -1289,7 +1366,7 @@ impl<'a> Pieces<'a> {
                     if i > 0 {
                         self.sep();
                     }
-                    self.cat().pattern(p).text(" -> ").term(t).end();
+                    self.cat().pattern(p).text(" -> ").body(t).end();
                 }
                 self.end().end();
             }
