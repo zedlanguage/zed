@@ -51,11 +51,11 @@ fn a_fold_of_rows_that_are_all_empty_needs_else() {
     // A row that is always empty has no entries and no type of entry, so `r >< max` always
     // fails, and the refusal is at the fold, not at the `+` after it (DESIGN sec:failure,
     // limit (2); row FAIL-empty-literal-fold-always-fails). `(+)` on a row that may hold an
-    // `int` folds the empty one to its identity `0` (case `sum_of_an_empty_row_is_zero`).
-    for (name, body) in [
-        ("empty_row", "${{0 -> []}.map(r -> (r >< max) + 1)}"),
-        ("empty_rows", "${[[], []].map(r -> (r >< max) + 1)}"),
-    ] {
+    // `int` folds the empty one to its identity `0` (case `sum_of_an_empty_row_is_zero`). The
+    // same row in a map display, `{0 -> []}.map(…)`, is refused by `map` before the fold is
+    // checked, with a headline that does not name the fold (plan row
+    // MSG-map-display-row-fold-headline).
+    for (name, body) in [("empty_rows", "${[[], []].map(r -> (r >< max) + 1)}")] {
         let e = refused(name, body);
         assert!(
             e.contains("`r >< max` here always fails with `#empty`"),
@@ -90,15 +90,26 @@ fn a_fold_of_an_empty_display_always_fails() {
 #[test]
 fn a_fold_that_may_have_entries_is_not_refused() {
     // The rule refuses only a receiver proved to have no entries. A value that is `[]` on one
-    // branch alone may have entries, and the checker does not evaluate `1 > 2` (it never runs
-    // the program's code), so the fold is accepted; each row of a display of rows that holds
-    // `[]` beside a row with entries is `a_fold_of_a_row_that_may_be_empty_passes_empty_by`.
-    for body in [
-        "${(if 1 > 2 { [3, 4] } else { [] }) >< (+)}",
-        "${(if 1 > 2 { [3, 4] } else { [] }) >< max}",
+    // branch alone, of a test the checker cannot decide, may have entries, so the fold is
+    // accepted. The test reads the command line, which only the run gives: a test of literals
+    // alone, as `1 > 2`, the checker decides from their types, leaving the `if` the type of
+    // `[]` alone. Run with no arguments, the fold meets `[]`: `(+)` gives its identity, and
+    // `max`, which has none, gives `#empty`, which the `else` takes. Each row of a display of
+    // rows that holds `[]` beside a row with entries is
+    // `a_fold_of_a_row_that_may_be_empty_passes_empty_by`.
+    for (body, out) in [
+        (
+            "${(if m.args[0] is #outOfBounds { [] } else { [3, 4] }) >< (+)}",
+            "0",
+        ),
+        (
+            "${((if m.args[0] is #outOfBounds { [] } else { [3, 4] }) >< max) else #empty -> 0}",
+            "0",
+        ),
     ] {
         let ran = run("branch", body);
         assert_eq!(ran.status, 0, "{body}: {}", ran.stderr);
+        assert_eq!(ran.stdout.trim(), out, "{body}");
     }
 }
 
