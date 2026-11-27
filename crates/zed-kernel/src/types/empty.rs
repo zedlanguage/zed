@@ -8220,6 +8220,19 @@ impl<'m> Searching<'m> {
     /// Whether no tuple in the box `r` is in `f`, decided on a region of its own.
     async fn piece(&'m self, r: Vec<Type>, f: Part<Row>, may_cover: bool) -> bool {
         if f.is_leaf() == Some(false) {
+            // A guard, never reached (TEST-kernel-unreached-paths-16, proof checked by
+            // reading, b31-kernel 2026-11-27): no caller passes a `false` part.
+            // `disjuncts_empty`'s parts come from `Part::disjoint_disjuncts`, the operands of
+            // `Or` expressions, and `connect` (bdd.rs, `mod build`, the only maker of a formed
+            // expression) folds a leaf operand away, so none is a leaf; `is_leaf` is `Some`
+            // only for `Bdd::Leaf`. `split_classes` passes `each` a part only when `is_leaf()
+            // != Some(false)` in its halves, and `out` in its `!wide` branch; `Each::Decide`
+            // comes only from the classes of `overlaps` (`!by_keys`), whose groups partition
+            // the open cells of component `j`, and each tuple type has one cell there
+            // (`Region::cell`), so each is in one class, `wide` is then `out.is_leaf() ==
+            // Some(false)`, and `!wide` passes a non-false `out`. The row's earlier note that
+            // this line is reachable from `!wide` with `out` false is wrong for that reason.
+            // Kept so that a new caller with a false part gets the right answer.
             return true;
         }
         let h = self.region(r, &f).await;

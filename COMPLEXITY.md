@@ -1066,6 +1066,21 @@ counted passes that cost. The constants are unit, as above; at k = 256 the test'
 
 Since POLY-crossover-bench (2026-11-13) the dense product is taken when its estimate, `DENSE_COST` + `SLOT_COST` per output slot + `num::mul_cost` of the two packed integers, is at most the sparse product's, `t1 t2` times `PAIR_COST` + `num::mul_cost` of the widest coefficients (`poly::Choice`), all in units of one word product (about 16 instructions). `num::mul_cost` is the estimate `num::mul` chooses its own method by (schoolbook to `MUL_LEAF`, Toom by `TOOM_COST`, the transforms by `transform_plan`), so a packed product of a few words is no longer costed as a transform. The three constants are fitted jointly over six shapes, each run once per constant (`poly-dense 1`, `poly-dense 4`, `poly-gaps 64`, `poly-gaps 16`, `poly-wide 2`, `poly-wide 8`): `PAIR_COST` = 60, `SLOT_COST` = 40, `DENSE_COST` = 700. With them the choice takes at most 1.087 times the less work (`poly-dense 4`, whose fit, `PAIR_COST` 67 to 84, does not meet `poly-dense 1`'s, 48 to 67) on every shape but `poly-wide 8`, which takes 1.30 times at every value of the three: `num::mul_cost` does not count the zero words that packing leaves between slots, so it overcounts the packed product there; counting them would read the factors, `O(L)`, for each choice. Without `DENSE_COST` (two constants) the best joint fit was 1.41. Cost of the choice: two `num::mul_cost` calls, `O(log L)`, beside the plan's `O(t1 + t2)` pass. The dense charge to the work limit now adds the dense product's fixed and per-slot cost the choice counts, at `PAIR` / `PAIR_COST` units of the limit per word product: without it `(x + y) ^ 72 - x`, whose products the new choice makes dense, took 2.1 to 2.4 times its prediction (POLY-nf-work). Tests: `poly::tests::the_choice_of_product_by_shape` (16 dense terms dense, 16 terms 4096 apart sparse, a span past `usize` sparse with no overflow, one term each sparse), `poly::tests::mul_cost_at_its_corners`, `l03_09_egraph::choice` (8, 16 and 32 dense terms of one-word coefficients dense and 2 terms of 16, 128 and 1024 words sparse, each product equal by both methods; the chosen product of two univariate sums of 1000 and 8000 terms, 12.35 M and 107.45 M instructions, 8.7 times, 0.78 MB and 6.28 MB, 8.0 times, limit 13). Negative control, run once, not committed: with the old choice both shape tests of `l03_09_egraph::choice` fail (8 terms; 16 words). Since POLY-square-choice-cost (2026-11-14) the choice charges a square squared by transforms `SQUARE_SHARE` (2/3) of the packed integer's `num::mul_cost`, as the work charge does (two transforms per prime in place of three): on `crossover poly-square 256 pair` (the square of 256 one-word terms about every `g` indices) the whole cost took the sparse product from gap 25, at up to 1.547 times the dense product's instructions, and the share takes it from gap 32, at up to 1.124 times, against a measured crossover of 34; the rest is `PAIR_COST`, which squares fit at 65.8 to 71.3 (row POLY-square-sparse-half, which also halves the pairs of a sparse square). At 64 terms the packed integer is squared by Toom in a release build, so the share does not apply. Test: `poly::tests::a_square_is_chosen_at_its_share` (64 terms about every 18 indices dense at the share and sparse at the whole cost, every 256 sparse; equal products by both methods); it fails on the old choice. Since POLY-square-sparse-half (2026-11-14) the sparse product of a square forms its `t (t + 1) / 2` pairs `i <= j` only (`Poly::sparse_square`: the cross products sorted and summed per monomial, each sum doubled once, the sorted diagonal merged in; exact on `BigInt`), and `Poly::pairs` counts them for the choice and the charge. Naive: all `t^2` pairs, `O(t^2 log t)` comparisons and `t^2` coefficient products; now about half of each, the same order. On squares of 63 to 511 one-word terms it takes 0.48 to 0.67 of the general product's instructions and 0.50 to 0.57 of its bytes; T(8n)/T(n) 8.0 to 8.9. A halved pair costs more than a general one (the doubling and the merge of the diagonal): alone, `poly-square 256 pair` fits `PAIR_COST` 76.8 to 82.2, outside `poly-dense 1`'s 48 to 66.5, so `SQUARE_PAIR_COST` = 20 (fit 16.8 to 22.2) is added to each of a square's pairs, in the choice and, at `CHOICE_UNIT`, in the charge; `PAIR_COST`, `SLOT_COST` and `DENSE_COST` stay 60, 40, 700, inside the joint fit over the seven shapes less `poly-wide 8` (58.5 to 65.3, 26.4 to 43.7, 596 to 996). The square now takes the sparse product from gap 20, its measured crossover, at worst 1.000 times the less work, against 1.124 before; the other shapes are unchanged within the run-to-run spread (worst 1.086 on `poly-dense 4`, 1.300 on `poly-wide 8`). `SQUARE_PAIR_COST` was fitted at 256 terms only. Tests: `poly::tests::a_square_by_its_pairs_once_agrees_with_the_general_product` (empty, one term, two terms, colliding exponents, negative and 2^400-sized coefficients, cancelling cross terms, sparse keys, and `mul` with its charge), `poly::tests::a_square_counts_each_unordered_pair_once`; both fail with the old pair count, as does `a_square_is_chosen_at_its_share`.
 
+POLY-support-cost-ranking (b31-kernel, 2026-11-27): the support product's estimate of the
+support's size (`SupportSetup::estimate`) is the median of 9 means of 16 drawn pairs, in place of
+the mean of 32 (Lugosi and Mendelson, FoCM 19 (2019), doi:10.1007/s10208-019-09427-x; the
+argument and its departure at the site). Cost: 144 draws in place of 32, small against the
+millions of units of the rounds. Measured with `crossover poly-support-units
+16` and `1` (`--exact`, instructions by `perf_event_open`, local): spent over estimated is 0.60
+to 0.94 at width 16 and 0.69 to 1.40 at width 1, against 0.29 to 1.20 and 0.44 to 2.47 (spreads
+1.56 and 2.04 against 4.1 and 5.6). `SUPPORT_COST` refit from 5.43 to 7.5: over `poly-support 1`,
+`4`, `16` and `poly-support-gaps 256` the windows meet from 6.369 to 8.962, 41% wide (before 0.4%),
+worst 1.0818 (width 16, whose best alone is 1.0438); at 5.43 the worst was 2.34 (width 1) and
+2.04 (width 4). Up to `k` = 512 at widths 1 and 4 the support product never did less work than
+the sparse square. Not done: the expected number of rounds in `cost` in place of two. Test:
+`poly::tests::the_support_estimate_is_near_the_support_of_the_bench_squares` (fails on the mean
+of 32 at `k` = 350 and 450).
+
 ### PRINT-below-whole, `zed-kernel/src/num/fast.rs` `PRINT_WHOLE` and `PRINT_HANDOFF`, measured 2026-11-12
 
 The first crossovers set by a benchmark under the rule of DESIGN.md sec:plan (author,
@@ -1242,7 +1257,52 @@ reciprocal took 1.32 times num-bigint's time at 4097 by 2049 words (2,307,471 ag
 1,744,351 ns, spread 1.111), against 0.749 at 4095 by 2048, so the step is real in time as
 well as in instructions. `DIV_COST` 9.1 takes num-bigint there, as it should; it is 1.0303
 times the less work at worst over these sizes, and its fit over them alone is 11.18 to 11.40.
-That row's model of the step is still open; this does not block it.
+That row's model of the step: built by b31-kernel on 2026-11-27. `newton_cost` charges a
+quotient wider than its divisor by the transforms its `Divisor`'s one Level does, on that
+Level's points (`(5/3) level(L) + (level(L) + level(C)) / 3 + B (2/3) (level(L) + level(C))`
+for `B` blocks; the derivation is at `newton_cost`). Measured with `crossover div-leaf` and
+`rem-leaf` with `--exact`, in instructions (the hardware counter by `perf_event_open`,
+`zed-alloc-count`, run locally on 8 cores at load 15 to 24), the old cost (base 26fefa48e)
+against the new on the same sizes, the worst as built at `DIV_COST` 9.1:
+
+| shape | old | new | best window, new |
+|---|---|---|---|
+| `div-leaf 1 1 1` | 1.2446 (8194 by 4097) | 1.0928 (5792 by 2896) | 8.9289 to 8.9834 |
+| `div-leaf 1 1 2048` | 1.1679 (6145 by 2049) | 1.0000 | 9.0250 to 9.1356 |
+| `div-leaf 4 1` | 1.0000 | 1.0000 | 9.0467 to 9.2005 |
+| `div-leaf 16 1` | 1.0164 | 1.0175 (4351 by 256) | 9.0476 to 9.2245 |
+| `div-leaf 256 1` | 1.0000 | 1.2780 (32895 by 128) | 8.5665 to 8.8090, at 1.1082 |
+| `rem-leaf 2`, `4` | 1.0000 | 1.0000 | |
+| `rem-leaf 16` | 1.0019 | 1.0011 | |
+| `rem-leaf 256` | 1.0802 (32896 by 128) | 1.0422 | 8.9970 up |
+| `div-leaf 1 1` (narrow, code unchanged) | 1.0727 | 1.0723 | 8.1431 to 8.2770 |
+
+The row's straddles are fixed: at 6145 by 2049 (`1 1 2048`) and from 8194 by 4097 to 9332 by
+4666 (`1 1 1`) the build now takes the method that does less work; at 9536 by 4768 it still
+takes the reciprocal at 1.008 times num-bigint's work, on the old cost and the new. Two
+exceptions remain, stated here with their measurement:
+
+- `div-leaf 1 1 1` at 5792 by 2896 words: the reciprocal at 39,345,651 instructions against
+  num-bigint's 36,005,422 (1.093). The quotient is 2897 words, one block, where the wide
+  formula is the narrow one, `(8/3) level(2 bw) + level(bw)`; the narrow branch makes the same
+  error at 5791 by 2896 (`div-leaf 1 1 0`, 1.072 on both the old and the new build), so it is
+  that branch's error at 2896 words, not this row's.
+- `div-leaf 256 1` at 32895 by 128 words, a regression: the build takes the division past the
+  leaf, whose `Divisor` takes the reciprocal for its blocks, 78,039,506 instructions and
+  4,302,400 bytes, against num-bigint's 61,063,596 and 19,408,848 (1.278). The old cost took
+  num-bigint's whole division there, the less work, by a margin of about 1.3% in its cost (by
+  my computation of both costs; its path past the leaf, with num-bigint's blocks, took
+  69,516,460). The Level's points are those the cost charges (L = 256, C =
+  `cyclic_points(8192)` = 128), but the work per unit of cost is not level over the shape: the
+  reciprocal took 21.7 instructions a unit at 128 words, 21.0 at 256, 19.1 at 512 and 17.6 at
+  2048 (the linear work per point, the folds, Garner's step and the corrections, which the cost
+  leaves out, weighs more where `log2 N` is small: `a + b / (the points' mean log2)` with `a`
+  9.74 and `b` 91.7 fits 128 and 2048 and reads 20.3, 19.2 and 18.3 at 256, 512 and 1024), and
+  num-bigint 16.4 at 128 words, 17.6 at 256 and 19 to 22 from 362 (its Burnikel-Ziegler
+  levels, which `num_bigint_div_cost` does not model). The two errors together are 1.32 at 128
+  and 1.19 at 256, so no `DIV_COST` fits both (the shape's best is 1.108). The fix is a cost
+  per point for the reciprocal and num-bigint's levels in its cost, both new fitted terms with
+  a refit of the six shapes: plan row PERF-div-small-divisor-linear-work (owner b31-kernel).
 
 RADIX-balanced-mul-regress (2026-11-22, load 55 to 90): the new `wrap 4096` and `wrap 8192`
 found the wrapped plan of `points` taken where it does more work (1.014 times at 1411 words),

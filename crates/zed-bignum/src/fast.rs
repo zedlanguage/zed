@@ -2869,7 +2869,12 @@ fn sparse_div_cost(qw: usize, b: &BigUint) -> f64 {
 /// (likewise, `dc` kept), two transforms on each. The first block is long division, O(bw)
 /// ([`Divisor::blocks`]), not counted. So `(5/3) level(L) + (level(L) + level(C)) / 3 + B (2/3)
 /// (level(L) + level(C))`. The word-level work outside the transforms (the folds, Garner's
-/// step, the corrections) is linear and left out, as in the narrow branch.
+/// step, the corrections) is linear and left out, as in the narrow branch. Measured against
+/// the old cost on the six shapes (COMPLEXITY.md, the division notes, 2026-11-27): the
+/// straddles at 6145 by 2049 and 8194 by 4097 words now take the less work, but `div-leaf 256 1`
+/// at 32895 by 128 words takes the reciprocal at 1.278 times num-bigint's instructions, where
+/// the old cost took num-bigint; that linear work weighs most at small divisors (plan row
+/// PERF-div-small-divisor-linear-work).
 fn newton_cost(qw: usize, bw: usize) -> f64 {
     let level = |coeffs: usize| TRANSFORM_COST * points_cost(coeffs.next_power_of_two()) as f64;
     match qw > bw {

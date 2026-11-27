@@ -158,7 +158,16 @@ const SUPPORT: f64 = CHOICE_UNIT * SUPPORT_COST;
 /// squares left to the sparse product. Set inside the window, not rounded to 5.4, which would
 /// take the 1.78 case. The estimate ranks these inputs loosely (the 16-word square at
 /// `k = 304` has the highest flip, 9.4, and took 1.56 times): POLY-support-cost-ranking.
-const SUPPORT_COST: f64 = 5.43;
+/// Refit with the support's size estimated by a median of means (`SupportSetup::estimate`,
+/// POLY-support-cost-ranking, b31-kernel, 2026-11-27, `crossover poly-support 1`, `4`, `16`
+/// and `poly-support-gaps 256` with `--exact`, instructions by `perf_event_open`, local): no
+/// measured `k` up to 512 at widths 1 and 4 has the support product doing less work, and at
+/// 5.43 it was taken at 2.34 and 2.04 times the sparse square's instructions; the windows are
+/// 6.369 up (width 1), 5.740 up (4), 5.266 to 6.166 at 1.0438 and 6.166 to 8.962 at 1.0818
+/// (16), 3.669 up (gaps). They meet from 6.369 to 8.962, 41% wide, worst 1.0818 (width 16,
+/// where no value is below 1.0438); set inside it. Not done: the expected number of rounds in
+/// `cost` in place of two, the row's second step.
+const SUPPORT_COST: f64 = 7.5;
 
 /// The cost of a pair of the sparse product besides its coefficients' product, in `Poly::mul`'s
 /// choice of method, in the units of `num::mul_cost` (one word product, about 16 instructions).
@@ -2786,7 +2795,8 @@ impl SupportSetup {
     /// [`SUPPORT_COST`]'s fit; what the choice needs is that the estimate ranks the inputs.
     ///
     /// Source: G. Lugosi and S. Mendelson, "Mean estimation and regression under heavy-tailed
-    /// distributions: a survey", Found. Comput. Math. 19 (2019), arXiv:1906.04280, Section 2.1
+    /// distributions: a survey", Found. Comput. Math. 19(5) (2019) 1145-1190,
+    /// doi:10.1007/s10208-019-09427-x, arXiv:1906.04280, Section 2.1
     /// (checked 2026-11-27 in the arXiv LaTeX source, lines 417-470, recorded in the spec
     /// repository's verification/bib.md as GaborLugosi2019mean): the estimator "calls for
     /// partitioning the data into k groups of roughly equal size, computing the empirical mean
@@ -2796,7 +2806,11 @@ impl SupportSetup {
     /// <= 1`, so the bound is a relative error of `2 sqrt(t1 t2 / (GROUP s))`, about 9 at `k =
     /// 350`), so it proves little here; the argument above, on how many groups a rare draw
     /// reaches, is what the choice uses, and it is not a proof of ranking. Measured by
-    /// `crossover poly-support-units` (estimated over spent, per `k`); tested by
+    /// `crossover poly-support-units` (estimated over spent, per `k`): on the mean of 32 draws
+    /// spent over estimated ran 0.29 to 1.20 at width 16 and 0.44 to 2.47 at width 1 (b22-kernel14,
+    /// 2026-11-24); on this median of means, 0.60 to 0.94 and 0.69 to 1.40 over the same `k`
+    /// (b31-kernel, 2026-11-27, instructions by `perf_event_open`, local), spreads 1.56 and 2.04
+    /// against 4.1 and 5.6. Tested by
     /// `tests::the_support_estimate_is_near_the_support_of_the_bench_squares`, which fails on
     /// the mean of 32 draws (k = 350 and 450) and cannot catch a shape it does not build.
     fn estimate(&self, rng: &mut u64) -> f64 {
