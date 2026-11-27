@@ -303,6 +303,45 @@ fn the_note_on_a_push_prints_the_types_the_call_binds() {
     assert!(out.contains("y: _, out: Lines) -> ()`"), "{out}");
 }
 
+#[test]
+fn the_note_on_a_push_of_a_written_and_an_unwritten_parameter_prints_both() {
+    // The same paragraph gives both halves: a written `T` prints as `T`, and a parameter no
+    // declaration named prints as what the call binds it to. A value holding both kept the
+    // body's type whole, `_` and all (plan row MSG-push-note-mixed-written-unwritten, whose
+    // program, `h(x, positional z: T, out: Lines)`, is refused for its order and its lone `T`;
+    // here it is DESIGN's `k` with the unwritten `x` added).
+    for n in [1, 3] {
+        notes_of_mixed_pushes_print_both(&mixed_pushes(n), n);
+    }
+}
+
+/// `n` functions as `h` of DESIGN's `k` with an unwritten `x` added, each called by `main`
+/// with arguments of its own, so each call is refused with its own note.
+pub(super) fn mixed_pushes(n: usize) -> String {
+    let mut src = String::new();
+    for i in 0..n {
+        src += &format!(
+            "h{i}(positional z: T, positional w: T, x, out: Lines) {{ out <- [x, z, w]; }}\n"
+        );
+    }
+    src += "main(m: MainArgs) {\n";
+    for i in 0..n {
+        src += &format!("    h{i}({}, {}, x: {}, out: m.stdout);\n", 3 * i, 3 * i + 1, 3 * i + 2);
+    }
+    src + "}\n"
+}
+
+/// The rejection of [`mixed_pushes`]`(n)` notes each pushed value as its call binds the
+/// unwritten `x`, beside the written `T`, and no note prints `_`.
+pub(super) fn notes_of_mixed_pushes_print_both(src: &str, n: usize) {
+    let out = rejected(src);
+    for i in 0..n {
+        let note = format!("this expression is (0 | 1 | 2) -> {} | T\n", 3 * i + 2);
+        assert!(out.contains(&note), "{note}: {:?}\n{out}", lines_with(&out, "this expression is"));
+    }
+    assert!(!out.contains("-> _\n") && !out.contains("| _\n"), "{out}");
+}
+
 /// The step on the declaration of `k` in `out`, from "the type the checker found" to the end
 /// of its line.
 fn declared_k(out: &str) -> String {

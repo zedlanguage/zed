@@ -10,6 +10,7 @@ mod fresh_names;
 mod group_site;
 mod layout;
 mod main_limits;
+mod mixed_push_notes;
 mod negative_literals;
 mod neglit;
 mod overload_cycles;
