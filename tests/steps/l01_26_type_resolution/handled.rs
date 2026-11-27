@@ -720,6 +720,30 @@ fn a_component_read_beside_a_handled_read_adds_no_atom_from_outside() {
     }
 }
 
+/// Row PRINT-underscore-hides-number: the `_` that `k`'s printed type gives the result of
+/// `a[0]` is the `_` of a parameter, which means a type the parameter's uses decide, not every
+/// value (DESIGN.md sec:diagnostics, "Types in a message": "`y: _`, though its uses need a
+/// string"; sec:type_resolution, rule 4: "A `_` in the type written for a parameter … is
+/// inferred as an unwritten type is"). So the need that `a[0]` be a number stays: a pair whose
+/// first component is a string is refused, and a pair of ints, the control, is accepted. (The
+/// printed parameter type cannot be written back into the program here: its key `0` is a
+/// literal type, which this zedc does not read in a program yet.)
+#[test]
+fn the_underscore_of_a_handled_read_is_a_type_its_uses_decide() {
+    let k = "k(positional a) = (a[0] else #outOfBounds -> 0) + a[1];\n";
+    assert!(sig(k, "k").contains('_'), "{}", sig(k, "k"));
+    assert_ne!(
+        type_errors(&format!("{k}b = k((\"x\", 1));\n")),
+        Vec::<String>::new(),
+        "a string at `a[0]` meets no number"
+    );
+    assert_eq!(
+        type_errors(&format!("{k}b = k((1, 2));\n")),
+        Vec::<String>::new(),
+        "two ints meet both needs"
+    );
+}
+
 /// A read of a display at a computed key, beside a handled read, keeps the atom the read
 /// makes: `[10, 20][a[1]]` misses with `#outOfBounds`, an atom of the body's own, not the
 /// parameter's, so the result gives it (the control of
