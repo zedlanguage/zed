@@ -63,6 +63,14 @@ if [ -n "${ZED_DOC_CHANGES-}" ]; then
   changed=$(awk -F '\t' '$1 == "changed" { print $2 }' "$ZED_DOC_CHANGES" | sort -u)
   names=$(awk -F '\t' '$1 == "name" { print $2 FS $3 FS $4 }' "$ZED_DOC_CHANGES" | sort)
   where=(--no-index --exclude-standard)
+  # git grep --no-index still looks for a repository above the copy and, finding one, applies its
+  # ignore files: a Colab job's /content/src is one (colab/job.sh commits the snapshot there and
+  # rsyncs it with its .git) and ignores /build/, so in a copy under its build/, as
+  # tools/test_check_changed_docs.sh's run_copy makes, every file was excluded, no lost name was
+  # found and the case "a copy with no .git documents each package whose docs link a renamed item"
+  # failed on every VM (found under PERF-doc-check-every-run, 2026-11-27). The search stops at the copy:
+  # the copy's own ignore files apply, a repository above it is not looked for.
+  ceiling=$(dirname "$(pwd -P)")
 else # Up to the `fi` after `--changes` prints them: the changes from git.
 if ! base=$(git merge-base HEAD origin/main 2>/dev/null); then
   [ "$mode" = changes ] && exit 0
@@ -82,7 +90,7 @@ if ! base=$(git merge-base HEAD origin/main 2>/dev/null); then
     "or name the run that did the check in ZED_DOC_CHECKED."
   exit 1
 fi
-where=(--untracked)
+where=(--untracked) ceiling=
 # One pass over the diff of the working tree from the point where this branch left origin/main (the
 # commits of the branch and every change not yet committed), with three lines of context so that
 # the item under a changed attribute is in the hunk. It prints one tab-separated line per fact:
@@ -212,7 +220,7 @@ fi # ZED_DOC_CHANGES
 # an existing link ambiguous. `tools/run_tests.sh --doc`, which documents the whole workspace, finds those.
 linking=
 if [ -n "$names" ]; then
-  linking=$(git grep -I -n -E "${where[@]}" '^[[:space:]]*(//[/!]|#!?\[doc).*\[' -- '*.rs' |
+  linking=$(GIT_CEILING_DIRECTORIES=$ceiling git grep -I -n -E "${where[@]}" '^[[:space:]]*(//[/!]|#!?\[doc).*\[' -- '*.rs' |
     awk -v names="$names" '
       # lost[name] is 1 for a name any file may link; scope[name] lists, for a private one, the
       # file it was declared in and the directory of the modules under it (the files that alone
