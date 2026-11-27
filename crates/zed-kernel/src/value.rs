@@ -5447,6 +5447,8 @@ impl From<TooLong> for KernelError {
     }
 }
 
+pub mod canon;
+
 #[cfg(test)]
 mod bench;
 

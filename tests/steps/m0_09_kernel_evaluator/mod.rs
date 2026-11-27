@@ -1013,8 +1013,48 @@ fn a_lookup_port_is_read_by_key() {
     let rate = Value::str(r#"rate at (0.0, "usd")"#);
     assert_eq!(out, Value::tuple(vec![rate.clone(); 3]));
     assert_eq!(port.0.load(Ordering::SeqCst), 1);
-    let keys: Vec<&Value> = run.world.reads["rates"].keys().collect();
+    let reads = run.world.reads["rates"].clone().into_map();
+    let keys: Vec<&Value> = reads.keys().collect();
     assert_eq!(keys, [&Value::tuple(vec![Value::float(0.0), s("usd")])]);
+}
+
+/// Answers `0` at every key, reading nothing of it, and counts the times it is asked.
+#[derive(Debug, Default)]
+pub(crate) struct Asked(pub(crate) AtomicUsize);
+
+impl Lookup for Asked {
+    fn get(&self, _key: &Value) -> Result<Value, String> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(Value::Int(0))
+    }
+}
+
+/// The tuple of the reads of the lookup port `asked` at `n` joins, each of a distinct 5-byte
+/// seed doubled 60 times (`5 · 2^60` bytes), and at `n` tuples, each of a distinct number
+/// doubled 40 times (`2^40` places), each key built twice, apart: `4n` reads at `2n` keys.
+pub(crate) fn doubled_reads(n: usize) -> Term {
+    let read = |k: Term| get(Term::Read("asked".into()), k);
+    let reads = (0..n).flat_map(|i| {
+        let join = move || doubled(lit(format!("s{i:04}").as_str()), 60, false);
+        let tuple = move || doubled(lit(i as i64), 40, true);
+        [read(join()), read(join()), read(tuple()), read(tuple())]
+    });
+    prim(Prim::Tuple, reads.collect())
+}
+
+/// The world keeps the answers of a lookup port by the canonical forms of its keys
+/// (WORLD-reads-canon-keys): a join of `5 · 2^60` bytes and a tuple of `2^40` places, each built
+/// twice apart, are each asked once, and distinct ones apart. Before, the world's map ordered
+/// keys by `Value`'s order, which writes the join out and reads the tuple as a tree, and this did
+/// not end (negative control: the test on the base, timed out at 60 s).
+#[test]
+fn a_lookup_port_read_at_a_long_join_or_a_doubled_tuple_is_asked_once() {
+    let port = Arc::new(Asked::default());
+    let mut run = Evaluator::new(World::new().source("asked", port.clone()));
+    let out = run.run(&doubled_reads(3)).unwrap();
+    assert_eq!(out, Value::tuple(vec![Value::Int(0); 12]));
+    assert_eq!(port.0.load(Ordering::SeqCst), 6);
+    assert_eq!(run.world.reads["asked"].len(), 6);
 }
 
 /// A read of a port inside a pure region gives the value the wave holds, as outside one

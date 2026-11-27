@@ -53,7 +53,7 @@ mod completeness;
 #[cfg(test)]
 use zed_testkit::seed;
 
-pub use eval::{Commutes, Evaluator, Global, Globals, Lookup, Schedule, World, eval};
+pub use eval::{Commutes, Evaluator, Global, Globals, Lookup, Reads, Schedule, World, eval};
 pub use num::Rat;
 pub use provenance::{Fact, FactAddress, NodeAddress, Provenance};
 pub use term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Shared, Term, Witness};

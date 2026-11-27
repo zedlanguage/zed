@@ -28,8 +28,8 @@ use std::hash::{BuildHasher, BuildHasherDefault};
 use zed_collections::patricia::{branching_bit, mask};
 use zed_kernel::digest::{Digest, DigestMap, DigestSet};
 use zed_kernel::term::walk;
-use zed_kernel::text;
 use zed_kernel::types::{Type, defs as printed};
+use zed_kernel::value::canon::{Canon, Namer};
 use zed_kernel::{
     Evaluator, Global, Globals, KernelError, Lookup, Pattern, Shared, Term, Value, World,
 };
@@ -2234,8 +2234,10 @@ fn compared(v: &Value) -> bool {
 }
 
 /// A value as a key of the stage's maps: the value, and its canonical form, by which keys are
-/// equal and ordered. The canonical form names each string by its bytes ([`text::names::Names`])
-/// and each tuple or keypath by its kind and the forms of its parts ([`Namer`]), so two keys are
+/// equal and ordered. The canonical form ([`Canon`], kept in zed-kernel since the world keys a
+/// lookup port's answers by it too) names each string by its bytes
+/// ([`zed_kernel::text::names::Names`]) and each tuple or keypath by its kind and the forms of
+/// its parts ([`Namer`]), so two keys are
 /// equal exactly when their values are. The order is that of names, not of bytes, and no
 /// result depends on it: each map is only looked up, the run log is read in the order of the
 /// run (item STAGE-joined-eq-build), and the arms of a split, whose literal patterns are
@@ -2244,7 +2246,7 @@ fn compared(v: &Value) -> bool {
 // comparison, and a join doubled k times is 2^k bytes in O(k) nodes, so staging gave up
 // keying calls at joins (item STAGE-joined-eq). Here a key's strings are named once, when the
 // key is made, in O(n log N) dictionary steps for n nodes not named before and N bytes
-// ([`text::names::Names`]); each tuple is named by the forms of its parts in O(p log T) for p parts
+// (`text::names::Names`); each tuple is named by the forms of its parts in O(p log T) for p parts
 // and T tuples named, a shared tuple once by its id; and a comparison reads no byte and no
 // part. Tradeoff: each
 // node and tuple named is kept, with its summary, while the mix lives. Nothing is refused.
@@ -2259,96 +2261,6 @@ fn compared(v: &Value) -> bool {
 struct Key {
     canon: Canon,
     value: Value,
-}
-
-/// A value's canonical form.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum Canon {
-    /// A number, boolean, atom or family, compared as before.
-    Other(Value),
-    Str(text::names::Name),
-    /// A tuple or keypath, by its number in [`Namer::seqs`].
-    Seq(u64),
-}
-
-/// The names of the strings and the numbers of the tuples and keypaths of the keys of one mix.
-#[derive(Debug, Default)]
-struct Namer {
-    text: text::names::Names,
-    /// The number of each tuple (`false`) or keypath (`true`), by the forms of its parts.
-    seqs: BTreeMap<(bool, Vec<Canon>), u64>,
-    /// The number of each shared tuple met, by its id ([`Value::shared_parts`]). A sequence is
-    /// never changed in place and its id is never drawn again, so an id names one sequence.
-    seen: HashMap<u64, u64>,
-}
-
-impl Namer {
-    /// The canonical form of `v`, read on the heap, so a tuple of any depth is read, and each
-    /// shared tuple once.
-    fn canon(&mut self, v: &Value) -> Canon {
-        // The tuples and keypaths being read: each, its parts not yet read, and the forms of
-        // those read.
-        // Neither the `unreachable!` nor the `expect` below can fire: `known` gives `None`
-        // only for a tuple or a keypath (its other arms give `Some`), and `next` is `None`
-        // only when it was read by `rest.next()` from the iterator of `open`'s top entry,
-        // which is still on `open` then (it starts as `Some(v)`, and after a form is made
-        // the loop returns when `open` is empty, before `next` is read again).
-        let mut open: Vec<(&Value, std::slice::Iter<'_, Value>, Vec<Canon>)> = Vec::new();
-        let mut next = Some(v);
-        loop {
-            let c = match next {
-                Some(v) => match self.known(v) {
-                    Some(c) => c,
-                    None => {
-                        let (Value::Tuple(items) | Value::Path(items)) = v else {
-                            unreachable!("only a sequence is not known at once")
-                        };
-                        let mut rest = items.as_slice().iter();
-                        next = rest.next();
-                        open.push((v, rest, Vec::with_capacity(items.len())));
-                        continue;
-                    }
-                },
-                None => {
-                    let (v, _, parts) = open.pop().expect("a sequence being read");
-                    let fresh = self.seqs.len() as u64;
-                    let n = *self
-                        .seqs
-                        .entry((matches!(v, Value::Path(_)), parts))
-                        .or_insert(fresh);
-                    if let Some((id, _)) = v.shared_parts() {
-                        self.seen.insert(id, n);
-                    }
-                    Canon::Seq(n)
-                }
-            };
-            let Some((_, rest, parts)) = open.last_mut() else {
-                return c;
-            };
-            parts.push(c);
-            next = rest.next();
-        }
-    }
-
-    /// The form of `v` when it is known without reading parts: none for a tuple or keypath
-    /// not met before.
-    fn known(&mut self, v: &Value) -> Option<Canon> {
-        Some(match v {
-            Value::Str(s) => Canon::Str(self.text.name(s)),
-            Value::Tuple(_) | Value::Path(_) => {
-                let (id, _) = v.shared_parts()?;
-                Canon::Seq(*self.seen.get(&id)?)
-            }
-            Value::Bool(_)
-            | Value::Int(_)
-            | Value::Big(_)
-            | Value::Rat(_)
-            | Value::Float(_)
-            | Value::Float32(_)
-            | Value::Atom(_)
-            | Value::Family(_) => Canon::Other(v.clone()),
-        })
-    }
 }
 
 impl Key {

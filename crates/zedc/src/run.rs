@@ -247,7 +247,11 @@ impl Ports {
                 }
             }
         }
-        record.files = std::mem::take(&mut ev.world.reads);
+        // A key here is a path, and the record writes each out in full (`Record::to_bytes`),
+        // so ordering the keys by their bytes costs no more than writing them.
+        record.files = (std::mem::take(&mut ev.world.reads).into_iter())
+            .map(|(port, reads)| (port, reads.into_map()))
+            .collect();
         Ok((
             Wave {
                 writes,
