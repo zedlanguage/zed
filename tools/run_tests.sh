@@ -567,7 +567,7 @@ logbase=${logs:-build/test-logs}
 # last; it is replaced by a rename, so a reader sees the old or the new link, never none. What a
 # later run reads from an earlier one, the table of all pieces and the runtimes the links were
 # made for, is published in <base> the same way (publish, below). The run directories are kept:
-# TOOL-test-logs-prune deletes old ones.
+# tools/prune_logs.sh lists the old ones to delete (TOOL-test-logs-prune).
 out=$logbase/$(date -u +%Y%m%dT%H%M%S.%NZ)-$$
 mkdir -p "$out" || exit 1
 ln -sfn "${out##*/}" "$logbase/latest.$$" && mv -T "$logbase/latest.$$" "$logbase/latest"
