@@ -21,6 +21,7 @@ pub mod dec;
 pub mod float_mod;
 mod float_text;
 mod room;
+pub mod tininess;
 
 // Moved to zed-bignum (DRY-bignum-crate-2026-11-26); the kernel names them as before. The unit
 // tests take the same source with the small leaves, zed-bignum-small (its Cargo.toml), so that

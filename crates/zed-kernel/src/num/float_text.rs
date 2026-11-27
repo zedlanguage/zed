@@ -79,7 +79,7 @@ pub enum FloatFormat {
 
 impl FloatFormat {
     /// The bits of precision, the leading bit included.
-    const fn precision(self) -> i64 {
+    pub(crate) const fn precision(self) -> i64 {
         match self {
             FloatFormat::F64 => 53,
             FloatFormat::F32 => 24,
@@ -125,7 +125,7 @@ impl FloatFormat {
     }
 
     /// The exponent of the last bit of a subnormal.
-    const fn tiny(self) -> i64 {
+    pub(crate) const fn tiny(self) -> i64 {
         2 - self.emax() - self.precision()
     }
 }
@@ -449,8 +449,9 @@ fn round(n: u64, e: i64, inexact: bool, format: FloatFormat) -> Result<u64, Edge
     Ok(field << fraction_bits | (m & ((1 << fraction_bits) - 1)))
 }
 
-/// The positive encoding `bits` in `format` as `m * 2^e`.
-fn decode(bits: u64, format: FloatFormat) -> (u64, i64) {
+/// The positive finite encoding `bits` in `format` as `m * 2^e`; [`super::tininess`] reads
+/// operands through it.
+pub(super) fn decode(bits: u64, format: FloatFormat) -> (u64, i64) {
     let fraction_bits = format.precision() - 1;
     let field = (bits >> fraction_bits) as i64;
     let fraction = bits & ((1 << fraction_bits) - 1);
