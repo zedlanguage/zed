@@ -26774,16 +26774,16 @@ impl Sig {
     /// `_`). The words are put inside the type's marks of variables to be named
     /// ([`defs::VARS`]), so [`defs::name_vars`] names a variable in them as in the type: in a
     /// message by the names it gives the variables of its other texts, from `T` on in each,
-    /// and alone at once, as [`write_parts`] finishes a text alone. So a note that says
+    /// and alone at once, as `write_parts` finishes a text alone. So a note that says
     /// `T -> #errs(T), where T is not int | …` gives the variable the name the other notes'
     /// texts give theirs, not one of its own that they then skip (plan row
     /// MSG-takes-note-name-shared).
     ///
-    /// Why a name in the words means the variable: the variable is a [`VarSlot::Free`] one,
-    /// counted as standing twice more than it does ([`Walk::plan`]), so the second pass writes
+    /// Why a name in the words means the variable: the variable is a `VarSlot::Free` one,
+    /// counted as standing twice more than it does (`Walk::plan`), so the second pass writes
     /// it as a mark at each place it stands outside a union written `_`, by the root of its
-    /// tree, and records that root ([`Scope::marks`]); the words write the mark of that root,
-    /// alone in a union, as [`Ty::write_lefts`] writes one; and [`defs::name_vars`] gives one
+    /// tree, and records that root (`Scope::marks`); the words write the mark of that root,
+    /// alone in a union, as `Ty::write_lefts` writes one; and [`defs::name_vars`] gives one
     /// name to one root throughout the text between [`defs::VARS`] and [`defs::VARS_END`],
     /// which the words are now inside. Cost: one hash insert per place of such a variable, and
     /// one lookup per variable of `marked`, beside the text.
