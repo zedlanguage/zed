@@ -24181,6 +24181,12 @@ struct Scope {
     /// The variables of [`Scope::left`] each open signature added, innermost last, so that
     /// [`Scope::close`] takes out exactly those.
     left_opened: Vec<Vec<Arc<str>>>,
+    /// The unbounded variables printed by a name wherever they stand, once or more, as one
+    /// standing twice is ([`Sig::text_around_then`]).
+    marked: HashSet<Arc<str>>,
+    /// For each variable of [`Scope::marked`] the text writes, the root its mark is written by
+    /// ([`Walk::plan`]), once the text is written.
+    marks: HashMap<Arc<str>, usize>,
 }
 
 /// What a message knows of the type variables around a text it prints (DESIGN.md
@@ -24255,6 +24261,8 @@ impl Default for Scope {
             kept: HashMap::new(),
             left: HashMap::new(),
             left_opened: Vec::new(),
+            marked: HashSet::new(),
+            marks: HashMap::new(),
         }
     }
 }
@@ -24962,6 +24970,9 @@ impl Ty {
             match k {
                 LeftKey::Name(n) => out.push_str(&n),
                 LeftKey::Mark(r) => {
+                    if !walk.marked.is_empty() {
+                        walk.wrote.insert(r);
+                    }
                     // One mark alone in a union, which [`defs::name_vars`] names as the marks
                     // of [`Ty::write_vars`].
                     out.push(defs::UNION);
@@ -25027,9 +25038,19 @@ impl Ty {
                         names.push(name);
                     }
                 }
-                (Some(&VarSlot::Free(k)), None) => walk.occ.push(k),
+                (Some(&VarSlot::Free(k)), None) => {
+                    if scope.marked.contains(v) {
+                        walk.marked.entry(v.clone()).or_insert(k);
+                    }
+                    walk.occ.push(k)
+                }
                 (Some(&VarSlot::Free(k)), Some(plan)) => match plan.count[plan.root[k]] >= 2 {
-                    true => marks.push(plan.root[k]),
+                    true => {
+                        if !walk.marked.is_empty() {
+                            walk.wrote.insert(plan.root[k]);
+                        }
+                        marks.push(plan.root[k])
+                    }
                     false => blank = true,
                 },
                 (None, _) => blank = true,
@@ -25229,6 +25250,11 @@ struct Walk {
     /// Whether the plan of a first pass that wrote a tuple once would write a union `_`, so
     /// that the text is written again with no tuple written once ([`write_text`]).
     retry: bool,
+    /// Each variable of [`Scope::marked`] the first pass met, with its number in
+    /// [`Scope::same`] where first met.
+    marked: HashMap<Arc<str>, usize>,
+    /// The roots the second pass wrote a mark of, kept while [`Walk::marked`] holds any.
+    wrote: HashSet<usize>,
 }
 
 /// What the end of a type entered and not yet closed is written by ([`Ty::write_end`]).
@@ -25405,6 +25431,13 @@ impl Walk {
                 count[r] = count[r].saturating_add(w);
                 places[r].push(k);
             }
+        }
+        // A variable of [`Scope::marked`] counts as standing in two more places, so it prints
+        // as a mark however many places it has, and taking types out below, each one place,
+        // leaves its count at 2 or more: a union holding it is written `_` alone only where it
+        // holds `_` whatever the names ([`PrintNode::blank`]), which `_ | T` is.
+        for &k in self.marked.values() {
+            count[root[k]] += 2;
         }
         let absorbs = |node: &PrintNode, count: &[usize]| {
             let vars = &self.occ[node.occ.clone()];
@@ -26005,6 +26038,14 @@ fn write_text<'a>(
         kernel = walk_parts(start, out, scope, &mut walk, shared);
         if marked {
             out.push(defs::VARS_END);
+        }
+        if let Some(plan) = &walk.plan {
+            for (v, &k) in &walk.marked {
+                let r = plan.root[k];
+                if walk.wrote.contains(&r) {
+                    scope.marks.insert(v.clone(), r);
+                }
+            }
         }
     }
     if !kernel.sets.is_empty() || !kernel.opens.is_empty() {
@@ -26721,6 +26762,82 @@ impl Sig {
         #[cfg(feature = "printed-types")]
         if around.named.is_empty() && around.kept.is_empty() {
             printed::record(&Ty::func(Arc::new(self.clone())), &text);
+        }
+        text
+    }
+
+    /// [`Self::text_around`], each unbounded variable of `marked` printed by a name wherever it
+    /// stands, once or more, and followed by the words `then` writes, given the type's text,
+    /// its marks not yet named, and for each variable of `marked` the text that names it, or
+    /// `None` where the type does not write it (a
+    /// parameter's variable replaced by its type, or every place of it inside a union written
+    /// `_`). The words are put inside the type's marks of variables to be named
+    /// ([`defs::VARS`]), so [`defs::name_vars`] names a variable in them as in the type: in a
+    /// message by the names it gives the variables of its other texts, from `T` on in each,
+    /// and alone at once, as [`write_parts`] finishes a text alone. So a note that says
+    /// `T -> #errs(T), where T is not int | …` gives the variable the name the other notes'
+    /// texts give theirs, not one of its own that they then skip (plan row
+    /// MSG-takes-note-name-shared).
+    ///
+    /// Why a name in the words means the variable: the variable is a [`VarSlot::Free`] one,
+    /// counted as standing twice more than it does ([`Walk::plan`]), so the second pass writes
+    /// it as a mark at each place it stands outside a union written `_`, by the root of its
+    /// tree, and records that root ([`Scope::marks`]); the words write the mark of that root,
+    /// alone in a union, as [`Ty::write_lefts`] writes one; and [`defs::name_vars`] gives one
+    /// name to one root throughout the text between [`defs::VARS`] and [`defs::VARS_END`],
+    /// which the words are now inside. Cost: one hash insert per place of such a variable, and
+    /// one lookup per variable of `marked`, beside the text.
+    pub fn text_around_then(
+        &self,
+        around: Around<'_>,
+        marked: &[Arc<str>],
+        then: impl FnOnce(&str, &[Option<String>]) -> String,
+    ) -> String {
+        let alone = defs::local();
+        let mut scope = Scope::around(around);
+        scope.marked = marked.iter().cloned().collect();
+        let mut text = String::new();
+        self.write(&mut text, &mut scope);
+        // Recorded as [`Self::text_around`] records its text, before the words; a text with a
+        // marked variable can name it where it stands once, which the type alone writes `_`,
+        // so it is not recorded.
+        #[cfg(feature = "printed-types")]
+        if around.named.is_empty() && around.kept.is_empty() && marked.is_empty() {
+            printed::record(&Ty::func(Arc::new(self.clone())), &text);
+        }
+        let names: Vec<Option<String>> = (marked.iter())
+            .map(|v| {
+                let r = scope.marks.get(v)?;
+                Some(format!(
+                    "{}{}{r}{}",
+                    defs::UNION,
+                    defs::VAR,
+                    defs::UNION_END
+                ))
+            })
+            .collect();
+        let words = then(&text, &names);
+        // A mark is written only inside the marks a text writes when it marks a variable
+        // ([`write_text`]), the last thing it writes there.
+        match text.strip_suffix(defs::VARS_END) {
+            Some(head) => {
+                let end = head.len();
+                text.truncate(end);
+                text.push_str(&words);
+                text.push(defs::VARS_END);
+            }
+            None => text.push_str(&words),
+        }
+        // Alone, the text is finished here, as [`write_parts`] finishes one: it left it so, the
+        // table being on.
+        if alone.is_some() {
+            let lifted = defs::lift(&mut [&mut text], &|w| scope.bound.contains(w));
+            let mut out = String::new();
+            for (name, body) in &lifted {
+                defs::declare(&mut out, name, body).expect("a String takes any text");
+            }
+            out.push_str(&text);
+            text = out;
         }
         text
     }

@@ -16948,28 +16948,70 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// partition). The arm `NeedKind::InDomain` writes nothing and gives the empty type, so it
     /// is monotone. Each other arm writes through the checker's walk of calls, reads and
     /// operators, which was not proved monotone here.
-    /// (b4) Where (b) fails as stated: `meet` makes classes. A use met on a class whose mask
-    /// names no single carrier is recorded on that class, and its result is a new class
-    /// ([`Self::need`], `let j = self.class()`), so `got(s')` can be the variable `$j` of a
-    /// class s' did not have, while at s, whose mask is the carrier `int`, `got(s)` is `int`
-    /// (inferred from `need` and the walk of operators, as for `x + 1` with x's class at
-    /// `int | f64` in s' and `int` in s; not run). Then `f(s')` joins k to `$j` and `f(s)`
-    /// cuts k to `int`: the two states are over different classes, and `f(s')` has a pair
-    /// `f(s)` lacks, so `f(s) <= f(s')` is not even defined on (partition, masks) over a fixed
-    /// set of classes, and the uses (`U`, which `need` adds to) are part of the state. The
-    /// claim that would close the proof, open: for s <= s', `f(s)` lies below `f(s')` with
-    /// each use `f(s')` left on a new class met at the masks of s, which is what the end of
-    /// the function does for a class that takes a type ([`Self::generalize`] meets each use
-    /// of such a class on that type); that is a statement about the fixpoint, not about one
-    /// operator, and the chaotic-iteration argument above must be redone over states that
-    /// carry the classes made and the uses recorded. A program whose end classes change with
-    /// the order of the roots would refute it. The test
+    /// (b4) The fixpoint claim with the classes a check makes. First, a correction to the
+    /// earlier form of this step, which said a use met on a class of mask `int | f64` gives a
+    /// new class while met on a class of mask `int` it gives `int`. By reading: [`Self::need`]
+    /// gives a new class for every use that gives one (`gives.then(|| … self.class() …)`),
+    /// whatever the mask; the choice between making a need and using the type at once is made
+    /// on the class's `resolved` (as in `word_entries`: `Some((_, Some(t)))` uses `t`,
+    /// `Some((r, None))` makes a need); and the `resolved` of a class of this level is set
+    /// only by `resolve`, inside [`Self::generalize`], which runs after this search (the two
+    /// call sites in this file run `join_narrowed(level)` and then `generalize(level, …)`).
+    /// So no check inside the search sees a `resolved` the search wrote. A check sees the
+    /// search's masks only where it reads a mask: by reading, `class_takes` (the carrier of a
+    /// literal from the one carrier of its class's mask, `LitsTake::Left`), reached from
+    /// `fix_bound` and `equal_classes`, and `resolve` (`single_carrier(mask)`).
+    ///
+    /// Claim (F): fix the state s0 and the links of one call of `join_narrowed`; assume
+    /// (H1) no check run inside the search reads the mask of a class of this level, and
+    /// (H2) a check of the pair (n, t) writes, at a state with partition P, the constraints
+    /// C(n, t, P) of (b1)'s form on the classes it was given and on the classes it makes, and
+    /// makes and checks at a coarser partition every class and nested pair it makes and checks
+    /// at a finer one ((b2), and (b3) for the arms of `meet`). Then of two fair runs X and Y,
+    /// if X has no failed merge, neither has Y, and the two end in the same partition and masks
+    /// of the classes that exist at s0, each class made in one run matching one made in the
+    /// other.
+    /// Proof. (F1) Name each class a check makes by its path: the pair checked, then the place
+    /// of the `need` call among those the check makes, then, for a nested check, its pair and
+    /// place, and so on; the checks nest finitely ((b2)). By (H2) the paths of the classes a
+    /// run makes at a finer partition are a subset of those it would make at a coarser one, so
+    /// "the class with path p" means one class in each run that makes it. (F2) Induction on
+    /// Y's steps, as in the proof of the order of the joins above, with classes named by
+    /// path: each class of Y lies within one class of X's end, its mask contains that class's
+    /// mask, and each link Y joins and pair Y checks, X joined and checked. Step, a link:
+    /// as in that proof. Step, a check of (n, t): n and t are in one class of Y, so by the
+    /// hypothesis in one class of X's end, so X checked (n, t) ((a): a pair is checked when its
+    /// use and its inflow first share a class, and they share one at X's end). Y's partition
+    /// is finer than X's end, so by (H2) the classes Y makes have paths X made, and the
+    /// constraints Y writes are among those X wrote, each a join of two classes in one class
+    /// of X's end or a cut to a mask that contains the mask of X's class there; by (b1) Y's
+    /// state after the step keeps the hypothesis. A merge of Y then meets a mask containing
+    /// X's, which is not empty, so Y fails nowhere. (F3) Both runs end, the states only moving
+    /// down over finitely many (classes are made only by checks, and the pairs are finitely
+    /// many, (a)). By (F2) with X and Y swapped, each end lies within the other: they are
+    /// equal, class for class by path. (H1) makes the masks of the search's classes no input
+    /// of any check, so C does not depend on them, which (F2) uses where it says Y's
+    /// constraints are among X's.
+    ///
+    /// What stays open: (H1) is not established for every program. The check of a call need
+    /// on a function value can walk that function's body (`check_on` → `meet` → `call_found` →
+    /// `drive` → `resume`, found 2026-11-27 by a call graph of `self.` calls in check/*.rs,
+    /// which over-approximates: whether this path runs inside the search is not known), and
+    /// that walk reaches `class_takes` (`resume` → `bind` → `fix_bound` → `fix_class` →
+    /// `class_takes`, and `resume` → `binary_end` → `as_written` → `construct` → `binary_op` →
+    /// `equal_classes` → `class_takes`). If a class read there
+    /// is one of this level whose mask the search narrows later, a literal's carrier can be
+    /// chosen at `int | f64` in one order and at `int` in another. So (F) is proved where no
+    /// use met in the search is a call of a function value whose body is walked there, or
+    /// where no class such a walk reads by `class_takes` is one the search writes; and (H2)
+    /// is (b3)'s open part. A program refuting the order independence would have a link
+    /// whose merge meets a call of a passed function whose body compares a value of a class
+    /// the search narrows with a literal (row PROOF-join-narrowed-literal-carrier). The test
     /// `tests::join_narrowed_joins_a_chain_whatever_the_order_of_its_roots` checks the order
     /// independence without use checks, and
     /// `l01_26_type_resolution::narrowing::the_tested_classes_end_alike_whatever_the_order_of_their_tests_and_uses`
     /// with them: a chain of three tested classes and a use, in all 24 orders, gives one
-    /// signature and one set of errors (PROOF-join-narrowed-rescan-rounds part (b), evidence,
-    /// not proof).
+    /// signature and one set of errors (evidence, not proof).
     // Complexity tradeoff (COMPLEXITY.md row F119): the naive version passes over the links
     // until no join changes a class, O(n²) for a chain of n links where each pass moves a
     // carrier one link (inferred). The two passes it was replaced with were O(n log n) but

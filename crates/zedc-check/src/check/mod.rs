@@ -8242,6 +8242,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         s.uses_written(&kept).text_around(around.get())
     }
 
+    /// [`Self::sig_text_with`] with no `written` and no `kept`, each variable of `marked` printed by a name
+    /// the message gives wherever it stands and not replaced by the types of its uses, and
+    /// followed by the words `then` writes ([`Sig::text_around_then`]).
+    fn sig_text_then(
+        &self,
+        s: &Sig,
+        marked: &[Arc<str>],
+        then: impl FnOnce(&str, &[Option<String>]) -> String,
+    ) -> String {
+        let s = s.solved_with(&|v| self.stale(v));
+        let around = self.around(s.facts());
+        let held: HashSet<&Arc<str>> = (around.kept.iter().map(|(v, _)| v)).chain(marked).collect();
+        s.uses_written(&held)
+            .text_around_then(around.get(), marked, then)
+    }
+
     /// [`Ty::sub`], each solved class variable read as its type ([`Self::stale`]).
     fn sub(&self, a: &Ty, b: &Ty, binds: &mut Binds) -> bool {
         a.sub_with(b, binds, &|v| self.stale(v))
@@ -11023,25 +11039,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             // words, by the variable's name: `T -> #errs(T), where T is not int | …` for the
             // payload of `#errs`, and `[T] -> #errs(T), where T is not …` for one inside a
             // parameter's type (plan rows MSG-takes-note-hides-bound, MSG-takes-note-names-var).
-            // The printer names such a variable only where it stands twice, in a walk after
-            // this one (`VarSlot::Free`), so the note gives it its name in this text, as a
-            // name a declaration wrote is given ([`Around::kept`], `Scope::kept_slot`): then it
-            // is printed by that name at every place, once or twice. The name is the one the
-            // program wrote for the variable, which `around.kept` holds and prints already
-            // (`([T], T) -> #errs(T)`); else the variable's own, where it is no class and no
-            // other variable around the text has it; else a fresh one, `T`, `U`, …, that no
-            // name around the text and no variable of the signature has, so `kept_slot` does
-            // not refuse it. A variable the checker made is named `$k` ([`class_id`]), and a
-            // `$k` left in a note's text is read as class `k` of the function being checked
-            // when the message is printed ([`Self::named`]), so such a variable always takes
-            // a fresh name (a probe found `$0` printed as `T` by that pass, and the note's own
-            // test of the name, made before it, failed). The name, a word of the message,
-            // is one the names `lay_out` gives the other notes' variables skip, so the same
-            // variable can print as `T` here and `U` in the declaration's note (open:
-            // MSG-takes-note-name-shared). Should the name still be missing from the text
-            // (the parameter's variable replaced by the type passed to it,
-            // [`Self::sig_text_with`]), the bound is said by the parameter, `where the
-            // argument `s` is not …`, and else not at all.
+            // A variable the program wrote a name for is printed by it ([`Self::around`],
+            // `([T], T) -> #errs(T)`). Every other one is printed by a name the message gives,
+            // in the type and in the words after it alike, wherever it stands, once or more
+            // ([`Sig::text_around_then`]): the same name the message gives it in the note on
+            // the declaration, `T` in both, where a name given in this note's own text was a
+            // word of the message, which the names `lay_out` gives the other notes' variables
+            // skip, so the variable printed `T` here and `U` there (plan row
+            // MSG-takes-note-name-shared). Where the type does not write the variable (a
+            // written name not in the text, or a parameter's variable replaced by the type
+            // passed to it, [`Self::sig_text_then`]), the bound is said by the parameter,
+            // `where the argument `s` is not …`, and else not at all.
             // The variables are those of the parameters and those their needs reach, as `$0`
             // in the lookup `s[0]: $0` of the parameter `s`, which stands in the parameter's
             // map type only: each variable's needs are read once (`held` is the visited set).
@@ -11066,50 +11074,44 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .filter(|&(_, m)| m & OTHER != 0 && m != EVERY)
                 .collect();
             let around = self.around(one.facts());
-            // Whether a variable other than `v` has `name` around the text: `v`'s own written
-            // name, which `around.named` holds as `(T, T)`, is no clash (`[T]` stays `[T]`).
-            let used = |v: &str, name: &str| {
-                around.taken.iter().any(|t| &**t == name)
-                    || (around.named.iter().chain(&around.kept))
-                        .any(|(k, w)| &**w == name && &**k != v)
-            };
-            let mut n = 0;
-            let mut kept: Vec<(Arc<str>, Arc<str>)> = Vec::with_capacity(hidden.len());
-            for (v, _) in &hidden {
-                let written = (around.kept.iter()).find(|(k, _)| k == v).map(|(_, w)| w);
-                let name = match written {
-                    // A class the declaration wrote a name for is printed by it already.
-                    Some(w) => w.clone(),
-                    None if class_id(v).is_none() && !used(v, v) => v.clone(),
-                    None => fresh_name(Names::Variables, &mut n, |name| {
-                        used("", name)
-                            || one.bounds.contains_key(name)
-                            || one.own.contains(name)
-                            || kept.iter().any(|(_, w)| &**w == name)
-                    }),
-                };
-                kept.push((v.clone(), name));
-            }
-            let sig_text = self.sig_text_with(&one, &[], &kept);
-            let in_text = |name: &str| {
-                (sig_text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '\'')))
-                    .any(|w| w == name)
-            };
-            let left_out = (hidden.iter().zip(&kept))
-                .filter_map(|((v, m), (_, name))| {
-                    let out = carriers_text(Carrier::of_mask(EVERY & !OTHER & !m));
-                    match in_text(name) {
-                        true => Some(format!("{name} is not {out}")),
-                        false => (arrow.params.iter().zip(&one.params))
-                            .find(|(t, _)| t.as_var() == Some(v))
-                            .map(|(_, p)| format!("the argument `{}` is not {out}", p.name)),
-                    }
+            let written: Vec<Option<Arc<str>>> = (hidden.iter())
+                .map(|(v, _)| {
+                    let w = around.kept.iter().find(|(k, _)| k == v);
+                    w.map(|(_, w)| w.clone())
                 })
-                .collect::<Vec<_>>();
-            let mut text = format!("{what} takes {sig_text}");
-            if !left_out.is_empty() {
-                text = format!("{text}, where {}", left_out.join(" and "));
-            }
+                .collect();
+            let marked: Vec<Arc<str>> = (hidden.iter().zip(&written))
+                .filter(|(_, w)| w.is_none())
+                .map(|((v, _), _)| v.clone())
+                .collect();
+            let sig_text = self.sig_text_then(&one, &marked, |text, names| {
+                let in_text = |name: &str| {
+                    (text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '\'')))
+                        .any(|w| w == name)
+                };
+                // `names` is in the order of `marked`, the variables of no written name.
+                let mut names = names.iter();
+                let left_out = (hidden.iter().zip(&written))
+                    .filter_map(|((v, m), w)| {
+                        let out = carriers_text(Carrier::of_mask(EVERY & !OTHER & !m));
+                        let name = match w {
+                            Some(w) => in_text(w).then(|| w.to_string()),
+                            None => names.next().cloned().flatten(),
+                        };
+                        match name {
+                            Some(name) => Some(format!("{name} is not {out}")),
+                            None => (arrow.params.iter().zip(&one.params))
+                                .find(|(t, _)| t.as_var() == Some(v))
+                                .map(|(_, p)| format!("the argument `{}` is not {out}", p.name)),
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                match left_out.is_empty() {
+                    true => String::new(),
+                    false => format!(", where {}", left_out.join(" and ")),
+                }
+            });
+            let text = format!("{what} takes {sig_text}");
             out.push(Note {
                 span,
                 text: text.into(),
