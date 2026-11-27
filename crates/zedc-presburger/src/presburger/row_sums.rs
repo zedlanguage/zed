@@ -1470,13 +1470,21 @@ fn span_mask((lo, hi): (i64, i64), blk: i64) -> u64 {
 // For the family `coefficients_one_and_two` (and `overlap_rows`) of
 // `l01_38_omega_test::disj_groups`, `w_i = 1000 + (37·i² mod 991)`: the groups are `y_0 ..`
 // (step 1, values `w_i`), the shared atoms of each parity (step 2, values `w_i`), and the
-// second sum's own atoms (step 1, values `(1 + i mod 2)·w_i`). The odd shared atoms have
-// the coefficient 2 in the second sum, but their values there are `w_i`, not `2·w_i`:
-// `Plan` divides each row of a group by the gcd of its coefficients on the group's atoms
-// (the `prim` vectors of the group's signature, the factor kept in `of_row`), and every odd
-// shared atom has the coefficient 2 there, so the gcd is 2. (Had the values been `2·w_i`, the
-// table would hold only even sums and no full word; the lemma then holds for the values
-// divided by their gcd, `T(g·A) = g·T(A)`.) The values of t atoms from a
+// second sum's own atoms (step 1, values `(1 + i mod 2)·w_i`). Every shared atom has the
+// signature of both sums, so by signature they are one group; the two parity groups are the
+// halves into which [`Plan::halves`] splits it by the ratio of the second sum's coefficient
+// to the first's (1 for the even atoms, 2 for the odd), in a plan made with fused pairs
+// (item 6 of the module's notes). The odd half has the coefficient 2 in the second sum, but
+// its values there are `w_i`, not `2·w_i`: [`Groups::push`] divides each row of a group by
+// the gcd of its coefficients on the group's atoms (the `prim` vectors, the factor kept in
+// `of_row`), and in the odd half every such coefficient is 2, so the gcd is 2. (Had the
+// values been `2·w_i`, the table would hold only even sums and no full word; the lemma then
+// holds for the values divided by their gcd, `T(g·A) = g·T(A)`.) In a plan made without
+// pairs (where [`Plan::fused`] does not keep the pair), the shared atoms stay one group, and
+// its row of the second sum has the primitive vector of 1s and 2s: two classes, so two
+// digits, which this lemma of one digit does not cover. The test below checks the values of
+// each kind and reads no `Plan`: the grouping is read from the code, not tested.
+// The values of t atoms from a
 // start index s depend on s only through `s mod 1982` (`w` has period 991 in i, the factor
 // period 2), so a check of every start residue covers every k: `tests::the_group_tables_of_
 // coefficients_one_and_two_have_a_dense_core` finds the core within `CORE_ATOMS` atoms from
