@@ -1203,6 +1203,26 @@ fn steps_through_a_slack_atom_are_exact() {
     }
 }
 
+/// A slack row in a component with no disjunction (`x1 == x0 + y`, `x0 == 0`, `y` in
+/// `[0..=1]`) beside a disjunction on another atom (`z` in `{0, 3}`): the forest handles `z`'s
+/// component only, so the slack row is not answered from the difference rows alone, which
+/// bound no `x1` (item PROJECT-each-eq-slack, the check in `certified_domains`).
+#[test]
+fn a_slack_row_with_no_disjunction_beside_a_forest_is_exact() {
+    let f = Formula::and(vec![
+        eq(&[("x0", 1)], 0),
+        eq(&[("x1", 1), ("x0", -1), ("y0", -1)], 0),
+        ge(&[("y0", 1)], 0),
+        ge(&[("y0", -1)], 1),
+        Formula::or(vec![eq(&[("z", 1)], 0), eq(&[("z", 1)], -3)]),
+    ]);
+    let syms = [sym("x1"), sym("y0"), sym("z")];
+    let (each, skipped) = project_each(&f, &syms).expect("projected");
+    assert!(skipped.is_empty(), "{skipped:?}");
+    let got: Vec<String> = each.into_iter().map(|h| h.expect("a set").to_string()).collect();
+    assert_eq!(got, [runs(&[0, 1]), runs(&[0, 1]), runs(&[0, 3])]);
+}
+
 /// `x[k+1] - x[k]` in `{0, 10}` from `x0 == 0` gives `x[k]` exactly the multiples of 10 up to
 /// `10k`; with `x[n] == 0` every `x[k]` is 0, and with `x[n] <= 10` every `x[k]` is 0 or 10
 /// (the steps rise and never fall). Before item PROJECT-each-chain-xr each answer was the hull,
@@ -1231,7 +1251,7 @@ fn steps_of_ten_are_exact() {
 }
 
 /// `values`, sorted, as [`IntervalSet`] prints them: `[a..=b, c..=d]`, one piece per run.
-fn runs(values: &[i128]) -> String {
+pub(super) fn runs(values: &[i128]) -> String {
     let mut pieces: Vec<(i128, i128)> = Vec::new();
     for &v in values {
         match pieces.last_mut() {
@@ -1475,7 +1495,8 @@ fn answers_match_enumeration(
     }
     let f = Formula::and(fs);
     let syms: Vec<Atom> = (0..atoms).map(|v| sym(&format!("v{v}"))).collect();
-    let (each, skipped) = project_each(&f, &syms).expect("projected");
+    let (each, skipped) = project_each(&f, &syms)
+        .unwrap_or_else(|e| panic!("case {case}: {f} is refused: {e:?}"));
     assert!(skipped.is_empty(), "case {case}: {skipped:?}");
     for (v, (h, s)) in each.into_iter().zip(&mut seen).enumerate() {
         zed_collections::sorted::sort_dedup(s);

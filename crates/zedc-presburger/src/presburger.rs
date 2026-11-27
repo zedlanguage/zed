@@ -19405,7 +19405,8 @@ impl Omega {
             // structure gives first (by color, through `System::least` and
             // `Equalities::least`), all such candidates together when no two share a row, the
             // first alone when two do and swapping it with each other maps the rows onto
-            // themselves (`Omega::untie`), and none otherwise, which ends the eliminations at
+            // themselves (`Omega::untie`), an equality's first tied pivot likewise
+            // (`Omega::pivot_swaps`), and none otherwise, which ends the eliminations at
             // `tie`. Equalities tied so are
             // kept as pairs of opposite rows, which the stages below decide by the same rule.
             let working = std::mem::take(&mut self.working);
@@ -19429,9 +19430,17 @@ impl Omega {
                     continue;
                 }
                 Some(Err((slots, t))) => {
-                    if !self.differences(&slots) {
-                        self.loosen(&slots, t);
+                    if self.differences(&slots) {
+                        continue;
                     }
+                    if let Some(chosen) = self.swapped_pivots(&slots) {
+                        for (s, y) in chosen {
+                            let e = self.es.clear(s, &self.sys);
+                            self.define(y, &e);
+                        }
+                        continue;
+                    }
+                    self.loosen(&slots, t);
                     continue;
                 }
                 None => {}
@@ -20125,6 +20134,20 @@ impl Omega {
             self.define(y, &e);
             return Ok(());
         }
+        // The slot is out of the equalities, so a pivot no other equality holds is in none.
+        if units
+            && tied.len() > 1
+            && let Some(perms) = self.pivot_swaps(&e, &tied, |p| self.es.of[p].is_empty())
+        {
+            let rows = vec![(e.clone(), Rel::Eq)];
+            let t = Tied {
+                vars: tied.clone(),
+                rows,
+            };
+            self.swaps.push((t, perms, self.steps.len()));
+            self.define(tied[0], &e);
+            return Ok(());
+        }
         if tied.len() > 1 {
             let rows = vec![(e.clone(), Rel::Eq)];
             // Tied pivots that every swap with the first maps onto themselves, in this equality,
@@ -20193,6 +20216,80 @@ impl Omega {
         self.steps.push(Step::Defined(y, def.clone()));
         self.pending.push((y, def));
         Ok(())
+    }
+
+    /// The swaps that let a step on the equality `e` define the first of `tied`, the
+    /// variables with a unit coefficient that tie for its pivot (`pivots`), when each swap of
+    /// the first with another maps the whole problem onto itself; `None` otherwise. `alone`
+    /// says whether no equality but `e` holds a variable. A swap of `x` and `y` maps onto
+    /// itself: `e`, when its coefficients at the two are equal; every other equality, which
+    /// holds neither (`alone`); the inequalities, by [`System::swaps_onto_itself`]; and the
+    /// definitions not yet written into them, when none holds either. Rows kept loose are
+    /// refused, as [`Omega::untie`] refuses them. Then the run that defines `y` is the image
+    /// under the swap of the run that defines `x`, by the argument of [`Omega::untie`], and
+    /// the swaps are checked against the rows the splinters read by [`broken_swap`] as
+    /// those of `untie` are. Before PROJECT-each-eq-slack such a tie kept `e` as a pair of
+    /// rows, which turns off every later swap of `untie` (`sys.loose`): `v0 + v3 == v1 - 1`
+    /// and `v1 == v2 + v4 + 1` in a box were refused. O(t·d·w log m) for the t tied
+    /// variables, as `untie`'s check. Test:
+    /// `l01_38_omega_test::names::tied_pivots_that_a_swap_maps_onto_itself_are_defined`.
+    fn pivot_swaps(
+        &self,
+        e: &Row,
+        tied: &[usize],
+        alone: impl Fn(usize) -> bool,
+    ) -> Option<Vec<Moves>> {
+        let [x, ref others @ ..] = tied[..] else {
+            return None;
+        };
+        let held = |j: usize| (self.pending.iter()).any(|(_, d)| d.a.iter().any(|(i, _)| *i == j));
+        let fits = |j: usize| alone(j) && e.at(j) == e.at(x) && !held(j);
+        (self.sys.loose.is_empty()
+            && !others.is_empty()
+            && fits(x)
+            && others
+                .iter()
+                .all(|&y| fits(y) && self.sys.swaps_onto_itself(x, y)))
+        .then(|| {
+            (others.iter())
+                .map(|&y| vec![(x.min(y), x.max(y)), (x.max(y), x.min(y))])
+                .collect()
+        })
+    }
+
+    /// The pivot of each equality in `slots`, the equalities of least key that
+    /// [`Equalities::least`] found tied, when each has its own: every variable that ties for
+    /// its pivot is held by no other equality, and when more than one ties, a swap of the first
+    /// with each other maps the whole problem onto itself ([`Omega::pivot_swaps`]), whose swaps
+    /// are recorded. Each pivot is then in its own equality alone, so the equalities are solved
+    /// together in any order, by the argument of [`Equalities::least`], and every check reads
+    /// the state before any is solved, so no order among them plays a part. `None`, with
+    /// nothing recorded, when some slot has no such pivot. O(t·d·w log m) for the t tied
+    /// variables.
+    fn swapped_pivots(&mut self, slots: &[usize]) -> Option<Vec<(usize, usize)>> {
+        let mut chosen = Vec::with_capacity(slots.len());
+        let mut swaps = Vec::new();
+        for &s in slots {
+            let held = self.es.rows[s].as_ref()?;
+            let alone = |p: usize| self.es.of[p].len() == 1;
+            let e = &held.row;
+            if !held.pivots.iter().all(|&p| alone(p) && e.at(p).is_unit()) {
+                return None;
+            }
+            if let [p] = held.pivots[..] {
+                chosen.push((s, p));
+                continue;
+            }
+            let perms = self.pivot_swaps(e, &held.pivots, alone)?;
+            let t = Tied {
+                vars: held.pivots.clone(),
+                rows: vec![(e.clone(), Rel::Eq)],
+            };
+            swaps.push((t, perms, self.steps.len()));
+            chosen.push((s, held.pivots[0]));
+        }
+        self.swaps.extend(swaps);
+        Some(chosen)
     }
 
     /// Solves the equalities in `slots` together when each is `x - y == d`, and says whether
@@ -21712,8 +21809,9 @@ fn cover_input(f: &Formula) -> Formula {
     canonical_parts(&signed.map_cons(&|c| Formula::Con(c.clone())))
 }
 
-/// Exact projections without a cover question when every row is a difference row,
-/// and every disjunction is certified by `forest_domains`. Products are excluded.
+/// Exact projections without a cover question when every row is a difference row or an
+/// equality with a slack atom ([`is_slack_row`]), and every disjunction is certified by
+/// `forest_domains`. Products are excluded.
 /// No disjunction may be omitted, even one on an atom not asked for: its component
 /// might be empty. A failed certificate takes the ordinary solver and cover path.
 ///
@@ -21726,6 +21824,16 @@ fn cover_input(f: &Formula) -> Formula {
 /// its handled components share no atom with any unhandled component. When all
 /// disjunctions are handled, the remaining components are satisfiable base rows.
 /// Their Cartesian product proves both existence and each returned projection.
+///
+/// Slack rows (item PROJECT-each-eq-slack): `forest_domains` reads a base slack row as a band
+/// on the edge of its two other atoms, and answers every atom of a component it handles (its
+/// difference rows' atoms, free atoms and the slack rows' atoms; the slack atom's exact values
+/// by `slack_values`). So a slack row is taken only when each of its atoms has a forest
+/// domain: its component is then handled, and every component left holds difference rows
+/// alone, whose hulls (`difference_hulls` of the difference rows) are exact as above. The
+/// hulls of a handled component's atoms from its difference rows alone are wider, and the
+/// forest's domains replace them. A slack row the forest does not take leaves an atom with
+/// no forest domain, or a disjunction not handled, and the ordinary path answers.
 ///
 /// Complexity tradeoff: reuse the existing O(N log N) difference/forest passes,
 /// plus their interval output, rather than O(S N) whole-formula questions/cells
@@ -21741,7 +21849,8 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<EachClassed> {
         |_, ()| (),
         |g, (), parts: Vec<bool>| match g {
             Formula::Con(c) => {
-                is_difference(c) && !c.lin.terms.keys().any(|a| matches!(a, Atom::Product(..)))
+                (is_difference(c) || is_slack_row(c))
+                    && !c.lin.terms.keys().any(|a| matches!(a, Atom::Product(..)))
             }
             _ => parts.into_iter().all(|p| p),
         },
@@ -21750,7 +21859,7 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<EachClassed> {
         return None;
     }
     let mut p = Parts::of(nnf(f, true));
-    if !p.cons.iter().all(is_difference) {
+    if !p.cons.iter().all(|c| is_difference(c) || is_slack_row(c)) {
         return None;
     }
     let model = match solve(&p.cons, true).ok()? {
@@ -21758,13 +21867,19 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<EachClassed> {
         Some(m) => m,
     };
     let linked = Linked::of(std::mem::take(&mut p.cons));
-    let rows: Vec<&Con> = linked.cons.iter().collect();
+    let rows: Vec<&Con> = linked.cons.iter().filter(|c| is_difference(c)).collect();
     let mut doms = difference_hulls(&rows, &model)?;
     let (forest, handled, empty) = forest_domains_classed(&linked, &p.ors, &model);
     if empty {
         return Some(EachClassed::plain(no_points(syms)));
     }
     if handled.iter().any(|h| !h) {
+        return None;
+    }
+    // Each slack row in a component the forest handled (above).
+    if !(linked.cons.iter().filter(|c| !is_difference(c)))
+        .all(|c| c.lin.terms.keys().all(|a| forest.contains_key(a)))
+    {
         return None;
     }
     // The forest's sets kept classed (PRES-holes-steps-cost): O(1) ranges each on a chain of
@@ -28640,7 +28755,7 @@ fn slack_values(
         let diffs: Vec<IntervalSet> = (dv.pieces())
             .map(|(l, h)| {
                 let (l, h) = (int_end(l), int_end(h));
-                shifted(&du, &h.map(|h| -h), &l.map(|l| -l))
+                shifted(&du, &h.map(|h| -&h), &l.map(|l| -&l))
             })
             .collect();
         let d = fold_in_pairs(diffs, false).meet(&band);

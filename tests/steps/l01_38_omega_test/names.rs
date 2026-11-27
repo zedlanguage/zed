@@ -1061,6 +1061,84 @@ fn tied_equalities_that_share_only_a_variable_they_do_not_define_are_solved_toge
     }
 }
 
+/// The base rows of case 52 of `omega::slack_forest_answers_match_enumeration`, over `v0` to
+/// `v4` by place: `v0 + v3 == v1 - 1` and `v1 == v2 + v4 + 1`, each atom in `[-2, 2]`. Each
+/// equality has two variables alike that no other equality holds (`v0` and `v3`, `v2` and
+/// `v4`), and swapping either pair maps the rows onto themselves.
+fn two_slack_rows() -> Vec<Row> {
+    with_box(
+        &[eq(&[1, -1, 0, 1, 0], 1), eq(&[0, 1, -1, 0, -1], -1)],
+        5,
+        2,
+    )
+}
+
+/// Until item PROJECT-each-eq-slack the pivots of each equality of [`two_slack_rows`] tied,
+/// both equalities were kept as pairs of rows, which turns off the swaps of `Omega::untie`,
+/// and `project_each` was refused with a tie over `v0`, `v3`, `v4`, `v2` (the solver found no
+/// point of the base). Each pair of pivots is swapped by a symmetry of the rows, so the solver
+/// now defines one of each: under every naming, a point, and each projection the values
+/// counted over the box. The control adds `v1 <= -2` with `v0, v3 >= -1`, which leaves no
+/// point.
+#[test]
+fn tied_pivots_that_a_swap_maps_onto_itself_are_defined() {
+    let rows = two_slack_rows();
+    let mut seen: Vec<Vec<i64>> = vec![Vec::new(); 5];
+    let mut p = [-2i64; 5];
+    loop {
+        if holds(&rows, &p) {
+            for (s, v) in seen.iter_mut().zip(p) {
+                s.push(v);
+            }
+        }
+        let Some(i) = p.iter().position(|v| *v < 2) else {
+            break;
+        };
+        p[i] += 1;
+        for v in &mut p[..i] {
+            *v = -2;
+        }
+    }
+    let want: Vec<String> = seen
+        .iter_mut()
+        .map(|s| {
+            s.sort_unstable();
+            s.dedup();
+            super::omega::runs(&s.iter().map(|v| i128::from(*v)).collect::<Vec<_>>())
+        })
+        .collect();
+    let visited = each_permutation(5, |perm| {
+        let f = formula(&rows, perm);
+        let m = satisfiable(&f)
+            .unwrap_or_else(|e| panic!("{perm:?}: {e:?}"))
+            .expect("a point");
+        assert!(f.holds(&m), "{perm:?}: {m:?}");
+        let syms: Vec<Atom> = perm
+            .iter()
+            .map(|i| Atom::Sym(Arc::from(format!("v{i}"))))
+            .collect();
+        let (each, skipped) =
+            project_each(&f, &syms).unwrap_or_else(|e| panic!("{perm:?}: {e:?}"));
+        assert!(skipped.is_empty(), "{perm:?}: {skipped:?}");
+        let got: Vec<String> = each
+            .into_iter()
+            .map(|h| h.expect("a set").to_string())
+            .collect();
+        assert_eq!(got, want, "{perm:?}");
+    });
+    assert_eq!(visited, 120);
+    let mut empty = rows.clone();
+    empty.extend([
+        ge(&[0, -1, 0, 0, 0], -2),
+        ge(&[1, 0, 0, 0, 0], 1),
+        ge(&[0, 0, 0, 1, 0], 1),
+    ]);
+    assert_eq!(
+        namings(&empty, 5).into_keys().collect::<Vec<_>>(),
+        ["Ok(false)"]
+    );
+}
+
 /// The two systems of [`three_reads_of_a_remainder`] that
 /// [`tied_equalities_that_share_only_a_variable_they_do_not_define_are_solved_together`] asks,
 /// with their answers. In the second, `i` in `[-3, -1]` has remainder 4, 5 or 6, so a middle
