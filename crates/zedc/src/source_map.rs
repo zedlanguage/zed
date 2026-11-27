@@ -7,8 +7,8 @@
 //! the top-level declaration it lies in and its path from there, the place among its
 //! parent's children at each step, never by byte offsets: text inserted above a declaration
 //! changes no entry. A statement's children are its expressions, as
-//! [`crate::ast::walk::stmts_exprs`] lists them; a block's are its statements; any other
-//! expression's are those [`crate::ast::walk::expr_kids`] lists.
+//! `stmts_exprs` of zedc-syntax's `ast::walk` lists them; a block's are its statements; any
+//! other expression's are those `expr_kids` there lists.
 //!
 //! The lowering gives each node the spans of the terms it was lowered for
 //! ([`crate::zir::lower::Sited::sources`]); a span is the source node whose text it is, the

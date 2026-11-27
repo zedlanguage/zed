@@ -121,7 +121,7 @@ fn text_above_a_declaration_changes_no_entry() {
         }
         assert_eq!(n.len(), m.len());
     }
-    assert!(m.len() > 0);
+    assert!(!m.is_empty());
 }
 
 #[test]
