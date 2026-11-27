@@ -1004,6 +1004,41 @@ pub fn local() -> Option<Collecting> {
 mod tests {
     use super::*;
 
+    /// A union of the marks `keys` alone, as zedc-types writes a variable printed by a mark.
+    fn marks(keys: &[&str]) -> String {
+        let mut out = String::from(UNION);
+        for (i, k) in keys.iter().enumerate() {
+            if i > 0 {
+                out.push(NEXT);
+            }
+            out.push(VAR);
+            out.push_str(k);
+        }
+        out.push(UNION_END);
+        out
+    }
+
+    /// UNDERSCORE-print-followups: a variable a declaration wrote a name for keeps it, though
+    /// one of no written name stands before it; a second of that written name in the type gets
+    /// a fresh one; every place of one variable gets one name; and each type names its own
+    /// variables from `T` on.
+    #[test]
+    fn a_written_name_is_kept_and_the_others_skip_it_in_order_of_first_place() {
+        let (a, b1, b2) = (marks(&["0"]), marks(&["b1:T"]), marks(&["b2:T"]));
+        let mut text = format!("{VARS}({a}, {b1}, {b2}, {a}){VARS_END}");
+        text.push_str(&format!("{VARS}({a}){VARS_END}"));
+        name_vars(&mut text, 0, &|_| false);
+        assert_eq!(text, "(U, T, V, U)(T)");
+        // A word of the message is skipped by a fresh name, never by a written one.
+        let mut text = format!("{VARS}({a}, {b1}){VARS_END}");
+        name_vars(&mut text, 0, &|w| w == "T" || w == "U");
+        assert_eq!(text, "(V, T)");
+        // In one union the members are written by name, the written one among them.
+        let mut text = format!("{VARS}{}{VARS_END}", marks(&["0", "b1:A"]));
+        name_vars(&mut text, 0, &|_| false);
+        assert_eq!(text, "A | T");
+    }
+
     #[test]
     fn definitions_come_before_their_uses_and_a_cycle_keeps_its_own() {
         let _on = collect();
