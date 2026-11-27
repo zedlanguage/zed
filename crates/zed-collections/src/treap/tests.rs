@@ -147,7 +147,7 @@ fn union_and_meet_agree_with_ordered_maps() {
         for _ in 0..next(2 * span) {
             b.insert(next(span), next(1000) + 1000);
         }
-        let made = |m: &BTreeMap<u64, u64>| from_sorted(m.iter().map(|(&k, &v)| E(k, v)).collect());
+        let made = |m: &BTreeMap<u64, u64>| from_sorted(m.iter().map(|(&k, &v)| E(k, v)));
         let (x, y) = (made(&a), made(&b));
         // One set of keys has one shape, made from sorted items or an item at a time.
         let mut by_one = None;

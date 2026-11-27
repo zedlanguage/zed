@@ -480,16 +480,20 @@ where
 // the only one made here, as before. Measured locally against origin/main fffd2df52
 // (instructions at n and 8n): the three forced-atoms benches +2.54% to +2.62% with this, against
 // +8.02% to +8.40% with the first version; `a_binding_over_many_inputs` -3.26% and -5.09% with
-// either. The 2.6% left is not placed by a profile; inferred to be the generic treap's own work
-// for the settings (its `Sum` and node layout) rather than this function's.
+// either. A callgrind of the three on an hm VM (2026-11-27, job cg4: fffd2df52 against
+// eab930d7a) placed most of that 2.6%: `settings::from_keys` wrapped its keys in `Setting` by a
+// `map` and `collect` of its own, and this function wrapped them again in `ByKey`, two passes
+// over the `k` items (each with its `forget_allocation_drop_remaining`) where the private treap
+// made none. So `items` is any iterator of items, and a caller's own wrapping `map` joins the
+// `ByKey` one here in one pass over a vector reused in place.
 #[inline]
-pub fn from_sorted<I: Item>(items: Vec<I>) -> Tree<I> {
+pub fn from_sorted<I: Item>(items: impl IntoIterator<Item = I>) -> Tree<I> {
+    let items: Vec<ByKey<I>> = items.into_iter().map(ByKey).collect();
     debug_assert!(
-        items.windows(2).all(|w| w[0].key() < w[1].key()),
+        items.windows(2).all(|w| w[0].0.key() < w[1].0.key()),
         "keys strictly increasing"
     );
-    let prios: Vec<u64> = items.iter().map(Item::priority).collect();
-    let items: Vec<ByKey<I>> = items.into_iter().map(ByKey).collect();
+    let prios: Vec<u64> = items.iter().map(|ByKey(item)| item.priority()).collect();
     crate::cartesian::build(items, &prios, |i, ByKey(item), l, r| {
         node(item, prios[i], l, r)
     })
