@@ -164,11 +164,11 @@ fn a_resolution_is_computed_once_per_key() {
         }
     };
     let k = key("resolve", &[b"u"]);
-    let a = db.resolve(k.clone(), compute);
-    let b = db.resolve(k, compute);
+    let a = db.resolve(k.clone(), vec![], compute);
+    let b = db.resolve(k, vec![], compute);
     assert!(std::sync::Arc::ptr_eq(&a, &b));
     assert_eq!(runs.get(), 1);
-    db.resolve(key("resolve", &[b"v"]), compute);
+    db.resolve(key("resolve", &[b"v"]), vec![], compute);
     assert_eq!(runs.get(), 2);
     assert_eq!(db.computed(Query::Resolve), 2);
 }
