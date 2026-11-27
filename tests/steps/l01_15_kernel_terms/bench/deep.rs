@@ -124,7 +124,7 @@ mod displaying_and_breaking_scale_with_depth {
     /// The names of the terms of `nested` then `printed`, in their order: test `k` below times
     /// term `k`, and each test checks the generators still make exactly these, so a term added
     /// there fails until it is listed here and has a test.
-    const TERMS: [&str; 10] = [
+    const TERMS: [&str; 11] = [
         "nested lambdas",
         "a left-nested sum",
         "nested `match` arms",
@@ -135,6 +135,7 @@ mod displaying_and_breaking_scale_with_depth {
         "nested negations",
         "nested indices",
         "a nested atom pattern",
+        "nested rebinding `let`s",
     ];
 
     /// Displays and breaks term `k` of [`TERMS`] at depth 20,000 and 8 times that.
@@ -205,5 +206,10 @@ mod displaying_and_breaking_scale_with_depth {
     #[test]
     fn a_nested_atom_pattern() {
         case(9);
+    }
+
+    #[test]
+    fn nested_rebinding_lets() {
+        case(10);
     }
 }

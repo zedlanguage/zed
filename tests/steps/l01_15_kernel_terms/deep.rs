@@ -168,9 +168,16 @@ pub(super) fn dag(n: usize) -> Term {
 }
 
 /// Terms nested `n` deep through the other parts the printer nests through: `let` bodies, `else`
-/// branches, call heads, negations, indices and an atom pattern.
+/// branches, call heads, negations, indices, an atom pattern, and `let` bodies each binding the
+/// name the one around it binds. The first `let`s bind `n` names, `y0 = v; y1 = v; …`, one
+/// block; the last bind `y` each, and a block cannot bind a name twice (DESIGN sec:diagnostics,
+/// "Rebinding in the same scope"), so each is a block nested in the one before,
+/// `{ y = v; { y = v; … } }`, indented a level deeper when broken.
 pub(super) fn printed(n: usize) -> Vec<(&'static str, Term)> {
-    let lets = (0..n).fold(var("x"), |b, _| Term::Let("y".into(), sh(var("v")), sh(b)));
+    let lets = (0..n).fold(var("x"), |b, i| {
+        Term::Let(format!("y{i}").into(), sh(var("v")), sh(b))
+    });
+    let rebinds = (0..n).fold(var("x"), |b, _| Term::Let("y".into(), sh(var("v")), sh(b)));
     let ifs = (0..n).fold(var("x"), |b, _| Term::If(sh(var("c")), sh(var("a")), sh(b)));
     let heads = (0..n).fold(var("f"), |h, _| Term::App(sh(h), vec![var("a")]));
     let negs = (0..n).fold(var("x"), |t, _| Term::Prim(Prim::Neg, vec![t]));
@@ -186,6 +193,7 @@ pub(super) fn printed(n: usize) -> Vec<(&'static str, Term)> {
         ("nested negations", negs),
         ("nested indices", index),
         ("a nested atom pattern", atom),
+        ("nested rebinding `let`s", rebinds),
     ]
 }
 
@@ -196,6 +204,7 @@ pub(super) fn indents(what: &str) -> bool {
         "a left-nested sum",
         "nested `match` arms",
         "nested `else` branches",
+        "nested rebinding `let`s",
     ]
     .contains(&what)
 }
@@ -222,6 +231,26 @@ fn each_benchmark_term_copies_compares_and_prints_at_small_depths() {
             );
         }
     }
+}
+
+/// The `let`s of [`printed`] binding `n` names are one block, whose text broken to a width is
+/// linear in `n`; those binding one name are `n` blocks, one in another, which [`indents`]
+/// lists. Were the first nested, `bench/stack.rs` would break 100,000 levels of them into text
+/// quadratic in that depth.
+#[test]
+fn lets_binding_new_names_are_one_block_and_rebinding_lets_nest() {
+    let n = 9;
+    let shapes = printed(n);
+    let blocks = |what: &str| {
+        let (_, t) = shapes
+            .iter()
+            .find(|(w, _)| *w == what)
+            .expect("a shape of printed");
+        t.to_string().matches('{').count()
+    };
+    assert_eq!(blocks("nested `let` bodies"), 1);
+    assert_eq!(blocks("nested rebinding `let`s"), n);
+    assert!(!indents("nested `let` bodies") && indents("nested rebinding `let`s"));
 }
 
 /// Two DAGs built apart share no subterm, so no pair is equal by its id alone: a walk of the
