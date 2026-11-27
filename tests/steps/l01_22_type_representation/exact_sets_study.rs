@@ -267,7 +267,7 @@ fn the_complement_of_a_class_holds_no_progression_longer_than_p() {
     let lens: Vec<i64> = [3, 5, 7, 11].map(longest_progression).to_vec();
     assert_eq!(lens, [3, 5, 7, 11]);
     // Control: the claim "at most p - 1".
-    assert!(!lens.iter().zip([3, 5, 7, 11]).all(|(l, p)| *l <= p - 1));
+    assert!(!lens.iter().zip([3, 5, 7, 11]).all(|(l, p)| *l < p));
 }
 
 fn roots_of_one(m: i64) -> usize {
@@ -388,9 +388,9 @@ fn a_square_mod_an_odd_prime_takes_half_the_values_and_one() {
 
 /// alg.js rule 1: the image under `mod m` of the progression `{lo + i k : 0 <= i < n}` is the
 /// class `lo mod g` in `[0, m)` (`g = gcd(k, m)`) when `n >= m / g`; for `k = 1` and `n < m`
-/// it is `[l..=h]` if `l <= h`, else `[0..=h]` and `[l..<m]`, with `l = lo mod m`, `h = (lo + n
-/// - 1) mod m`. `None` for a partial progression of stride above 1. With `wrong`, the full
-/// image one step early (the control).
+/// it is `[l..=h]` if `l <= h`, else `[0..=h]` and `[l..<m]`, with `l = lo mod m`,
+/// `h = (lo + n - 1) mod m`. `None` for a partial progression of stride above 1. With `wrong`,
+/// the full image one step early (the control).
 fn image_rule(lo: i64, k: i64, n: i64, m: i64, wrong: bool) -> Option<BTreeSet<i64>> {
     let g = gcd(k, m);
     let full = if wrong { n >= m / g - 1 } else { n >= m / g };

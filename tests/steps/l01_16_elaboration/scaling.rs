@@ -32,7 +32,11 @@ pub(super) fn defaults_stay_short(u: &Checked) {
     let k = u.defs.len() - 2;
     let bound = 22 + 5 * (k + 1).to_string().len();
     let term = main.term.to_string();
-    assert!(term.len() <= bound, "{} characters, over {bound}: {term}", term.len());
+    assert!(
+        term.len() <= bound,
+        "{} characters, over {bound}: {term}",
+        term.len()
+    );
 }
 
 #[test]
