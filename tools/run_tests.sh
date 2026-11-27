@@ -577,73 +577,9 @@ echo "process $$, started $(date '+%F %T'), arguments: ${args:-none}" >"$out/run
 # publish <file> <name>: puts a copy of <file> at <base>/<name> by a rename, so a reader of it sees
 # one whole version, the last one published.
 publish() { cp "$1" "$logbase/$2.$$" && mv -T "$logbase/$2.$$" "$logbase/$2"; }
-# The tests of each test binary, one per line, listed once (`--list --format terse`, 30 ms for
-# l01_38's 644 tests); empty for a binary that cannot be listed. list_binary fills it, in the
-# shell that calls it.
-declare -A test_list
-list_binary() {
-  [ -n "${test_list[$1]+x}" ] ||
-    test_list[$1]=$("$1" --list --format terse </dev/null 2>/dev/null | sed -n 's/: test$//p')
-}
-# The tests of a piece's command, one per line: the listed binary $1 run with the arguments
-# after it, applied to its list as libtest applies them. A test runs when a filter is part of
-# its name (with --exact, its whole name), or when there is no filter, and when no --skip is
-# part of it (with --exact, the whole of it). The pieces use no other argument. Listing each
-# piece instead would take 30 ms a piece, 50 s for the 1,653 pieces of 2026-11-14.
-piece_tests() {
-  local bin=$1
-  shift
-  [ -n "${test_list[$bin]}" ] || return 0
-  printf '%s\n' "${test_list[$bin]}" | awk -v args="$*" '
-    BEGIN {
-      n = split(args, a, " ")
-      for (i = 1; i <= n; i++) {
-        if (a[i] == "--exact") exact = 1
-        else if (a[i] == "--skip") skip[++ns] = a[++i]
-        else filter[++nf] = a[i]
-      }
-    }
-    function has(s) { return exact ? $0 == s : index($0, s) > 0 }
-    {
-      for (i = 1; i <= nf; i++) if (has(filter[i])) break
-      if (nf && i > nf) next
-      for (i = 1; i <= ns; i++) if (has(skip[i])) next
-      print
-    }'
-}
-# Splits the pieces of the table on stdin, `group step name dir binary args`, into correctness
-# pieces and benchmarks, and writes each with its kind, test or bench, first. A piece none of
-# whose tests has `bench::` in its path is a correctness piece as it is. Otherwise each of its
-# benchmarks becomes a piece of its own, <its name before the first ::>::<test> running
-# `--exact <test>`, and the rest of it, if any test is left, a correctness piece that skips them:
-# by `--skip bench::`, which libtest matches anywhere in a name, or, in a piece that runs with
-# --exact, where a skip must be a whole name, by a `--skip` of each.
-split_benchmarks() {
-  local group step name dir bin args tests t skips
-  local -A seen
-  while read -r group step name dir bin args; do
-    list_binary "$bin"
-    tests=
-    [[ ${test_list[$bin]} != *bench::* ]] || tests=$(piece_tests "$bin" $args)
-    if [[ $tests != *bench::* ]]; then
-      echo "test $group $step $name $dir $bin${args:+ $args}"
-      continue
-    fi
-    if printf '%s\n' "$tests" | grep -qv 'bench::'; then
-      if [[ " $args " == *" --exact "* ]]; then
-        skips=$(printf '%s\n' "$tests" | grep 'bench::' | sed 's/^/ --skip /' | tr -d '\n')
-        echo "test $group $step $name $dir $bin${args:+ $args}$skips"
-      else
-        echo "test $group $step $name $dir $bin${args:+ $args} --skip bench::"
-      fi
-    fi
-    for t in $(printf '%s\n' "$tests" | grep 'bench::'); do
-      [ -z "${seen[$bin $t]}" ] || continue
-      seen[$bin $t]=1
-      echo "bench $group $step ${name%%::*}::$t $dir $bin --exact $t"
-    done
-  done
-}
+# test_list, list_binary, piece_tests and split_benchmarks are in tools/lib.sh, sourced above, so
+# that `tools/test_run_tests.sh split` tests split_benchmarks on fake binaries
+# (TOOL-split-benchmarks-forks).
 # The alternatives at the top level of the extended regular expression $1, one per line: it is
 # split at each | outside parentheses, bracket expressions and escapes. Fails when a ) closes a
 # parenthesis that was not opened (terms, below, reads the inside of ^(...)$ with it).
