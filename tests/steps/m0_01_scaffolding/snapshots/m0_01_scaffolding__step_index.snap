@@ -38,6 +38,7 @@ l01_28_staging
 l01_29_diagnostics
 l01_29_repairs_and_printing
 l01_30_queries
+l01_30a_query_reads
 l01_31_zir
 l01_32_canonical_zir
 l01_33_lowering
