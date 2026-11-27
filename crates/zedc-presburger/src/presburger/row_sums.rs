@@ -4456,8 +4456,7 @@ mod tests {
         // The step between the indices of a group's atoms, the value of atom i, and the
         // period of the values in the start index.
         type Value<'a> = &'a dyn Fn(usize) -> i64;
-        let kinds: [(usize, Value, usize); 3] =
-            [(1, &w, 991), (2, &w, 991), (1, &twice, 1982)];
+        let kinds: [(usize, Value, usize); 3] = [(1, &w, 991), (2, &w, 991), (1, &twice, 1982)];
         let mut most = 0;
         for (kind, &(step, value, period)) in kinds.iter().enumerate() {
             let top = (0..1982).map(value).max().expect("1982 values");
