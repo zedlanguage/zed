@@ -446,6 +446,17 @@ pub(super) enum Frame<'a> {
     Tests(Box<ScopeF<'a>>),
     /// The status of row `usize` of `main`'s table, the expression given ([`Ck::main_rows`]).
     MainStatus(Box<ScopeF<'a>>, &'a Function, usize, &'a Expr),
+    /// Item `k` of the key of row `row` of `main`'s table, `(row, k)`, the expression given,
+    /// checked against the type of the input it gives, with the number of errors before it
+    /// ([`Ck::main_rows`]).
+    MainKey(
+        Box<ScopeF<'a>>,
+        &'a Function,
+        (usize, usize),
+        &'a Expr,
+        Ty,
+        usize,
+    ),
     /// The value of the clause `p = e` of the function's tables, checked against the port's
     /// type, with the place of the next clause and the number of errors before it
     /// ([`Ck::test_ports`]).
@@ -2014,7 +2025,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::MainStatus(s, f, row, status) => {
                 let a = m.take_arg();
                 self.row_status(status, &a.ty);
-                self.main_rows(m, s, f, row + 1);
+                self.main_rows(m, s, f, (row + 1, 0));
+            }
+            Frame::MainKey(s, f, (row, k), e, ty, before) => {
+                let a = m.take_arg();
+                // A lambda refused while it was fitted to the input's type is not refused
+                // again as a value outside it, as at a clause (`Frame::TestPort`).
+                if self.errors.len() == before {
+                    let what = format!("`{}`", MAIN_KEY_PORTS[k]);
+                    self.passes_into(&a.ty, &ty, &what, None, e.span);
+                }
+                self.main_rows(m, s, f, (row, k + 1));
             }
             Frame::TestPort(s, f, sig, next, p, ty, before) => {
                 let a = m.take_arg();
@@ -2485,24 +2506,62 @@ impl<'t, 'a> Ck<'t, 'a> {
             return m.job(Job::Arg(&p.value, want));
         }
         if f.main.is_some() {
-            return self.main_rows(m, s, f, 0);
+            return self.main_rows(m, s, f, (0, 0));
         }
         m.k(Frame::Tests(s));
         self.test_case(m, f, sig, 0)
     }
 
-    /// The expected exit statuses of the rows of `main`, `f`, from row `row` on, then the
-    /// scope's other tables. A row's value is the standard output, or `(stdout, stderr)`, or
-    /// `(stdout, stderr, status)` (`zedc`'s `rows.rs`); the status is checked here
-    /// ([`Ck::row_status`]), and the rest when the table runs.
-    fn main_rows(&mut self, m: &mut M<'a>, s: Box<ScopeF<'a>>, f: &'a Function, row: usize) {
-        for (i, (_, want)) in f.tests.iter().enumerate().skip(row) {
+    /// The keys and expected exit statuses of the rows of `main`, `f`, from item `k` of the
+    /// key of row `row` on, then the scope's other tables.
+    ///
+    /// A row's key is the standard input as a String, or the tuple `(stdin, args, env, files)`
+    /// of [`MAIN_KEY_PORTS`], items left off its end empty (`zedc_elab`'s `MAIN_KEY`, which
+    /// refuses a tuple of more items). Each item is "a value of the port's type `K ->? V`, so a
+    /// function given there answers only values of `V`, never `#notFound` for a key it lacks"
+    /// (DESIGN.md, the row `f(x) = e test { … }` of the syntax table; plan row
+    /// PORT-main-key-values-unchecked). So each is checked as the clause `test with main::f =
+    /// e` that gives the same input is ([`Self::test_ports`]): `env` and `files` as an
+    /// argument of the port's type, a lambda fitted to it, and `stdin` and `args` as a
+    /// String, the text the runner splits into lines ([`main_key_type`]). Before, no item was
+    /// checked: `(n -> #notFound)` for `env` was accepted though it answers outside the port,
+    /// and `("", 3)` failed only when its row ran, in `zedc`'s `rows.rs`, whose run-time
+    /// refusals of a stdin or args that is no String a checked program no longer reaches.
+    ///
+    /// A row's value is the standard output, or `(stdout, stderr)`, or `(stdout, stderr,
+    /// status)` (`zedc`'s `rows.rs`); the status is checked here ([`Ck::row_status`]) after
+    /// the row's key, and the rest when the table runs.
+    ///
+    /// Cost: one check of each key item, as of an argument, and of each status; the next
+    /// item is found by its place `(row, k)`, O(1) a step.
+    fn main_rows(
+        &mut self,
+        m: &mut M<'a>,
+        s: Box<ScopeF<'a>>,
+        f: &'a Function,
+        (mut row, mut k): (usize, usize),
+    ) {
+        while let Some((key, want)) = f.tests.get(row) {
+            if k < MAIN_KEY_PORTS.len() {
+                let items = match &key.kind {
+                    ExprKind::Tuple(items) => items.as_slice(),
+                    _ => std::slice::from_ref(key),
+                };
+                if let Some(e) = items.get(k) {
+                    let ty = main_key_type(k);
+                    let want = Want::of(&ty);
+                    m.k(Frame::MainKey(s, f, (row, k), e, ty, self.errors.len()));
+                    return m.job(Job::Arg(e, want));
+                }
+                k = MAIN_KEY_PORTS.len();
+            }
             if let ExprKind::Tuple(items) = &want.kind
                 && let [_, _, status] = items.as_slice()
             {
-                m.k(Frame::MainStatus(s, f, i, status));
+                m.k(Frame::MainStatus(s, f, row, status));
                 return m.job(Job::Arg(status, Want::default()));
             }
+            (row, k) = (row + 1, 0);
         }
         self.tests_step(m, s);
     }

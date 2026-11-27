@@ -18843,6 +18843,24 @@ fn port(key: Carrier, io: bool) -> Ty {
     }))
 }
 
+/// The inputs of `main` that the items of a tuple key of its table give, in order, by the
+/// names a clause `test with main::f = e` gives them by: `zedc_elab`'s `MAIN_KEY`, `(stdin,
+/// args, env, files)`, whose order the runner (`zedc`'s `rows.rs`) reads the items in.
+const MAIN_KEY_PORTS: [&str; 4] = ["main::stdin", "main::args", "main::env", "main::files"];
+
+/// The type of item `k` of a key of `main`'s table ([`MAIN_KEY_PORTS`]): `stdin` and `args`
+/// are Strings, the text a run reads, split into lines as a `Lines` input is; `env` is the
+/// port `Utf8String ->? Utf8String`, and `files` the port `Files = Path ->? Utf8String |
+/// #ioError` (DESIGN.md sec:ports), the types [`Ck::test_ports`] gives the clauses of the
+/// same names.
+fn main_key_type(k: usize) -> Ty {
+    match k {
+        2 => port(Carrier::Str, false),
+        3 => port(Carrier::Str, true),
+        _ => Ty::carrier(Carrier::Str),
+    }
+}
+
 /// What a type variable that a finished signature prints stands for ([`Ck::finished_with`]).
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Printed {
