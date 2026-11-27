@@ -22,8 +22,9 @@ fn scales(what: &'static str, n: usize, ds: Domains, make: impl Fn(usize) -> Ter
 
 /// `i * i * … * i <= 1`, read as one power; and `i * i * j * i * j * … <= 1`, whose
 /// products are read once each though the first factor of each lies as deep as the product.
-/// The second stays at 512: at 4,096 and 32,768 it took 13.8 times the work and 22.8 times the
-/// bytes (TEST-bench-move-l0125; plan row PERF-alternating-product-bytes).
+/// The second was held at 512 until PERF-alternating-product-bytes: at 4,096 and 32,768 the set
+/// of each partial product, O(depth) bits, stayed in the run, 13.9 times the work and 22.3 times
+/// the bytes (2.43 GB at 32,768); the product is now read by its factors and their counts.
 #[test]
 fn reading_a_product_as_a_power_is_linear_in_its_factors() {
     let ds = || doms(&[("i", Some(-50), Some(50)), ("j", Some(-50), Some(50))]);
@@ -32,7 +33,7 @@ fn reading_a_product_as_a_power_is_linear_in_its_factors() {
     });
     scales(
         "`i * i * j * i * j * … <= 1` with n factors",
-        512,
+        4096,
         ds(),
         |k| at_most(alternating(k), 1),
     );

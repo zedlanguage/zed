@@ -7256,6 +7256,95 @@ impl<'t> Tx<'t> {
         Some((*s, *se, j.add(k)))
     }
 
+    /// The factors of the product `at` and the number of times each occurs, in the order they
+    /// are first met: a factor is a term reached through products (`*` of two operands, names
+    /// followed) that is not itself a product. A free name is one factor in every scope, as in
+    /// [`Tx::joined`]; any other factor is one by its term and scope. A factor is counted once
+    /// for each path from `at` to it, so `x1 = i * j; x2 = x1 * x1` gives `i` and `j` twice.
+    // Complexity tradeoff (PERF-alternating-product-bytes): naive version, the product read
+    // operand by operand, `((i * i) * j) * …`, made the set of each partial product, whose bounds
+    // have O(depth) bits and stay in `run.ints.ops` for the run: O(n²) bits for n factors
+    // (2.43 GB at 32,768 factors, 22.3 times the bytes of 4,096). Used: the factors and their
+    // counts, each product node reached once (a visited map) and each count passed down in
+    // topological order (Kahn's algorithm, counting the paths of a DAG), so the cost is linear in
+    // the products reached plus the bits of the counts, and no partial product is made.
+    // Expanding the DAG into a tree instead would take 2^d steps for d nested names. Cost: one
+    // entry per product reached for this read. Test:
+    // `l01_25_preimage_catalog::bench::powers::reading_a_product_as_a_power_is_linear_in_its_factors`.
+    fn factors(&self, at: At) -> Vec<(Tid, Eid, Count)> {
+        // Proof that every count is the number of paths. (1) The first pass reaches every
+        // product node below `at` once (`index`) and counts its incoming edges from products,
+        // an operand used twice (`x1 * x1`) giving two edges. (2) The second pass is Kahn's
+        // order: a node is taken once all its parents were, so its count, the sum over its
+        // incoming edges of the parent's count, is final when taken; by induction on that order
+        // it is the number of paths from `at`, which starts at one. (3) The graph has no cycle,
+        // since a term's operands are terms written before it and names are followed to the
+        // terms they are bound to, so every reached node is taken.
+        let kids = |at: At| -> Option<[At; 2]> {
+            let (t, env) = at;
+            match self.node(t) {
+                Node::Prim(Prim::Mul, args) if args.len() == 2 => Some([
+                    self.followed(self.arg(args, 0), env),
+                    self.followed(self.arg(args, 1), env),
+                ]),
+                _ => None,
+            }
+        };
+        let at = self.followed(at.0, at.1);
+        let (mut index, mut nodes, mut parents): (HashMap<At, usize>, Vec<At>, Vec<usize>) =
+            (HashMap::from([(at, 0)]), vec![at], vec![0]);
+        let mut todo = vec![at];
+        while let Some(u) = todo.pop() {
+            for c in kids(u).into_iter().flatten() {
+                let i = *index.entry(c).or_insert_with(|| {
+                    nodes.push(c);
+                    parents.push(0);
+                    todo.push(c);
+                    nodes.len() - 1
+                });
+                parents[i] += 1;
+            }
+        }
+        let mut counts: Vec<Option<Count>> = vec![None; nodes.len()];
+        counts[0] = Some(Count::one());
+        let (mut ready, mut out) = (vec![0], Vec::<(Tid, Eid, Count)>::new());
+        let mut free: HashMap<Name, usize> = HashMap::new();
+        let mut bound: HashMap<At, usize> = HashMap::new();
+        while let Some(i) = ready.pop() {
+            let n = counts[i].take().expect("a taken node has its count");
+            let u = nodes[i];
+            let Some(cs) = kids(u) else {
+                let slot = match self.node(u.0) {
+                    Node::Var(x) => free.get(&x).copied(),
+                    _ => bound.get(&u).copied(),
+                };
+                match slot {
+                    Some(s) => out[s].2 = out[s].2.add(&n),
+                    None => {
+                        match self.node(u.0) {
+                            Node::Var(x) => free.insert(x, out.len()),
+                            _ => bound.insert(u, out.len()),
+                        };
+                        out.push((u.0, u.1, n));
+                    }
+                }
+                continue;
+            };
+            for c in cs {
+                let j = index[&c];
+                counts[j] = Some(match counts[j].take() {
+                    Some(m) => m.add(&n),
+                    None => n.clone(),
+                });
+                parents[j] -= 1;
+                if parents[j] == 0 {
+                    ready.push(j);
+                }
+            }
+        }
+        out
+    }
+
     /// The set of the input domain `dom`, one for the run ([`SharedInts`]).
     fn input_ints(&mut self, dom: Rc<IntervalSet>) -> Ints {
         let shared = &mut self.run.ints.inputs;
@@ -8785,6 +8874,28 @@ impl<'m, 't> Walk<'m, 't> {
             let b = self.fwd(base, be).await;
             return self.arith(&Op::Pow(k), &b, &b, false);
         }
+        if p == Mul {
+            // A product of several factors: each distinct factor's power, then their product
+            // ([`Tx::factors`]), so no partial product's set is made (PERF-alternating-product-bytes).
+            // Sound: integer products are exact and associative, so regrouping the factors
+            // gives the same values, each set holds every value of its factor's power or
+            // product, the set of a power is that of one
+            // value raised (not of independent factors), and the product fails where a factor
+            // may, as `arith` marks at each step.
+            let mut out: Option<Fwd> = None;
+            for (f, fe, k) in self.with(|tx| tx.factors((t, env))) {
+                let b = self.fwd(f, fe).await;
+                let g = match k.is_several() {
+                    true => self.arith(&Op::Pow(k.exponent()), &b, &b, false),
+                    false => b,
+                };
+                out = Some(match out {
+                    None => g,
+                    Some(a) => self.arith(&Op::Mul, &a, &g, false),
+                });
+            }
+            return out.expect("a product has two or more factors");
+        }
         match p {
             Neg | Abs => {
                 let a = self.fwd(self.arg(args, 0), env).await;
@@ -9439,6 +9550,7 @@ impl<'m, 't> Walk<'m, 't> {
             (Sub, Some(c), _) => self.back(b, env, ints(reflect(z, c as i128))).await,
             (Mul, Some(c), _) => self.back(b, env, ints(times_pre(z, c))).await,
             (Mul, _, Some(c)) => self.back(a, env, ints(times_pre(z, c))).await,
+            (Mul, None, None) => self.back_product(t, env, z).await,
             (IntDiv, _, Some(c)) => self.back(a, env, ints(div_pre(z, c))).await,
             (Mod, _, Some(c)) => {
                 // Within the run's class of remainders of the input `a`, every point is in `z`
@@ -9619,6 +9731,67 @@ impl<'m, 't> Walk<'m, 't> {
         let fc = self.fwd(c, env).await.ints;
         let zc = revision::backward(o, 0, fc.set(), fc.set(), z);
         self.back(c, env, Demand::Ints(zc)).await
+    }
+
+    /// The product `t`, whose operands are not constants and which is not a power, in `z`: the
+    /// HC4 projection ([`Walk::project`]) onto each distinct factor's power against the
+    /// product of the others ([`Tx::factors`]), and through the power to the factor. Necessary,
+    /// not exact, as [`Walk::project`] is.
+    // Complexity tradeoff (PERF-alternating-product-bytes): naive version, `project` operand
+    // by operand down the tree, which makes the forward set of each partial product and a
+    // demand for it, O(depth) bits each, O(n²) bits for a chain of n factors. Used: one
+    // projection per distinct factor at the top, the product of the others from prefix and
+    // suffix products, so g distinct factors cost O(g) set products and no partial product
+    // of the written tree is made. Sound: each factor's demand is the backward projection of
+    // `z` through `*` against a set holding every value of the other factors' product, and
+    // through `^ k` for a repeated factor, each a necessary condition (revision::backward);
+    // the meet of necessary conditions is one. Test:
+    // `l01_25_preimage_catalog::bench::powers::reading_a_product_as_a_power_is_linear_in_its_factors`.
+    async fn back_product(&'m self, t: Tid, env: Eid, z: &IntervalSet) -> Res {
+        let mul = Op::Mul;
+        let groups = self.with(|tx| tx.factors((t, env)));
+        let mut sets = Vec::with_capacity(groups.len());
+        for (f, fe, k) in &groups {
+            let b = self.fwd(*f, *fe).await;
+            sets.push(match k.is_several() {
+                true => self.arith(&Op::Pow(k.exponent()), &b, &b, false).ints,
+                false => b.ints,
+            });
+        }
+        let times = |a: &Ints, b: &Ints| self.with(|tx| tx.forward_ints(&mul, a, b));
+        // `after[i]`: the product of `sets[i..]`.
+        let mut after: Vec<Option<Ints>> = vec![None; sets.len() + 1];
+        for i in (0..sets.len()).rev() {
+            after[i] = Some(match &after[i + 1] {
+                None => sets[i].clone(),
+                Some(s) => times(&sets[i], s),
+            });
+        }
+        let (mut before, mut out): (Option<Ints>, Option<Res>) = (None, None);
+        for (i, (f, fe, k)) in groups.into_iter().enumerate() {
+            let others = match (&before, &after[i + 1]) {
+                (Some(a), Some(b)) => times(a, b),
+                (Some(a), None) => a.clone(),
+                (None, Some(b)) => b.clone(),
+                (None, None) => unreachable!("a product has two or more factors"),
+            };
+            let zi = revision::backward(&mul, 0, sets[i].set(), others.set(), z);
+            let r = match k.is_several() {
+                true => self.back_unary(&Op::Pow(k.exponent()), f, fe, &zi).await,
+                false => self.back(f, fe, Demand::Ints(zi)).await,
+            };
+            out = Some(match out {
+                None => r,
+                Some(o) => self.meet(o, r),
+            });
+            before = Some(match before {
+                None => sets[i].clone(),
+                Some(a) => times(&a, &sets[i]),
+            });
+        }
+        let mut r = out.expect("a product has two or more factors");
+        r.exact = self.empty(&r);
+        r
     }
 
     /// The HC4 projection onto each operand: necessary, not exact.
