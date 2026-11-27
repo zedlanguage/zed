@@ -13378,13 +13378,19 @@ fn content_order(p: &mut Parts, kept: &HashSet<u64>) {
     for o in &mut ors {
         let keys: Vec<(bool, Vec<&Con>)> = o.iter().map(|d| key(d, kept)).collect();
         let mut at: Vec<usize> = (0..o.len()).collect();
-        at.sort_by(|&a, &b| keys[a].cmp(&keys[b]).then_with(|| content_cmp(&o[a], &o[b])));
+        at.sort_by(|&a, &b| {
+            keys[a]
+                .cmp(&keys[b])
+                .then_with(|| content_cmp(&o[a], &o[b]))
+        });
         let sorted: Vec<Rc<Parts>> = at.iter().map(|&i| o[i].clone()).collect();
         drop(keys);
         *o = sorted;
     }
-    let keys: Vec<Vec<(bool, Vec<&Con>)>> =
-        ors.iter().map(|o| o.iter().map(|d| key(d, kept)).collect()).collect();
+    let keys: Vec<Vec<(bool, Vec<&Con>)>> = ors
+        .iter()
+        .map(|o| o.iter().map(|d| key(d, kept)).collect())
+        .collect();
     let mut at: Vec<usize> = (0..ors.len()).collect();
     at.sort_by(|&a, &b| {
         keys[a].cmp(&keys[b]).then_with(|| {
@@ -34844,7 +34850,11 @@ mod probe_order {
             Rng::fresh("probe_answers_the_same_parts_in_the_same_order_in_every_order");
         let written = |p: &Parts| -> String {
             let ors: Vec<Vec<String>> = (p.ors.iter())
-                .map(|o| o.iter().map(|d| format!("{:?} {:?}", d.cons, key(d))).collect())
+                .map(|o| {
+                    o.iter()
+                        .map(|d| format!("{:?} {:?}", d.cons, key(d)))
+                        .collect()
+                })
                 .collect();
             format!("{:?} {ors:?}", p.cons)
         };
