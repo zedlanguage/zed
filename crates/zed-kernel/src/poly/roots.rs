@@ -1922,9 +1922,9 @@ fn chain_ends(t: usize) -> u64 {
     u64::try_from(ends).unwrap_or(u64::MAX)
 }
 
-/// The branch and bound of [`positive_roots`] without the bound from above and with it from
+/// The branch and bound of `positive_roots` without the bound from above and with it from
 /// the first interval, for the benchmark `crossover roots-horner` (crate zed-benches), which
-/// fits [`HORNER_COST`]. Not for other use.
+/// fits `HORNER_COST`. Not for other use.
 #[doc(hidden)]
 pub mod crossover {
     use num_bigint::BigInt;

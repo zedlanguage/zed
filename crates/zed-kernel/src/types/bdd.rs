@@ -64,8 +64,8 @@ enum Pins {
     /// Every trial carried as far as it changes nodes; kept to test [`Pins::Cut`] against.
     #[cfg(test)]
     Carried,
-    /// The trials of [`Pins::Carried`], skipped or stopped where the verdict is known without
-    /// carrying them: the same pins.
+    /// The trials of `Pins::Carried` (test only), skipped or stopped where the verdict is known
+    /// without carrying them: the same pins.
     Cut,
     /// Claude's A+B of cross-review XR-lazy-and-kernel-batch-1, kept to show that it changes
     /// the answer: first pin what `root = true` requires, then the trials.
@@ -1852,7 +1852,7 @@ impl<A: Literal> Part<A> {
     ///
     /// A round's trials are cut short where the cut gives the trial's verdict without carrying it
     /// ([`Part::pins_by`], [`Pins::Cut`]): the same pins in the same order, so the same part, as
-    /// carrying every trial (tested against [`Pins::Carried`] on every family below and on random
+    /// carrying every trial (tested against `Pins::Carried` on every family below and on random
     /// parts).
     ///
     /// Lower bound, conditional: deciding whether a CNF formula has a failed literal, the
@@ -1873,8 +1873,9 @@ impl<A: Literal> Part<A> {
     /// Gemini's family `tests::cubic_for_a_worklist`, and it changes which superset `settle`
     /// returns, which the callers in `empty.rs` read (Codex's witness,
     /// `tests::worklist_cannot_pin_an_expression_the_round_turns_into_a_bdd`). Nor Claude's A+B
-    /// ([`Pins::Required`]), which pins the expressions that `root = true` requires before the
-    /// trials: it takes pins the round would not, and changes the answer on that witness.
+    /// (`Pins::Required`, test only), which pins the expressions that `root = true` requires
+    /// before the trials: it takes pins the round would not, and changes the answer on that
+    /// witness.
     pub(super) fn settle(&self) -> Part<A> {
         self.settle_by(Pins::Cut)
     }
