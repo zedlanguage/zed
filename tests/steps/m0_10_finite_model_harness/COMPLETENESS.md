@@ -32,3 +32,4 @@ uses, such as ports and text.
 | seed.rs lines 23–26: `ZED_TEST_SEED` set, and set to text that is no number | None in this group: the variable is read by every random test of the binary at once, so setting it inside one test would change the others' seeds; it is set from the shell to repeat a run, and the parse is two library calls |
 | kernel.rs `lines_of`, `beyond_machine` | None here: builders for other groups (texts of lines, the memory message), not used by any M0.10 law |
 | Linear scaling of the recursion schedules and of fold and lattice ascents | the tests of `scaling.rs` at small sizes; large sizes in the `bench` module |
+| The counted checks DESIGN states as done at design time (plan row CLAIM-design-checks): the join rule over 27 triples and 729 pairs of bounds, the map rules (3,222 instances), the carrier change (1,002), the fold bounds (280) | the four tests of `claims.rs`, each asserting and printing its counts |
