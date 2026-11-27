@@ -21,7 +21,7 @@ use zed_kernel::frames::{Deep, Stack};
 pub use zed_kernel::types::names::{
     FreshVarSpanStats, HeldVarSnapshot, NameItem, NameRun, NameRunIndex, Names, ProgramNames,
     SkipIndex, current_held_var_snapshot, fresh_name, fresh_name_with_held,
-    fresh_variable_span_stats_indexed, rename_apart,
+    fresh_variable_span_stats_indexed, may_be_picked, rename_apart,
 };
 use zed_kernel::types::order;
 use zed_kernel::types::{Refusal, Spell, TextPlace, Type as KType, Verdict, defs};
@@ -24600,6 +24600,25 @@ impl Scope {
         scope
     }
 
+    /// The name a declaration wrote for the bounded own variable `v` of a signature whose own
+    /// names were picked from `T` on, `named` of them, if it has one. Only a written name is kept:
+    /// the checker's own name for a variable says nothing of its first place
+    /// ([`Scope::mark`]). A name that is no class `$k` was written where it is not one of the
+    /// checker's picks ([`may_be_picked`], whose comment gives the proof): a signature read
+    /// from an annotation (`g: T -> T for U in int | f64`) or a declaration's, finished. A
+    /// name the checker picked is not kept (b30's trial of keeping every name that is no class
+    /// renamed `inc = x -> x + 1` to `V -> V` in one step of a derivation and `T -> T` in
+    /// another; PRINT-written-vars-on-sig). Only for a bounded variable: an unbounded one that
+    /// stands once prints `_`, which a kept name would not, so it keeps only a name of
+    /// [`Scope::kept`] ([`Scope::kept_slot`]); applying this rule to unbounded variables too
+    /// printed `(x0: _) -> _` as `(x0: T | (U | V, int)) -> V` and broke the join of a failed
+    /// test's leftover (unreached6, `what_a_failed_test_leaves_…`). Missed: a written name of another file at a place below
+    /// `named` that the program does not bind, printed as one picked. O(1) per variable.
+    fn written_name(&self, v: &Arc<str>, named: usize) -> Option<Arc<str>> {
+        (self.kept.get(v).cloned())
+            .or_else(|| (class_id(v).is_none() && !may_be_picked(v, named)).then(|| v.clone()))
+    }
+
     /// A new unbounded variable, alone in its tree.
     fn free(&mut self) -> VarSlot {
         VarSlot::Free(self.same.push())
@@ -24697,9 +24716,7 @@ impl Scope {
             let union = self.unions.last().filter(|_| hoisted);
             let taken =
                 |name: &str| printed.contains(name) || union.is_some_and(|u| u.contains(name));
-            // Only a written name is kept: the checker's own name for a variable says nothing
-            // of its first place ([`Scope::mark`]).
-            let want = self.kept.get(v).filter(|w| !taken(w)).cloned();
+            let want = self.written_name(v, sig.named).filter(|w| !taken(w));
             let name = self.mark(want);
             self.names
                 .entry(v.clone())
@@ -28097,8 +28114,10 @@ mod tests {
     /// as an unbounded one is, not by the name the checker gave it (DESIGN.md sec:diagnostics,
     /// "Types in a message": "A variable is named in the order in which the names first occur
     /// in the printed text, left to right, whatever bounds it"); a written name is kept, and a
-    /// variable met before it skips it. Red before: `(x0: T, x1: Z) -> T for Z in …`, the
-    /// checker's name `Z`.
+    /// variable met before it skips it. Red before: `(x0: U, x1: T) -> T for U in …` for the
+    /// second, the checker's names. The checker's names are its first picks, `T` and `U` with `named` 2
+    /// ([`may_be_picked`]); a name it cannot pick, as `A` or `Z`, is one a declaration wrote,
+    /// and is kept (PRINT-written-vars-on-sig).
     #[test]
     fn a_bounded_variable_is_named_in_order_of_first_place() {
         let v = |x: &str| Ty::var(x.into());
@@ -28110,27 +28129,38 @@ mod tests {
                 stores_not_found: false,
             };
             let mut s = sig(vec![arrow], 2, false);
-            s.own = ["A".into(), "Z".into()].into_iter().collect();
-            s.bounds.insert("Z".into(), B_MASK);
+            s.own = ["T".into(), "U".into()].into_iter().collect();
+            s.bounds.insert("U".into(), B_MASK);
+            s.named = 2;
             s.note_held();
             s
         };
         let clause = |n: &str| format!(" for {n} in {}", mask_text(B_MASK));
-        let s = make(["A", "Z"], "A");
+        let s = make(["T", "U"], "T");
         assert_eq!(s.to_string(), format!("(x0: T, x1: U) -> T{}", clause("U")));
-        let s = make(["Z", "A"], "A");
+        let s = make(["U", "T"], "T");
         assert_eq!(s.to_string(), format!("(x0: T, x1: U) -> U{}", clause("T")));
-        // Written `T`, the bounded variable keeps it, and `A`, met first, takes `U`.
-        let kept: [(Arc<str>, Arc<str>); 1] = [("Z".into(), "T".into())];
+        // Written `T`, the bounded variable keeps it, and the checker's `T`, met first, takes
+        // `U`.
+        let kept: [(Arc<str>, Arc<str>); 1] = [("U".into(), "T".into())];
         let around = Around {
             kept: &kept,
             ..Around::default()
         };
-        let s = make(["A", "Z"], "A");
+        let s = make(["T", "U"], "T");
         assert_eq!(
             s.text_around(around),
             format!("(x0: U, x1: T) -> U{}", clause("T"))
         );
+        // A bounded name the checker cannot pick was written, and prints as written; an
+        // unbounded one keeps only a name of `kept`, and is named by its first place.
+        let mut s = make(["T", "U"], "T");
+        s.own = ["A".into(), "Z".into()].into_iter().collect();
+        s.bounds = [("Z".into(), B_MASK)].into_iter().collect();
+        s.arrows[0].params = vec![v("A"), v("Z")];
+        s.arrows[0].result = v("A");
+        s.note_held();
+        assert_eq!(s.to_string(), format!("(x0: T, x1: Z) -> T{}", clause("Z")));
     }
 
     /// A recursive type stands among the type variables by its name, as the order of a union
