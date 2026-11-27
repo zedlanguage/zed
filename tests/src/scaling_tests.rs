@@ -1207,7 +1207,7 @@ const A_START: &str = concat!("Command", "::new(");
 /// process must count; counting it would run it under the client from its start.
 const NOT_COUNTED: &[(&str, &str, &str)] = &[
     (
-        "tests/src/scaling.rs",
+        "crates/zed-testkit/src/scaling.rs",
         "fresh_command",
         "the run at n or 8n of a check, in a new process of the test binary, which measures \
          itself; under `counted` its set-up would run under DynamoRIO, which it starts itself at \
@@ -1366,7 +1366,14 @@ fn every_process_a_benchmark_starts_is_counted() {
         .parent()
         .expect("the workspace");
     let mut files = Vec::new();
-    for dir in ["tests/src", "tests/steps", "tests/full", "benches/src"] {
+    // The harness itself lies in zed-testkit (DRY-testkit-2026-11-26).
+    for dir in [
+        "tests/src",
+        "tests/steps",
+        "tests/full",
+        "benches/src",
+        "crates/zed-testkit/src",
+    ] {
         rust_files(root, &root.join(dir), &mut files);
     }
     let found: Vec<String> = files
@@ -1430,7 +1437,7 @@ fn a_process_a_benchmark_starts_uncounted_is_found() {
     );
     // And a start NOT_COUNTED names is not.
     let named = bench.replace("spawns_in_its_run", "fresh_command");
-    assert!(uncounted_starts("tests/src/scaling.rs", &named).is_empty());
+    assert!(uncounted_starts("crates/zed-testkit/src/scaling.rs", &named).is_empty());
 }
 /// The variable naming, for [`bench::a_spin_whose_phase_at_8n_is_read`], the file of the
 /// benchmark's phases: its own name, since a process started for a run at 8n is not given
