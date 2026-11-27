@@ -261,8 +261,7 @@ impl Op<'_> {
 
 #[test]
 fn changing_a_carrier_keeps_each_property_with_the_equations_it_needs() {
-    let (mut instances, mut idempotence_fails, mut identity_fails, mut either_fails) =
-        (0, 0, 0, 0);
+    let (mut instances, mut idempotence_fails, mut identity_fails, mut either_fails) = (0, 0, 0, 0);
     for n in 1..=2usize {
         for t in maps(n * n, n) {
             let op = Op { n, t: &t };
