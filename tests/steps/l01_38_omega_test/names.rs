@@ -2466,6 +2466,33 @@ fn two_copies_of_a_chain_with_no_point_are_never_decided_true() {
     }
 }
 
+/// [`two_chains_or`] gets one answer under every naming (PROOF-tied-projection-refusal-names):
+/// at `k > 0` the copies form one tied component, which is `decide`d `false` under most
+/// namings and was refused with `Growth` under 2 to 4 of 40 (solve-rename, 2026-11-16); the
+/// formula has no point, so the one answer must be `false`. It catches a refusal that depends
+/// on the names in any step of `decide` on these formulas; it cannot say which step refuses,
+/// and it draws 40 namings of the (2n)! there are.
+#[test]
+fn two_tied_copies_of_a_chain_are_answered_alike_under_every_naming() {
+    let (mut rng, seed) = Rng::fresh("two tied copies of a chain");
+    for a in [0, 4, 5, 8] {
+        for k in [1, 3] {
+            let (n, sys) = two_chains_or(a, k);
+            let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+            for _ in 0..40 {
+                let f = disjunctive_formula(&sys, &shuffled(&mut rng, n));
+                let got = match decide(&f) {
+                    Ok(b) => b.to_string(),
+                    Err(e) => refusal_kind(&e),
+                };
+                *seen.entry(got).or_insert(0) += 1;
+            }
+            let one: BTreeMap<String, usize> = [("false".to_string(), 40)].into();
+            assert_eq!(seen, one, "seed {seed}, a {a}, k {k}");
+        }
+    }
+}
+
 /// A refusal written without the names it gives, which a renaming changes.
 fn refusal_kind(e: &Refusal) -> String {
     match e {
