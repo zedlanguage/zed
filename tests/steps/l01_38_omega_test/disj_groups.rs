@@ -477,6 +477,18 @@ fn one_of(l: &Lin, vs: &[i128]) -> Formula {
     Formula::or(vs.iter().map(|v| eq(l.minus(&Lin::constant(*v)))).collect())
 }
 
+/// A chain of `n` stages `y[i + 1] <= y[i] + x[i]` with `x[i]` in {0, 2} and `y[0] == 0`:
+/// `y[i]` is at most `2i` and unbounded below, a bound only the rows the disjunctions imply
+/// give (item PRES-pendants-wider). Each row reads three atoms (PRES-sum-chain-cost).
+pub(super) fn sum_chain(n: usize) -> Formula {
+    let mut fs = vec![eq(y(0))];
+    for i in 0..n - 1 {
+        fs.push(ge(y(i).plus(&x(i)).minus(&y(i + 1))));
+        fs.push(one_of(&x(i), &[0, 2]));
+    }
+    Formula::and(fs)
+}
+
 /// The hull of `z` over `f`, with `lo` and `hi` its ends (`None`: unbounded), and no part
 /// left out.
 fn assert_hull(f: &Formula, lo: Option<i64>, hi: Option<i64>) {
