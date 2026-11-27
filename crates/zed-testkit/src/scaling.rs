@@ -1771,7 +1771,7 @@ fn fresh_target() -> Option<&'static (usize, bool, String, String)> {
 /// `--nocapture`, `--show-output`, `--quiet`/`-q` change what is printed and `--test-threads=`
 /// how many threads run the tests selected, and none of them selects a test. A false answer
 /// where the process does run the test alone costs one more process start (see
-/// [`compare_measured`]), never a wrong count.
+/// `compare_measured`), never a wrong count.
 pub fn runs_alone(test: &str) -> bool {
     let (mut exact, mut named) = (false, false);
     for arg in std::env::args().skip(1) {
@@ -2048,16 +2048,16 @@ fn replay_or_measure(
 /// grammar, an interner) was filled by the run at n before the run at 8n began, so in one
 /// process it counted in the run at n only: a set-up that grows faster than the pass, hidden in
 /// such a memo, went unseen (TEST-scaling-cold-shared-memo). So on a count of instructions the
-/// run at 8n runs in a new process of the test binary ([`run_in_a_new_process`]), which runs the
+/// run at 8n runs in a new process of the test binary (`run_in_a_new_process`), which runs the
 /// same test alone up to this check and measures there the run at 8n in place of the run at n:
 /// both runs measured then start from one state, that of this process as the check began, and
 /// each pays what the process builds on first use, at its own size. The proof that the state is
 /// the same: a test is a function of what its process holds as it starts and of what its checks
 /// return. The new process starts as this one did (the same binary, environment and arguments
 /// that select this test), libtest runs the test on one thread named after it, and each earlier
-/// check `j` of the test ([`replay_or_measure`]) runs there the runs this process ran (its run at
+/// check `j` of the test (`replay_or_measure`) runs there the runs this process ran (its run at
 /// n, and its run at 8n where that ran here), unmeasured, and returns or panics as it did here
-/// ([`FRESH_FAILED`]); so the test reaches check `k` with the memos this process held at the
+/// (`FRESH_FAILED`); so the test reaches check `k` with the memos this process held at the
 /// start of check `k`, given that the test does the same thing from run to run (a check that
 /// finds the wrong check at its place says so). What the process held from other tests running
 /// beside this one is not there, as it is not in a run of the test alone; so when this process
@@ -2080,7 +2080,7 @@ fn replay_or_measure(
 /// once per check; the run at 8n is no longer than before. A check on a thread whose name is not
 /// a test's (one the test named itself), or with no name, and a meter of processor time or
 /// cycles, which takes the least of several runs, keep both runs in this process and the hole.
-/// The body is [`compare_measured`], compiled once for the reason [`check_by`] gives.
+/// The body is `compare_measured`, compiled once for the reason [`check_by`] gives.
 pub fn compare_by(
     meter: &mut Meter,
     measures: Measures,
