@@ -378,9 +378,10 @@ fn satisfiable_named_once(f: &Formula) -> Result<Option<Model>, Refusal> {
         Naming::Kept => satisfiable_inner(f),
         Naming::Renamed(r) => {
             // Atoms ranked by name are settled first as tied ones are, at the cost of that
-            // path; the search answers what it leaves.
+            // path, over the new names ([`Renamed::settle_tied`]); the search answers what it
+            // leaves.
             if let Some(color) = &r.tied {
-                match settle_tied(f, color, true) {
+                match r.settle_tied(color, true) {
                     Ok(Settled::Empty) => return Ok(None),
                     Ok(Settled::Point(m)) => return Ok(Some(m)),
                     Ok(Settled::Left(_)) | Err(_) => {}
@@ -390,38 +391,44 @@ fn satisfiable_named_once(f: &Formula) -> Result<Option<Model>, Refusal> {
             Ok(found.map(|m| m.into_iter().map(|(a, v)| (r.back(&a), v)).collect()))
         }
         Naming::Tied(vars, color) => {
-            let whole = || match settle_tied(f, &color, true)? {
+            // As in [`decide_named`]; each atom that [`twins_merged`] replaced takes the value
+            // of the atom that replaced it.
+            let merged = |g: &Formula| {
+                twins_merged(g, &[], true).map(|(g, to)| {
+                    satisfiable_named(&g).map(|found| {
+                        found.map(|mut m| {
+                            for (a, by) in to {
+                                if let Some(v) = m.get(&by).cloned() {
+                                    m.insert(a, v);
+                                }
+                            }
+                            m
+                        })
+                    })
+                })
+            };
+            let renamed = |r: Renamed| match r.settle_tied(&color, true)? {
                 Settled::Empty => Ok(None),
                 Settled::Point(m) => Ok(Some(m)),
-                // As in [`decide_named`]; each replaced atom takes the value of the atom that
-                // replaced it.
-                Settled::Left(p) => {
-                    let merged = twins_merged(f, &[], true).map(|(g, to)| {
-                        satisfiable_named(&g).map(|found| {
-                            found.map(|mut m| {
-                                for (a, by) in to {
-                                    if let Some(v) = m.get(&by).cloned() {
-                                        m.insert(a, v);
-                                    }
-                                }
-                                m
-                            })
-                        })
-                    });
-                    match merged {
-                        Some(Ok(found)) => Ok(found),
-                        // As in [`decide_named`].
-                        _ => match Renamed::untied(f) {
-                            Some(r) => {
-                                let found =
-                                    satisfiable_inner(&r.f).map_err(|e| r.back_refusal(e))?;
-                                Ok(found
-                                    .map(|m| m.into_iter().map(|(a, v)| (r.back(&a), v)).collect()))
-                            }
-                            None => Err(unordered(vars.clone(), &p)),
-                        },
+                Settled::Left(_) => match merged(&r.f) {
+                    Some(Ok(found)) => Ok(found.map(|m| r.model_back(m))),
+                    _ => {
+                        let found = satisfiable_inner(&r.f).map_err(|e| r.back_refusal(e))?;
+                        Ok(found.map(|m| r.model_back(m)))
                     }
-                }
+                },
+            };
+            let as_given = || match settle_tied(f, &color, true)? {
+                Settled::Empty => Ok(None),
+                Settled::Point(m) => Ok(Some(m)),
+                Settled::Left(p) => match merged(f) {
+                    Some(Ok(found)) => Ok(found),
+                    _ => Err(unordered(vars.clone(), &p)),
+                },
+            };
+            let whole = || match Renamed::untied(f) {
+                Some(r) => renamed(r),
+                None => as_given(),
             };
             // As in [`decide_named`]: each group that shares no atom with the others alone,
             // the points of all of them joined; the whole asked as before where one is
@@ -627,9 +634,10 @@ fn decide_named_once(f: &Formula) -> Result<bool, Refusal> {
     match Renamed::of(f) {
         Naming::Kept => unit_rows_have_a_point(f).map_or_else(|| decide_inner(f), Ok),
         Naming::Renamed(r) => {
-            // As in [`satisfiable_named`]: the tied path first, the search on what it leaves.
+            // As in [`satisfiable_named`]: the tied path first, the search on what it leaves,
+            // both over the new names ([`Renamed::settle_tied`]).
             if let Some(color) = &r.tied {
-                match settle_tied(f, color, false) {
+                match r.settle_tied(color, false) {
                     Ok(Settled::Empty) => return Ok(false),
                     Ok(Settled::Point(_)) => return Ok(true),
                     Ok(Settled::Left(_)) | Err(_) => {}
@@ -638,20 +646,33 @@ fn decide_named_once(f: &Formula) -> Result<bool, Refusal> {
             decide_inner(&r.f).map_err(|e| r.back_refusal(e))
         }
         Naming::Tied(vars, color) => {
-            let whole = || match settle_tied(f, &color, false)? {
+            // Renamed by its structure where it can be, and then settled and searched over the
+            // new names, so the projections of [`stage_kernels`] read no name of the formula's
+            // (PROOF-tied-projection-refusal-names, [`Renamed::settle_tied`]).
+            let renamed = |r: Renamed| match r.settle_tied(&color, false)? {
                 Settled::Empty => Ok(false),
                 Settled::Point(_) => Ok(true),
-                // With atoms defined alike made one, the tie may be gone. Each merge leaves
-                // fewer atoms, so the call ends.
+                Settled::Left(_) => {
+                    match twins_merged(&r.f, &[], true).map(|(g, _)| decide_named(&g)) {
+                        Some(Ok(found)) => Ok(found),
+                        _ => decide_inner(&r.f).map_err(|e| r.back_refusal(e)),
+                    }
+                }
+            };
+            // Otherwise as given; with atoms defined alike made one, the tie may be gone (each
+            // merge leaves fewer atoms, so the call ends).
+            let as_given = || match settle_tied(f, &color, false)? {
+                Settled::Empty => Ok(false),
+                Settled::Point(_) => Ok(true),
                 Settled::Left(p) => match twins_merged(f, &[], true).map(|(g, _)| decide_named(&g))
                 {
                     Some(Ok(found)) => Ok(found),
-                    // Told apart by the nesting, the formula is renamed and searched.
-                    _ => match Renamed::untied(f) {
-                        Some(r) => decide_inner(&r.f).map_err(|e| r.back_refusal(e)),
-                        None => Err(unordered(vars.clone(), &p)),
-                    },
+                    _ => Err(unordered(vars.clone(), &p)),
                 },
+            };
+            let whole = || match Renamed::untied(f) {
+                Some(r) => renamed(r),
+                None => as_given(),
             };
             // Each group that shares no atom with the others decided alone: empty when one
             // is; where one is refused and none is empty, the whole is asked as before.
@@ -2190,8 +2211,12 @@ impl Renamed {
     /// ([`nesting()`]), or `None` when that coloring ties two atoms too. Each atom's color is
     /// the rank of the pair of its first color and its second, so the order of the atoms the
     /// first coloring separates is kept; both depend on the structure alone, so the pair does,
-    /// and a renaming of the atoms gives the one renamed formula. Asked only where the answer
-    /// is otherwise [`Refusal::Unordered`] ([`decide_named`], [`satisfiable_named`]).
+    /// and a renaming of the atoms gives the one renamed formula. Asked by [`decide_named`] and
+    /// [`satisfiable_named`] for a tied formula whose groups ([`atom_disjoint_parts`]) did not
+    /// answer it, before it is settled: where it gives a renaming, the formula is settled and
+    /// searched over the new names ([`Renamed::settle_tied`], PROOF-tied-projection-refusal-names);
+    /// before, it was asked only where the answer was otherwise [`Refusal::Unordered`], after a
+    /// settling over the names as given whose refusals followed the names.
     // Complexity tradeoff (PREIMAGE-tie-indep-let): naive version, the second coloring in
     // [`Renamed::of`] for every tied formula, so that each is renamed and searched. That
     // turned [`project_each`] of tied formulas, answered before by [`project_parts`] with
@@ -2199,9 +2224,11 @@ impl Renamed {
     // `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale` went from
     // linear to about 4 times the time per doubling of the depth (55 ms at depth 8, 1.6 s at
     // 64, 5.5 s at 128), almost all of it [`probe`]'s [`search_by_halves`], and no order of the
-    // pair ranks changed that (measured 2026-11-14). Used: the second coloring only where
-    // the tied path would refuse, after [`settle_tied`] and [`twins_merged`]; a projection of
-    // a tied formula is answered as before. The coloring costs one walk of the formula with
+    // pair ranks changed that (measured 2026-11-14). Used: the second coloring only in
+    // [`decide_named`] and [`satisfiable_named`], once for a tied formula their groups leave,
+    // with [`settle_tied`] run on the renamed formula before any search, as it ran on the
+    // formula as given (PROOF-tied-projection-refusal-names); a projection of a tied formula is
+    // answered as before. The coloring costs one walk of the formula with
     // shared parts read once and one color refinement, O(L log L) for L links of the graph
     // ([`nesting()`], [`stable_colors`]); the search after it costs what [`decide_inner`] or
     // [`satisfiable_inner`] cost on the renamed formula, and it replaces a refusal. On the nested
@@ -2620,6 +2647,47 @@ impl Renamed {
             | Refusal::Work
             | Refusal::Questions
             | Refusal::Repeats => e,
+        }
+    }
+
+    /// The model `m` of the renamed formula, over the atoms as given.
+    fn model_back(&self, m: Model) -> Model {
+        m.into_iter().map(|(a, v)| (self.back(&a), v)).collect()
+    }
+
+    /// [`settle_tied`] of the renamed formula, `color` the colors of the atoms as given, with
+    /// a refusal and a point written over the atoms as given (PROOF-tied-projection-refusal-names).
+    ///
+    /// Why the renamed formula: [`settle_tied`] projects a tied component over the names it is
+    /// given ([`stage_kernels`]), and [`shadow`] breaks ties in its order of elimination by them,
+    /// so under the names as given a step could refuse (`Growth`) under one naming and answer
+    /// under another: two tied copies of a chain with no point were decided `false` under most
+    /// of 40 namings and refused under 2 to 4. Proof that this settling is the same under every
+    /// naming, where [`Renamed::untied`] or [`Renamed::ranked`] gives `self`: (1) two namings
+    /// of one formula give one renamed formula (their docs: the colors are numbered by the
+    /// structure alone, and the atoms a coloring leaves tied are exchanged by a map of the
+    /// formula onto itself, tested by [`Numbered::permutes_onto_itself`] or
+    /// [`Numbered::ties_are_symmetries`]); (2) the colors are the same function of the
+    /// structure under both, so `there` is one map; (3) [`settle_tied`] is a function of its
+    /// formula and colors, reading no state that a naming changes (its meter is the question's
+    /// own, and counts the same steps on one input), so it returns one value, over the new names
+    /// (a `Left` too, whose parts the caller reads as the renamed formula's),
+    /// and [`Renamed::back`] and [`Renamed::back_refusal`] then write it over each naming's own
+    /// atoms. Not proved where (1) rests on what those docs leave unproved (the joining of equal
+    /// parts in [`nesting()`] and [`Numbered::permutes_onto_itself`]).
+    // Complexity tradeoff: naive version, [`settle_tied`] of the formula as given, with no
+    // renaming. Used: one map of the colors to the new names, O(A) for A atoms, and the
+    // renaming the caller made ([`Renamed::untied`], one more coloring of the formula and its
+    // nesting, O(L log L) for L links, [`stable_colors`]); the settling costs what it cost
+    // before, over other names. COMPLEXITY.md row PROOF-tied-projection-refusal-names.
+    fn settle_tied(&self, color: &HashMap<Atom, usize>, want: bool) -> Result<Settled, Refusal> {
+        let there: HashMap<Atom, usize> = (color.iter())
+            .map(|(a, &c)| (rename(&self.to, a), c))
+            .collect();
+        match settle_tied(&self.f, &there, want) {
+            Ok(Settled::Point(m)) => Ok(Settled::Point(self.model_back(m))),
+            Ok(s) => Ok(s),
+            Err(e) => Err(self.back_refusal(e)),
         }
     }
 }
@@ -3077,7 +3145,9 @@ fn unordered(vars: Vec<Atom>, p: &Parts) -> Refusal {
 /// solver refused under one naming was shown empty under another
 /// (PROOF-settle-marks-naming-free). Not proved where two atoms of the disjunction's component
 /// share a color: that component is projected over its names as given, which keeps the
-/// base's points but may change a refusal ([`stage_kernels`], PROOF-tied-projection-refusal-names).
+/// base's points but may change a refusal, unless those names are the structure's, as where
+/// [`Renamed::settle_tied`] settles the formula ([`stage_kernels`],
+/// PROOF-tied-projection-refusal-names).
 /// On a chain of `n` stages with a disjunction at each, every test read the whole chain
 /// before, `n` solves of `n` rows (COMPLEXITY.md PROJECT-dead2-quadratic).
 ///
@@ -3290,11 +3360,13 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
 /// integer points under every naming, since [`shadow`] eliminates an atom only where that is
 /// exact over the integers, so a test that the solver answers answers alike, and no mark
 /// claims a point the base lacks (a tied component's atoms keep their own names, so no map
-/// back moves them onto another component's atoms). Not proved: that the solver refuses a test of
-/// those rows under every naming or none; a disjunct it refuses under one naming and answers under
-/// another, and whose linked rows it refuses, is still marked by the names (plan row
-/// PROOF-tied-projection-refusal-names: two tied copies of a chain with no point, `false` under
-/// most namings and refused with `Growth` under 2 to 4 of 40, which step refuses not traced).
+/// back moves them onto another component's atoms). Where [`decide_named`] and
+/// [`satisfiable_named`] reach here, the formula has been renamed by its structure where it can
+/// be ([`Renamed::untied`], [`Renamed::settle_tied`]), so the names as given are the structure's
+/// and every naming gets one projection (PROOF-tied-projection-refusal-names: two tied copies of a
+/// chain with no point were `false` under most namings and refused with `Growth` under 2 to 4 of
+/// 40). Not proved where no renaming is found, or for [`project_parts`], which projects with the
+/// names as given: that the solver refuses a test of those rows under every naming or none.
 /// Renaming such a component canonically needs a canonical labeling, exponential in the worst case;
 /// leaving it without a projection tests each disjunct against the whole group, O(k r) for k
 /// disjunctions over r rows, which made `decide_scales_over_a_sum_of_conditionals_tied_jointly`
