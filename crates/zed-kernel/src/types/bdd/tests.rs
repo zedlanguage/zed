@@ -3827,7 +3827,10 @@ fn gated_by_the_one_before_takes_a_round_a_pin() {
 /// `N` both `Θ(n)`; all rounds cost 1984, 7632, 26515 and 178679 over 6, 10, 13 and 26 rounds,
 /// each round at most the first (the ratio of the whole to rounds times the first is 0.77, 0.67,
 /// 0.62 and 0.64). The test asserts both: the first round within `7 · n^2`, and the whole within
-/// rounds times the first.
+/// the rounds plus one times the first, the bound [`settled_by`] proves: the last round, which
+/// finds no pin, costs work too. The rounds times the first is no bound: the short-addresses
+/// build (`address::short64`, 8-bit digests) settles `n = 8` in 2 rounds `[1, 7]` with work
+/// 1004 against a first round of 432, over `2 · 432` and within `3 · 432`.
 #[test]
 fn cubic_for_a_worklist() {
     let family = |n: usize| {
@@ -3858,8 +3861,8 @@ fn cubic_for_a_worklist() {
         );
         assert!(first <= 7 * (n * n) as u64, "n = {n}: first round {first}");
         assert!(
-            cut <= rounds.len() as u64 * first,
-            "n = {n}: {cut} over {} rounds",
+            cut <= (rounds.len() as u64 + 1) * first,
+            "n = {n}: {cut} over {} rounds and the last, which finds no pin",
             rounds.len()
         );
     }
