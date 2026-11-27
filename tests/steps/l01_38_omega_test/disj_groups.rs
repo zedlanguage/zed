@@ -480,7 +480,12 @@ fn one_of(l: &Lin, vs: &[i128]) -> Formula {
 /// The hull of `z` over `f`, with `lo` and `hi` its ends (`None`: unbounded), and no part
 /// left out.
 fn assert_hull(f: &Formula, lo: Option<i64>, hi: Option<i64>) {
-    let r = project_each(f, &[Atom::Sym("z".into())]).expect("a projection");
+    assert_hull_of(f, "z", lo, hi);
+}
+
+/// [`assert_hull`] of the atom named `z`.
+fn assert_hull_of(f: &Formula, z: &str, lo: Option<i64>, hi: Option<i64>) {
+    let r = project_each(f, &[Atom::Sym(z.into())]).expect("a projection");
     let s = r.0[0].clone().expect("a hull");
     let probe = 1_000_000;
     match lo {
@@ -525,6 +530,62 @@ fn an_unbounded_end_that_the_implied_rows_bound_is_read_where_atoms_are_tied() {
     ]);
     assert_hull(&f, None, Some(4));
     solver_alone(|| assert_hull(&f, None, Some(4)));
+}
+
+/// Formulas over `b`, `c`, `z` and `w`, named `n[0]` to `n[3]`, that a swap of `b` and `c`
+/// maps onto themselves, so they are projected by `project_parts` with `sets`, which reads
+/// the rows the two disjunctions imply (`0 <= b <= 2`, `0 <= c <= 2`) by one `propagate`;
+/// each with the ends of the hull of `z`. In turn: `z <= b + c`; `z <= w <= b + c`, a bound
+/// found through two rows; the same with `w <= z + 1`, where the upper sides of `z` and `w`
+/// each wait on the other and `propagate` lets them go; and `-(b + c) - 1 <= z <= b + c`,
+/// both ends, the lower at `b = c = 2`.
+fn tied_cases(n: [&str; 4]) -> Vec<(Formula, Option<i64>, Option<i64>)> {
+    let [b, c, z, w] = n.map(named);
+    let bc = b.plus(&c);
+    let two = |base: Vec<Formula>| {
+        let mut fs = base;
+        fs.push(one_of(&b, &[0, 2]));
+        fs.push(one_of(&c, &[0, 2]));
+        Formula::and(fs)
+    };
+    let one = Lin::constant(1);
+    vec![
+        (two(vec![ge(bc.minus(&z))]), None, Some(4)),
+        (two(vec![ge(w.minus(&z)), ge(bc.minus(&w))]), None, Some(4)),
+        (
+            two(vec![
+                ge(w.minus(&z)),
+                ge(bc.minus(&w)),
+                ge(z.plus(&one).minus(&w)),
+            ]),
+            None,
+            Some(4),
+        ),
+        (
+            two(vec![ge(bc.minus(&z)), ge(z.plus(&bc).plus(&one))]),
+            Some(-5),
+            Some(4),
+        ),
+    ]
+}
+
+/// The hull the sets path reads from the implied rows ([`tied_cases`]) is the same under each
+/// of the 24 namings of the four atoms by the names `b`, `c`, `z` and `w`, under the solver
+/// alone and by the default path (claim of PRES-cases-end at `Level::close`: the bounds are
+/// read by one `propagate`, whose result does not depend on the order of the rows, then the
+/// rows on each symbol alone, so the reading is a function of the parts as sets and not of
+/// the names, which order the rows).
+#[test]
+fn the_ends_the_implied_rows_give_tied_atoms_are_the_same_under_every_naming() {
+    let pool = ["b", "c", "z", "w"];
+    for p in zed_tests::instances::permutations(4) {
+        let n = [pool[p[0]], pool[p[1]], pool[p[2]], pool[p[3]]];
+        for (f, lo, hi) in tied_cases(n) {
+            let check = || assert_hull_of(&f, n[2], lo, hi);
+            check();
+            solver_alone(check);
+        }
+    }
 }
 
 /// `z + 2w >= 1 || z + 3y >= 3` with `w <= 1` and `y` in {-1, 2}: at `y = -1` the least `z`
