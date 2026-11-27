@@ -542,13 +542,14 @@ o=$ws/case-$n-cmd-docs.out
   { fail=$((fail + 1)); echo "FAIL cmd-docs: the command did not get the doc changes, '$want' ($o)"; }
 # The shares' copies have no origin/main either, and the doc check of each run_tests.sh there
 # printed that it was skipped and passed (MERGECHECK-doc-check-skipped-without-origin). Share 1
-# gets the changes found here and the other shares name share 1; with ZED_DOC_CHECKED set by the
-# caller (tools/merge_check.sh, which did the check), every share names that run. Before the fix
-# every line was `docs: checked= changes=none`.
+# gets the changes found here, checks them itself after its list call, and then its pieces, like
+# the other shares', name share 1 (FARM-share-doc-check-only-with-short); with ZED_DOC_CHECKED set
+# by the caller (tools/merge_check.sh, which did the check), every share names that run. Before the
+# fix every line was `docs: checked= changes=none`.
 STUB_DOCS=1 case_ share-docs 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2
 o=$ws/case-$n-share-docs.out
-[ "$(command grep -a -c -x 'docs: checked= changes=base' "$o")" -ge 1 ] &&
-  [ "$(command grep -a -c -x 'docs: checked=share 1 of this farm run changes=none' "$o")" -ge 1 ] &&
+[ "$(command grep -a -c -x 'farm: share 1 of 2: the doc check of the changed packages passed' "$o")" = 1 ] &&
+  [ "$(command grep -a -c -x 'docs: checked=share 1 of this farm run changes=none' "$o")" -ge 2 ] &&
   [ "$(command grep -a -c -x 'docs: checked= changes=none' "$o")" = 0 ] ||
   { fail=$((fail + 1)); echo "FAIL share-docs: a share had neither the changes nor share 1 named ($o)"; }
 ZED_DOC_CHECKED="the caller" STUB_DOCS=1 case_ share-docs-caller 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2
