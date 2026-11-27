@@ -527,6 +527,37 @@ impl Misfit<'_> {
     }
 }
 
+/// The word of a stopping read ([`open_reads`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum OpenWord {
+    First,
+    Any,
+    Find,
+    All,
+}
+
+impl OpenWord {
+    /// The word of the prelude member `name`, if it is a stopping read.
+    fn of(name: &str) -> Option<OpenWord> {
+        Some(match name {
+            "first" => OpenWord::First,
+            "any" => OpenWord::Any,
+            "find" => OpenWord::Find,
+            "all" => OpenWord::All,
+            _ => return None,
+        })
+    }
+}
+
+/// A stopping read of a range with no upper end: `of.word(test)`. Here, not in
+/// [`open_reads`], so that this file, which holds [`Ck`], names nothing of that file and the
+/// two are in no import cycle (tests/steps/s_01f_import_graph).
+struct OpenRead<'a> {
+    of: &'a Expr,
+    test: Option<&'a Expr>,
+    word: OpenWord,
+}
+
 /// The warning for `r`, a question the integer solver left undecided, asked at `span`, with
 /// the sets `kept` it left its variables: its headline, and each step of its derivation and
 /// each repair as a note at `span`. The question is printed as the program wrote it, with no
@@ -3397,7 +3428,7 @@ struct Ck<'t, 'a> {
     refused_at: BTreeMap<(Span, Refused), Kept>,
     /// Each stopping read of a range with no upper end, by its span: a warning each once the
     /// walk is done where it is not proved to end ([`open_reads`]).
-    open_reads: BTreeMap<Span, open_reads::OpenRead<'a>>,
+    open_reads: BTreeMap<Span, OpenRead<'a>>,
     /// Each place [`Self::refused_at`] holds a question at, by the question: where a rejection
     /// the question may be behind names it ([`Ck::refused_notes`]).
     asked_where: BTreeMap<Refused, BTreeSet<Span>>,
@@ -9764,8 +9795,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.info.warnings = (std::mem::take(&mut self.refused_at).into_iter())
             .map(|((span, r), kept)| refused_warning(span, &r, &kept))
             .collect();
-        let open = self.open_read_warnings();
-        self.info.warnings.extend(open);
         self.r10.stats.alloc_classes = self.classes.alloc_count();
         self.r10.stats.logical_classes = self.classes.len();
         probe::save_r10_stats(&self.r10.stats);

@@ -135,6 +135,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     // Before `finish` puts the classes' types in the signatures recorded at calls.
     ck.settle_calls();
     ck.finish();
+    ck.warn_open_reads();
     #[cfg(debug_assertions)]
     clean_check::flush();
     // Every headline is a sentence, so two errors that differ only by its period are one.
@@ -175,6 +176,7 @@ pub fn check_given(unit: &[Stmt], res: &Resolution, text: &str, given: Ty) -> In
     // Before `finish` puts the classes' types in the signatures recorded at calls.
     ck.settle_calls();
     ck.finish();
+    ck.warn_open_reads();
     ck.info.errors.iter_mut().for_each(Error::sentence);
     ck.info.errors.dedup();
     ck.info

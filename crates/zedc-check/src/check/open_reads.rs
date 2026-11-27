@@ -62,36 +62,7 @@ use zedc_resolve::resolve::{Ref, open_stream};
 use zedc_syntax::ast::{Error, Expr, ExprKind, Note, UnaryOp};
 use zedc_syntax::lex::Span;
 
-use super::{Ck, arms};
-
-/// The word of a stopping read.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum OpenWord {
-    First,
-    Any,
-    Find,
-    All,
-}
-
-impl OpenWord {
-    /// The word of the prelude member `name`, if it is a stopping read.
-    pub(super) fn of(name: &str) -> Option<OpenWord> {
-        Some(match name {
-            "first" => OpenWord::First,
-            "any" => OpenWord::Any,
-            "find" => OpenWord::Find,
-            "all" => OpenWord::All,
-            _ => return None,
-        })
-    }
-}
-
-/// A stopping read of a range with no upper end: `of.word(test)`.
-pub(super) struct OpenRead<'a> {
-    pub(super) of: &'a Expr,
-    pub(super) test: Option<&'a Expr>,
-    pub(super) word: OpenWord,
-}
+use super::{Ck, OpenRead, OpenWord, arms};
 
 /// The name of `j`, the key less the low end; no binder's name holds a space ([`arms::var`]).
 const KEY: &str = "the key";
@@ -135,17 +106,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             .or_insert(OpenRead { of, test, word });
     }
 
-    /// The warnings "Not proved to end" of the reads [`Self::note_open_read`] recorded.
-    pub(super) fn open_read_warnings(&mut self) -> Vec<Error> {
+    /// Appends to the warnings the warning "Not proved to end" of each read
+    /// [`Self::note_open_read`] recorded: called by the check after [`Ck::finish`], which sets
+    /// the warnings the walk left, so these come after them as before.
+    pub(super) fn warn_open_reads(&mut self) {
         let reads = std::mem::take(&mut self.open_reads);
-        let mut out = Vec::new();
         for (span, r) in reads {
             let verdict = self.open_read_verdict(&r);
             if let Some(w) = self.open_read_warning(span, &r, verdict) {
-                out.push(w);
+                self.info.warnings.push(w);
             }
         }
-        out
     }
 
     /// Cases (a), (b) and (c) of the module's proof for `r`.

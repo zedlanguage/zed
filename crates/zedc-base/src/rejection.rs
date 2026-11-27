@@ -80,7 +80,8 @@ rows! {
     // No diagnostic uses the next two rows yet: step L18.2a emits them.
     CostAboveClaim => "Work above its cost claim",
     CostUnbounded => "Unbounded work under a cost claim",
-    // No diagnostic uses the next row yet: plan row TERM-verdicts emits it.
+    // A warning at a stopping read of a range with no upper end (zedc-check `open_reads`, plan
+    // row RANGE-open-ending-warn); plan row TERM-verdicts emits it at loops and recursions.
     NotProvedToEnd => "Not proved to end",
     // No diagnostic uses the next four rows yet: plan row COST-required emits them.
     CostClaimMissing => "Function without a cost claim in a unit under `@cost(#required);`",
