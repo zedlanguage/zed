@@ -445,3 +445,127 @@ fn lazy_trees_agree_with_shifted_lists() {
         assert_eq!(&shifted_entries(t).0, want);
     }
 }
+
+/// An entry of a key and a priority the test chooses, to build paths; its summary is the sum of
+/// the keys of its subtree.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct P(u64, u64);
+
+impl Item for P {
+    type Key = u64;
+    type Sum = u64;
+    fn key(&self) -> &u64 {
+        &self.0
+    }
+    fn priority(&self) -> u64 {
+        self.1
+    }
+    fn sum(&self, left: Option<&u64>, right: Option<&u64>) -> u64 {
+        self.0 + left.copied().unwrap_or(0) + right.copied().unwrap_or(0)
+    }
+}
+
+/// The keys of `t` in preorder, `None` for each empty child, by a loop, each node's size, sum and
+/// heap order checked.
+fn preorder(t: &Tree<P>) -> Vec<Option<u64>> {
+    let sum = |t: &Tree<P>| t.as_ref().map_or(0, |n| n.sum);
+    let (mut out, mut stack) = (Vec::new(), vec![t]);
+    while let Some(t) = stack.pop() {
+        let Some(n) = t.as_deref() else {
+            out.push(None);
+            continue;
+        };
+        assert_eq!(n.len, 1 + len(&n.left) + len(&n.right));
+        assert_eq!(n.sum, n.item.0 + sum(&n.left) + sum(&n.right));
+        for c in [n.left.as_deref(), n.right.as_deref()].into_iter().flatten() {
+            assert!(!above(c, n), "heap order");
+        }
+        out.push(Some(n.item.0));
+        stack.push(&n.right);
+        stack.push(&n.left);
+    }
+    out
+}
+
+/// The number of nodes on the search path of `key` in `t`, its own node counted if it is there.
+fn depth(t: &Tree<P>, key: u64) -> usize {
+    let (mut d, mut at) = (0, t.as_deref());
+    while let Some(n) = at {
+        d += 1;
+        at = match key.cmp(&n.item.0) {
+            Ordering::Less => n.left.as_deref(),
+            Ordering::Greater => n.right.as_deref(),
+            Ordering::Equal => None,
+        };
+    }
+    d
+}
+
+/// Drops `t` node by node, so that a path is not dropped by the compiler's drop, a recursion as
+/// deep as the path (STACK-treap-drop-depth). A node another tree shares is left to it.
+fn dismantle(t: Tree<P>) {
+    let mut stack = vec![t];
+    while let Some(t) = stack.pop() {
+        if let Some(Ok(mut n)) = t.map(Arc::try_unwrap) {
+            stack.push(n.left.take());
+            stack.push(n.right.take());
+        }
+    }
+}
+
+/// FAIL-treap-inplace-recursion-depth: each in-place operation on paths of 100,000 nodes, in a
+/// thread of a 1 MiB stack, which a recursion one call a node of them overflows. Each result is
+/// the persistent operation's tree, and a copy taken before is left as it was.
+#[test]
+fn the_in_place_operations_take_a_path_of_any_depth() {
+    std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(|| {
+            const M: u64 = 100_000;
+            // Key 2i of priority 2|i - M| + 2, the middle one's the highest: below the root, the
+            // keys under the middle make a path to the right and those above it a path to the
+            // left, each of M nodes.
+            let prio = |i: u64| if i == M { u64::MAX } else { 2 * i.abs_diff(M) + 2 };
+            let items: Vec<P> = (0..=2 * M).map(|i| P(2 * i, prio(i))).collect();
+            let prios: Vec<u64> = items.iter().map(|p| p.1).collect();
+            let mut t: Tree<P> =
+                crate::cartesian::build(items, &prios, |_, p, l, r| node(p, p.1, l, r));
+            let copy = t.clone();
+            let before = preorder(&copy);
+            let mut p = t.clone();
+            // The root out: its two paths, of equal priorities in turn, joined into one path
+            // that zigzags between them, every node of both on the walk.
+            let m = M as usize;
+            assert_eq!(depth(&t, 2 * M - 2), m + 1);
+            remove_mut(&mut t, &(2 * M));
+            p = remove(&p, &(2 * M));
+            assert_eq!(preorder(&t), preorder(&p));
+            // A key just above the old middle one, of a priority between those of keys 0 and
+            // 4M - 2: the walk stops at key 4M - 2, the path's third node, and splits the rest
+            // of the path, whose keys are on both sides of the new key in turn, every node on
+            // the walk.
+            assert!(depth(&t, 2 * M + 1) > 2 * m - 2);
+            insert_mut(&mut t, P(2 * M + 1, 2 * M + 1));
+            p = insert(&p, P(2 * M + 1, 2 * M + 1));
+            assert_eq!(preorder(&t), preorder(&p));
+            // The key at the bottom of the left side's path, then a new key of the lowest
+            // priority there: walks of about M nodes down.
+            assert!(depth(&t, 2 * M - 2) > m);
+            remove_mut(&mut t, &(2 * M - 2));
+            p = remove(&p, &(2 * M - 2));
+            assert_eq!(preorder(&t), preorder(&p));
+            insert_mut(&mut t, P(2 * M - 3, 1));
+            p = insert(&p, P(2 * M - 3, 1));
+            let got = preorder(&t);
+            assert_eq!(got, preorder(&p));
+            assert!(depth(&t, 2 * M - 3) > m);
+            assert_eq!(got.iter().flatten().count(), 2 * m + 1);
+            assert_eq!(preorder(&copy), before);
+            dismantle(p);
+            dismantle(t);
+            dismantle(copy);
+        })
+        .expect("a thread")
+        .join()
+        .expect("no stack overflow and no failed check");
+}

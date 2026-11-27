@@ -581,4 +581,64 @@ mod tests {
         sets.up(s, &d(6), &same, &mut out);
         assert!(out.is_empty());
     }
+
+    /// FAIL-treap-inplace-recursion-depth: a set whose treap is a path of 100,000 divisors, the
+    /// priorities the test's (set on the divisors once numbered, as divisors chosen against a
+    /// known draw would give), in a thread of a 1 MiB stack, which a recursion one call a node
+    /// of the path overflows. A split, a union, `each`, `up` and `down` walk the whole path.
+    #[test]
+    fn deep_sets_take_no_deep_recursion() {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                const M: i64 = 100_000;
+                let mut sets = Sets::default();
+                // The set of the divisor `d(i)`, given the priority `priority`.
+                let one = |sets: &mut Sets, i: i64, priority: u64| {
+                    let k = sets.number(&d(i));
+                    sets.keys[k as usize].1 = priority;
+                    sets.make(k, EMPTY, EMPTY)
+                };
+                // `d(2i)` of priority `M - i + 2`: the priorities fall as the divisors rise, so
+                // the treap is a path to the right. Each divisor comes in as the new root, the
+                // smallest so far, so each union is O(1).
+                let mut a = EMPTY;
+                for i in (0..M).rev() {
+                    let s = one(&mut sets, 2 * i, (M - i + 2) as u64);
+                    a = sets.union(a, s);
+                }
+                let want: Vec<Lin> = (0..M).map(|i| d(2 * i)).collect();
+                assert_eq!(sets.len(a), M as u32);
+                assert_eq!(listed(&sets, a), want);
+                let mut out = Vec::new();
+                sets.up(a, &d(0), &|_| true, &mut out);
+                assert_eq!(out, want);
+                out.clear();
+                sets.down(a, &d(2 * M), &|_| true, &mut out);
+                assert!(out.iter().eq(want.iter().rev()));
+                // A divisor above all, of the highest priority: the union's root, so the path is
+                // split by it, every node on the walk.
+                let top = one(&mut sets, 2 * M, u64::MAX);
+                let v = sets.union(a, top);
+                // One set has one node, however made: the divisors put in under `top`, each
+                // the new root below it, O(1) each.
+                let mut again = top;
+                for i in (0..M).rev() {
+                    let s = sets.single(&d(2 * i));
+                    again = sets.union(again, s);
+                }
+                assert_eq!(again, v);
+                // A divisor of the lowest priority at the bottom of the path: the union walks
+                // down to it, one call a node.
+                let low = one(&mut sets, 2 * M - 1, 1);
+                let w = sets.union(v, low);
+                assert_eq!(sets.len(w), M as u32 + 2);
+                let mut all = want;
+                all.extend([d(2 * M - 1), d(2 * M)]);
+                assert_eq!(listed(&sets, w), all);
+            })
+            .expect("a thread")
+            .join()
+            .expect("no stack overflow and no failed check");
+    }
 }
