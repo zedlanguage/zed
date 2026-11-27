@@ -22,6 +22,8 @@ export interface LogEntry {
 
 export interface LedgerEntry {
   id: string;
+  // What some agents wrote in place of id (ledgerId).
+  row?: unknown;
   state: string;
   by?: string;
   agent?: string;
@@ -266,6 +268,16 @@ export function resolveId(raw: string, known: Map<string, string>): { id: string
   return { id: known.get(bare.toLowerCase()) ?? bare, sub: "" };
 }
 
+// The id a ledger line is read by: its "id", or, on a line with no string id, its "row" field, whose
+// ids are split on commas and spaces ("A B, C" is A, B and C); "" when it has neither. "id" stays the
+// key a line should use; 190 of the 223 lines with no id on 2026-11-27 wrote "row" for it, and are
+// read so that they attach to the rows they name (DECIDE-ledger-row-field-as-id). board-check.sh and
+// board-check-docs.sh read a line the same way, through wt/ledger-ids.jq.
+export function ledgerId(e: LedgerEntry): string {
+  if (typeof e.id === "string") return e.id;
+  return typeof e.row === "string" ? e.row.split(/[\s,]+/).filter((s) => s !== "").join(",") : "";
+}
+
 // The items a ledger id names: "STRNAN-spec:merge" is STRNAN-spec, and "A+B" or "A, B" is A and B.
 export function ledgerItems(raw: string, known: Map<string, string>): string[] {
   const label = rolePattern.exec(raw);
@@ -401,19 +413,20 @@ export function buildGraph(inp: Inputs): BoardState {
   const ledger = new Map<string, LedgerEntry[]>();
   const ownLines = new Map<string, LedgerEntry[]>();
   for (const e of inp.ledger) {
-    // A line without a string id (an agent wrote "item" for "id") names no item; report it, do not fail.
-    if (typeof e.id !== "string") {
+    const raw = ledgerId(e);
+    // A line with neither (an agent wrote "item" for "id") names no item; report it, do not fail.
+    if (raw === "") {
       problems.push(`LEDGER LINE WITH NO ID: ${JSON.stringify(e).slice(0, 120)}`);
       continue;
     }
-    const ids = ledgerItems(e.id, known);
+    const ids = ledgerItems(raw, known);
     for (const id of ids) {
       if (!ledger.has(id)) ledger.set(id, []);
       ledger.get(id)!.push(e);
-      if (ownLabel(e.id)) {
+      if (ownLabel(raw)) {
         if (!ownLines.has(id)) ownLines.set(id, []);
         ownLines.get(id)!.push(e);
-      } else if (!labelOf.has(id)) labelOf.set(id, e.id);
+      } else if (!labelOf.has(id)) labelOf.set(id, raw);
     }
   }
   // The last of the item's own lines that gives the field as the type asked for.
