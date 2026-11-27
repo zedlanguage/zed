@@ -2769,7 +2769,7 @@ fn newton_floor(qw: usize, bw: usize) -> f64 {
         TRANSFORM_COST * (h as f64) * f64::from(log)
     };
     match qw > bw {
-        true => ((qw - 1).div_ceil(bw) as f64 + 3.0) * floor(2 * bw),
+        true => (2.0 + 2.0 * (qw - 1).div_ceil(bw) as f64 / 3.0) * floor(2 * bw),
         false => 8.0 * floor(2 * qw) / 3.0 + floor(bw),
     }
 }
@@ -2873,7 +2873,11 @@ fn sparse_div_cost(qw: usize, b: &BigUint) -> f64 {
 fn newton_cost(qw: usize, bw: usize) -> f64 {
     let level = |coeffs: usize| TRANSFORM_COST * points_cost(coeffs.next_power_of_two()) as f64;
     match qw > bw {
-        true => ((qw - 1).div_ceil(bw) as f64 + 3.0) * transform_cost(2 * bw),
+        true => {
+            let (linear, cyclic) = (level(2 * bw), level(bw));
+            let blocks = (qw - 1).div_ceil(bw) as f64;
+            5.0 * linear / 3.0 + (linear + cyclic) / 3.0 + blocks * 2.0 * (linear + cyclic) / 3.0
+        }
         false => 8.0 * level(2 * qw) / 3.0 + level(bw),
     }
 }
