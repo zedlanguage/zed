@@ -243,8 +243,8 @@ fn coefficients_one_and_minus_two_are_told_apart() {
 /// number of classes stops rising: a row's signature is its relation, constant and multiset of
 /// (coefficient, variable class); a variable's is its class and multiset of (row class,
 /// coefficient). Classes are numbered by sorting the signatures. Each variable maps to the least
-/// variable of its class.
-fn plain_refinement(cons: &[Con]) -> BTreeMap<Atom, Atom> {
+/// variable of its class. At most `rounds` rounds run (`usize::MAX`: until the count stops).
+fn plain_refinement(cons: &[Con], rounds: usize) -> BTreeMap<Atom, Atom> {
     let vars: Vec<Atom> = cons
         .iter()
         .flat_map(|c| c.lin.terms.keys().cloned())
@@ -253,7 +253,7 @@ fn plain_refinement(cons: &[Con]) -> BTreeMap<Atom, Atom> {
         .collect();
     let mut class: BTreeMap<Atom, usize> = vars.iter().map(|a| (a.clone(), 0)).collect();
     let mut count = 1;
-    loop {
+    for _ in 0..rounds {
         let row_sigs: Vec<_> = cons
             .iter()
             .map(|c| {
@@ -329,7 +329,11 @@ fn the_partition_is_the_one_plain_refinement_reaches() {
             .iter()
             .map(|(a, k)| (a.clone(), first[k].clone()))
             .collect();
-        assert_eq!(got, plain_refinement(&sys), "system {i}: {sys:?}");
+        assert_eq!(
+            got,
+            plain_refinement(&sys, usize::MAX),
+            "system {i}: {sys:?}"
+        );
     }
     let sys = pipeline(40);
     assert_eq!(distinct(&colors(&sys)), 40);
@@ -406,4 +410,80 @@ fn colors_follow_random_namings_and_row_orders_of_random_systems() {
         400,
         1,
     );
+}
+
+/// The census of the CANON-stable battery (plan rows TESTS-random-batteries-to-size and
+/// TESTS-audit-battery-gaps): `systems` systems drawn as the battery draws them, from the fixed
+/// seed `0xCA_0004`, so the census can be rebuilt. A line per number of variables gives how many
+/// systems have each number of classes by `classes`, and the last line how many have a tie.
+fn census(systems: &[Vec<Con>], classes: impl Fn(&[Con]) -> usize) -> String {
+    let mut by_n: BTreeMap<usize, BTreeMap<usize, usize>> = BTreeMap::new();
+    let mut ties = 0;
+    for sys in systems {
+        let n = order(sys).len();
+        let k = classes(sys);
+        *by_n.entry(n).or_default().entry(k).or_default() += 1;
+        ties += usize::from(k < n);
+    }
+    let mut out = String::new();
+    for (n, ks) in &by_n {
+        let total: usize = ks.values().sum();
+        let parts: Vec<String> = ks.iter().map(|(k, c)| format!("{k} classes {c}")).collect();
+        out += &format!("{n} variables, {total} systems: {}\n", parts.join(", "));
+    }
+    out + &format!("{ties} of {} systems have a tie\n", systems.len())
+}
+
+/// As many systems as `bench::canonical`'s battery draws (420), drawn the same way from a fixed
+/// seed.
+fn census_systems() -> Vec<Vec<Con>> {
+    let mut rng = Rng::new(0xCA_0004);
+    (0..420)
+        .map(|_| {
+            let n = 3 + rng.below(6);
+            let rows = 2 + rng.below(11);
+            random(&mut rng, n, rows, "x")
+        })
+        .collect()
+}
+
+/// The CANON census: the number of color classes of each of the 420 systems, the same under 10
+/// random namings and row orders of each (the shuffle set), counted and kept as a snapshot. The
+/// census was printed by h2's verifier only and could not be rebuilt (TESTS-audit-battery-gaps).
+/// Control: one round of plain refinement gives another census, so the snapshot sees a coloring
+/// that stops early; the full refinement gives this one, as
+/// `the_partition_is_the_one_plain_refinement_reaches` shows system by system.
+#[test]
+fn the_census_of_the_color_classes_of_420_systems() {
+    let systems = census_systems();
+    let mut rng = Rng::new(0xCA_0005);
+    // Every system names its variables among x0 to x7, some of them unused; a renaming of all
+    // eight covers each.
+    let base = names(8, "x");
+    for (case, sys) in systems.iter().enumerate() {
+        let k = distinct(&colors(sys));
+        for _ in 0..10 {
+            let mut p: Vec<usize> = (0..8).collect();
+            rng.shuffle(&mut p);
+            let (mut other, _) = renamed(sys, &base, &p);
+            rng.shuffle(&mut other);
+            assert_eq!(
+                distinct(&colors(&other)),
+                k,
+                "case {case}: {sys:?} as {other:?}"
+            );
+        }
+    }
+    let got = census(&systems, |s| distinct(&colors(s)));
+    let classes_of = |m: BTreeMap<Atom, Atom>| m.values().collect::<BTreeSet<_>>().len();
+    let one_round = census(&systems, |s| classes_of(plain_refinement(s, 1)));
+    assert_ne!(
+        one_round, got,
+        "one round of refinement gives the census too"
+    );
+    assert_eq!(
+        census(&systems, |s| classes_of(plain_refinement(s, usize::MAX))),
+        got
+    );
+    insta::assert_snapshot!(got);
 }
