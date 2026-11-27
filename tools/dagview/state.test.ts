@@ -518,9 +518,9 @@ test("a log label alone makes no node, and one not written by the orchestrator i
 });
 
 test("a ledger line without an id is reported, not fatal", () => {
-  const g = buildGraph(inputs("", '{"item":"A","state":"ready","time":"2026-11-02T10:00:00Z"}\n{"id":"A","state":"open"}\n'));
+  const g = buildGraph(inputs("", '{"name":"A","state":"ready","time":"2026-11-02T10:00:00Z"}\n{"id":"A","state":"open"}\n'));
   assert.equal(by(g.nodes).get("A")!.state, "unstarted");
-  assert.deepEqual(g.problems, ['LEDGER LINE WITH NO ID: {"item":"A","state":"ready","time":"2026-11-02T10:00:00Z"}']);
+  assert.deepEqual(g.problems, ['LEDGER LINE WITH NO ID: {"name":"A","state":"ready","time":"2026-11-02T10:00:00Z"}']);
 });
 
 test("a ledger line with no id is read from its row field, which may name several ids split on commas and spaces (DECIDE-ledger-row-field-as-id)", () => {
@@ -535,6 +535,19 @@ test("a ledger line with no id is read from its row field, which may name severa
   const nodes = by(g.nodes);
   assert.deepEqual(["A", "B", "LR2", "C", "NEW-item"].map((id) => nodes.get(id)?.state), ["blocked", "waiting", "waiting", "blocked", "blocked"]);
   assert.deepEqual(g.problems, ['LEDGER LINE WITH NO ID: {"row":" ","state":"blocked"}']);
+});
+
+test("a ledger line with no id or row is read from its item field, then from its rows list (DECIDE-ledger-row-field-as-id)", () => {
+  const g = buildGraph(inputs("",
+    '{"item":"A","state":"blocked"}\n' +
+      '{"rows":["B","LR2"],"state":"waiting"}\n' +
+      // A row comes before an item, and an item before a rows list.
+      '{"row":"C","item":"LR2","rows":["LR2"],"state":"blocked"}\n' +
+      '{"rows":[],"state":"blocked"}\n',
+  ));
+  const nodes = by(g.nodes);
+  assert.deepEqual(["A", "B", "LR2", "C"].map((id) => nodes.get(id)?.state), ["blocked", "waiting", "waiting", "blocked"]);
+  assert.deepEqual(g.problems, ['LEDGER LINE WITH NO ID: {"rows":[],"state":"blocked"}']);
 });
 
 test("with a fixture QUESTIONS.md, every plan row an open question holds is blocked, a sub-step id (L10.3b) holds its row, and a row held only by an answered question or by nothing is not", () => {
