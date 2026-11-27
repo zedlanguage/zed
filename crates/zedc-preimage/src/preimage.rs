@@ -19866,22 +19866,22 @@ mod tests {
     /// proof took `backward` to be smaller for a smaller `B'`, which is false, since `map2`
     /// caps the image to as many pieces as its operands have, and a `B'` of more pieces than
     /// `B` merged pieces the reading against `B` kept apart (seed 9220505866642457837: 2 of
-    /// 3000 not within). Of three to five factors the claim is false: the reading operand by operand meets
-    /// each partial product of the written tree with whole numbers (`x * (y * w)` in `-15`
-    /// with `x` in `[-7, -6]` needs `y * w` in `[15/7, 15/6]`, which holds no integer), which
-    /// one projection per factor against the product of the others does not see. Measured
-    /// on one run (2026-11-27, seed 15410409318329950335): of two factors, 0 of 3000 not
-    /// within and 174 strictly within; of two to five, 16 not within, 7 of them with the other
-    /// reading not within this one either, and 514 strictly within. Before the quotient's
-    /// rounding was fixed (zedc-lattice revision.rs `quotient`, which rounded a finite bound
-    /// outward) and before the others' product was narrowed first (`others_in` in
-    /// [`Walk::back_product`]), 94 of 3000 of two to five were not within, with the rounding
-    /// fixed alone 29, and before the demand against the whole product of the others was met
-    /// in, 18. Three more runs with fresh seeds, 2026-11-27: of two factors 0 not within each
-    /// time; of two to five, 8, 13 and 12 not within. Making it never less precise needs every
-    /// partial product's set, the O(n²) bits the factor reading removed; the measured loss is
-    /// kept. Negative control: with the other factors read as every integer
-    /// (`PRODUCT_OTHERS_TOP`), the two-factor comparison finds sets that are not within.
+    /// 3000 not within). Of three to five factors the claim is false: the reading operand by
+    /// operand meets each partial product of the written tree with whole numbers
+    /// (`x * (y * w)` in `-15` with `x` in `[-7, -6]` needs `y * w` in `[15/7, 15/6]`, which
+    /// holds no integer), which one projection per factor against the product of the others
+    /// does not see. Measured on one run (2026-11-27, seed 15410409318329950335): of two
+    /// factors, 0 of 3000 not within and 174 strictly within; of two to five, 16 not within, 7
+    /// of them with the other reading not within this one either, and 514 strictly within.
+    /// Before the quotient's rounding was fixed (zedc-lattice revision.rs `quotient`, which
+    /// rounded a finite bound outward) and before the others' product was narrowed first
+    /// (`others_in` in [`Walk::back_product`]), 94 of 3000 of two to five were not within,
+    /// with the rounding fixed alone 29, and before the demand against the whole product of
+    /// the others was met in, 18. Three more runs with fresh seeds, 2026-11-27: of two factors
+    /// 0 not within each time; of two to five, 8, 13 and 12 not within. Making it never less
+    /// precise needs every partial product's set, the O(n²) bits the factor reading removed;
+    /// the measured loss is kept. Negative control: with the other factors read as every
+    /// integer (`PRODUCT_OTHERS_TOP`), the two-factor comparison finds sets that are not within.
     #[test]
     fn a_product_read_by_its_factors_is_within_its_reading_by_operand() {
         let (mut rng, _) =

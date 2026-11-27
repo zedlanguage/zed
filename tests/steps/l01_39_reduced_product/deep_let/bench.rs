@@ -197,8 +197,8 @@ fn the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block() {
 ///
 /// (medians of three runs of the profiling build on the local job runner, glibc's allocator,
 /// load 13 to 17; the count varies by about 2% from run to run, a cause not traced; the time
-/// before at 32,000 is of one earlier run.) The drop is 14% of the calls and 2% of the bytes, not more: what is
-/// left has no one site to cut. The cuts: a test
+/// before at 32,000 is of one earlier run.) The drop is 14% of the calls and 2% of the bytes,
+/// not more: what is left has no one site to cut. The cuts: a test
 /// with no name bound to a function is not closed (`Scope::close`), a term binding none of its
 /// free names to a static is borrowed, not copied (`substituted`), the free names of a test
 /// are found once (`Scope::atom`, `Scope::atom_names`), a summary already made is read with no
