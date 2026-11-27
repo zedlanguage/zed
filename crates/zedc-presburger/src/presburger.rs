@@ -10898,9 +10898,11 @@ fn pick_traced(step: &'static str, at: usize, got: &Result<Option<Model>, Refusa
 /// solves the fast reading passed over are made here, the last first, down to the last refused
 /// solve it made, so the cause is the same. Unless `cause`, they are not made, and the
 /// refusal's cause is not the slow reading's: only for a caller that drops it
-/// ([`pick_taking_point`]). Tests: `a_tie_survives_a_projection_with_no_point` and
-/// `growth_survives_a_projection_with_no_point` (the fast reading, `pick_taking` and the slow
-/// reading give one refusal with one cause); each passes over one disjunct, so they cannot
+/// ([`pick_taking_point`]). Tests: `growth_survives_a_projection_with_no_point` (the fast
+/// reading, `pick_taking` and the slow reading give one refusal with one cause; its Tie
+/// counterpart is answered since PRES-tie-symmetry,
+/// `a_symmetric_tie_past_a_projection_with_no_point_is_answered`); it passes over one disjunct,
+/// so it cannot
 /// catch an error in the order of the solves made again where several are passed over.
 fn pick_reading<'a>(
     p: &'a Parts,
@@ -18929,6 +18931,21 @@ impl Equalities {
         &self.rows[s].as_ref().expect("a slot in use").row
     }
 
+    /// Whether swapping `x[x]` with `x[y]` maps the equalities onto themselves: the image of
+    /// each equality of either, with its constant, is held up to sign ([`unsigned`]), as
+    /// [`System::swaps_onto_itself`] asks of the rows. O(d·w log e) for the d equalities of
+    /// the two, of w terms, among e.
+    fn swaps_onto_itself(&self, x: usize, y: usize) -> bool {
+        (self.of[x].iter().chain(&self.of[y])).all(|&s| {
+            let r = self.row(s);
+            let image = Row {
+                a: swapped(&r.a, x, y).into(),
+                k: r.k.clone(),
+            };
+            self.held.contains_key(&unsigned(&image))
+        })
+    }
+
     /// The slots of the equalities of least key, all of them when no two share a variable or
     /// when each has one variable to define, with a unit coefficient, that no other of them
     /// holds; otherwise the tie, with the variables they share and the equalities. Equalities
@@ -20102,8 +20119,45 @@ impl Omega {
         }
         if tied.len() > 1 {
             let rows = vec![(e.clone(), Rel::Eq)];
-            self.es.put(s, e, &mut self.sys);
-            return Err(Tied { vars: tied, rows });
+            // Tied pivots that every swap with the first maps onto themselves, in this equality,
+            // in every other equality and in every row, are a symmetry of the system: the step
+            // takes the first, as `Omega::untie` takes the first of a symmetric row tie, and
+            // records the swaps so that splinters built later are checked against them
+            // (`broken_swap`). Why the answer is the same: the swap `τ` of `x` with `y` keeps the
+            // colors (the pivots share one) and maps the system onto itself, so the run that
+            // defines `y` is the image under `τ` of the run that defines `x`, step for step, and
+            // ends in the same kind of leaf (the argument at `Omega::untie`, whose assumption on
+            // the later steps this shares). Kept rows (`loose`) are refused as there.
+            // Before PRES-tie-symmetry every tie here was kept as two rows, and a row tie
+            // on kept rows is refused, so `a' + b' == 2d'` with `a'` and `b'` alike was refused
+            // (`tests::a_hull_side_past_a_symmetric_tie_is_answered`; also
+            // `cause_replay_tests::a_symmetric_tie_past_a_projection_with_no_point_is_answered`).
+            // Complexity tradeoff: one swap check per other pivot, each looking up the image of
+            // every row and equality of the two, O(t·d·w log m) for t pivots of d rows and
+            // equalities of w terms among m, as `Omega::untie` pays; naive alternative, keep
+            // the refusal, which costs nothing and answers nothing. COMPLEXITY.md row
+            // PRES-tie-symmetry.
+            let [x, ref others @ ..] = tied[..] else {
+                unreachable!("more than one pivot")
+            };
+            let symmetric = self.sys.loose.is_empty()
+                && (others.iter()).all(|&y| {
+                    swapped(&e.a, x, y) == *e.a
+                        && self.sys.swaps_onto_itself(x, y)
+                        && self.es.swaps_onto_itself(x, y)
+                });
+            if !symmetric {
+                self.es.put(s, e, &mut self.sys);
+                return Err(Tied { vars: tied, rows });
+            }
+            let perms = (others.iter())
+                .map(|&y| vec![(x.min(y), x.max(y)), (x.max(y), x.min(y))])
+                .collect();
+            let t = Tied {
+                vars: tied.clone(),
+                rows,
+            };
+            self.swaps.push((t, perms, self.steps.len()));
         }
         let y = tied[0];
         if units {
@@ -36999,10 +37053,17 @@ mod cause_replay_tests {
     /// it) and the others to 0; an earlier one-arm disjunction `-100 <= 2S + v <= 100` for each
     /// atom `v` and `S - v >= 1` for `v` in `a, b, c`, holding at that model; and a last one
     /// `a + b + c >= 1`, which misses it. The rows force `a, b, c <= 0` against `a + b + c >= 1`,
-    /// so there is no point; the projection onto `a, b, c` shows it, while the whole system is
-    /// symmetric in the four atoms and the solver refuses it with `Tie` on `S == 1`.
+    /// so there is no point; the projection onto `a, b, c` shows it. The whole system is
+    /// symmetric in the four atoms: `t` is set apart only by its name, since the rows `S - v >= 1`
+    /// for `v` other than `t` and the last row are the four sums of three atoms, each at least 1.
+    /// The solver refused it with `Tie` on `S == 1`; since PRES-tie-symmetry it takes that tie,
+    /// which every swap maps onto itself, and answers `Ok(None)`, and the fast, the taking and
+    /// the slow reading all give `Refusal::Disjuncts`, no disjunct with a point. (No Tie refusal
+    /// past the empty projection is known since: a cycle of rows over the atoms other than `t`,
+    /// turned one way to break the symmetry, was tried, and the solver then answers `Ok(None)`
+    /// without the tie.)
     #[test]
-    fn a_tie_survives_a_projection_with_no_point() {
+    fn a_symmetric_tie_past_a_projection_with_no_point_is_answered() {
         let names = ["a", "b", "c", "d"];
         let all: Vec<(&str, i64)> = names.iter().map(|&n| (n, 1)).collect();
         let base = con(&all, -1, Rel::Eq);
@@ -37037,11 +37098,12 @@ mod cause_replay_tests {
         // Read the last first: `earlier`, then `last`.
         p.ors.push(vec![arm(last.clone())]);
         p.ors.push(vec![arm(earlier.clone())]);
-        let why = Refusal::Tie(std::sync::Arc::new(Tie {
-            vars: ["a", "c", "d", "b"].map(String::from).to_vec(),
-            rows: vec!["a + c + d + b - 1 == 0".into()],
-        }));
-        refusal_survives_the_empty_projection(&p, &full, &why);
+        assert_eq!(solve(&full, true), Ok(None));
+        assert_eq!(traced(&p).0, Err(Refusal::Disjuncts));
+        let taking = pick_taking(&p, false).map(|(m, _)| m);
+        assert_eq!(taking, Err(Refusal::Disjuncts));
+        let slow = pick_by(&p, false, false).map(|(m, _)| m);
+        assert_eq!(slow, Err(Refusal::Disjuncts));
     }
 
     /// Gemini's example (R2_GEMINI section 2.1). Six rows on `x, y`; ten rows on `a, b, c, d`
