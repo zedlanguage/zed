@@ -1203,7 +1203,20 @@ fn sum_called_as_a_function_folds_a_family() {
     prints("t = sum([1, 2]);\n", "t", "3");
     prints("t = [1, 2].sum;\n", "t", "3");
     prints("t = sum((3, 4));\n", "t", "7");
-    same("t = sum([]);\nu = [].sum;\n", "t", "u");
+    // A call is judged as a call (sec:failure, limit (1)): `sum([])` is accepted and is
+    // `#empty`, since `[]` has no carrier to take an identity from. The method `[].sum` is the
+    // fold written on a family with no entries, which always fails (sec:type_language, the
+    // `m >< op` row: "`[] >< max` is rejected, while a call such as `sum([])` is judged as a
+    // call and accepted"; row FAIL-empty-literal-fold-always-fails).
+    prints("t = sum([]);\n", "t", "#empty");
+    rejected(
+        "u = [].sum;\n",
+        &["`[].sum` here always fails with `#empty`"],
+    );
+    // A generic function's fold is judged in its body, where the parameter may have entries,
+    // and not again at the call that passes `[]`.
+    prints("g(positional xs) = xs >< max;\nt = g([]);\n", "t", "#empty");
+    prints("g(positional xs) = xs.sum;\nt = g([]);\n", "t", "#empty");
     same(
         "t = sum([1.5f64, 2.5f64]);\nu = [1.5f64, 2.5f64].sum;\n",
         "t",

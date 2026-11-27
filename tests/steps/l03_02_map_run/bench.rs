@@ -14,6 +14,7 @@ use zed_tests::kernel::*;
 use zed_tests::scaling::{self, FACTOR, Meter, hold_linear};
 
 use super::program;
+use zed_tests::step_helpers::l01_16_elaboration::errors;
 use zed_tests::step_helpers::l01_36a_executables::{built, dir, executable, interpreter};
 
 /// Entries of a kernel run.
@@ -711,4 +712,29 @@ fn where_over_a_display_of_functions_runs_in_linear_time() {
 #[test]
 fn a_remap_of_a_display_of_functions_runs_in_linear_time() {
     through_display_of_functions("remap", "b as (k -> v) into (k -> v)");
+}
+
+/// Definitions checked by the bench of folds of empty displays.
+const N_FOLDS: usize = 200;
+
+/// n folds of `[]`, each refused as always failing, beside n folds of a display with an entry,
+/// each accepted: the check of plan row FAIL-empty-literal-fold-always-fails reads each
+/// receiver's arrows once, so the parse and the check of the whole unit stay linear in n.
+#[test]
+fn n_folds_of_empty_displays_are_refused_in_linear_time() {
+    let srcs = scaling::inputs(N_FOLDS, |k| {
+        (0..k)
+            .map(|i| format!("x{i} = [{i}] >< max;\ny{i} = [] >< max;\n"))
+            .collect::<String>()
+    });
+    let run = |k: usize| {
+        let es = errors(&srcs[&k]);
+        let refused = (es.iter()).filter(|e| e.contains("always fails")).count();
+        assert_eq!(refused, k, "{es:?}");
+    };
+    scaling::check(
+        "the check of n folds of `[]` and n folds of a display with an entry",
+        N_FOLDS,
+        run,
+    );
 }

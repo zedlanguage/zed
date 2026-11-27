@@ -201,11 +201,6 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
                 ),
             ]),
         ),
-        (
-            "fold_of_an_empty_display_is_empty",
-            "${([] >< (+)) else #empty -> -1}",
-            or(reduce(list(&[]), Prim::Add, None), "empty", -1),
-        ),
         // `k in m` tests the keys of `m` (DESIGN.md sec:grammar, `k in m::domain`; a set is a
         // self-map, so `x in s` tests its elements): the model reads each key and tests for a
         // miss.
@@ -265,11 +260,6 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
             "max_of_each_row",
             "${[[1, 5], [7, 2]].map(r -> r >< max)}",
             map_rows(lists(&[&[1, 5], &[7, 2]]), |r| reduce(r, Prim::Max, None)),
-        ),
-        (
-            "max_of_an_empty_display_is_empty",
-            "${([] >< max) else #empty -> -1}",
-            or(reduce(list(&[]), Prim::Max, None), "empty", -1),
         ),
         // A float fold goes round the canonical tree of sec:reduction item 1:
         // `((x0 + x1) + (x2 + x3)) + (x4 + x5)` for six entries, which the kernel `fold` walks.

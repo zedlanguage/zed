@@ -65,6 +65,44 @@ fn a_fold_of_rows_that_are_all_empty_needs_else() {
 }
 
 #[test]
+fn a_fold_of_an_empty_display_always_fails() {
+    // `[]` has no entries and no type of entry, so no carrier gives `+` or `max` an identity
+    // and the fold is `#empty` on every run: an operation that always fails, rejected at the
+    // fold (DESIGN sec:type_language, the `m >< op` row: "`[] >< max` is rejected";
+    // sec:failure; row FAIL-empty-literal-fold-always-fails). An `else` on the atom does not
+    // make the fold useful, so it is refused with it. These were run cases before the row.
+    for (name, body, fold) in [
+        ("plus", "${([] >< (+)) else #empty -> -1}", "`[] >< (+)`"),
+        ("max", "${([] >< max) else #empty -> -1}", "`[] >< max`"),
+        ("min", "${[] >< min}", "`[] >< min`"),
+        ("reduce", "${[].reduce((+))}", "`[].reduce((+))`"),
+        ("sum", "${[].sum}", "`[].sum`"),
+    ] {
+        let e = refused(&format!("empty_{name}"), body);
+        assert!(
+            e.contains(&format!("{fold} here always fails with `#empty`")),
+            "{body}: {e}"
+        );
+        assert!(e.contains("repair: give the entries a type"), "{body}: {e}");
+    }
+}
+
+#[test]
+fn a_fold_that_may_have_entries_is_not_refused() {
+    // The rule refuses only a receiver proved to have no entries. A value that is `[]` on one
+    // branch alone may have entries, and the checker does not evaluate `1 > 2` (it never runs
+    // the program's code), so the fold is accepted; each row of a display of rows that holds
+    // `[]` beside a row with entries is `a_fold_of_a_row_that_may_be_empty_passes_empty_by`.
+    for body in [
+        "${(if 1 > 2 { [3, 4] } else { [] }) >< (+)}",
+        "${(if 1 > 2 { [3, 4] } else { [] }) >< max}",
+    ] {
+        let ran = run("branch", body);
+        assert_eq!(ran.status, 0, "{body}: {}", ran.stderr);
+    }
+}
+
+#[test]
 fn a_fold_of_a_row_that_may_be_empty_passes_empty_by() {
     // The function's input is either row, so `r >< max` is `int | #empty`: a number for some
     // inputs and the atom for others, which is no error (the rule's other half) and gives the
