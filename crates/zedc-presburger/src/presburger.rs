@@ -24735,12 +24735,60 @@ impl Level {
         // item PRES-pendants-wider).
         // The rows the disjuncts left imply, read below for the hulls and by [`tighten_each`] for a
         // point at each end.
-        let implied = if !sets && n_ors > 1 && !old_path() && out.iter().any(Result::is_ok) {
+        let implied = if n_ors > 1 && !old_path() && out.iter().any(Result::is_ok) {
             disjunction_hulls(&ors, &mut DeepHulls::default())
         } else {
             Vec::new()
         };
-        if !implied.is_empty() {
+        // With `sets` (tied atoms), the bounds are read without a projection, by one
+        // [`propagate`] over the base and the implied rows (item PRES-cases-end: `b + c >= z`
+        // with `b` and `c` each in {0, 2}, `z <= 4`, was left unbounded). Why not
+        // [`by_halves`]: [`shadow`] keeps exactly the integer points on the atoms it keeps,
+        // but which atoms it keeps follows its order of elimination, and a bound read from the
+        // rows of a kept core could then follow the names, where the projection with `sets`
+        // must be a function of the parts as sets. Proof that this reading is: the base rows
+        // are the parts' rows; [`disjunction_hulls`] bounds each linear form by what every
+        // disjunct of a disjunction puts on it, a function of the disjuncts' rows, so a
+        // renaming maps its rows onto those of the renamed parts; [`propagate`]'s result does
+        // not depend on the order of the rows (its doc: each final side is the fixed point of
+        // reading the rows again and again) and reads atoms only by identity; and the bounds of
+        // a symbol are the meet of the rows on it alone, which no order changes. Each bound
+        // holds at every point of the parts, so the meet is sound, and rows on one symbol
+        // whose bounds cross show the parts have no integer point.
+        // Complexity tradeoff: naive, [`bounds_alone`] for each symbol, one propagation of all
+        // the rows each, O(k·m) for `k` symbols and `m` terms; used: one propagation, then the
+        // rows of one term read once into a map by atom, O(m + k) expected. What is given up:
+        // the bounds that only a projection shows (a row of a core the propagation does not
+        // bound, `2·a + z + 15 >= 0` with `a` bounded only through other rows that need `z`); the
+        // hull stays as the questions below leave it, sound and wider. Test:
+        // `l01_38_omega_test::disj_groups::an_unbounded_end_that_the_implied_rows_bound_is_read_where_atoms_are_tied`;
+        // COMPLEXITY.md row PRES-cases-end.
+        if sets && !implied.is_empty() {
+            let rows: Vec<&Con> = g.linked.cons.iter().chain(&implied).collect();
+            let mut added = Vec::new();
+            propagate(&rows, &HashMap::new(), &mut added);
+            let mut alone: HashMap<&Atom, Vec<(Int, Int, Rel)>> = HashMap::new();
+            for c in rows.into_iter().chain(&added) {
+                let mut terms = c.lin.terms.iter();
+                if let (Some((a, k)), None) = (terms.next(), terms.next()) {
+                    let row = (k.clone(), c.lin.constant.clone(), c.rel);
+                    alone.entry(a).or_default().push(row);
+                }
+            }
+            for (k, sym) in syms.iter().enumerate() {
+                let (Ok(o), Some(rs)) = (&mut out[k], alone.get(sym)) else {
+                    continue;
+                };
+                let Some((lo, hi)) = int_bounds(rs.iter().cloned()) else {
+                    return Ok(no_points(syms));
+                };
+                let end = |v: Option<Int>, inf: End| v.map_or(inf, |v| End::Fin(Num::from(&v)));
+                *o = o.meet(&IntervalSet::range(
+                    end(lo, End::NegInf),
+                    end(hi, End::PosInf),
+                ));
+            }
+        } else if !implied.is_empty() {
             let ks: Vec<usize> = (0..syms.len()).filter(|&k| out[k].is_ok()).collect();
             let keep: Vec<BTreeSet<Atom>> = (ks.iter())
                 .map(|&k| BTreeSet::from([syms[k].clone()]))
@@ -24829,7 +24877,10 @@ impl Level {
             } else {
                 |f, kept, status| decide_kept_status(f, Some(kept), status)
             };
-            tighten_each(f, syms, &ks, &open, &mut out, &implied, ask);
+            // With `sets` the questions are asked without the implied rows, as before they were
+            // read there for the hulls above.
+            let hint: &[Con] = if sets { &[] } else { &implied };
+            tighten_each(f, syms, &ks, &open, &mut out, hint, ask);
         }
         zed_collections::sorted::sort_dedup(&mut skipped);
         Ok((out, skipped))
