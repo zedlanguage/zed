@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use zed_tests::instances::Rng;
+use zed_tests::instances::{Rng, each_permutation};
 use zed_tests::scaling;
 use zedc::store::interval::{End, Num};
 use zedc::store::presburger::{
@@ -87,28 +87,6 @@ fn answer(f: &Formula) -> String {
         ),
         a => format!("{a:?}"),
     }
-}
-
-/// Visits every permutation of `0..n` (Heap's algorithm); returns how many.
-fn each_permutation(n: usize, mut visit: impl FnMut(&[usize])) -> usize {
-    let mut perm: Vec<usize> = (0..n).collect();
-    visit(&perm);
-    let mut count = 1;
-    let mut c = vec![0; n];
-    let mut i = 1;
-    while i < n {
-        if c[i] < i {
-            perm.swap(if i % 2 == 0 { 0 } else { c[i] }, i);
-            visit(&perm);
-            count += 1;
-            c[i] += 1;
-            i = 1;
-        } else {
-            c[i] = 0;
-            i += 1;
-        }
-    }
-    count
 }
 
 /// The answers of `rows` under every naming of its `n` variables, with how many namings

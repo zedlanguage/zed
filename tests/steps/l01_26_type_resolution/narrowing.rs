@@ -2,6 +2,7 @@
 //! rest where it does not, through `not`, `&&` and `||`.
 
 use super::{sig, type_errors};
+use zed_tests::instances::permutations;
 use zed_tests::step_helpers::l01_16_elaboration::value;
 
 const N: &str = "n(x: int | String) = if x is String { len(x) } else { x * 2 };\n";
@@ -104,22 +105,6 @@ fn the_tested_classes_end_alike_whatever_the_order_of_their_tests_and_uses() {
         let (sig, errors) = seen.expect("24 orders");
         assert_eq!(last.is_empty(), errors.is_empty(), "{sig} {errors:?}");
     }
-}
-
-/// Every order of `0..n`.
-fn permutations(n: usize) -> Vec<Vec<usize>> {
-    if n == 0 {
-        return vec![Vec::new()];
-    }
-    let mut out = Vec::new();
-    for rest in permutations(n - 1) {
-        for at in 0..=rest.len() {
-            let mut p = rest.clone();
-            p.insert(at, n - 1);
-            out.push(p);
-        }
-    }
-    out
 }
 
 #[test]

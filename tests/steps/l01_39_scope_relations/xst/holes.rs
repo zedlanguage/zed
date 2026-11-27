@@ -9,10 +9,10 @@
 //! tests now pass and are here (HOLES-exact-between, b22-preimage-a, 2026-11-21).
 
 use zed_kernel::Value;
-use zed_tests::instances::Rng;
+use zed_tests::instances::{Rng, permutations};
 use zed_tests::scaling;
 
-use super::{Inst, Lcg, ends, nm, permutations, rotations};
+use super::{Inst, Lcg, ends, nm, rotations};
 
 /// CE-A: `a` in `4..=6`, `b` in `{4, 6}`, `c` in `{2, 4}`, `c - b <= -2`, `a - c <= 2`,
 /// `b - a <= 0`. The solutions are `(4, 4, 2)` and `(6, 6, 4)`.

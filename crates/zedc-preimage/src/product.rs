@@ -15283,6 +15283,10 @@ impl Scope {
                 continue;
             }
             let reads: Vec<_> = lets.values().filter_map(|l| l.read.clone()).collect();
+            let one_input: Vec<(Arc<str>, LetPa)> = (lets.iter())
+                .filter(|(_, l)| l.summary.vars().len() == 1)
+                .map(|(n, l)| (n.clone(), l.summary.clone()))
+                .collect();
             let demand = Demand::Ints(self.get(&z).ints().clone());
             #[cfg(feature = "counts")]
             super::preimage::counts::TERM_READS.set(super::preimage::counts::TERM_READS.get() + 1);
@@ -15309,6 +15313,30 @@ impl Scope {
                         return true;
                     }
                     push(n.clone(), self, &mut seen, &mut todo);
+                }
+            }
+            // A name the term read through its summary over one input is no input, so the
+            // narrowing gave it nothing (`w` of `w = x + 1; z = w div 2` under `z == 3` kept
+            // `..` while `x` became `5..=6`, PA-let-followups part 2). Its value is its
+            // summary of that input at every state, so it lies in the summary's image over
+            // the input's integers as now narrowed, an `O(1)` read ([`LetPa::image`]), as
+            // [`Scope::bind_with`] meets a binding with it. A summary over two inputs or more
+            // is not met so: its image costs every input, where the test costs only those it
+            // narrows (item PA-letpre-linear); that case stays open in PA-let-followups.
+            // Test: `l01_39_reduced_product::let_terms::
+            // a_summarized_binding_read_inside_a_term_narrows_its_input`.
+            for (l, summary) in &one_input {
+                if !summary.vars().iter().any(|v| narrowed.contains_key(v)) {
+                    continue;
+                }
+                let Some(image) = summary.image(|v| self.names.get(v).map(Product::ints)) else {
+                    continue;
+                };
+                if self.meet_name(l, &image, convex, prem) {
+                    met = true;
+                    if self.no_value(l) {
+                        return true;
+                    }
                 }
             }
         }

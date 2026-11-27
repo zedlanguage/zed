@@ -12442,10 +12442,15 @@ fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
 /// ([`content_order`], whose note has the proof), so a round, and by induction on the rounds
 /// the probe, does the same work and gives the same answer in every order the top-level
 /// constraints, disjunctions and disjuncts are written in, whether or not (M1) and (M2) hold.
-/// That settles (a), (b) and (d), and in (c) the `Err` of `settle` with no meter. Still open:
-/// the meter of (c), which counts the work before the probe, and the order of the disjunctions
-/// nested inside a disjunct, which is not changed. The sub-cases below are the argument as it
-/// stood before.
+/// That settles (a), (b) and (d), and in (c) the `Err` of `settle` with no meter. The meter
+/// of (c), closed for the probe's own work (2026-11-27): a round does the same steps in every
+/// order, so it makes the same charges (each a count of rows, terms or disjuncts), and the
+/// lemma at [`meter::charge`] makes the outcome under any limit a function of the answer with
+/// no limit and the total charged; so with the same units left when the probe starts, every
+/// order gives the same answer or the same refusal. Still open: that the units left are the
+/// same, which is the claim of the caller (the work before the probe in the same question),
+/// and the order of the disjunctions nested inside a disjunct, which is not changed. The
+/// sub-cases below are the argument as it stood before.
 ///
 /// (a) A bound of [`learn`] proved by [`bounds_refute`] alone. `bounds_refute` of given parts
 /// and bound no longer depends on their order, but `learn` asks it only after a disjunct is
@@ -13348,8 +13353,9 @@ impl<'a> Unit<'a> {
 /// answer, `None`, or its refusal is the same in every written order. Each of the four sources
 /// the comment at [`probe_unhandled`] named, the bounds of `learn`, the slack index, `settle`'s
 /// refusals and `Immune`, follows only the round's state, so it is now the same in every
-/// order too. What still differs between two calls: a refusal under the cover's meter
-/// ([`meter::charge`]), whose budget the work before the probe has spent, and the order of the
+/// order too, and so are its charges, so by the lemma at [`meter::charge`] its outcome under
+/// the cover's meter is too, given the same units left. What still differs between two calls:
+/// the units left, which the work before the probe has spent, and the order of the
 /// disjunctions nested inside a disjunct, which this function does not change (a disjunct is
 /// shared and not changed once made) and which is content here. Assumed, not traced through
 /// every helper: no step chooses by the iteration order of a hash map, whose seed changes from

@@ -42,3 +42,23 @@ fn a_test_that_narrows_every_link_reads_every_link_once() {
         },
     );
 }
+
+/// `abs`, `max(w, -w)` and `min(w, -w)` of a summary of n pieces ([`sawtooth`]), each read by
+/// a test ([`over_a_sawtooth`]): the summary is made once, and each choice in one walk of its
+/// pieces, every piece crossing 0 (PA-let-followups part 3), so the work is of order n, or
+/// n log n for the walk of the treap.
+#[test]
+fn abs_min_and_max_of_a_summary_of_n_pieces_scale() {
+    let xy = ints(&["x".into(), "y".into()]);
+    for (name, f, sign) in choices() {
+        let bodies = scaling::inputs(64, |n| over_a_sawtooth(n, f, sign));
+        scaling::check_order(
+            &format!("{name} over a sawtooth of n pieces, tested"),
+            64,
+            1,
+            |n| {
+                zedc::store::product::arms(&bodies[&n], &xy);
+            },
+        );
+    }
+}

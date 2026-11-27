@@ -584,18 +584,7 @@ fn a_function_with_needs_is_checked_alike_beside_never_and_an_int_in_every_order
 /// The orders of `(a0, …)`'s parameters, for the tests of order below: each permutation of
 /// `0..n`, `n!` of them.
 fn orders(n: usize) -> Vec<Vec<usize>> {
-    if n == 0 {
-        return vec![vec![]];
-    }
-    let mut out = Vec::new();
-    for o in orders(n - 1) {
-        for k in 0..=o.len() {
-            let mut o = o.clone();
-            o.insert(k, n - 1);
-            out.push(o);
-        }
-    }
-    out
+    zed_tests::instances::permutations(n)
 }
 
 /// The text of `f(positional n: Never) = q(…)` with `q`'s parameters `ps` in the order `o` and

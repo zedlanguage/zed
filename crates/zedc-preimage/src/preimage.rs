@@ -10198,9 +10198,13 @@ impl<'m, 't> Walk<'m, 't> {
                                     Pa::by_sign(var, (&d.0, &d.1), tx.cx.get(var)?, neg, pos)
                                 });
                             }
-                            // Two summaries of one input: `min(u, v) = u + min(v - u, 0)`.
-                            let d = pb.plus(&pa, -1)?;
-                            return self.clamped(&d, min, 0)?.plus(&pa, 1);
+                            // Two summaries of one input: on each stretch where a piece of
+                            // each holds, the line chosen, with exact bounds ([`Pa::choose`]).
+                            let empty = IntervalSet::empty();
+                            return match pa.var().or(pb.var()) {
+                                None => pa.choose(&pb, min, &empty),
+                                Some(v) => self.with(|tx| pa.choose(&pb, min, tx.cx.get(v)?)),
+                            };
                         }
                     },
                 };
@@ -10208,19 +10212,24 @@ impl<'m, 't> Walk<'m, 't> {
                 self.clamped(&pa, min, c)
             }
             Prim::Abs => {
-                // `abs(u) = max(u, -u) = u + max(-2 * u, 0)`: a choice on `u >= 0`. Of a line,
-                // `-u` where `u` is negative and `u` elsewhere, with exact bounds
-                // ([`Pa::by_sign`]).
+                // `abs(u) = max(u, -u)`: a choice on `u >= 0`, `-u` where `u` is negative and
+                // `u` elsewhere, with exact bounds: of a line by [`Pa::by_sign`], of pieces by
+                // [`choose_treap`] (as `u + max(-2 * u, 0)` the bounds were those of a line
+                // added, [`Tag::vals`]).
                 let pa = self.pa(a, env).await?;
                 match &pa {
-                    Pa::Const(c) => return Some(Pa::Const(c.abs())),
+                    Pa::Const(c) => Some(Pa::Const(c.abs())),
                     Pa::Linear { var, a, b } => {
                         let (neg, pos) = ((-a, -b), (a.clone(), b.clone()));
-                        return self.with(|tx| Pa::by_sign(var, (a, b), tx.cx.get(var)?, neg, pos));
+                        self.with(|tx| Pa::by_sign(var, (a, b), tx.cx.get(var)?, neg, pos))
                     }
-                    Pa::Piecewise { .. } => {}
+                    Pa::Piecewise { var, root } => {
+                        let neg = Tag::affine(-&Int::ONE, Int::ZERO);
+                        let root = choose_treap(root, false, &Int::ZERO, &neg)?;
+                        let var = var.clone();
+                        Some(Pa::Piecewise { var, root })
+                    }
                 }
-                self.clamped(&pa.affine(-2, 0), false, 0)?.plus(&pa, 1)
             }
             _ => None,
         }
@@ -13384,6 +13393,68 @@ impl Pa {
             root,
         })
     }
+
+    /// `min(self, other)`, or `max(self, other)` where not `min`, of two summaries of one
+    /// input over `dom`, its domain: defined where both are, as [`Pa::plus`] is. Both are put
+    /// on treaps ([`Pa::to_treap`]) and their pieces walked in the order of the input; on each
+    /// stretch where a piece of each holds, the two lines `u` and `v` give the line chosen by
+    /// the sign of `v - u` ([`Pa::by_sign`]), at most two pieces, joined in order
+    /// ([`join_treap`]). `O((p + q) log(p + q))` expected for `p` and `q` pieces: at most
+    /// `p + q - 1` common stretches, each one or two pieces joined at the end in `O(log)`
+    /// (Seidel and Aragon, doi:10.1007/BF01940876, through [`prio_of`]). Every piece is made
+    /// from its own line ([`make_node`]), so the bounds every node keeps are exact; made as
+    /// `u + min(v - u, 0)`, a clamp plus a summary, they were those of [`Tag::vals`], infinite
+    /// where a line and a piece slope in opposite directions over an unbounded piece
+    /// (PA-let-followups part 3). `None` when the two read different inputs or an end lies
+    /// outside [`in_range`]. Test:
+    /// `tests::a_chosen_summary_is_the_choice_at_every_point_with_exact_bounds`; bench
+    /// `l01_39_reduced_product::let_terms::bench::abs_min_and_max_of_a_summary_of_n_pieces_scale`.
+    fn choose(&self, other: &Pa, min: bool, dom: &IntervalSet) -> Option<Pa> {
+        let var = match (self.var(), other.var()) {
+            (Some(v), Some(w)) if v != w => return None,
+            (Some(v), _) | (None, Some(v)) => v.clone(),
+            (None, None) => {
+                let (Pa::Const(u), Pa::Const(v)) = (self, other) else {
+                    unreachable!("a summary with no input is a constant")
+                };
+                return Some(Pa::Const(if min { u.min(v) } else { u.max(v) }.clone()));
+            }
+        };
+        let pieces = |pa: &Pa| -> Option<Vec<Piece>> {
+            let root = pa.to_treap(dom)?;
+            Some(pa_pieces(&Pa::Piecewise {
+                var: var.clone(),
+                root,
+            }))
+        };
+        let (ps, qs) = (pieces(self)?, pieces(other)?);
+        let mut root = None;
+        let (mut i, mut j) = (0, 0);
+        while let (Some((Some((plo, phi)), ua, ub)), Some((Some((qlo, qhi)), va, vb))) =
+            (ps.get(i), qs.get(j))
+        {
+            let (lo, hi) = (plo.max(qlo), phi.min(qhi));
+            if lo <= hi {
+                let (u, v) = ((ua.clone(), ub.clone()), (va.clone(), vb.clone()));
+                let (neg, pos) = if min { (v, u) } else { (u, v) };
+                let d = (va - ua, vb - ub);
+                let set = IntervalSet::range(lo.clone(), hi.clone());
+                let Pa::Piecewise { root: part, .. } =
+                    Pa::by_sign(&var, (&d.0, &d.1), &set, neg, pos)?
+                else {
+                    unreachable!("by_sign makes a piecewise summary")
+                };
+                root = join_treap(root, part);
+            }
+            // The piece that ends first is done; at a tie both are.
+            match phi.cmp(qhi) {
+                std::cmp::Ordering::Less => i += 1,
+                std::cmp::Ordering::Greater => j += 1,
+                std::cmp::Ordering::Equal => (i, j) = (i + 1, j + 1),
+            }
+        }
+        Some(Pa::Piecewise { var, root })
+    }
 }
 
 /// The names bound by `let`s around a term that the transfer reads through their summaries,
@@ -16144,6 +16215,24 @@ fn split_above_under((node, f): Under, cut: i128) -> (Option<CutPiece>, Tree) {
 /// Test, red (the panic) before the check and green after:
 /// `tests::a_clamp_whose_crossing_lies_past_i128_is_given_up`.
 fn clamp_treap(node: &Tree, min: bool, c: &Int) -> Option<Tree> {
+    choose_treap(node, min, c, &Tag::affine(Int::ZERO, c.clone()))
+}
+
+/// The pieces of `node`'s subtree with each value `v` kept where it lies on the kept side of
+/// `c` (`v <= c` where `min`, `v >= c` otherwise) and mapped by `other` elsewhere, for a map
+/// `other` of slope 0 that maps `c` to `c`: [`clamp_treap`] with `other` the constant `c`, and
+/// `abs(v)` with `max`, `c = 0` and `other` the map `v -> -v` ([`Walk::pa_prim`]). The proof
+/// and the cost are [`clamp_treap`]'s with `other` in place of the constant: a subtree all on
+/// the other side is mapped by `other` as one tag, and the part of the node's own piece on the
+/// other side takes the line `other` maps the piece's line to. A subtree all on the other side
+/// may hold the value `c`, which `other` then maps, so `other(c) = c` is needed. `other` has
+/// slope 0, so its tag keeps the bounds exact ([`Tag::vals`]): `abs(u)` made so has the bounds
+/// of its values, where `u + max(-2 * u, 0)`, a clamp plus a summary, had those of
+/// [`Tag::vals`] for a line added, infinite over an unbounded piece of slope not 0 (a test of
+/// `abs(w) + y` with `w` of several pieces read no upper bound on `y`, PA-let-followups part
+/// 3). Test: `tests::a_chosen_summary_is_the_choice_at_every_point_with_exact_bounds`.
+fn choose_treap(node: &Tree, min: bool, c: &Int, other: &Tag) -> Option<Tree> {
+    debug_assert!(other.slope.is_zero(), "a choice maps by a tag of slope 0");
     let Some(n) = node.as_ref() else {
         return Some(None);
     };
@@ -16158,12 +16247,12 @@ fn clamp_treap(node: &Tree, min: bool, c: &Int) -> Option<Tree> {
         return Some(Some(n.clone()));
     }
     if at_c {
-        return Some(Some(apply_tag(n, &Tag::affine(Int::ZERO, c.clone()))));
+        return Some(Some(apply_tag(n, other)));
     }
     let (left, right) = push_down(n);
-    let mut out = clamp_treap(&left, min, c)?;
+    let mut out = choose_treap(&left, min, c, other)?;
     // The inputs of the node's own piece whose value lies on the kept side of `c`: one stretch
-    // at an end of the piece, or none, since the line is monotone; the rest take `c`.
+    // at an end of the piece, or none, since the line is monotone; the rest take `other`.
     let side = if min {
         IntervalSet::range(NegInf, Fin(Num::from(c)))
     } else {
@@ -16171,16 +16260,17 @@ fn clamp_treap(node: &Tree, min: bool, c: &Int) -> Option<Tree> {
     };
     let mut own = Vec::with_capacity(1);
     invert_piece(&n.lo, &n.hi, &n.a, &n.b, &side, &mut own);
+    let (oa, ob) = other.line(&n.a, &n.b);
     let mut pieces = Vec::with_capacity(3);
     match own.first() {
-        None => pieces.push((n.lo.clone(), n.hi.clone(), Int::ZERO, c.clone())),
+        None => pieces.push((n.lo.clone(), n.hi.clone(), oa, ob)),
         Some((xl, xh)) => {
             if *xl > n.lo {
-                pieces.push((n.lo.clone(), xl.pred(), Int::ZERO, c.clone()));
+                pieces.push((n.lo.clone(), xl.pred(), oa.clone(), ob.clone()));
             }
             pieces.push((xl.clone(), xh.clone(), n.a.clone(), n.b.clone()));
             if *xh < n.hi {
-                pieces.push((xh.succ(), n.hi.clone(), Int::ZERO, c.clone()));
+                pieces.push((xh.succ(), n.hi.clone(), oa, ob));
             }
         }
     }
@@ -16190,7 +16280,7 @@ fn clamp_treap(node: &Tree, min: bool, c: &Int) -> Option<Tree> {
         }
         out = join_treap(out, Some(make_node(plo, phi, a, b, None, None)));
     }
-    Some(join_treap(out, clamp_treap(&right, min, c)?))
+    Some(join_treap(out, choose_treap(&right, min, c, other)?))
 }
 
 /// The pieces of `root` within `lo..=hi`, whose finite ends lie strictly between the
@@ -21070,6 +21160,129 @@ mod tests {
                     "round {round}: {:?}",
                     r.vals
                 );
+            }
+        }
+    }
+
+    /// A random treap of up to six pieces from `-40` on, with gaps and no tags, and an input
+    /// past the end of its last piece: with no tag of slope not 0 its bounds are exact, which
+    /// [`random_treap`], whose tags carry slopes, does not give.
+    fn untagged_treap(rng: &mut Rng) -> (Tree, i64) {
+        let (mut root, mut lo) = (None, -40i64);
+        for _ in 0..1 + rng.below(6) {
+            let hi = lo + rng.below(12) as i64;
+            let (a, b) = (rng.below(7) as i128 - 3, rng.below(21) as i128 - 10);
+            let node = make_node(End::of(lo), End::of(hi), a.into(), b.into(), None, None);
+            root = join_treap(root, Some(node));
+            lo = hi + 1 + rng.below(3) as i64;
+        }
+        (root, lo)
+    }
+
+    /// The root of `t` keeps as its bounds exactly the least and the greatest value of `t` at
+    /// the inputs `xs`, which hold all of its pieces.
+    fn bounds_are_exact(t: &Tree, xs: std::ops::RangeInclusive<i64>, what: &str) {
+        let vals: Vec<i128> = xs.filter_map(|x| point(t, x)).collect();
+        match (t, vals.iter().min(), vals.iter().max()) {
+            (Some(r), Some(&lo), Some(&hi)) => {
+                assert_eq!(r.vals, (Val::Fin(lo.into()), Val::Fin(hi.into())), "{what}");
+            }
+            (t, ..) => assert!(t.is_none(), "{what}: a treap with no value"),
+        }
+    }
+
+    /// `abs(u)` ([`choose_treap`]) and `min` and `max` of two summaries ([`Pa::choose`]) are
+    /// the choice at every point, defined where both summaries are, and the root keeps exact
+    /// bounds: each piece is made from its own line, where `u + max(-2 * u, 0)` and
+    /// `u + min(v - u, 0)`, a clamp plus a summary, kept the wider bounds of [`Tag::vals`].
+    #[test]
+    fn a_chosen_summary_is_the_choice_at_every_point_with_exact_bounds() {
+        let name = "a_chosen_summary_is_the_choice_at_every_point_with_exact_bounds";
+        let (mut rng, _) = Rng::fresh(name);
+        let var: Arc<str> = Arc::from("x");
+        let neg = Tag::affine(-&Int::ONE, Int::ZERO);
+        for round in 0..2000 {
+            // Under tags with slopes ([`random_treap`]) the values, not the bounds.
+            let t = random_treap(&mut rng);
+            let tabs = choose_treap(&t, false, &Int::ZERO, &neg).expect("ends inside i128");
+            let (tu, tv) = (
+                Pa::Piecewise {
+                    var: var.clone(),
+                    root: t.clone(),
+                },
+                {
+                    let root = random_treap(&mut rng);
+                    Pa::Piecewise {
+                        var: var.clone(),
+                        root,
+                    }
+                },
+            );
+            let tdom = IntervalSet::range(End::of(-60), End::of(80));
+            let Pa::Piecewise { root: other, .. } = &tv else {
+                unreachable!("made piecewise")
+            };
+            let chosen = [false, true].map(|min| match tu.choose(&tv, min, &tdom) {
+                Some(Pa::Piecewise { root, .. }) => root,
+                _ => panic!("round {round}: a choice of two summaries of x is piecewise"),
+            });
+            for x in -60..=80 {
+                let want = point(&t, x).map(i128::abs);
+                assert_eq!(
+                    point(&tabs, x),
+                    want,
+                    "round {round}, tagged abs at x = {x}"
+                );
+                for (min, root) in [false, true].into_iter().zip(&chosen) {
+                    let pick = |(a, b): (i128, i128)| if min { a.min(b) } else { a.max(b) };
+                    let want = point(&t, x).zip(point(other, x)).map(pick);
+                    assert_eq!(
+                        point(root, x),
+                        want,
+                        "round {round}, tagged, min {min}, x {x}"
+                    );
+                }
+            }
+            for root in chosen.iter().chain([&tabs]) {
+                check_nodes(root);
+            }
+            let (p, pe) = untagged_treap(&mut rng);
+            let abs = choose_treap(&p, false, &Int::ZERO, &neg).expect("ends well inside i128");
+            for x in -40..=pe + 12 {
+                let want = point(&p, x).map(i128::abs);
+                assert_eq!(point(&abs, x), want, "round {round}, abs at x = {x}");
+            }
+            bounds_are_exact(&abs, -40..=pe, &format!("round {round}, abs"));
+            // The other operand: a second treap, or a line over the domain.
+            let (q, qe) = untagged_treap(&mut rng);
+            let line = (rng.below(7) as i128 - 3, rng.below(21) as i128 - 10);
+            let (other, top) = if rng.below(3) == 0 {
+                let (a, b) = (line.0.into(), line.1.into());
+                let var = var.clone();
+                (Pa::Linear { var, a, b }, pe)
+            } else {
+                let (var, root) = (var.clone(), q.clone());
+                (Pa::Piecewise { var, root }, pe.max(qe))
+            };
+            let dom = IntervalSet::range(End::of(-40), End::of(top));
+            let (var, root) = (var.clone(), p.clone());
+            let u = Pa::Piecewise { var, root };
+            for min in [false, true] {
+                let Some(Pa::Piecewise { root, .. }) = u.choose(&other, min, &dom) else {
+                    panic!("round {round}: a choice of two summaries of x is piecewise");
+                };
+                for x in -40..=top + 12 {
+                    let v = match &other {
+                        Pa::Linear { .. } => (-40..=top)
+                            .contains(&x)
+                            .then_some(line.0 * x as i128 + line.1),
+                        _ => point(&q, x),
+                    };
+                    let pick = |(a, b): (i128, i128)| if min { a.min(b) } else { a.max(b) };
+                    let want = point(&p, x).zip(v).map(pick);
+                    assert_eq!(point(&root, x), want, "round {round}, min {min}, x = {x}");
+                }
+                bounds_are_exact(&root, -40..=top, &format!("round {round}, min {min}"));
             }
         }
     }

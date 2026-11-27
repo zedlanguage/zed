@@ -142,21 +142,13 @@ fn progress_and_preservation_for_fold_an_operator_with_its_identity_returns_a_sc
     }
 }
 
-/// Every permutation of `xs`, in lexicographic order of positions.
+/// Every permutation of `xs`, in lexicographic order of positions
+/// ([`zed_tests::instances::permutations`]).
 fn permutations<T: Clone>(xs: &[T]) -> Vec<Vec<T>> {
-    if xs.len() <= 1 {
-        return vec![xs.to_vec()];
-    }
-    let mut out = Vec::new();
-    for i in 0..xs.len() {
-        let mut rest = xs.to_vec();
-        let x = rest.remove(i);
-        for mut p in permutations(&rest) {
-            p.insert(0, x.clone());
-            out.push(p);
-        }
-    }
-    out
+    zed_tests::instances::permutations(xs.len())
+        .into_iter()
+        .map(|p| p.into_iter().map(|i| xs[i].clone()).collect())
+        .collect()
 }
 
 #[test]

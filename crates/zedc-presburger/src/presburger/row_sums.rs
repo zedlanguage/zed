@@ -1505,9 +1505,25 @@ fn span_mask((lo, hi): (i64, i64), blk: i64) -> u64 {
 // The order. [`Plan::build`] sorts a group's atoms by their span, least first (the atoms
 // projected onto last), and [`Plan::halves`] keeps that order in each half; the span of `y_i`
 // is `w_i`, so each table is the sums of the group's t lightest atoms, and the core B is the
-// first t atoms of that order. No argument by start index covers that order for every k: past
-// k = 991 the values repeat, and the lightest come first, so how many atoms the core needs can
-// grow with k (inferred, not measured past k = 1800). The test finds the core on the plan's
+// first t atoms of that order. No number of atoms bounds the core at every k (measured, test
+// `tests::the_core_of_coefficients_one_and_two_grows_with_k`): the core of a half of n atoms
+// needs about 2·√n of them, 63 at n = 1,000 and 197 at n = 10,000. Why (derived, with one
+// step inferred): `37·i² mod 991` takes 496 values, each, for i over a range of 2n, about
+// `2n/991` times in a half (inferred from i² mod 991 being spread evenly over such a range,
+// not proved for each k); so the t lightest weights are at most `1000 + δ` with `δ` about
+// `991·t/n`. The sums of j of them lie in `[1000·j, (1000 + δ)·j]`, and the sums of j and of
+// j + 1 atoms meet only where `(1000 + δ)·j >= 1000·(j + 1) - 1`, that is `j·δ >= 999`; an
+// interval of `U >= 1000` keys needs two such blocks to meet, and `j <= t`, so `t·δ >= 999`,
+// `991·t²/n >= about 999`, `t >= about √n`, `t = Ω(√n)`. Then
+// `ΣB >= 1000·t` and the lemma bounds a table by `O(√n)` words times `1000/64`, and the pass
+// by `O(n^1.5)`: at large k the lemma does not give the near-linear work the benchmarks show.
+// Measured on a model of the tables outside the code (each table of a half as a plain bit
+// set, items counted as here: words neither empty nor full, and one per run of full words):
+// the largest table has 181 items at n = 1,000 and 558 at n = 10,000, and the sum over the
+// pass grows from 39,761 to 463,165, 11.6 times for 10 times the atoms, so the words outside
+// the interval are far fewer than `⌈ΣB/64⌉` (below `min I` the sums of few atoms are islands
+// with empty words between them). Not proved: a bound on the sum over the pass that follows
+// that. The test finds the core on the plan's
 // own order and checks the bound on the plan's own tables: every table from the core on has
 // at most `⌈ΣB/64⌉ + 4` items (the lemma's words outside the interval, and the interval). By
 // the claim above each table is a cut `T_t ∩ W_t`, whose words outside the interval are a
@@ -1530,7 +1546,8 @@ fn span_mask((lo, hi): (i64, i64), blk: i64) -> u64 {
 // item_per_value`, which checks the lower bound on the plan's own tables at k = 64 and 128.
 // Not proved here (the open part of PRES-c12-proof): the words of the layers of the join and
 // of the fused images (`Fused::s`, `Fused::q`, and the `d` that `lattice` gives back), which
-// are sums and maps of these tables; and a core within a bounded number of atoms at every k.
+// are sums and maps of these tables; and a bound on the items of a group's whole forward pass
+// at large k. The claim of a core within a bounded number of atoms at every k is false (above).
 #[derive(Clone, Default)]
 struct Set {
     lit: Lits,
@@ -4574,6 +4591,50 @@ mod tests {
             }
         }
         eprintln!("the dense core of every group of k = 512 and 1800 needs at most {most} atoms");
+    }
+
+    /// PRES-c12-proof, the core at every k (the note at [`Set`]): the halves of the shared
+    /// group of [`coefficients_one_and_two`] in the plan's order (each half's weights `w_i`,
+    /// `b <= i < a`, of one parity, lightest first, as the test above reads them from the plan),
+    /// and the number t of atoms whose sums first hold `⌈U/64⌉ + 1` full words in a row, the
+    /// test above's core. It grows with k, about as `2·√n` for halves of n atoms, past the 64
+    /// atoms the test above allows at k = 512 and 1800: no number of atoms bounds the core at
+    /// every k. Only the weights are read, since [`Plan::of`] at these k is not needed for it.
+    #[test]
+    fn the_core_of_coefficients_one_and_two_grows_with_k() {
+        let mut cores = Vec::new();
+        for k in [1800, 6000, 60_000] {
+            let (a, b) = (2 * k / 3, k / 3);
+            for parity in 0..2 {
+                let mut values: Vec<usize> = (b..a)
+                    .filter(|i| i % 2 == parity)
+                    .map(|i| 1000 + (37 * i * i) % 991)
+                    .collect();
+                values.sort_unstable();
+                let u = *values.iter().max().expect("a half has atoms");
+                let need = u.div_ceil(64) + 1;
+                // The core is far below 1000 atoms at these k; the sums past them are not read.
+                let mut bits = vec![0u64; values.iter().take(1000).sum::<usize>() / 64 + 2];
+                bits[0] = 1;
+                let core = values.iter().position(|&v| {
+                    shift_or(&mut bits, v);
+                    let mut run = 0;
+                    bits.iter().any(|&x| {
+                        run = if x == u64::MAX { run + 1 } else { 0 };
+                        run >= need
+                    })
+                });
+                let t = core.expect("a core within 1000 atoms") + 1;
+                eprintln!(
+                    "k {k}, half {parity}: {} atoms, the core needs {t}",
+                    values.len()
+                );
+                cores.push((k, t));
+            }
+        }
+        let most = |k| cores.iter().filter(|c| c.0 == k).map(|c| c.1).max();
+        assert!(most(1800) <= Some(64), "{cores:?}");
+        assert!(most(60_000) > Some(150), "{cores:?}");
     }
 
     /// PRES-c12-proof, part 3 (the lower bound at [`Set`]): in the plan made without pairs

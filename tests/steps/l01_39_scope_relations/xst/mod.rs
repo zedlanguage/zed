@@ -190,22 +190,6 @@ fn ends(sets: &[Vec<i64>]) -> Vec<Option<(i64, i64)>> {
         .collect()
 }
 
-/// Every order of `k` items.
-fn permutations(k: usize) -> Vec<Vec<usize>> {
-    if k == 0 {
-        return vec![vec![]];
-    }
-    let mut out = vec![];
-    for p in permutations(k - 1) {
-        for i in 0..=p.len() {
-            let mut q = p.clone();
-            q.insert(i, k - 1);
-            out.push(q);
-        }
-    }
-    out
-}
-
 /// Every rotation of `0..k` and of its reverse: `2k` orders, which put each item first and
 /// last.
 fn rotations(k: usize) -> Vec<Vec<usize>> {
