@@ -121,6 +121,9 @@ path = "steps/l01_29_repairs_and_printing/mod.rs"
 name = "l01_30_queries"
 path = "steps/l01_30_queries/mod.rs"
 [[test]]
+name = "l01_30a_query_reads"
+path = "steps/l01_30a_query_reads/mod.rs"
+[[test]]
 name = "l01_31_zir"
 path = "steps/l01_31_zir/mod.rs"
 [[test]]
