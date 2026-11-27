@@ -847,3 +847,21 @@ fn relational_pairs_chain_scales_at_512() {
         written_pairs_chain,
     );
 }
+
+/// The chain of `k` remainders at k = 4 and 6, which
+/// `remainder_reads_outside_a_split_at_their_corners_on_a_longer_chain` skips, at every modulus
+/// of `CORNER_MODULI`, each against the interpreter, each in under a second (item
+/// PERF-wide-modulus-cliffs: with `x` unbounded, shape 3 took 1.4 to 4.6 s at `2^62` and
+/// `i64::MIN`, the bisection of `Hull::tighten` asking about `log2 m` whole questions).
+#[test]
+fn remainder_corners_at_four_and_six_remainders_at_every_modulus() {
+    for k in [4, 6] {
+        for m in CORNER_MODULI {
+            let start = std::time::Instant::now();
+            remainder_corners_at(m, k);
+            let t = start.elapsed();
+            eprintln!("k = {k}, m = {m}: {t:?}");
+            assert!(t.as_secs_f64() < 1.0, "k = {k}, m = {m} took {t:?}");
+        }
+    }
+}

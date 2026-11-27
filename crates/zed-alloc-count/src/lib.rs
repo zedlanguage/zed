@@ -95,6 +95,9 @@ struct Local {
     net: Cell<i64>,
     /// The largest `net` has been.
     peak: Cell<i64>,
+    /// The blocks the system gave this thread, each allocation and each reallocation one, for
+    /// [`allocations`].
+    calls: Cell<u64>,
 }
 
 thread_local! {
@@ -108,6 +111,7 @@ thread_local! {
             on: Cell::new(false),
             net: Cell::new(0),
             peak: Cell::new(0),
+            calls: Cell::new(0),
         }
     };
 }
@@ -193,11 +197,19 @@ fn track(local: &Local, added: usize, freed: usize) {
 fn allocated_block(block: *mut u8, bytes: usize, freed: usize) -> *mut u8 {
     if !block.is_null() {
         LOCAL.with(|local| {
+            local.calls.set(local.calls.get() + 1);
             count(local, bytes);
             track(local, bytes, freed);
         });
     }
     block
+}
+
+/// The blocks the system has given this thread so far, each allocation and each reallocation
+/// one: not those of the threads it started. The difference over a run is how often the run
+/// went to the allocator, whatever the sizes (PERF-walk-allocator-no-coalesce).
+pub fn allocations() -> u64 {
+    LOCAL.with(|l| l.calls.get())
 }
 
 /// What [`live`] measured.

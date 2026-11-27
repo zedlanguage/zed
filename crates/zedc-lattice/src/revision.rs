@@ -447,13 +447,20 @@ fn map2(
     )
 }
 
-/// The real quotient `z / y` at two endpoints, rounded outward in `dir`.
+/// The real quotient `z / y` at two endpoints, as the bound in `dir` of the integers at or
+/// within it: rounded up for a lower bound (`Dir::Down`) and down for an upper one. An integer
+/// operand `x` with `x * y = z` is the real quotient itself, so of the quotients over a box,
+/// whose least and greatest are at its corners, `x` lies between the least rounded up and the
+/// greatest rounded down. Rounding outward, as before, kept one integer too many at each end
+/// that is not a whole quotient: `x * o` in `34..=38` with `o` in `-9..=-1` gave `x` up to
+/// `-3` (`ceil(34 / -9)`), though `-3 * o` reaches only `27`, where `floor(-34 / 9) = -4`
+/// is the bound (TEST-back-product-precision). An infinite end rounds outward as before.
 fn quotient(z: &End, y: &End, dir: Dir) -> End {
     match (z, y) {
         (Fin(n), Fin(d)) if !d.is_zero() => {
             let floor = n.div_floor(d);
             match dir {
-                Dir::Up if !n.mod_floor(d).is_zero() => Fin(&floor + &Num::ONE),
+                Dir::Down if !n.mod_floor(d).is_zero() => Fin(&floor + &Num::ONE),
                 _ => Fin(floor),
             }
         }
@@ -960,6 +967,26 @@ mod tests {
         assert_eq!(
             backward(&Op::Mul, 0, &x, &IntervalSet::of(1, 3), &z),
             IntervalSet::of(0, 10)
+        );
+    }
+
+    /// Projected onto an operand, a product bounds it by the quotients at the corners rounded
+    /// inward, as the operand is an integer: `x * o` in `34..=38` with `o` in `-9..=-1` gives
+    /// `x` in `-38..=-4`, `-34 / 9` rounded down, so `x` in `-3..=-2` gives nothing; outward
+    /// it gave `-3`, whose products reach only `27` (TEST-back-product-precision). The sweep
+    /// of `backward_transfer_keeps_every_operand_that_can_give_the_result` checks that it
+    /// keeps every operand that can give the result.
+    #[test]
+    fn a_product_bounds_an_operand_by_whole_quotients() {
+        let (z, o) = (IntervalSet::of(34, 38), IntervalSet::of(-9, -1));
+        let x = IntervalSet::top();
+        assert_eq!(backward(&Op::Mul, 0, &x, &o, &z), IntervalSet::of(-38, -4));
+        assert!(backward(&Op::Mul, 0, &IntervalSet::of(-3, -2), &o, &z).is_empty());
+        // `7 / 2` and `9 / 2` are not whole: 4 alone, `4 * 2 = 8`.
+        let two = IntervalSet::of(2, 2);
+        assert_eq!(
+            backward(&Op::Mul, 1, &two, &x, &IntervalSet::of(7, 9)),
+            IntervalSet::of(4, 4)
         );
     }
 

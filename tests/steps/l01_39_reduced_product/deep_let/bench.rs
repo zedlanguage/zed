@@ -183,3 +183,46 @@ fn the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block() {
         );
     });
 }
+
+/// The walk of `fees(d, 1)`, a block of `d` bindings each with a test, goes to the allocator
+/// at most 310 times a binding at 4,000 and at 32,000 bindings (item
+/// PERF-walk-allocator-no-coalesce). Measured on this thread (`zed_alloc_count::allocations`,
+/// which counts each allocation and each reallocation), before and after the cuts in
+/// `zedc-preimage` product.rs that carry the item's name:
+///
+/// | bindings | allocations a binding | bytes a binding   | time            |
+/// |----------|-----------------------|-------------------|-----------------|
+/// | 4,000    | 329.3 to 281.4        | 105.8 KB after    | 0.605 to 0.565 s |
+/// | 32,000   | 338.9 to 297.7        | 112.6 to 110.8 KB | 4.78 to 4.44 s  |
+///
+/// (medians of three runs of the profiling build on the local job runner, glibc's allocator,
+/// load 13 to 17; the count varies by about 2% from run to run, a cause not traced; the time
+/// before at 32,000 is of one earlier run.) The drop is 14% of the calls and 2% of the bytes, not more: what is
+/// left has no one site to cut. The cuts: a test
+/// with no name bound to a function is not closed (`Scope::close`), a term binding none of its
+/// free names to a static is borrowed, not copied (`substituted`), the free names of a test
+/// are found once (`Scope::atom`, `Scope::atom_names`), a summary already made is read with no
+/// work list (`Lazy::get`), and a test that is one atom is one node with no stack
+/// (`Tree::of`). What is left is spread over the walk, no site above 47 a binding: the copies
+/// of paths of the scope's persistent maps (`imbl`) at each binding and test, which the
+/// snapshots the walk keeps make necessary, and the making of each binding's summary, about
+/// ten allocations a summary. Red on the code before the cuts (327.6 and 338.9).
+#[test]
+fn the_walk_of_a_deep_block_allocates_at_most_310_times_a_binding() {
+    on_small_stack(|| {
+        for d in [4_000, 32_000] {
+            let t = fees(d, 1);
+            let scope = ints(&["n".into()]);
+            let c0 = zed_alloc_count::allocations();
+            let start = std::time::Instant::now();
+            _ = arms(&t, &scope);
+            let time = start.elapsed();
+            let per = (zed_alloc_count::allocations() - c0) as f64 / d as f64;
+            eprintln!("{d} bindings: {per:.1} allocations a binding, {time:?}");
+            assert!(
+                per <= 310.0,
+                "the walk of {d} bindings allocated {per:.1} times a binding, more than 310"
+            );
+        }
+    });
+}

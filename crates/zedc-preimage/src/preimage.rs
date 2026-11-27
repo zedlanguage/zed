@@ -9552,6 +9552,7 @@ impl<'m, 't> Walk<'m, 't> {
             (Sub, Some(c), _) => self.back(b, env, ints(reflect(z, c as i128))).await,
             (Mul, Some(c), _) => self.back(b, env, ints(times_pre(z, c))).await,
             (Mul, _, Some(c)) => self.back(a, env, ints(times_pre(z, c))).await,
+            (Mul, None, None) if product_by_operand() => self.project(p, a, b, env, z).await,
             (Mul, None, None) => self.back_product(t, env, z).await,
             (IntDiv, _, Some(c)) => self.back(a, env, ints(div_pre(z, c))).await,
             (Mod, _, Some(c)) => {
@@ -9747,7 +9748,14 @@ impl<'m, 't> Walk<'m, 't> {
     // of the written tree is made. Sound: each factor's demand is the backward projection of
     // `z` through `*` against a set holding every value of the other factors' product, and
     // through `^ k` for a repeated factor, each a necessary condition (revision::backward);
-    // the meet of necessary conditions is one. Test:
+    // the meet of necessary conditions is one. The other set is first narrowed to the values
+    // that meet `z` with some value of the factor (`others_in` below), one more set quotient
+    // per factor. Tradeoff: with two factors the result is within that of the operand-by-
+    // operand reading (proof at
+    // `a_product_read_by_its_factors_is_within_its_reading_by_operand`); with three or more it
+    // is not always, since that reading meets each partial product's own set, which this one
+    // never makes (TEST-back-product-precision: 18 of 3,000 random products of two to five
+    // factors read looser, 514 tighter). Test:
     // `l01_25_preimage_catalog::bench::powers::reading_a_product_as_a_power_is_linear_in_its_factors`.
     async fn back_product(&'m self, t: Tid, env: Eid, z: &IntervalSet) -> Res {
         let mul = Op::Mul;
@@ -9777,7 +9785,23 @@ impl<'m, 't> Walk<'m, 't> {
                 (None, Some(b)) => b.clone(),
                 (None, None) => unreachable!("a product has two or more factors"),
             };
-            let zi = revision::backward(&mul, 0, sets[i].set(), others.set(), z);
+            let others = if product_others_top() {
+                Ints::of(IntervalSet::top())
+            } else {
+                others
+            };
+            // The others' product narrowed first to the values that meet `z` with some value
+            // of this factor, then this factor's demand read against it: two steps of the
+            // HC4 revision of `f * others` in place of one. Sound: each is
+            // `revision::backward`, a necessary condition, and a smaller `others` set gives a
+            // smaller quotient of `z`. It recovers part of what reading the written tree
+            // operand by operand gave (`x * (y * w)` in `-15` with `x` in `[-7, -6]` has
+            // `y * w` in `[15/7, 15/6]`, no integer, so the product is empty), at one more
+            // set quotient per factor (TEST-back-product-precision, the measured counts at
+            // `a_product_read_by_its_factors_is_within_its_reading_by_operand`).
+            let others_in =
+                (others.set()).meet(&revision::backward(&mul, 1, sets[i].set(), others.set(), z));
+            let zi = revision::backward(&mul, 0, sets[i].set(), &others_in, z);
             let r = match k.is_several() {
                 true => self.back_unary(&Op::Pow(k.exponent()), f, fe, &zi).await,
                 false => self.back(f, fe, Demand::Ints(zi)).await,
@@ -13074,6 +13098,35 @@ impl<'m, 't> Walk<'m, 't> {
 fn two_at_a_time() -> bool {
     #[cfg(test)]
     return presburger::TWO_AT_A_TIME.get();
+    #[cfg(not(test))]
+    false
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether the tests have chosen to read a product of two terms that are not constants
+    /// operand by operand down the tree ([`Walk::project`]), as before
+    /// PERF-alternating-product-bytes, in place of [`Walk::back_product`], to compare the two
+    /// boxes (TEST-back-product-precision).
+    static PRODUCT_BY_OPERAND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set by the negative control of that comparison: [`Walk::back_product`] then reads the
+    /// product of the other factors as every integer, a box looser than either method's.
+    static PRODUCT_OTHERS_TOP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether the tests have chosen to read a product operand by operand (`PRODUCT_BY_OPERAND`).
+fn product_by_operand() -> bool {
+    #[cfg(test)]
+    return PRODUCT_BY_OPERAND.get();
+    #[cfg(not(test))]
+    false
+}
+
+/// Whether the negative control reads the other factors as every integer
+/// (`PRODUCT_OTHERS_TOP`).
+fn product_others_top() -> bool {
+    #[cfg(test)]
+    return PRODUCT_OTHERS_TOP.get();
     #[cfg(not(test))]
     false
 }
@@ -19657,6 +19710,194 @@ mod tests {
             }
         }
         println!("{read} read at once, {empty} empty");
+    }
+
+    /// The box of the backward run alone of `t` toward `d` over `inputs`, as [`preimage_in`]
+    /// makes it before any split, enumeration or linear stage.
+    fn walked(t: &Term, inputs: &Domains, d: &Demand) -> Domains {
+        let mut tx = Tx::new();
+        let root = tx.terms.add(t);
+        let marks = tx.landmarks(inputs, d);
+        let begun = tx.begin(inputs);
+        tx.start_from(&begun, marks);
+        let r = tx.back(root, ROOT, d);
+        tx.whole(&r)
+    }
+
+    /// Random products of two to `most` factors on `x`, `y` and `w` (a name or a name plus a
+    /// literal, names repeated, the tree in any shape), random finite boxes of one or two
+    /// pieces in `-7..=7`, and random demands on the product: the boxes of
+    /// [`Walk::back_product`] and of the reading operand by operand (`PRODUCT_BY_OPERAND`),
+    /// each checked to hold every point of the box at which the product meets the demand.
+    /// Gives the cases where a name's set by factors is not within its set operand by operand
+    /// (the first few, printed), the number where it is strictly within, and the number of the
+    /// first where the set operand by operand is not within the set by factors either.
+    fn products_by_factors_and_by_operand(
+        rng: &mut Rng,
+        cases: usize,
+        most: usize,
+    ) -> (Vec<String>, usize, usize) {
+        let names: Vec<Arc<str>> = ["x", "y", "w"].iter().map(|&n| n.into()).collect();
+        let leaf = |rng: &mut Rng| -> Term {
+            let v = Term::Var(names[rng.below(3)].clone());
+            match rng.below(4) {
+                0 => {
+                    let k = rng.below(5) as i64 - 2;
+                    Term::Prim(Prim::Add, vec![v, Term::Lit(Value::Int(k))])
+                }
+                _ => v,
+            }
+        };
+        fn tree(rng: &mut Rng, leaves: usize, leaf: &dyn Fn(&mut Rng) -> Term) -> Term {
+            if leaves == 1 {
+                return leaf(rng);
+            }
+            let left = 1 + rng.below(leaves - 1);
+            let a = tree(rng, left, leaf);
+            let b = tree(rng, leaves - left, leaf);
+            Term::Prim(Prim::Mul, vec![a, b])
+        }
+        let small = |rng: &mut Rng, lo: i64, width: usize| -> IntervalSet {
+            let mut pieces = Vec::new();
+            for _ in 0..1 + rng.below(2) {
+                let a = lo + rng.below(width) as i64;
+                let b = a + rng.below(5) as i64;
+                pieces.push((End::of(a), End::of(b)));
+            }
+            IntervalSet::from_pieces(pieces)
+        };
+        let value = |t: &Term, at: &BTreeMap<Arc<str>, i128>| -> i128 {
+            fn go(t: &Term, at: &BTreeMap<Arc<str>, i128>) -> i128 {
+                match t {
+                    Term::Var(n) => at[n],
+                    Term::Lit(Value::Int(k)) => i128::from(*k),
+                    Term::Prim(Prim::Add, a) => go(&a[0], at) + go(&a[1], at),
+                    Term::Prim(Prim::Mul, a) => go(&a[0], at) * go(&a[1], at),
+                    _ => unreachable!("built above"),
+                }
+            }
+            go(t, at)
+        };
+        let (mut looser, mut tighter, mut neither) = (Vec::new(), 0, 0);
+        for _ in 0..cases {
+            let leaves = 2 + rng.below(most - 1);
+            let t = tree(rng, leaves, &leaf);
+            let inputs: Domains = (names.iter())
+                .map(|n| (n.clone(), small(rng, -7, 11)))
+                .collect();
+            let z = match rng.below(3) {
+                0 => small(rng, -40, 81),
+                1 => small(rng, -12, 25),
+                _ => {
+                    let (a, b) = (rng.below(41) as i64 - 20, rng.below(41) as i64 - 20);
+                    IntervalSet::of(a.min(b), a.max(b))
+                }
+            };
+            let d = Demand::Ints(z.clone());
+            let new = walked(&t, &inputs, &d);
+            PRODUCT_BY_OPERAND.set(true);
+            let old = walked(&t, &inputs, &d);
+            PRODUCT_BY_OPERAND.set(false);
+            // Both hold every point of the box whose product is in `z`.
+            let points = |n: &Arc<str>| -> Vec<i128> {
+                (inputs[n].pieces())
+                    .flat_map(|(a, b)| {
+                        let (a, b) = (a.to_i64().expect("finite"), b.to_i64().expect("finite"));
+                        (a..=b).map(i128::from)
+                    })
+                    .collect()
+            };
+            let (xs, ys, ws) = (points(&names[0]), points(&names[1]), points(&names[2]));
+            for x in &xs {
+                for y in &ys {
+                    for w in &ws {
+                        let at: BTreeMap<Arc<str>, i128> =
+                            names.iter().cloned().zip([*x, *y, *w]).collect();
+                        let p = value(&t, &at);
+                        if i64::try_from(p).is_ok_and(|p| z.contains(p)) {
+                            for (n, v) in &at {
+                                let v = i64::try_from(*v).expect("small");
+                                assert!(
+                                    new[n].contains(v) && old[n].contains(v),
+                                    "{t:?} in {z} over {inputs:?}: {n} = {v} of a point dropped: \
+                                     by factors {new:?}, by operand {old:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            if names.iter().any(|n| !new[n].is_subset(&old[n])) {
+                neither += usize::from(names.iter().any(|n| !old[n].is_subset(&new[n])));
+                if looser.len() < 5 {
+                    looser.push(format!(
+                        "{t:?} in {z} over {inputs:?}: by factors {new:?}, by operand {old:?}"
+                    ));
+                } else {
+                    looser.push(String::new());
+                }
+            } else if new != old {
+                tighter += 1;
+            }
+        }
+        (looser, tighter, neither)
+    }
+
+    /// [`Walk::back_product`] against the reading operand by operand it replaced
+    /// (PERF-alternating-product-bytes), on random products, demands and boxes
+    /// (TEST-back-product-precision). Of two factors, each name's set by factors is within its
+    /// set operand by operand, on every case. Proof: for `a * b`, the reading operand by
+    /// operand gives `a` the demand `backward(*, 0, A, B, z)` over the forward sets `A`, `B`,
+    /// and `back_product` gives it `backward(*, 0, A, B', z)` with `B'` = `B` met with
+    /// `backward(*, 1, A, B, z)`, within `B`; `backward` at operand 0 is the union over the
+    /// pieces of `B'` of quotients of `z`, so a smaller `B'` gives a smaller set; the same for
+    /// `b`. Of three to five factors the claim is false: the reading operand by operand meets
+    /// each partial product of the written tree with whole numbers (`x * (y * w)` in `-15`
+    /// with `x` in `[-7, -6]` needs `y * w` in `[15/7, 15/6]`, which holds no integer), which
+    /// one projection per factor against the product of the others does not see. Measured
+    /// on one run (2026-11-27, seed 15410409318329950335): of two factors, 0 of 3000 not
+    /// within and 174 strictly within; of two to five, 18 not within, 7 of them with the other
+    /// reading not within this one either, and 514 strictly within. Before the quotient's
+    /// rounding was fixed (zedc-lattice revision.rs `quotient`, which rounded a finite bound
+    /// outward) and before the others' product was narrowed first (`others_in` in
+    /// [`Walk::back_product`]), 94 of 3000 of two to five were not within, and with the
+    /// rounding fixed alone, 29. Making it never less precise needs every
+    /// partial product's set, the O(n²) bits the factor reading removed; the measured loss is
+    /// kept. Negative control: with the other factors read as every integer
+    /// (`PRODUCT_OTHERS_TOP`), the two-factor comparison finds sets that are not within.
+    #[test]
+    fn a_product_read_by_its_factors_is_within_its_reading_by_operand() {
+        let (mut rng, _) =
+            Rng::fresh("a_product_read_by_its_factors_is_within_its_reading_by_operand");
+        let (looser, tighter, _) = products_by_factors_and_by_operand(&mut rng, 3000, 2);
+        println!(
+            "two factors: {tighter} of 3000 strictly within, {} not within",
+            looser.len()
+        );
+        assert!(
+            looser.is_empty(),
+            "{} of 3000 not within; the first: {:#?}",
+            looser.len(),
+            &looser[..looser.len().min(5)]
+        );
+        let (looser, tighter, neither) = products_by_factors_and_by_operand(&mut rng, 3000, 5);
+        println!(
+            "two to five factors: {tighter} of 3000 strictly within, {} not within, {neither} of \
+             them neither within the other: {:#?}",
+            looser.len(),
+            &looser[..looser.len().min(5)]
+        );
+        assert!(
+            looser.len() < tighter,
+            "by factors less often within than not"
+        );
+        PRODUCT_OTHERS_TOP.set(true);
+        let (control, _, _) = products_by_factors_and_by_operand(&mut rng, 300, 2);
+        PRODUCT_OTHERS_TOP.set(false);
+        assert!(
+            !control.is_empty(),
+            "the negative control found no looser set"
+        );
     }
 
     /// A random set of one to three pieces in `-20..=29`, an end infinite one time in eight.

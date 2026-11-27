@@ -25813,14 +25813,21 @@ impl Hull {
                     let top = hi
                         .clone()
                         .or_else(|| self.seen[i].as_ref().map(|s| s.0.clone()));
+                    // Steps of 1, 2, 4, ... from `lo` (item PERF-wide-modulus-cliffs), each a
+                    // value snapped to `set` as in the bisection below, up to `top` where there
+                    // is one; see the tradeoff at `new_hi`.
                     let (mut a, mut b) = match top {
-                        Some(top) => (lo, top),
-                        None => {
+                        Some(top) if !shortcuts => (lo, top),
+                        top => {
                             let (mut a, mut step) = (lo, one.clone());
                             loop {
                                 let v = &a + &step;
-                                if !self.none(i, true, &v) {
-                                    break (a, v);
+                                if let Some(t) = top.as_ref().filter(|t| &v >= *t) {
+                                    break (a, t.clone());
+                                }
+                                match snap_below(&a, &v) {
+                                    Some(m) if !self.none(i, true, &m) => break (a, m),
+                                    _ => {}
                                 }
                                 a = &v + &one;
                                 step = &step * &two;
@@ -25863,14 +25870,32 @@ impl Hull {
                 _ => {
                     let bottom =
                         (new_lo.clone()).or_else(|| self.seen[i].as_ref().map(|s| s.1.clone()));
+                    // Complexity tradeoff (PERF-wide-modulus-cliffs): the bisection from the end
+                    // to the value at a point found asks about `log2 w` whole questions for `w`
+                    // the distance between them, whatever the distance `d` from the end to the
+                    // bound: shape 3 of `counted_remainder_chain(k, m)` at m = 2^62 and
+                    // `i64::MIN` (`l01_25_preimage_catalog::s22`) found a point at about `-m`
+                    // and the bound `-2` or `-3` below the end 2, and asked 63 questions, each a
+                    // probe of every disjunct, 1.1 to 3.0 s at k = 4 and 5. Used: steps of 1, 2,
+                    // 4, ... from the end first (the unbounded search of Bentley and Yao 1976,
+                    // doi:10.1016/0020-0190(76)90071-5, its first stage), up to the value at
+                    // the point, then the bisection within the last step: about `2 log2 d + 2`
+                    // questions, at most `2 log2 w + 2` where the bound lies near the point,
+                    // against `log2 w + 1`. Each value is snapped to a member of `set`, so a gap
+                    // of `set` costs no question, as in the bisection. `HULL_BISECT` turns it
+                    // off with the other shortcuts.
                     let (mut a, mut b) = match bottom {
-                        Some(bottom) => (bottom, hi),
-                        None => {
+                        Some(bottom) if !shortcuts => (bottom, hi),
+                        bottom => {
                             let (mut b, mut step) = (hi, one.clone());
                             loop {
                                 let v = &b - &step;
-                                if !self.none(i, false, &v) {
-                                    break (v, b);
+                                if let Some(t) = bottom.as_ref().filter(|t| &v <= *t) {
+                                    break (t.clone(), b);
+                                }
+                                match snap_above(&b, &v) {
+                                    Some(m) if !self.none(i, false, &m) => break (m, b),
+                                    _ => {}
                                 }
                                 b = &v - &one;
                                 step = &step * &two;
