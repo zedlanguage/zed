@@ -79,7 +79,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::shared::TwoSat;
-use super::Ints;
+use super::ints::Ints;
 use crate::value::Value;
 
 /// One step of the reductions, for the unwinding.
@@ -416,7 +416,7 @@ pub(super) fn crossing_witness(
 
 #[cfg(test)]
 pub(super) mod tests {
-    use super::super::forest_tests::{cofinite, finite};
+    use super::super::ints::{cofinite, finite};
     use super::*;
 
     fn int(k: i64) -> Value {
@@ -457,9 +457,10 @@ pub(super) mod tests {
             .any(|a| (clauses.iter()).all(|c| c.iter().any(|&(i, b)| (a >> i & 1 == 1) == b)))
     }
 
-    /// The selector atoms `{2, 3}`, `{1, 3}`, `{1, 2}` cross, so `forest` refuses them; a 2-SAT
-    /// formula in the selector reduction (each clause's literals on two variables at most, a
-    /// chain `x0 -> x1 -> x2 -> x3` with a tautology beside each link: t04 of the prototype) is
+    /// The selector atoms `{2, 3}`, `{1, 3}`, `{1, 2}` cross, so `forest` refuses them
+    /// (`forest_tests::the_selector_atoms_cross` in `escape.rs`); a 2-SAT formula in the
+    /// selector reduction (each clause's literals on two variables at most, a chain
+    /// `x0 -> x1 -> x2 -> x3` with a tautology beside each link: t04 of the prototype) is
     /// answered with a list that holds every clause.
     #[test]
     fn a_selector_reduction_of_2_sat_is_answered_with_a_list() {
@@ -469,9 +470,6 @@ pub(super) mod tests {
             cls.push([(i, true), (i, false), (i + 1, true)]);
         }
         let (pl, atom, clause) = selector(4, &cls);
-        let at_sel: Vec<usize> = (0..atom.len()).filter(|&i| atom[i].0 == 5).collect();
-        let mut parent = vec![None; atom.len()];
-        assert_eq!(super::super::forest(&at_sel, &atom, &mut parent), None);
         let x = crossing_witness(&pl, &atom, &clause).expect("a list");
         assert!(holds(&x, &atom, &clause), "{x:?}");
         for (j, v) in x.iter().enumerate().skip(1) {
