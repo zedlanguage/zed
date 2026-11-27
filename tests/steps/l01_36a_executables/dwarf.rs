@@ -512,9 +512,10 @@ fn gdb_prints_the_words_the_names_are_bound_to() {
 #[test]
 fn gdb_prints_the_value_of_a_name_bound_to_a_constant_that_is_not_a_word() {
     // Plan row FAIL-dwarf-staged-let-nonscalar: staging makes `s`, `t` and `u` literals and
-    // keeps their `let`s for their names (`Program::stage_named`). `s` and `t` are read by no
-    // code, so the table of constants has no entry for them; `u` is read, in place, by the
-    // send. Each is shown as its value: a string's bytes (`zed_str`), the tuple's printed text
+    // keeps their `let`s for their names (`Program::stage_named`); each is read by a send, and
+    // a name no code reads has no binding at all (measured: gdb said `No symbol "s"` when `s`
+    // and `t` were not read). None of them is in the table of constants. Each is shown as its
+    // value: a string's bytes (`zed_str`), the tuple's printed text
     // (`zed_text`), both as gdb prints a `char` array. `k` is still a word in the frame.
     if !cfg!(target_arch = "x86_64") {
         return;
@@ -525,6 +526,8 @@ fn gdb_prints_the_value_of_a_name_bound_to_a_constant_that_is_not_a_word() {
     t = (1, 2);
     u = \"yo\";
     k = n + 1;
+    m.stdout <- \"${k}${s}\";
+    m.stdout <- String((k, t));
     m.stdout <- \"${k}${u}\";
 }
 ";
