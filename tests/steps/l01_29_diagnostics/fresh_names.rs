@@ -326,18 +326,31 @@ pub(super) fn mixed_pushes(n: usize) -> String {
     }
     src += "main(m: MainArgs) {\n";
     for i in 0..n {
-        src += &format!("    h{i}({}, {}, x: {}, out: m.stdout);\n", 3 * i, 3 * i + 1, 3 * i + 2);
+        src += &format!(
+            "    h{i}({}, {}, x: {}, out: m.stdout);\n",
+            3 * i,
+            3 * i + 1,
+            3 * i + 2
+        );
     }
     src + "}\n"
 }
 
 /// The rejection of [`mixed_pushes`]`(n)` notes each pushed value as its call binds the
-/// unwritten `x`, beside the written `T`, and no note prints `_`.
+/// unwritten `x`, beside the written `T`, and no note prints `_`. The keys print as
+/// `(0 | 1 | 2)`, or as `Part1` where the headline above the note writes them twice and names
+/// them so, so only the value is matched.
 pub(super) fn notes_of_mixed_pushes_print_both(src: &str, n: usize) {
     let out = rejected(src);
+    let notes = lines_with(&out, "this expression is");
+    // The value of each note, after its last arrow, in a set: a scan of the notes for each
+    // `i` would make the benchmark's own check quadratic in `n`.
+    let values: std::collections::HashSet<&str> = (notes.iter())
+        .filter_map(|l| l.rsplit_once(" -> ").map(|(_, v)| v))
+        .collect();
     for i in 0..n {
-        let note = format!("this expression is (0 | 1 | 2) -> {} | T\n", 3 * i + 2);
-        assert!(out.contains(&note), "{note}: {:?}\n{out}", lines_with(&out, "this expression is"));
+        let value = format!("{} | T", 3 * i + 2);
+        assert!(values.contains(value.as_str()), "{value}: {notes:?}\n{out}");
     }
     assert!(!out.contains("-> _\n") && !out.contains("| _\n"), "{out}");
 }
