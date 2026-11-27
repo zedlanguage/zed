@@ -540,7 +540,11 @@ fn the_text_of_8_times_the_levels_is_at_most_24_times_as_long() {
 /// over a node, or an `if` on `c` or on `xi >= 1` over two nodes of one pool. Any later node
 /// may hold a node, so parts are shared, and they read names their places bind differently,
 /// in chains of `let`s of one or several names.
-fn drawn(seed: u64, size: usize) -> Term {
+///
+/// With `chains` (Claude C-3, Gemini C.3 of round 2), each `let` drawn is a chain of 2 to 6
+/// `let`s over one node, so a chain often binds one name twice, and half the `if`s have one
+/// node under both arms.
+fn drawn(seed: u64, size: usize, chains: bool) -> Term {
     let mut s = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
     let mut next = |n: usize| {
         s ^= s << 13;
@@ -577,10 +581,20 @@ fn drawn(seed: u64, size: usize) -> Term {
                 // printer must not write `xi = xi + k` reading the `xi` outside, nor a chain
                 // whose binding reads a name a later `let` of the chain binds, in one block
                 // (PRINT-let-reading-its-own-name).
+                let n = match chains {
+                    true => 2 + next(5),
+                    false => 1,
+                };
+                let mut body = p;
+                for _ in 1..n {
+                    let e = prim(Prim::Add, vec![var(&x(next(4))), lit(next(5) as i64)]);
+                    body = Shared::new(Term::Let(x(next(4)).into(), Shared::new(e), body));
+                }
                 let i = next(4);
                 let e = prim(Prim::Add, vec![var(&x(next(4))), lit(k)]);
-                (kind, Term::Let(x(i).into(), Shared::new(e), p))
+                (kind, Term::Let(x(i).into(), Shared::new(e), body))
             }
+            3 if chains && next(2) == 0 => (kind, Term::If(Shared::new(var("c")), p.clone(), p)),
             3 => (kind, Term::If(Shared::new(var("c")), p, q)),
             _ => {
                 let guard = prim(Prim::Ge, vec![var(&x(next(4))), lit(1i64)]);
@@ -597,15 +611,30 @@ fn drawn(seed: u64, size: usize) -> Term {
     Term::Lam(vec!["c".into()], body)
 }
 
-/// 400 drawn terms with shared parts: the text for a user, on one line and broken into lines,
-/// and a message's text, each read back, give what the term gives at `c` true and false.
+/// Each name `x` followed by digits written `x`, as a message writes `x@1` and `x@2`
+/// ([`written_name`]): every name of a drawn term but `c` is one name in the text, so the
+/// text reads back only where each binder that would capture a read takes a new name.
+fn all_x(name: &str) -> &str {
+    match name.strip_prefix('x') {
+        Some(n) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => "x",
+        _ => name,
+    }
+}
+
+/// 400 drawn terms with shared parts, and 400 with chains of `let`s: the text for a user, on
+/// one line and broken into lines, and a message's text, with each name as it is and with
+/// the names written alike ([`all_x`], Gemini C.3 of round 2), each read back, give what the
+/// term gives at `c` true and false.
 #[test]
 fn drawn_terms_with_shared_parts_read_back_with_the_same_value() {
-    for seed in 0..400 {
-        let t = drawn(seed, 4 + (seed as usize % 12));
-        reads_back_the_same(&t, &shown(&t), &bools());
-        reads_back_the_same(&t, &pretty_in(&t, 40, &none), &bools());
-        reads_back_the_same(&t, &written(&t, |x| x, &none), &bools());
+    for chains in [false, true] {
+        for seed in 0..400 {
+            let t = drawn(seed, 4 + (seed as usize % 12), chains);
+            reads_back_the_same(&t, &shown(&t), &bools());
+            reads_back_the_same(&t, &pretty_in(&t, 40, &none), &bools());
+            reads_back_the_same(&t, &written(&t, |x| x, &none), &bools());
+            reads_back_the_same(&t, &written(&t, all_x, &none), &bools());
+        }
     }
 }
 
@@ -838,4 +867,148 @@ fn a_binding_reading_a_name_its_block_binds_reads_back_with_the_same_value() {
             "x -> { { y = x + 1; { x = 5; y + x } } }"
         ]
     );
+}
+
+// Round 2 of XR-lazy-and-kernel-batch-1 on PRINT-let-reading-its-own-name.
+
+fn ints() -> Vec<Vec<Value>> {
+    [3i64, -1].map(|n| vec![Value::Int(n)]).to_vec()
+}
+
+fn lam_x(body: Term) -> Term {
+    Term::Lam(vec!["x".into()], Shared::new(body))
+}
+
+/// Claude D-2, Codex D6: at width 20 a call `(x -> rest)(e)` that binds the parameter again
+/// is broken into lines inside its lambda, and reads back.
+#[test]
+fn a_call_binding_the_parameter_again_broken_at_width_20_reads_back() {
+    let cases = [
+        lam_x(let_(
+            "x",
+            add(var("x"), lit(1i64)),
+            let_("x", add(var("x"), lit(10i64)), var("x")),
+        )),
+        lam_x(let_(
+            "x",
+            add(var("x"), lit(1i64)),
+            let_("long_name", lit(123456i64), add(var("long_name"), var("x"))),
+        )),
+    ];
+    let texts: Vec<String> = cases.iter().map(|t| pretty_in(t, 20, &none)).collect();
+    for (t, text) in cases.iter().zip(&texts) {
+        reads_back_the_same(t, text, &ints());
+    }
+    // Written by hand from the layout rules, not from a run. Each binding reading `x` is a
+    // call (`Pieces::called`), so no block binds the parameter. In the first, the call
+    // `((x + 10))` would start at column 19 and does not fit, so its one item goes on its own
+    // line indented two. Read by eye: `x -> (x -> (x -> x)((x + 10)))((x + 1))`, which is
+    // `x + 11`, as `let x = x + 1 in let x = x + 10 in x`. In the second, the block of
+    // `long_name` does not fit after `x -> (x -> `, so each of its statements goes on its own
+    // line; `long_name = 123456;` is one `Cat` of texts with no break in it, so that line is
+    // 21 columns, past the width, as `render` allows ("where it can"). Read by eye:
+    // `x -> (x -> { long_name = 123456; (long_name + x) })((x + 1))`, which is
+    // `x + 123457`, as the term; the block binds `long_name` only, not the parameter.
+    assert_eq!(
+        texts,
+        [
+            "x -> (x -> (x -> x)(\n  (x + 10)\n))((x + 1))",
+            "x -> (x -> {\n  long_name = 123456;\n  (long_name + x)\n})((x + 1))",
+        ]
+    );
+}
+
+/// Codex D1: a binding whose bound term binds `x` inside itself and reads it there reads the
+/// `x` outside only with one more read of `x`, before the inner binder or after it: then the
+/// block ends at `x = 5`, and with none it does not.
+#[test]
+fn a_binding_reading_x_only_under_its_own_binder_of_x_keeps_the_block() {
+    let inner = || let_("x", lit(1i64), var("x"));
+    let of = |e: Term| {
+        let arm = let_("y", e, let_("x", lit(5i64), add(var("y"), var("x"))));
+        Term::Lam(
+            vec!["c".into()],
+            Shared::new(let_(
+                "x",
+                lit(0i64),
+                Term::If(
+                    Shared::new(var("c")),
+                    Shared::new(arm),
+                    Shared::new(var("x")),
+                ),
+            )),
+        )
+    };
+    let cases = [
+        of(add(var("x"), inner())),
+        of(add(inner(), var("x"))),
+        of(add(inner(), lit(1i64))),
+    ];
+    let texts: Vec<String> = cases.iter().map(|t| written(t, |x| x, &none)).collect();
+    for (t, text) in cases.iter().zip(&texts) {
+        reads_back_the_same(t, text, &bools());
+        reads_back_the_same(t, &shown(t), &bools());
+    }
+    // Written by hand from the rules, not from a run. An `if` branch is written in its braces
+    // (`Pieces::block`) and a `let` in its own, so a branch that is a `let` is `{ { … } }`. In
+    // the first two `y = …` reads the `x` outside, so `x = 5` would be used above its
+    // definition in the same block: the block ends before it and `{ x = 5; y + x }` is nested.
+    // In the third `y = …` reads only the `x` of its own block `{ x = 1; x }`, so `x = 5` joins
+    // the block of `y`. Read by eye, each in block scope: with `c` true the first two give
+    // `y = 0 + 1 = 1`, then `1 + 5 = 6`, and the third `y = 1 + 1 = 2`, then `2 + 5 = 7`, as the
+    // terms; with `c` false each gives the outer `x`, 0.
+    assert_eq!(
+        texts,
+        [
+            "c -> { x = 0; if c { { y = x + { x = 1; x }; { x = 5; y + x } } } else { x } }",
+            "c -> { x = 0; if c { { y = { x = 1; x } + x; { x = 5; y + x } } } else { x } }",
+            "c -> { x = 0; if c { { y = { x = 1; x } + 1; x = 5; y + x } } else { x } }",
+        ]
+    );
+}
+
+/// Gemini D.3, Codex D4: in `Display`, which labels a part reading a name bound in two places,
+/// a labeled `let` that is the body of another `let` at its first place is written with its
+/// label there, `#1=`, and `#1#` at its other place.
+#[test]
+fn a_labeled_let_held_as_the_body_of_a_let_is_written_with_its_label() {
+    // `L` has 13 nodes: a part held in 2 places that reads a rebound name is written once
+    // when `s + 4 + 2 * 3 < 2 * s` (`dag::choose`), so it needs `s >= 11`; with fewer it is
+    // written in full at each place and has no label.
+    let l = Shared::new(let_(
+        "z",
+        add(var("w"), lit(1i64)),
+        let_(
+            "u",
+            add(var("z"), lit(2i64)),
+            add(add(var("z"), var("u")), lit(3i64)),
+        ),
+    ));
+    let t = Term::Lam(
+        vec!["c".into(), "w".into()],
+        Shared::new(Term::If(
+            Shared::new(var("c")),
+            Shared::new(let_(
+                "w",
+                lit(1i64),
+                Term::Let("a".into(), Shared::new(lit(0i64)), l.clone()),
+            )),
+            l,
+        )),
+    );
+    // Written by hand from the rules, not from a run. The block of `w` and `a` ends at `L`,
+    // which is labeled, and `L` is written there as a term, `#1=` and its own block; the
+    // `else` branch writes `#1#`. Read by eye, `#1#` replaced by the text after `#1=`: with
+    // `c` true `w = 1`, `z = 2`, `u = 4`, giving 9; with `c` false `z = w + 1`, `u = w + 3`,
+    // giving `2 w + 7`, as the term, the `w` of `L` being the nearer binder at each place.
+    assert_eq!(
+        format!("{t}"),
+        "(c, w) -> if c { { w = 1; a = 0; #1={ z = (w + 1); u = (z + 2); ((z + u) + 3) } } } \
+         else { #1# }"
+    );
+    // A user's text, with no label, reads back to the same value.
+    let inputs: Vec<Vec<Value>> = [(true, 3i64), (false, -1)]
+        .map(|(c, w)| vec![Value::Bool(c), Value::Int(w)])
+        .to_vec();
+    reads_back_the_same(&t, &shown(&t), &inputs);
 }

@@ -554,8 +554,10 @@ struct Pieces<'a>(Vec<Piece<'a>>, Names<'a>, LetReads<'a>);
 /// reached after `T`, and none is written `x` (else the block ends at that binder).
 ///
 /// The test is one binary search: for each name as written the reads are kept in order of
-/// `t`, and a read with a `p` no less than a later read's is dropped, as every range of `t`
-/// that holds the earlier read holds the later one, so the reads kept have `p` rising with
+/// `t`, and a read with a `p` no less than a later read's is dropped, as every test asks of
+/// the reads with `t >= T`, and each such set that holds the earlier read holds the later one,
+/// whose `p` is no greater (round 2 of XR-lazy-and-kernel-batch-1, Codex D1: the sets are
+/// suffixes, not any range of `t`), so the reads kept have `p` rising with
 /// `t`, and the least `p` of the reads with `t >= T` is that of the first. Exact on the text
 /// written: names are compared as written, so `x@1` and `x@2`, both written `x` in a message
 /// ([`written`]), are one name, as the text reads them.
@@ -667,6 +669,8 @@ impl<'a> LetReads<'a> {
                         unreachable!("a `Bound` step is a `let`'s")
                     };
                     let own = self.read_since(spelled(x), from);
+                    // A labeled body is written as a term, its label before it, so a `let`
+                    // there begins a block, as `Pieces::lay_out` writes it.
                     let next = match own {
                         true => {
                             self.own.insert(std::ptr::from_ref(t));
@@ -674,7 +678,10 @@ impl<'a> LetReads<'a> {
                         }
                         false => {
                             blocks[block].bound.insert(spelled(x));
-                            Some(block)
+                            match self.labels.contains(&std::ptr::from_ref(&**body)) {
+                                true => None,
+                                false => Some(block),
+                            }
                         }
                     };
                     let b = Binds::Names(std::slice::from_ref(x));
@@ -842,6 +849,11 @@ impl<'a> Pieces<'a> {
             self.2.walk(t, self.1);
         }
         self.2.own.contains(&at)
+    }
+
+    /// Whether `t` is a labeled part ([`LetReads::labels`]).
+    fn labeled(&self, t: &Term) -> bool {
+        self.2.labels.contains(&std::ptr::from_ref(t))
     }
 
     /// Whether, in the block of `let`s from `first`, a binding above the `let` `t` reads a name
@@ -1088,6 +1100,12 @@ impl<'a> Pieces<'a> {
                         .end()
                         .sep();
                     t = body;
+                    // A labeled part is written as a term, so that `Doc::of` writes its label
+                    // `#n=` here or `#n#` (Gemini D.3, Codex D4, round 2 of
+                    // XR-lazy-and-kernel-batch-1): a `let` there begins its own block.
+                    if self.labeled(t) {
+                        break;
+                    }
                 }
                 if !called {
                     self.term(t);
