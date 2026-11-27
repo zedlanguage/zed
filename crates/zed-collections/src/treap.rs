@@ -407,9 +407,20 @@ where
 
 /// The tree of `items`, whose keys are strictly increasing: its shape found as a Cartesian
 /// tree by priority with one stack and each node made once over its children, `O(k)` (module
-/// [`crate::cartesian`], which cites, quotes and proves the construction). The indices stand
-/// for the keys in [`crate::cartesian::build`]: they are in the keys' order, so its ties, broken
-/// by the greater index, are broken by the greater key, as `above` breaks them.
+/// [`crate::cartesian`], which cites, quotes and proves the construction). The items go to
+/// [`crate::cartesian::build`] themselves, ordered by their keys (`ByKey`), so its ties,
+/// broken by the greater key, are broken as `above` breaks them.
+// Complexity tradeoff: the first version handed `build` the indices `0..k` and kept the items in
+// a vector of `Option`s taken one by one, two more vectors of `k` and a pass over each; the
+// sets of settings of zed-kernel's `bdd` are built so many times (`settings::from_keys`) that
+// the forced-atoms benches took 8.0 to 8.4% more instructions than with the private treap that
+// passed its keys to `build` directly. `ByKey` is `repr(transparent)`, so the `map` and
+// `collect` that wrap the items reuse their vector in place: one vector of `k` priorities is
+// the only one made here, as before. Measured locally against origin/main fffd2df52
+// (instructions at n and 8n): the three forced-atoms benches +2.54% to +2.62% with this, against
+// +8.02% to +8.40% with the first version; `a_binding_over_many_inputs` -3.26% and -5.09% with
+// either. The 2.6% left is not placed by a profile; inferred to be the generic treap's own work
+// for the settings (its `Sum` and node layout) rather than this function's.
 #[inline]
 pub fn from_sorted<I: Item>(items: Vec<I>) -> Tree<I> {
     debug_assert!(
@@ -417,16 +428,37 @@ pub fn from_sorted<I: Item>(items: Vec<I>) -> Tree<I> {
         "keys strictly increasing"
     );
     let prios: Vec<u64> = items.iter().map(Item::priority).collect();
-    let mut items: Vec<Option<I>> = items.into_iter().map(Some).collect();
-    let at: Vec<usize> = (0..items.len()).collect();
-    crate::cartesian::build(at, &prios, |i, _, l, r| {
-        node(
-            items[i].take().expect("each item made once"),
-            prios[i],
-            l,
-            r,
-        )
+    let items: Vec<ByKey<I>> = items.into_iter().map(ByKey).collect();
+    crate::cartesian::build(items, &prios, |i, ByKey(item), l, r| {
+        node(item, prios[i], l, r)
     })
+}
+
+/// An item ordered by its key alone, for [`from_sorted`].
+#[repr(transparent)]
+struct ByKey<I: Item>(I);
+
+impl<I: Item> PartialEq for ByKey<I> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.0.key() == other.0.key()
+    }
+}
+
+impl<I: Item> Eq for ByKey<I> {}
+
+impl<I: Item> PartialOrd for ByKey<I> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<I: Item> Ord for ByKey<I> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.key().cmp(other.0.key())
+    }
 }
 
 /// Whether two trees are one node (or both empty); a shortcut only, never an order.
