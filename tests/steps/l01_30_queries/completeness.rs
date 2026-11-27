@@ -58,17 +58,20 @@ fn a_row_is_computed_once_per_key_and_a_failure_is_kept_too() {
     };
     let k = key("row", &[b"f"]);
     assert_eq!(
-        db.row(Query::Row, k.clone(), fail),
+        db.row(Query::Row, k.clone(), vec![], fail),
         Err("the result is 3".into())
     );
     assert_eq!(
-        db.row(Query::Row, k.clone(), fail),
+        db.row(Query::Row, k.clone(), vec![], fail),
         Err("the result is 3".into())
     );
     assert_eq!(runs.get(), 1);
     assert_eq!(db.computed(Query::Row), 1);
     // Another key computes.
-    assert_eq!(db.row(Query::Row, key("row", &[b"g"]), || Ok(())), Ok(()));
+    assert_eq!(
+        db.row(Query::Row, key("row", &[b"g"]), vec![], || Ok(())),
+        Ok(())
+    );
     assert_eq!(db.computed(Query::Row), 2);
 }
 
@@ -76,14 +79,17 @@ fn a_row_is_computed_once_per_key_and_a_failure_is_kept_too() {
 fn a_function_row_and_a_wave_row_under_one_key_are_kept_apart() {
     let mut db = Db::new();
     let k = key("row", &[b"same"]);
-    assert_eq!(db.row(Query::Row, k.clone(), || Ok(())), Ok(()));
+    assert_eq!(db.row(Query::Row, k.clone(), vec![], || Ok(())), Ok(()));
     assert_eq!(
-        db.row(Query::Wave, k.clone(), || Err("wave".into())),
+        db.row(Query::Wave, k.clone(), vec![], || Err("wave".into())),
         Err("wave".into())
     );
     assert_eq!(db.computed(Query::Row), 1);
     assert_eq!(db.computed(Query::Wave), 1);
-    assert_eq!(db.row(Query::Row, k, || Err("again".into())), Ok(()));
+    assert_eq!(
+        db.row(Query::Row, k, vec![], || Err("again".into())),
+        Ok(())
+    );
 }
 
 #[test]
