@@ -5,64 +5,128 @@ expression: out
 a left-nested sum (4 deep):
   sig 0: () -> ()
   0 type errors
+a left-nested sum (4 deep), bound at top level:
+  t: int
+  0 type errors
 a sum nested in parentheses (4 deep):
   sig 0: () -> ()
+  0 type errors
+a sum nested in parentheses (4 deep), bound at top level:
+  t: int
   0 type errors
 nested blocks (4 deep):
   sig 2: () -> ()
   c: 1
   v: 1
   0 type errors
+nested blocks (4 deep), bound at top level:
+  c: 1
+  t: 1
+  v: 1
+  0 type errors
 an `else if` chain (4 deep):
   sig 1: () -> ()
+  x: 3
+  0 type errors
+an `else if` chain (4 deep), bound at top level:
+  t: 3
   x: 3
   0 type errors
 nested negations (4 deep):
   sig 0: () -> ()
   0 type errors
+nested negations (4 deep), bound at top level:
+  t: int
+  0 type errors
 nested calls (4 deep):
   sig 0: T -> T for T in int | f32 | f64 | rat
   sig 1: () -> ()
+  0 type errors
+nested calls (4 deep), bound at top level:
+  sig 0: T -> T for T in int | f32 | f64 | rat
+  t: int
   0 type errors
 a long sum in a function's body (4 deep):
   sig 0: T -> T for T in int | f32 | f64 | rat
   sig 1: () -> ()
   0 type errors
+a long sum in a function's body (4 deep), bound at top level:
+  sig 0: T -> T for T in int | f32 | f64 | rat
+  t: int
+  0 type errors
 nested tuples (4 deep):
   sig 0: () -> ()
+  0 type errors
+nested tuples (4 deep), bound at top level:
+  t: ((((1, 0), 0), 0), 0)
   0 type errors
 nested lambdas (4 deep):
   sig 0: () -> ()
   0 type errors
+nested lambdas (4 deep), bound at top level:
+  t: _ -> _ -> _ -> _ -> 1
+  0 type errors
 a left-nested sum (12 deep):
   sig 0: () -> ()
   0 type errors
+a left-nested sum (12 deep), bound at top level:
+  t: int
+  0 type errors
 a sum nested in parentheses (12 deep):
   sig 0: () -> ()
+  0 type errors
+a sum nested in parentheses (12 deep), bound at top level:
+  t: int
   0 type errors
 nested blocks (12 deep):
   sig 2: () -> ()
   c: 1
   v: 1
   0 type errors
+nested blocks (12 deep), bound at top level:
+  c: 1
+  t: 1
+  v: 1
+  0 type errors
 an `else if` chain (12 deep):
   sig 1: () -> ()
+  x: 3
+  0 type errors
+an `else if` chain (12 deep), bound at top level:
+  t: 3
   x: 3
   0 type errors
 nested negations (12 deep):
   sig 0: () -> ()
   0 type errors
+nested negations (12 deep), bound at top level:
+  t: int
+  0 type errors
 nested calls (12 deep):
   sig 0: T -> T for T in int | f32 | f64 | rat
   sig 1: () -> ()
+  0 type errors
+nested calls (12 deep), bound at top level:
+  sig 0: T -> T for T in int | f32 | f64 | rat
+  t: int
   0 type errors
 a long sum in a function's body (12 deep):
   sig 0: T -> T for T in int | f32 | f64 | rat
   sig 1: () -> ()
   0 type errors
+a long sum in a function's body (12 deep), bound at top level:
+  sig 0: T -> T for T in int | f32 | f64 | rat
+  t: int
+  0 type errors
 nested tuples (12 deep):
   sig 0: () -> ()
   0 type errors
+nested tuples (12 deep), bound at top level:
+  t: ((((((((((((1, 0), 0), 0), 0), 0), 0), 0), 0), 0), 0), 0), 0)
+  0 type errors
 nested lambdas (12 deep):
   sig 0: () -> ()
+  0 type errors
+nested lambdas (12 deep), bound at top level:
+  t: _ -> _ -> _ -> _ -> _ -> _ -> _ -> _ -> _ -> _ -> _ -> _ -> 1
   0 type errors
