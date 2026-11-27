@@ -1772,7 +1772,7 @@ fn fresh_target() -> Option<&'static (usize, bool, String, String)> {
 /// how many threads run the tests selected, and none of them selects a test. A false answer
 /// where the process does run the test alone costs one more process start (see
 /// [`compare_measured`]), never a wrong count.
-pub(crate) fn runs_alone(test: &str) -> bool {
+pub fn runs_alone(test: &str) -> bool {
     let (mut exact, mut named) = (false, false);
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
