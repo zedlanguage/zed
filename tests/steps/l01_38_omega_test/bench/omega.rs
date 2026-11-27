@@ -442,3 +442,16 @@ fn holes_on_difference_chains_scale() {
         holes_family_scales(fam, |f, s| drop(std::hint::black_box(project_each(f, s))));
     }
 }
+
+/// The family `accpin` of [`holes_family`], the steps of `pinlast` written as equalities with a
+/// slack atom each (`x[k+1] == x[k] + y[k]`, `y[k]` in `{0, 2}`, `x[n] <= 2`), every symbol
+/// projected at 16 and 128 (item PROJECT-each-eq-slack): each equality is over three atoms,
+/// which the forest passes of PROJECT-each-chain-xr did not take (`acc`, unpinned, was Θ(n³)
+/// on main then). Pinned, every answer is `{0, 2}`, so the answers are O(n) in all and the
+/// cost can be O(n log n); unpinned, `x[k]` has `k + 1` values, Θ(n²) in all.
+#[test]
+fn holes_through_slack_atoms_on_a_difference_chain_scale() {
+    holes_family_scales("accpin", |f, s| {
+        drop(std::hint::black_box(project_each(f, s)))
+    });
+}

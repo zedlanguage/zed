@@ -1042,7 +1042,8 @@ fn joint_stage_hulls_are_exact() {
 /// Families of `n` holes, each a disjunction, on a chain of difference rows (item
 /// PROJECT-each-chain-xr). `chain`: [`dead2`] chained; `both`: [`dead2`] chained both ways
 /// (`|y[k+1] - y[k]| <= 2`); `slope`: `1 <= y[k+1] - y[k] <= 5`, `y[k]` in `{3k, 3k + 2}`; `acc`:
-/// `x[k+1] == x[k] + y[k]`, `x0 == 0`, `y[k]` in `{0, 2}`; `mono`/`mono1`: `y[k+1] >= y[k]`,
+/// `x[k+1] == x[k] + y[k]`, `x0 == 0`, `y[k]` in `{0, 2}` (`accpin`: also `x[n] <= 2`);
+/// `mono`/`mono1`: `y[k+1] >= y[k]`,
 /// `0 <= y[k] <= 20`, `y[k]` in `{9, 11}` / `{10, 11}`; `eqchain`: `y[k+1] == y[k]`; `band`:
 /// `0 <= y[k+1] - y[k] <= 1`, both with `y[k]` in `{0, 10}`; `wide`: `band` with `y[k]` in
 /// `{0, 4n}`; `twoway`: `|y[k+1] - y[k]| <= 2`, `y[k]` in `{0, 2}`, `y[k] == 1 || z[k] >= 0`,
@@ -1152,7 +1153,53 @@ pub(super) fn holes_family(fam: &str, n: usize) -> (Formula, Vec<Atom>) {
             }
             (Formula::and(fs), (0..n).map(|k| sym(&y(k))).collect())
         }
+        "acc" | "accpin" => {
+            // The steps of `steps` written as an equality with a slack atom each, `y[k]`.
+            let mut fs = vec![eq(&[(&x(0), 1)], 0)];
+            for k in 0..n {
+                fs.push(eq(&[(&x(k + 1), 1), (&x(k), -1), (&y(k), -1)], 0));
+                fs.push(Formula::or(vec![
+                    eq(&[(&y(k), 1)], 0),
+                    eq(&[(&y(k), 1)], -2),
+                ]));
+            }
+            if fam == "accpin" {
+                fs.push(ge(&[(&x(n), -1)], 2));
+            }
+            let syms = (1..=n)
+                .map(|k| sym(&x(k)))
+                .chain((0..n).map(|k| sym(&y(k))))
+                .collect();
+            (Formula::and(fs), syms)
+        }
         f => panic!("no family {f}"),
+    }
+}
+
+/// The families `acc` (`x[k+1] == x[k] + y[k]`, `x0 == 0`, `y[k]` in `{0, 2}`; item
+/// PROJECT-each-eq-slack) and `accpin` (also `x[n] <= 2`): in `acc`, `x[k]` takes exactly the
+/// even values `0..=2k`; in `accpin`, 0 and 2 (the steps never fall); each `y[k]` is 0 or 2.
+#[test]
+fn steps_through_a_slack_atom_are_exact() {
+    let n = 6;
+    for fam in ["acc", "accpin"] {
+        let (f, syms) = holes_family(fam, n);
+        let (each, skipped) = project_each(&f, &syms).expect("projected");
+        assert!(skipped.is_empty(), "{fam}: {skipped:?}");
+        for (i, h) in each.into_iter().enumerate() {
+            let (what, values): (String, Vec<i128>) = if i < n {
+                let k = i as i128 + 1;
+                let top = if fam == "acc" { k } else { 1 };
+                (format!("x{k}"), (0..=top).map(|j| 2 * j).collect())
+            } else {
+                (format!("y{}", i - n), vec![0, 2])
+            };
+            assert_eq!(
+                h.expect("a set").to_string(),
+                runs(&values),
+                "{fam}: {what} of {n}"
+            );
+        }
     }
 }
 
@@ -1322,52 +1369,123 @@ fn forest_answers_match_enumeration() {
                 vec![random_row(&mut rng, v, v)],
             ]);
         }
-        let mut seen: Vec<Vec<i128>> = vec![Vec::new(); atoms];
-        let mut p = vec![-2i128; atoms];
-        loop {
-            let holds = base.iter().all(|r| r.holds(&p))
-                && ors
-                    .iter()
-                    .all(|d| d.iter().any(|rs| rs.iter().all(|r| r.holds(&p))));
-            if holds {
-                for (s, v) in seen.iter_mut().zip(&p) {
-                    s.push(*v);
-                }
-            }
-            let Some(i) = p.iter().position(|v| *v < 2) else {
-                break;
-            };
-            p[i] += 1;
-            for v in &mut p[..i] {
-                *v = -2;
-            }
-        }
-        if seen[0].is_empty() {
-            continue;
-        }
-        let mut fs: Vec<Formula> = base.iter().map(Row::formula).collect();
-        for d in &ors {
-            fs.push(Formula::or(
-                d.iter()
-                    .map(|rs| Formula::and(rs.iter().map(Row::formula).collect()))
-                    .collect(),
-            ));
-        }
-        let f = Formula::and(fs);
-        let syms: Vec<Atom> = (0..atoms).map(|v| sym(&format!("v{v}"))).collect();
-        let (each, skipped) = project_each(&f, &syms).expect("projected");
-        assert!(skipped.is_empty(), "case {case}: {skipped:?}");
-        for (v, (h, s)) in each.into_iter().zip(&mut seen).enumerate() {
-            zed_collections::sorted::sort_dedup(s);
-            assert_eq!(
-                h.expect("a set").to_string(),
-                runs(s),
-                "case {case}: v{v} of {f}"
-            );
-        }
-        checked += 1;
+        checked += usize::from(answers_match_enumeration(case, atoms, &base, &ors));
     }
     assert!(checked >= 50, "only {checked} cases have a point");
+}
+
+/// Random forests as in [`forest_answers_match_enumeration`], 2 or 3 classes of one atom each
+/// in `[-2..=2]`, where each tree edge is an equality with a slack atom of its own, `b - a ==
+/// ±s + c` (item PROJECT-each-eq-slack), `s` in `[-2..=2]` and in a random disjunction of two
+/// bounds, or else a pair of difference rows; up to two disjunctions over one atom besides.
+/// Every answer, the slack atoms' too, is the set of values counted over `[-2..=2]`.
+#[test]
+fn slack_forest_answers_match_enumeration() {
+    let mut rng = Rng::new(39);
+    let mut checked = 0;
+    for case in 0..150 {
+        let classes = 2 + rng.below(2);
+        let mut atoms = classes;
+        let mut base: Vec<Row> = Vec::new();
+        let mut ors: Vec<Vec<Vec<Row>>> = Vec::new();
+        for c in 1..classes {
+            let (a, b) = (rng.below(c), c);
+            if rng.below(4) == 0 {
+                base.push(random_row(&mut rng, a, b));
+                base.push(random_row(&mut rng, a, b));
+                continue;
+            }
+            let s = atoms;
+            atoms += 1;
+            let sign = if rng.below(2) == 0 { 1 } else { -1 };
+            base.push(Row {
+                terms: vec![(b, 1), (a, -1), (s, -sign)],
+                k: rng.int(-1, 1) as i128,
+                eq: true,
+            });
+            ors.push(vec![
+                vec![random_row(&mut rng, s, s)],
+                vec![random_row(&mut rng, s, s)],
+            ]);
+        }
+        for v in 0..atoms {
+            base.push(Row {
+                terms: vec![(v, 1)],
+                k: 2,
+                eq: false,
+            });
+            base.push(Row {
+                terms: vec![(v, -1)],
+                k: 2,
+                eq: false,
+            });
+        }
+        for _ in 0..rng.below(3) {
+            let v = rng.below(classes);
+            ors.push(vec![
+                vec![random_row(&mut rng, v, v)],
+                vec![random_row(&mut rng, v, v)],
+            ]);
+        }
+        checked += usize::from(answers_match_enumeration(case, atoms, &base, &ors));
+    }
+    assert!(checked >= 50, "only {checked} cases have a point");
+}
+
+/// Checks that `project_each` gives each of the `atoms` atoms `v0, v1, ...` of `base` and the
+/// disjunctions `ors` (each a list of conjunctions of rows) exactly the values it takes at the
+/// points found by counting over `[-2..=2]`, which must hold every point (each atom bounded
+/// there by `base`). False, with nothing checked, when there is no point.
+fn answers_match_enumeration(
+    case: usize,
+    atoms: usize,
+    base: &[Row],
+    ors: &[Vec<Vec<Row>>],
+) -> bool {
+    let mut seen: Vec<Vec<i128>> = vec![Vec::new(); atoms];
+    let mut p = vec![-2i128; atoms];
+    loop {
+        let holds = base.iter().all(|r| r.holds(&p))
+            && ors
+                .iter()
+                .all(|d| d.iter().any(|rs| rs.iter().all(|r| r.holds(&p))));
+        if holds {
+            for (s, v) in seen.iter_mut().zip(&p) {
+                s.push(*v);
+            }
+        }
+        let Some(i) = p.iter().position(|v| *v < 2) else {
+            break;
+        };
+        p[i] += 1;
+        for v in &mut p[..i] {
+            *v = -2;
+        }
+    }
+    if seen[0].is_empty() {
+        return false;
+    }
+    let mut fs: Vec<Formula> = base.iter().map(Row::formula).collect();
+    for d in ors {
+        fs.push(Formula::or(
+            d.iter()
+                .map(|rs| Formula::and(rs.iter().map(Row::formula).collect()))
+                .collect(),
+        ));
+    }
+    let f = Formula::and(fs);
+    let syms: Vec<Atom> = (0..atoms).map(|v| sym(&format!("v{v}"))).collect();
+    let (each, skipped) = project_each(&f, &syms).expect("projected");
+    assert!(skipped.is_empty(), "case {case}: {skipped:?}");
+    for (v, (h, s)) in each.into_iter().zip(&mut seen).enumerate() {
+        zed_collections::sorted::sort_dedup(s);
+        assert_eq!(
+            h.expect("a set").to_string(),
+            runs(s),
+            "case {case}: v{v} of {f}"
+        );
+    }
+    true
 }
 
 /// `Σ c·a + k`, where a name `qN` is the solver's own atom `N` ([`Atom::Aux`]) and any other
