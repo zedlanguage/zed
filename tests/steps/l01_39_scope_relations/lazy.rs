@@ -477,6 +477,31 @@ mod a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_prod
     fn seed_132839571965928555_reads_a_narrowed_binder_back_to_the_name_it_reads() {
         run(&bounded_hubs(), [132839571965928555], satellites);
     }
+
+    /// Seed 4211133997374228451 of [`satellites`] (FAIL-lazy-satellites-wider-interval, a fresh
+    /// seed of `random_seeds` on 2026-11-26): the lazy scope settled `a0` to (-inf, -3] where
+    /// the eager scope holds (-inf, -5].
+    #[test]
+    fn seed_4211133997374228451_settles_a0_at_most_minus_5() {
+        run(&bounded_hubs(), [4211133997374228451], satellites);
+    }
+
+    /// Seed 16004534807616651151 of [`satellites`] (FAIL-lazy-satellites-wider-interval): `a1`
+    /// is bound to `a3`'s product and narrowed through the hub `m`; the eager scope projects
+    /// `a1`'s star, reads it back to `a3` and holds `m` in [15, 18], where the lazy scope held
+    /// [13, 18].
+    #[test]
+    fn seed_16004534807616651151_settles_m_from_15() {
+        run(&bounded_hubs(), [16004534807616651151], satellites);
+    }
+
+    /// Seed 12944458854883377711 of [`satellites`] (FAIL-lazy-satellites-wider-interval): the
+    /// same family through the hub `n`, which the eager scope holds in [-18, 19] and the lazy
+    /// scope held in [-19, 19].
+    #[test]
+    fn seed_12944458854883377711_settles_n_from_minus_18() {
+        run(&bounded_hubs(), [12944458854883377711], satellites);
+    }
 }
 
 /// For each name of `all`, the values in `-3..=13` the scope holds of it.
