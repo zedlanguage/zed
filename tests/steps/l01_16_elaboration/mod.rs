@@ -9,6 +9,7 @@
 mod bench;
 mod calls;
 mod complete;
+mod displays;
 mod errors;
 mod handled;
 mod kept;

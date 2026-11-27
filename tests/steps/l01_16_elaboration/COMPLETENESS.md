@@ -16,6 +16,7 @@ before the last three tests of `complete.rs` were added:
 | Case | Test that covers it | Or reason none is needed |
 |---|---|---|
 | Each binary operator, its primitive and its value | complete.rs `each_binary_operator_elaborates_to_its_primitive_and_computes`; programs.rs `arithmetic_comparison_and_power` | |
+| The array, set and map displays and `{}` parse at ring L1 as displays, not blocks; the record display stays at L2; each display gives its family (LAYER-audit-open, item F) | displays.rs `each_display_parses_at_l1_as_a_display_and_gives_its_family` | |
 | Precedence and associativity | complete.rs `precedence_and_associativity_shape_the_term` | |
 | Integers past a machine word in each operation | complete.rs `integers_widen_past_a_machine_word_in_every_operation` | |
 | `int ^` a negative exponent, division by the literal zero | complete.rs `an_int_power_with_a_negative_exponent_and_a_division_by_the_literal_zero_are_rejected` | |

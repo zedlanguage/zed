@@ -4,7 +4,9 @@ Code under test: the building of ranges, displays of arrays, sets and maps, inde
 membership (`in`, `not in`), reductions (`><`), sections, metadata reads (`::`), `for`, range
 patterns and family types (`crates/zedc-syntax/src/ast/mod.rs`, `node.rs`, `types.rs`), and
 their formatting (`format.rs`) (DESIGN.md sec:grammar, step L3.1). Every alternative of these
-rules also has a case in l01_08 `grammar_cases.rs`.
+rules also has a case in l01_08 `grammar_cases.rs`. The displays are of layer L1 since
+LAYER-audit-open item F (step L1.16); their building tests stay here beside the other data
+forms, and l01_16 `displays.rs` checks that they parse at ring L1.
 
 Coverage: shared with the other groups of this row (`ast/mod.rs` 94.4% to 94.5%, `format.rs`
 96.8% to 98.8%). The formatter's walk of an index key that starts with `in` (`format.rs` lines
