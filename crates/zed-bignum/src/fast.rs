@@ -5336,6 +5336,8 @@ pub mod crossover {
 
     use super::MulBy;
 
+    pub use super::mul_cost;
+
     /// `super::SMALL_LEAVES` as built: whether the leaves below are the unit tests' small ones.
     pub const SMALL_LEAVES: bool = super::SMALL_LEAVES;
     /// `super::MUL_LEAF` as built, in words.

@@ -1463,6 +1463,52 @@ fn poly_support_units(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `mul-units [ratio]`: num-bigint's product of `ratio w` by `w` dense random words, `w` from 1
+/// to 640 (each power of two and the edges of num-bigint 0.4.8's methods in
+/// `biguint/multiplication.rs` `mac3`: long multiplication at most 32 words in the narrower
+/// factor, Karatsuba to 256, Toom-3 above, the longer halved while it has twice the other's
+/// words), against `num::fast::mul_cost`'s units: the work per unit for each method's range
+/// (PERF-mul-cost-below-leaf). `mul_cost` counts all three methods in one unit; where the work
+/// per unit differs by method, the unit is one per method. Not a fit, so not in `all`.
+fn mul_units(args: &[String]) -> ExitCode {
+    let ratio: usize = args.first().map_or(1, |s| s.parse().expect("a ratio"));
+    let mut meter = Meter::new();
+    let mut ws = ladder(1, 512, 4);
+    ws.extend([
+        24, 31, 32, 33, 40, 48, 64, 96, 128, 192, 255, 256, 257, 300, 384, 400, 401, 640,
+    ]);
+    ws.sort_unstable();
+    ws.dedup();
+    println!("mul-units {ratio}, {}", conditions());
+    println!(
+        "\n| words | by | method | units | {} | {} / unit |",
+        meter.unit(),
+        meter.unit()
+    );
+    println!("|---|---|---|---|---|---|");
+    for w in ws {
+        let mut rng = Rng::new(w as u64);
+        let (a, b) = (random(&mut rng, ratio * w), random(&mut rng, w));
+        let method = match (w, ratio) {
+            (..=32, _) => "long",
+            (_, 2..) => "halves",
+            (..=256, _) => "karatsuba",
+            _ => "toom-3",
+        };
+        let units = x::mul_cost(ratio * w, w);
+        let work = meter.work(|| {
+            std::hint::black_box(&a * &b);
+        });
+        println!(
+            "| {w} | {} | {method} | {units:.0} | {} | {:.2} |",
+            ratio * w,
+            work.units,
+            work.units as f64 / units
+        );
+    }
+    ExitCode::SUCCESS
+}
+
 /// The first `n` primes at or above `from`, by `zed_numtheory::next_prime`.
 fn primes_from(from: u64, n: usize) -> Vec<u64> {
     let mut out = Vec::with_capacity(n);
@@ -1798,12 +1844,15 @@ fn main() -> ExitCode {
     if name == "poly-support-units" {
         return poly_support_units(rest);
     }
+    if name == "mul-units" {
+        return mul_units(rest);
+    }
     match BENCHES.iter().find(|(n, _, _)| *n == name) {
         Some((_, run, _)) => run(rest),
         None => {
             let names: Vec<&str> = BENCHES.iter().map(|(n, _, _)| *n).collect();
             eprintln!(
-                "usage: crossover (all | print-never-slower [digits...] | factor-bits | poly-support-units [words] | {}) [--exact]",
+                "usage: crossover (all | print-never-slower [digits...] | factor-bits | poly-support-units [words] | mul-units [ratio] | {}) [--exact]",
                 names.join(" | ")
             );
             ExitCode::FAILURE
