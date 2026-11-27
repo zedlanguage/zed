@@ -997,8 +997,9 @@ struct LitMasks {
 /// `l01_29_repairs_and_printing::bench::scaling::checking_a_chain_read_twice_scales`, which
 /// times the whole check of the chain; `deriving_through_values_read_twice_scales` beside it
 /// counts the steps [`Ck::derivation_lines`] takes on the same chain, 3 a binding, but not
-/// the cost of a union, which is not a step; TEST-l01_29-share): naive version, `imbl::OrdSet`, a B-tree whose union inserts each key of the smaller set into
-/// the larger: where the steps form a DAG, as `a_i = a_(i-1) + a_(i-1)`, a step's next steps
+/// the cost of a union, which is not a step; TEST-l01_29-share): naive version, `imbl::OrdSet`,
+/// a B-tree whose union inserts each key of the smaller set into the larger: where the steps
+/// form a DAG, as `a_i = a_(i-1) + a_(i-1)`, a step's next steps
 /// hold nearly the same `i` lines, and their union cost O(i log n), Theta(n^2 log n) along the
 /// chain (ratio 46.07 at 2100 and 16800 bindings). Used: the kernel's persistent treap, whose
 /// shape is fixed by its keys and whose union stops at subtrees the two sets share and gives
