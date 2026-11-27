@@ -692,7 +692,7 @@ mod imp {
     /// Whether DynamoRIO was started inside this process ([`attach_dynamorio`]) and runs.
     static ATTACHED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
 
-    /// See [`super::counted_command`].
+    /// See [`super::counted`].
     pub(super) fn counted_command(program: &std::ffi::OsStr) -> std::process::Command {
         let named = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
         let (Some(drrun), Some(client)) = (
