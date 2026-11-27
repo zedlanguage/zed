@@ -25,7 +25,6 @@ export interface LedgerEntry {
   // What some agents wrote in place of id (ledgerId).
   row?: unknown;
   item?: unknown;
-  rows?: unknown;
   state: string;
   by?: string;
   agent?: string;
@@ -271,16 +270,17 @@ export function resolveId(raw: string, known: Map<string, string>): { id: string
 }
 
 // The id a ledger line is read by: its "id"; on a line with no string id, the first of its "row" or
-// "item" fields that is a string, whose ids are split on commas and spaces ("A B, C" is A, B and C),
-// or else its "rows" list of strings; "" when it has none. "id" stays the key a line should use; of
-// the 230 lines with no id on 2026-11-27, 197 wrote "row", 17 "item" and 8 "rows", and they are read
-// so that they attach to the rows they name (DECIDE-ledger-row-field-as-id). board-check.sh and
-// board-check-docs.sh read a line the same way, through wt/ledger-ids.jq.
+// "item" fields that is a string, whose ids are split on commas and spaces ("A B, C" is A, B and C);
+// "" when it has none. "id" stays the key a line should use; of the 230 lines with no id on
+// 2026-11-27, 197 wrote "row" and 17 "item", and they are read so that they attach to the rows they
+// name (DECIDE-ledger-row-field-as-id). The 8 lines with a "rows" list are not read: all are from
+// 2026-11-16 and use the L40/L41 numbers from before 908b6b969 swapped the two layers, so they would
+// attach to the wrong rows. board-check.sh and board-check-docs.sh read a line the same way, through
+// wt/ledger-ids.jq.
 export function ledgerId(e: LedgerEntry): string {
   if (typeof e.id === "string") return e.id;
   const one = [e.row, e.item].find((v) => typeof v === "string") as string | undefined;
-  const ids = one !== undefined ? one.split(/[\s,]+/) : Array.isArray(e.rows) ? e.rows.filter((v) => typeof v === "string") : [];
-  return ids.filter((s) => s !== "").join(",");
+  return (one ?? "").split(/[\s,]+/).filter((s) => s !== "").join(",");
 }
 
 // The items a ledger id names: "STRNAN-spec:merge" is STRNAN-spec, and "A+B" or "A, B" is A and B.
