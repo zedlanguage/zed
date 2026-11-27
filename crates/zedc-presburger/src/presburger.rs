@@ -23391,7 +23391,7 @@ fn project_parts(
     memo: &mut Below,
 ) -> Result<Each, Refusal> {
     let mut stack: Vec<Level> = Vec::new();
-    let mut opened = Level::open(p, syms.to_vec(), sets);
+    let mut opened = Level::open(p, syms.to_vec(), sets, KnownSides::new());
     loop {
         let mut answer = match opened {
             Opened::Level(level) => {
@@ -23404,8 +23404,8 @@ fn project_parts(
             let Some(level) = stack.last_mut() else {
                 return answer.expect("the answer of the top level");
             };
-            if let Some((q, sub)) = level.read(answer.take(), memo) {
-                opened = Level::open(q, sub, sets);
+            if let Some((q, sub, known)) = level.read(answer.take(), memo) {
+                opened = Level::open(q, sub, sets, known);
                 break;
             }
             let level = stack.pop().expect("the level just read");
@@ -23555,7 +23555,24 @@ struct Disjunct {
     /// dropped from `ks`: the next disjunct is offered these.
     wanted: Vec<usize>,
     sub: Vec<Atom>,
+    /// The sides of the hulls of `sub` the level below is given ([`KnownSide`]).
+    known: KnownSides,
     pre: Option<Result<Option<Parts>, Refusal>>,
+}
+
+impl Disjunct {
+    /// The question to the level below about the disjunct, settled as `q`. The known sides go
+    /// down only where `q` has at most one disjunction: with two or more, [`Level::close`]
+    /// tightens the hulls by searches that start from their ends, and an end taken from a
+    /// known side could move where such a search stops.
+    fn down(&self, q: Parts) -> Down {
+        let known = if q.ors.len() > 1 {
+            KnownSides::new()
+        } else {
+            self.known.clone()
+        };
+        (q, self.sub.clone(), known)
+    }
 }
 
 /// A question about a disjunct of [`project_parts`]: its answer and whether it has a point, or
@@ -23591,8 +23608,9 @@ fn ask_disjunct(settled: Result<Option<Parts>, Refusal>, sub: &[Atom], sets: boo
 
 impl Level {
     /// The level of the parts `p` asked for `syms`, up to its first disjunct, or its answer
-    /// where that needs no disjunct read.
-    fn open(mut p: Parts, syms: Vec<Atom>, sets: bool) -> Opened {
+    /// where that needs no disjunct read. A side of a symbol's hull over the base that `known`
+    /// gives is taken from it where the base's point lies within it ([`KnownSide`]).
+    fn open(mut p: Parts, syms: Vec<Atom>, sets: bool, known: KnownSides) -> Opened {
         let none = |syms: &[Atom]| Opened::Answer(Ok(no_points(syms)));
         if REVERSED.with(Cell::get) {
             p.ors.reverse();
@@ -23816,7 +23834,7 @@ impl Level {
                             let rows = held.iter().map(|i| g.linked.cons[*i].clone()).collect();
                             let ks: Vec<&Atom> =
                                 g.syms_of[&r].iter().map(|&k| &g.syms[k]).collect();
-                            projected_hulls(rows, &ks, &model)
+                            projected_hulls(rows, &ks, &model, &known)
                         });
                         match hulls.remove(s) {
                             Some(Ok(h)) => Ok(h),
@@ -23845,10 +23863,10 @@ impl Level {
                             // alone. Tests: `batch_and_single_sound` over the random draws,
                             // `seed_1446_case_7_single_hull_alone_reports_a_cause`,
                             // `batch_and_single_on_a_parity`.
-                            _ => hull_from(g.base_of(r), s, &model),
+                            _ => hull_from_known(g.base_of(r), s, &model, known.get(s)),
                         }
                     }
-                    _ => hull_from(g.base_of(r), s, &model),
+                    _ => hull_from_known(g.base_of(r), s, &model, known.get(s)),
                 },
             });
         }
@@ -23975,11 +23993,7 @@ impl Level {
     /// Reads the level's disjuncts, from the one that waits for `below`, the answer of the
     /// level below, if any, up to the next disjunct to be projected a level down, which it
     /// returns settled, with the symbols it is asked for; `None` once every disjunct is read.
-    fn read(
-        &mut self,
-        below: Option<Result<Each, Refusal>>,
-        memo: &mut Below,
-    ) -> Option<(Parts, Vec<Atom>)> {
+    fn read(&mut self, below: Option<Result<Each, Refusal>>, memo: &mut Below) -> Option<Down> {
         if let Some((r, key, groups)) = self.waiting.take() {
             let answer = below.expect("the answer of the level below").map(|e| {
                 let point = e.0.iter().any(|r| !matches!(r, Ok(s) if s.is_empty()));
@@ -24070,7 +24084,7 @@ impl Level {
 
     /// Reads the disjunct `at` in the order of the disjunction read, up to its question to the
     /// level below, if it has one.
-    fn start_disjunct(&mut self, at: usize, memo: &mut Below) -> Option<(Parts, Vec<Atom>)> {
+    fn start_disjunct(&mut self, at: usize, memo: &mut Below) -> Option<Down> {
         let j = self.j;
         let reading = self.reading.as_mut().expect("a disjunction read");
         let t = reading.order[at];
@@ -24114,15 +24128,50 @@ impl Level {
         // (`Disjunct::wanted`), so one with disjunctions is still asked for `k`. What changes is
         // only `skipped`: the causes of a refusal of `k` by this disjunct, which no longer
         // happens, are not reported. Cost: one `is_subset` of two interval sets for each
-        // symbol, linear in their pieces. Not done: asking only the side of `k` where `u` falls
-        // short of `o` (the other side is not needed), which needs the sides passed down to the
-        // level below; row PERF-pendants-dnf-hull-one-side. Tests:
+        // symbol, linear in their pieces. A symbol still asked may be asked one side only, by
+        // the tradeoff below (PERF-pendants-dnf-hull-one-side). Tests:
         // `l01_39_reduced_product::pendants::seed_393_case_13_asks_fewer_hull_sides` and the
         // benchmark `pendants::bench::hull_sides_of_a_disjunction_grow_linearly_in_its_disjuncts`.
+        //
+        // Complexity tradeoff (PERF-pendants-dnf-hull-one-side): naive version, a symbol still
+        // asked is asked both sides of its hull, though where `u` holds `o` from one finite end
+        // of `o` on, only the other side can widen `u` within `o`: 840 sides on seed 393 case
+        // 13. Used: where `u` holds the values of `o` from its finite lower end `o.lo` up to
+        // `c` (the piece of `u` that holds `o.lo` ends at `c`), the level below is given the
+        // lower side `o.lo` for the points whose value is at most `c` ([`KnownSide`]); it takes
+        // that side with no question where the point `m` of its base has `m(k) <= c`, and
+        // searches it otherwise; the upper side likewise. The answer is unchanged, step by
+        // step, for the lower side (the upper is its mirror): (1) the side `a` that
+        // [`hull_side`] would find is sound, so `a <= m(k) <= c`. (2) The disjunct's hull over
+        // its base becomes `[o.lo, b]` where it was `[a, b]`; they differ only on `[o.lo, a)`
+        // where `a > o.lo`, and only below `o.lo` where `a < o.lo`. (3) The level below meets
+        // that hull with its disjunctions' unions (at most one disjunction, [`Disjunct::down`],
+        // so [`Level::close`] tightens nothing) and with rows, each a meet, so its answer `h'`
+        // differs from the answer `h` it gave before only on those same values. (4)
+        // [`Level::close_disjunction`] meets `o` with `U = u ∪ h ∪ (the later disjuncts)`:
+        // values below `o.lo` are outside `o`, and `[o.lo, a) ⊆ [o.lo, c] ⊆ u ⊆ U` lies in `U`
+        // with `h'` and without it, so `o ∩ U` is unchanged. (5) The level's `o` does not
+        // change while the disjunction is read (only `close_disjunction` writes it), so the `o`
+        // of the proof is the one met. (6) The hulls kept in `seen` change by the same values:
+        // [`summarize`] reads only those of a disjunct with disjunctions, which gets known
+        // sides only where the level has one disjunction, and so no `seen`; the `open`
+        // candidates of [`Level::close`] are read only for an infinite end of `o`, and a side is
+        // known only at a finite end, which stays finite as `o` only narrows. (7) The memo
+        // keeps each answer under its known sides ([`BelowKey`]), so an answer read for one
+        // level is not taken for a level whose `u` and `o` give other sides. What changes,
+        // as with the drop above, is only `skipped`: a side not searched is not refused, so a
+        // hull refused before can now be met, narrower and sound. Cost: one search of `u`'s
+        // pieces for each end of each symbol asked, O(log p) for `p` pieces. Not done: a known
+        // side at an infinite end, whose `open` candidate [`Level::close`] would then lose.
+        // Tests: `l01_39_reduced_product::pendants::seed_393_case_13_asks_fewer_hull_sides`
+        // and the benchmark
+        // `pendants::bench::hull_sides_of_a_disjunction_grow_linearly_in_its_disjuncts`.
         let wanted = ks.clone();
+        let mut known = KnownSides::new();
         let ks: Vec<usize> = if self.ors.len() == 1 || d.ors.is_empty() {
             let (acc, out) = (&reading.acc, &self.out);
-            ks.into_iter()
+            let ks: Vec<usize> = ks
+                .into_iter()
                 .filter(|k| {
                     !matches!(
                         (acc.get(k), &out[*k]),
@@ -24131,7 +24180,33 @@ impl Level {
                                 && o.is_subset(u)
                     )
                 })
-                .collect()
+                .collect();
+            for &k in &ks {
+                let (Some((Some(u), _)), Ok(o)) = (acc.get(&k), &out[k]) else {
+                    continue;
+                };
+                let Some((lo, hi)) = o.bounds() else { continue };
+                let lower = (matches!(lo, End::Fin(_)))
+                    .then(|| u.piece_at_or_below(lo))
+                    .flatten()
+                    .filter(|p| &p.1 >= lo)
+                    .map(|p| KnownSide {
+                        within: p.1.clone(),
+                        end: lo.clone(),
+                    });
+                let upper = (matches!(hi, End::Fin(_)))
+                    .then(|| u.piece_at_or_above(hi))
+                    .flatten()
+                    .filter(|p| &p.0 <= hi)
+                    .map(|p| KnownSide {
+                        within: p.0.clone(),
+                        end: hi.clone(),
+                    });
+                if lower.is_some() || upper.is_some() {
+                    known.insert(self.g.syms[k].clone(), [lower, upper]);
+                }
+            }
+            ks
         } else {
             ks
         };
@@ -24155,12 +24230,13 @@ impl Level {
             ks,
             wanted,
             sub,
+            known,
             pre,
         };
         if let Some(k) = kernel
             && !pre_groups
         {
-            let key: BelowKey = (r.d.id(), false, k, r.sub.clone());
+            let key: BelowKey = (r.d.id(), false, k, r.sub.clone(), r.known.clone());
             let answer = match memo.get(&key) {
                 Some(a) => a.clone(),
                 None => {
@@ -24174,9 +24250,9 @@ impl Level {
                             a
                         }
                         Asked::Below(q) => {
-                            let sub = r.sub.clone();
+                            let down = r.down(q);
                             self.waiting = Some((r, key, false));
-                            return Some((q, sub));
+                            return Some(down);
                         }
                     }
                 }
@@ -24194,7 +24270,7 @@ impl Level {
         answer: Result<(Each, bool), Refusal>,
         groups: bool,
         memo: &mut Below,
-    ) -> Option<(Parts, Vec<Atom>)> {
+    ) -> Option<Down> {
         if !groups {
             // A settling with the projected base is no settling of the base's groups.
             r.pre = None;
@@ -24207,11 +24283,17 @@ impl Level {
     }
 
     /// Asks the disjunct `r` with the base's groups it touches.
-    fn ask_groups(&mut self, mut r: Disjunct, memo: &mut Below) -> Option<(Parts, Vec<Atom>)> {
+    fn ask_groups(&mut self, mut r: Disjunct, memo: &mut Below) -> Option<Down> {
         let linked = &self.g.linked;
         let rows =
             (r.roots.iter()).flat_map(|x| linked.held[*x].iter().map(|i| linked.cons[*i].clone()));
-        let key: BelowKey = (r.d.id(), true, rows.collect(), r.sub.clone());
+        let key: BelowKey = (
+            r.d.id(),
+            true,
+            rows.collect(),
+            r.sub.clone(),
+            r.known.clone(),
+        );
         let answer = match memo.get(&key) {
             Some(a) => a.clone(),
             None => {
@@ -24227,9 +24309,9 @@ impl Level {
                         a
                     }
                     Asked::Below(q) => {
-                        let sub = r.sub.clone();
+                        let down = r.down(q);
                         self.waiting = Some((r, key, true));
-                        return Some((q, sub));
+                        return Some(down);
                     }
                 }
             }
@@ -24480,8 +24562,31 @@ impl Level {
 
 /// A disjunct of [`project_parts`] below the top, by its id ([`Parts::id`]), with whether it is
 /// read with the base's groups (`true`) or with the base projected for it, the constraints of
-/// that base, and the symbols it is asked for.
-type BelowKey = (u64, bool, Vec<Con>, Vec<Atom>);
+/// that base, the symbols it is asked for, and the sides of their hulls it is given
+/// ([`KnownSide`]), on which its answer depends too.
+type BelowKey = (u64, bool, Vec<Con>, Vec<Atom>, KnownSides);
+
+/// A disjunct settled, to be projected a level down ([`Level::open`]): its parts, the symbols
+/// it is asked for, and the sides of their hulls it is given.
+type Down = (Parts, Vec<Atom>, KnownSides);
+
+/// A side of a symbol's hull that a level below takes as `end` with no question, where the
+/// point of its base has the symbol at `within` or past it toward that side's end (at or
+/// below `within` for the lower side, at or above it for the upper side). Given by
+/// [`Level::start_disjunct`], where `end` is the level's own finite end `o.lo` (or `o.hi`) of
+/// the symbol's hull `o`, and the union `u` of the hulls the disjuncts read before gave it
+/// holds `o`'s values from `end` to `within`. A side taken so changes the disjunct's hull
+/// only between `end` and the side's true value, which lies between `end`'s side of the
+/// point and the point, so within `u`, or beyond `end`, outside `o`: the meet `o ∩ U` of
+/// [`Level::close_disjunction`] is unchanged (proof at `start_disjunct`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct KnownSide {
+    within: End,
+    end: End,
+}
+
+/// For each symbol asked, its known lower side and its known upper side ([`KnownSide`]).
+type KnownSides = BTreeMap<Atom, [Option<KnownSide>; 2]>;
 
 /// The answers of [`project_parts`] for the disjuncts below the top already read. A disjunct
 /// shared by several disjunctions (a named disjunction used as a disjunct at each of several
@@ -25569,7 +25674,8 @@ fn point_of(rows: &[Con], greatest: bool) -> Option<Model> {
 /// projection has the integer points of `rows` read on the atoms it keeps, and the symbol's
 /// hull over it is its hull over `rows`; where every other atom is gone, the rows over the
 /// symbol alone give the hull with no question. A symbol whose projection shows no point (none
-/// does, as `rows` has one) is left out, for the caller to ask.
+/// does, as `rows` has one) is left out, for the caller to ask. A side `known` gives a symbol
+/// is taken from it where `m` lies within it ([`hull_from_known`]), not searched.
 ///
 /// The answer depends on `rows` and `syms` as sets, not on their orders: the rows are sorted
 /// and the symbols put in the order of [`symbols_by_structure`] before they are projected.
@@ -25584,6 +25690,7 @@ fn projected_hulls(
     mut rows: Vec<Con>,
     syms: &[&Atom],
     m: &Model,
+    known: &KnownSides,
 ) -> HashMap<Atom, Result<IntervalSet, Refusal>> {
     zed_collections::sorted::sort_dedup(&mut rows);
     let ordered = symbols_by_structure(&rows, syms);
@@ -25592,7 +25699,8 @@ fn projected_hulls(
     let mut put = |i: usize, k: Option<Vec<Con>>| {
         if let Some(k) = k {
             let f = Formula::and(k.into_iter().map(Formula::Con).collect());
-            out.insert(syms[i].clone(), hull_from(&f, syms[i], m));
+            let h = hull_from_known(&f, syms[i], m, known.get(syms[i]));
+            out.insert(syms[i].clone(), h);
         }
     };
     // Rows of three or more terms whose wide rows share no atom are projected by their own
@@ -25942,12 +26050,31 @@ fn projected_each(rows: &[Con], syms: &[&Atom]) -> Vec<Option<Vec<Con>>> {
 /// The least and greatest values of a symbol over a formula, given a point `m` of it: the two
 /// sides [`hull_side`] finds.
 fn hull_from(c: &Formula, sym: &Atom, m: &Model) -> Result<IntervalSet, Refusal> {
-    let end = |dir: i64, inf: End| -> Result<End, Refusal> {
+    hull_from_known(c, sym, m, None)
+}
+
+/// [`hull_from`], with the sides `known` gives taken without [`hull_side`] where the point `m`
+/// lies within them ([`KnownSide`]).
+fn hull_from_known(
+    c: &Formula,
+    sym: &Atom,
+    m: &Model,
+    known: Option<&[Option<KnownSide>; 2]>,
+) -> Result<IntervalSet, Refusal> {
+    let end = |i: usize, dir: i64, inf: End| -> Result<End, Refusal> {
+        if let Some(Some(side)) = known.map(|k| &k[i])
+            && let Some(at) = m.get(sym)
+        {
+            let at = End::Fin(Num::from(at));
+            if (dir < 0 && at <= side.within) || (dir > 0 && at >= side.within) {
+                return Ok(side.end.clone());
+            }
+        }
         Ok(hull_side(c, sym, m, dir)?.map_or(inf, |v| End::Fin(Num::from(&v))))
     };
     Ok(IntervalSet::range(
-        end(-1, End::NegInf)?,
-        end(1, End::PosInf)?,
+        end(0, -1, End::NegInf)?,
+        end(1, 1, End::PosInf)?,
     ))
 }
 
@@ -33403,7 +33530,7 @@ mod by_halves_against_old {
             .collect();
         let model = solve(&rows, true).expect("solve").expect("a point");
         let ks: Vec<&Atom> = syms.iter().collect();
-        let hulls = projected_hulls(rows.clone(), &ks, &model);
+        let hulls = projected_hulls(rows.clone(), &ks, &model, &KnownSides::new());
         let whole = Formula::and(rows.into_iter().map(Formula::Con).collect());
         for s in &syms {
             assert_eq!(hulls.get(s), Some(&hull_from(&whole, s, &model)), "{s}");
@@ -33455,12 +33582,12 @@ mod by_halves_against_old {
             (syms.iter()).chain([&syms[3], &absent]).collect(),
         ];
         for ks in &orders {
-            let hulls = projected_hulls(rows.clone(), ks, &model);
+            let hulls = projected_hulls(rows.clone(), ks, &model, &KnownSides::new());
             for s in &syms {
                 assert_eq!(hulls.get(s), Some(&hull_from(&whole, s, &model)), "{s}");
             }
         }
-        let with_absent = projected_hulls(rows.clone(), &orders[3], &model);
+        let with_absent = projected_hulls(rows.clone(), &orders[3], &model, &KnownSides::new());
         assert_eq!(
             with_absent.get(&absent),
             Some(&hull_from(&whole, &absent, &model))
