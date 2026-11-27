@@ -293,15 +293,23 @@ pub fn name_vars(out: &mut String, from: usize, taken: &dyn Fn(&str) -> bool) {
                 // ordered by its name, the text up to a `(` (MSG-union-order-rest,
                 // SPEC-union-order-recursive). Two of one name, which no union here holds (a
                 // type holds one kernel set, and the union of two recursive types is their
-                // unfolding, `Type::zip`), are left in the order of their texts.
+                // unfolding, `Type::zip`), are left in the order of their texts. Inside a
+                // message the recursive type's text is still a reference here, as
+                // `TYPE COUNT 0 END TYPE_END`, since [`lift_holding`] names the variables
+                // before it writes the references; it is ordered by the body it stands for
+                // ([`standing`]), and a mark would put it after every name
+                // (PRINT-recursive-type-unfolded).
                 fn name(m: &str) -> &str {
                     m.find('(').map_or(m, |i| &m[..i])
                 }
-                members.sort_unstable_by(|a, b| {
+                let mut keyed: Vec<(String, String)> =
+                    members.drain(..).map(|m| (standing(&m), m)).collect();
+                keyed.sort_unstable_by(|(a, x), (b, y)| {
                     super::order::name_cmp(name(a), name(b))
                         .then_with(|| super::order::name_cmp(a, b))
+                        .then_with(|| x.cmp(y))
                 });
-                for (j, m) in members.iter().enumerate() {
+                for (j, (_, m)) in keyed.iter().enumerate() {
                     if j > 0 {
                         out.push_str(" | ");
                     }
@@ -312,6 +320,38 @@ pub fn name_vars(out: &mut String, from: usize, taken: &dyn Fn(&str) -> bool) {
         };
     }
     out.push_str(rest);
+}
+
+/// The text a member `m` of a union of marks is ordered by ([`name_vars`]): `m`, or, when `m`
+/// is a reference into the thread's table, opened by [`TYPE`] or not, the body it stands for,
+/// followed through each body that is itself such a reference. A body placed uses only
+/// definitions placed before it ([`lift`]), so the chain ends; it is cut at the table's
+/// length all the same. Outside [`collect`] no text holds a reference, and `m` is returned.
+/// Linear in the bodies followed.
+fn standing(m: &str) -> String {
+    let leading = |s: &str| -> Option<usize> {
+        let s = s.strip_prefix(TYPE).unwrap_or(s);
+        let after = s.strip_prefix(MARKS)?;
+        let n = after.find(END)?;
+        after[..n].parse().ok()
+    };
+    let Some(first) = leading(m) else {
+        return m.to_string();
+    };
+    TABLE.with_borrow(|t| {
+        let Some(t) = t.as_ref() else {
+            return m.to_string();
+        };
+        let mut k = first;
+        for _ in 0..t.bodies.len() {
+            let Some(body) = t.bodies.get(k) else { break };
+            match leading(body) {
+                Some(j) => k = j,
+                None => return body.clone(),
+            }
+        }
+        m.to_string()
+    })
 }
 
 /// Names the variables marked in `texts` ([`name_vars`]), skipping every word they write. The

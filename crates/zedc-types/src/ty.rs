@@ -16045,7 +16045,19 @@ impl Ty {
     // union of the branches below it; the cost is the size of the types.
     pub fn union(&self, other: &Ty) -> Ty {
         let mut out = self.clone();
-        out.set = &out.set | &other.set;
+        // A kernel set joined to the empty one is kept whole, not joined: the kernel's join
+        // gives a recursive operand back only beside another node of parts (zed-kernel
+        // `Type::zip_at_once`), so `L(int) | ∅` would be rebuilt from its parts and print
+        // unfolded, `#cons(int, L(int)) | #nil`, where a recursive type beside type variables
+        // stands by its name (DESIGN.md sec:diagnostics, "Types in a message";
+        // PRINT-recursive-type-unfolded). Both are the same values: `x | ∅ = x`. The tests
+        // are `==` on stored digests, O(1), where `is_empty` may search a recursive type.
+        let none = KType::empty();
+        if out.set == none {
+            out.set = other.set.clone();
+        } else if other.set != none {
+            out.set = &out.set | &other.set;
+        }
         out.family = &out.family | &other.family;
         if !self.payloads.is_empty() || !other.payloads.is_empty() {
             out.payloads = join_payloads(&[self, other]);
@@ -16071,7 +16083,10 @@ impl Ty {
     pub fn union_all<'t>(ts: impl IntoIterator<Item = &'t Ty>) -> Ty {
         let ts: Vec<&Ty> = ts.into_iter().collect();
         let mut out = Ty::empty();
-        out.set = KType::union_all(ts.iter().map(|t| t.set.clone()));
+        // The empty sets left out, so that one recursive set among them is kept whole, as in
+        // [`Ty::union`] (PRINT-recursive-type-unfolded).
+        let none = KType::empty();
+        out.set = KType::union_all(ts.iter().map(|t| t.set.clone()).filter(|s| *s != none));
         out.family = KType::union_all(ts.iter().map(|t| t.family.clone()));
         if ts.iter().any(|t| !t.payloads.is_empty()) {
             out.payloads = join_payloads(&ts);
@@ -28156,6 +28171,10 @@ mod tests {
         ];
         let named = Ty::set(list("L")).union(&v("A")).union(&v("Z"));
         assert_eq!(named.text_named(false, &plain, &names), "A | L(int) | Z");
+        // Joined at once, the same (PRINT-recursive-type-unfolded): the variables' empty
+        // kernel sets leave the recursive one whole.
+        let at_once = Ty::union_all([&v("Z"), &Ty::set(list("L")), &v("A")]);
+        assert_eq!(at_once.text_named(false, &plain, &names), "A | L(int) | Z");
         // By its name `L`, which comes before `L'`; by its text it would not, `(` being
         // below `'` (SPEC-union-order-recursive).
         let primed = Ty::set(list("L")).union(&v("L'"));
