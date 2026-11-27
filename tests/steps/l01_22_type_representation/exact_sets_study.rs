@@ -74,7 +74,7 @@ fn the_stockmeyer_meyer_residues_encode_two_clauses() {
 
 /// The least `x >= 0` with `x == rs[i] (mod ms[i])` for each `i`, the moduli coprime.
 fn crt(rs: &[i64], ms: &[i64]) -> i64 {
-    let (mut x, mut m) = (0, 1);
+    let (mut x, mut m) = (0i64, 1i64);
     for (r, mi) in rs.iter().zip(ms) {
         while x.rem_euclid(*mi) != *r {
             x += m;
@@ -163,7 +163,7 @@ fn moduli_one_plus_i_times_k_factorial_are_pairwise_coprime() {
 fn contain_reduction(f: impl Fn(i64, i64, i64) -> i64, c_lo: i64) -> bool {
     for b in 2..=40 {
         for a in 0..b {
-            for g in [0, 3, 7, 20, 60] {
+            for g in [0i64, 3, 7, 20, 60] {
                 let root = (0..=g).any(|x| (x * x - a).rem_euclid(b) == 0);
                 let contained = (0..=g).all(|x| (c_lo..b).contains(&f(x, a, b)));
                 if contained == root {
