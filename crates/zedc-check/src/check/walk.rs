@@ -6420,6 +6420,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     // `card` values in `[lo, hi]` lies in; that transfer is step L3.6's. A naive interval sum
     // here would need the level's cardinality, which this step does not track.
     fn reduce_end(&mut self, op: Reducer, x: &Ty, span: Span, site: Span) -> Ty {
+        // A loose atom beside the families is `fold_level`'s to refuse, with its own message.
+        if x.loose().is_empty() && self.empty_fold_refused(op, x, span, site, FoldForm::Infix) {
+            return Ty::empty();
+        }
         self.fold_level(op, x, span, site, FoldForm::Infix)
     }
 
@@ -6664,8 +6668,128 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `x >< op` rejects one.
     fn family_fold(&mut self, op: Reducer, x: &Ty, span: Span, form: FoldForm) -> Ty {
         let out = self.passing(x, self.fold_word(form, span), span, None);
-        let t = self.fold_level(op, &x.without_loose(), span, span, form);
+        let families = x.without_loose();
+        if self.empty_fold_refused(op, &families, span, span, form) {
+            return out;
+        }
+        let t = self.fold_level(op, &families, span, span, form);
         out.union(&t)
+    }
+
+    /// Whether the fold `form` by `op` written at `site`, of the families `x`, is refused at
+    /// `span` as an operation that always fails: `x` is proved to have no entries, as the
+    /// literal `[]` is, so it has no type of entry either, `op` has no identity to give, and
+    /// the fold is `#empty` on every input that reaches it. DESIGN.md sec:failure ("An
+    /// operation that always fails is rejected", which lists "a reduction over a level with no
+    /// entry (`#none`, `#empty`)") and the `m >< op` row of the type table in
+    /// sec:type_language: "a level proved empty ... a reduction over it is rejected at the
+    /// fold, as an operation that always fails, unless `op` carries `identity(e)` on a carrier
+    /// the program writes, so ... `[] >< max` is rejected, while a call such as `sum([])` is
+    /// judged as a call and accepted"; the author's answer A to row
+    /// FAIL-empty-literal-fold-always-fails (2026-11-24). Only the fold's whole receiver is
+    /// judged, at the two places that hold it (`reduce_end` for `x >< op`, `family_fold` for
+    /// `x.reduce(op)` and `x.sum`): `sum_beside` folds the families beside a tuple or a
+    /// variable as one region, which is no proof that the receiver is empty, and a scan folds
+    /// no empty prefix. Not judged (limit (1) of sec:failure, a call is not judged by its
+    /// value): the call `sum([])`, a check of a generic function's needs at a call
+    /// (`replaying`, or under a call's frame), and a trial of a repair. An operator other than
+    /// these six has no fold `><` on any entries, which `fold_level` refuses.
+    /// Not covered: a level the program writes a type for and that is proved empty by its keys,
+    /// as DESIGN's `([]: [int]) >< max`, which needs a reading of the keys this check does not
+    /// make; such a fold keeps `#empty` in its type.
+    // Complexity tradeoff: one walk of `x`'s pieces and of each family's arrows, which
+    // `fold_level` makes again, O(arrows); a variable is read by its class's resolved type,
+    // O(1) per variable, and an unresolved one is no proof.
+    fn empty_fold_refused(
+        &mut self,
+        op: Reducer,
+        x: &Ty,
+        span: Span,
+        site: Span,
+        form: FoldForm,
+    ) -> bool {
+        let at_call = self.call_frames.last().and_then(|f| f.call).is_some();
+        let sum_call = form == FoldForm::Sum && self.sum_calls.contains(&site);
+        if self.trying || self.replaying > 0 || at_call || sum_call {
+            return false;
+        }
+        // The identity each operator has at the one type of entry the repair writes
+        // (`fold_level`, the identities of sec:reduction item 3).
+        let (entry, identity) = match op {
+            Reducer::Op(BinaryOp::Add) => ("int", "0"),
+            Reducer::Op(BinaryOp::Mul) => ("int", "1"),
+            Reducer::Op(BinaryOp::And) => ("bool", "true"),
+            Reducer::Op(BinaryOp::Or) => ("bool", "false"),
+            Reducer::Max => ("f64", "-inf"),
+            Reducer::Min => ("f64", "inf"),
+            _ => return false,
+        };
+        if !self.proved_no_entries(x) {
+            return false;
+        }
+        let s = self.fold_subject(site);
+        let w = op.written();
+        let fold = |subject: &str| match form {
+            FoldForm::Infix => format!("{subject} >< {w}"),
+            FoldForm::Reduce => format!("{subject}.reduce({w})"),
+            FoldForm::Sum | FoldForm::Scan => format!("{subject}.sum"),
+        };
+        let written = fold(&s);
+        let mut notes = Vec::new();
+        if let Some(&at) = self.receivers.get(&site) {
+            notes.push(Note {
+                span: at,
+                text: format!("`{s}` has no entries").into(),
+            });
+            notes.extend(self.derive(&[at]));
+        }
+        let menu = [
+            format!(
+                "repair: fold a family that has entries, as `{}`",
+                form.example(&w)
+            ),
+            format!(
+                "repair: give the entries a type, as the parameter of `f(xs: [{entry}]) = {}`, \
+                 whose fold of `[]` is `{identity}`",
+                fold("xs")
+            ),
+            "repair: write `#empty` in place of this fold, where the failure is meant".to_string(),
+        ];
+        notes.extend(menu.into_iter().map(|text| Note {
+            span,
+            text: text.into(),
+        }));
+        self.rejects_with(
+            Row::AlwaysFails,
+            span,
+            format!(
+                "`{written}` here always fails with `#empty`: `{s}` has no entries and no type of \
+                 entry, so the fold has no identity to give"
+            ),
+            notes,
+        );
+        true
+    }
+
+    /// Whether `x` is families alone, each storing no value, as the literal `[]` is: the test
+    /// `fold_level` makes for "a family with no entries", with each variable read as its
+    /// class's resolved type (a lambda's parameter bound to `[]`); a variable whose class is
+    /// not resolved, or has none, may still take entries, so it is no proof.
+    fn proved_no_entries(&self, x: &Ty) -> bool {
+        let mut t = x.clone();
+        t.vars = VarSet::new();
+        for v in x.vars.iter() {
+            match self
+                .class_root(v)
+                .and_then(|r| self.classes[r].resolved.as_ref())
+            {
+                Some(r) => t = t.union(r),
+                None => return false,
+            }
+        }
+        !t.fns.is_empty()
+            && (t.pieces().into_iter()).all(|p| matches!(p, Piece::Fn(s) if s.data))
+            && (t.fns.iter()).all(|s| super::family_values(s).lists_nothing())
     }
 
     /// The word of the fold `form` written at `site`, as [`FoldForm::word`] gives it for the
