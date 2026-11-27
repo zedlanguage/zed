@@ -16003,9 +16003,17 @@ fn reduce_subset_row_eqs(mut base: Vec<(Row, Rel)>, vars: usize) -> Vec<(Row, Re
                 .filter_map(|v| owner.get(v).copied())
                 .collect();
             zed_collections::sorted::sort_dedup(&mut cands);
+            // Each owned equation shorter than the whole one is subtracted, not one shorter
+            // than what is left: owners share no variable, so each subtraction reads and
+            // removes only its own terms, and the result is the same in every order of the
+            // owners, which is the order of the rows (PROOF-solve-omega-path-renaming). Until
+            // then an equation that was the sum of two owned ones lost the first by place and
+            // kept the second, as long as the rest; now it loses both and is left a constant.
+            // The cost is unchanged, one pass over the owners of its terms.
+            let whole = cur_map.len();
             for p in cands {
                 let sub = &base[p].0;
-                if sub.a.is_empty() || sub.a.len() >= cur_map.len() {
+                if sub.a.is_empty() || sub.a.len() >= whole {
                     continue;
                 }
                 let mut scale: Option<Int> = None;
