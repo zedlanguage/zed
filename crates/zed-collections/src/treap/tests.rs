@@ -133,6 +133,58 @@ fn one_set_of_keys_has_one_shape() {
     assert_eq!(up.as_ref().map(|n| n.item), down.as_ref().map(|n| n.item));
 }
 
+#[test]
+fn union_and_meet_agree_with_ordered_maps() {
+    let mut rng = crate::seed::Rng::new(13);
+    let mut next = |m: u64| rng.below_u64(m);
+    let one = |t: &Tree<E>| t.as_ref().map(Arc::as_ptr);
+    for round in 0..300 {
+        let span = 1 + next(200);
+        let (mut a, mut b) = (BTreeMap::new(), BTreeMap::new());
+        for _ in 0..next(2 * span) {
+            a.insert(next(span), next(1000));
+        }
+        for _ in 0..next(2 * span) {
+            b.insert(next(span), next(1000) + 1000);
+        }
+        let made = |m: &BTreeMap<u64, u64>| from_sorted(m.iter().map(|(&k, &v)| E(k, v)).collect());
+        let (x, y) = (made(&a), made(&b));
+        // One set of keys has one shape, made from sorted items or an item at a time.
+        let mut by_one = None;
+        for (&k, &v) in a.iter().rev() {
+            by_one = insert(&by_one, E(k, v));
+        }
+        assert_eq!(shape(&x), shape(&by_one), "{round}");
+        let (u, m) = (union(&x, &y), meet(&x, &y));
+        assert!(sound(&x) && sound(&y) && sound(&u) && sound(&m), "{round}");
+        // A key in both keeps the item of the second tree.
+        let mut want_u = a.clone();
+        want_u.extend(b.iter().map(|(&k, &v)| (k, v)));
+        let want_m: Vec<(u64, u64)> = b
+            .iter()
+            .filter(|(k, _)| a.contains_key(k))
+            .map(|(&k, &v)| (k, v))
+            .collect();
+        assert_eq!(
+            entries(&u),
+            want_u.into_iter().collect::<Vec<_>>(),
+            "{round}"
+        );
+        assert_eq!(entries(&m), want_m, "{round}");
+        assert_eq!(shape(&u), shape(&made(&entries(&u).into_iter().collect())));
+        // A tree is its own union and meet, and the empty tree changes nothing in a union.
+        assert_eq!(one(&union(&x, &x)), one(&x));
+        assert_eq!(one(&meet(&x, &x)), one(&x));
+        assert_eq!(one(&union(&x, &None)), one(&x));
+        assert_eq!(one(&union(&None, &y)), one(&y));
+        assert!(meet(&x, &None).is_none() && meet(&None, &y).is_none());
+        // A tree that gains a key shares with the union every subtree the key's path leaves.
+        let k = next(span + 1);
+        let more = insert(&x, E(k, 7));
+        assert_eq!(one(&union(&x, &more)), one(&more), "{round}");
+    }
+}
+
 /// The tree's shape: its keys in preorder, `None` for each empty child, read by the accessors.
 fn shape(t: &Tree<E>) -> Vec<Option<u64>> {
     let (mut out, mut stack) = (Vec::new(), vec![t]);

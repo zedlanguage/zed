@@ -1,6 +1,7 @@
 //! Persistent treaps with sizes and a summary of each subtree, built from two operations,
 //! `split` and `join`: get, split, join, insertion, removal, the place of a key and the key at a
-//! place, each `O(log n)` expected (plan row DRY-persistent-trees-2026-11-26, which takes the
+//! place, each `O(log n)` expected; a tree made from sorted items in `O(n)`; and the union and
+//! meet of two trees (plan row DRY-persistent-trees-2026-11-26, which takes the
 //! split and join copies of the workspace onto this one). An item says its key, its priority and
 //! how its subtree's summary is made from its children's ([`Item`]).
 //!
@@ -402,6 +403,132 @@ where
         }
     }
     t.clone()
+}
+
+/// The tree of `items`, whose keys are strictly increasing: its shape found as a Cartesian
+/// tree by priority with one stack and each node made once over its children, `O(k)` (module
+/// [`crate::cartesian`], which cites, quotes and proves the construction). The indices stand
+/// for the keys in [`crate::cartesian::build`]: they are in the keys' order, so its ties, broken
+/// by the greater index, are broken by the greater key, as [`above`] breaks them.
+#[inline]
+pub fn from_sorted<I: Item>(items: Vec<I>) -> Tree<I> {
+    debug_assert!(
+        items.windows(2).all(|w| w[0].key() < w[1].key()),
+        "keys strictly increasing"
+    );
+    let prios: Vec<u64> = items.iter().map(Item::priority).collect();
+    let mut items: Vec<Option<I>> = items.into_iter().map(Some).collect();
+    let at: Vec<usize> = (0..items.len()).collect();
+    crate::cartesian::build(at, &prios, |i, _, l, r| {
+        node(
+            items[i].take().expect("each item made once"),
+            prios[i],
+            l,
+            r,
+        )
+    })
+}
+
+/// Whether two trees are one node (or both empty); a shortcut only, never an order.
+#[inline]
+fn same<I: Item>(x: &Tree<I>, y: &Tree<I>) -> bool {
+    match (x, y) {
+        (Some(x), Some(y)) => Arc::ptr_eq(x, y),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// The node `n` over `left` and `right`, `n` itself when they are its own children.
+#[inline]
+fn remake<I: Item>(n: &Arc<Node<I>>, left: Tree<I>, right: Tree<I>) -> Arc<Node<I>> {
+    if same(&left, &n.left) && same(&right, &n.right) {
+        return n.clone();
+    }
+    again(n, left, right)
+}
+
+/// The items of `x` and `y` whose key is in either (`union`) or in both (`meet`), a key in both
+/// with the item of `y`: from the roots down, the higher root kept and the other tree split at
+/// its key, the two sides combined past it, and for `meet` the root kept only when the other
+/// tree had its key. Two subtrees that are one node are their own union and meet, and a node
+/// over children left as they were is shared, not made again. For trees of sizes `m <= n`,
+/// `O(m log(n/m + 1))` expected (Blelloch, Ferizovic and Sun, Theorem 4 of the full version,
+/// cited at the head of this module; for the draw of module [`crate::priority`], the finger bound
+/// proved there, plus the keys that share a point). A walk with stacks of its own.
+///
+/// Proof that a key in both keeps `y`'s item. A step combines subtrees `x'` and `y'`; say the
+/// higher root's key `k` is in both. A node's rank is its priority and key, so `k`'s node has
+/// one rank in both trees, and no node of `x'` or `y'` ranks above it, as it is the higher
+/// root's rank. In a heap-ordered tree the node of the top rank is the root, so `k`'s node is
+/// the root of both `x'` and `y'`; the two roots tie, [`above`] is false for them, and `y'`'s
+/// root is kept, `x'`'s dropped by the split. The sides below keep `x`'s subtree first, so the
+/// same holds at every step. A key in one tree only keeps its own item. Tested by
+/// `treap::tests::union_and_meet_agree_with_ordered_maps`.
+#[inline]
+fn combine<I: Item>(x: &Tree<I>, y: &Tree<I>, keep_one_sided: bool) -> Tree<I> {
+    /// A pair of subtrees to combine, or a node to make over the two combined last: with its
+    /// item kept, or (for a meet whose other tree lacked its key) the two joined.
+    enum Step<I: Item> {
+        Combine(Tree<I>, Tree<I>),
+        Make(Arc<Node<I>>, bool),
+    }
+    let mut todo = vec![Step::Combine(x.clone(), y.clone())];
+    let mut done: Vec<Tree<I>> = Vec::new();
+    while let Some(step) = todo.pop() {
+        let (x, y) = match step {
+            Step::Make(n, kept) => {
+                let r = done.pop().expect("the right side is combined");
+                let l = done.pop().expect("the left side is combined");
+                done.push(if kept {
+                    Some(remake(&n, l, r))
+                } else {
+                    join(l, r)
+                });
+                continue;
+            }
+            Step::Combine(None, t) | Step::Combine(t, None) => {
+                done.push(if keep_one_sided { t } else { None });
+                continue;
+            }
+            Step::Combine(Some(x), Some(y)) if Arc::ptr_eq(&x, &y) => {
+                done.push(Some(x));
+                continue;
+            }
+            Step::Combine(Some(x), Some(y)) => (x, y),
+        };
+        let (hi, lo, hi_is_x) = if above(&x, &y) {
+            (x, y, true)
+        } else {
+            (y, x, false)
+        };
+        let lo = Some(lo);
+        let (l, found, r) = split(&lo, hi.item.key());
+        let kept = keep_one_sided || found.is_some();
+        let (hl, hr) = (hi.left.clone(), hi.right.clone());
+        todo.push(Step::Make(hi, kept));
+        // The sides keep the trees' order, `x`'s first, so that ties below go to `y` as well.
+        if hi_is_x {
+            todo.push(Step::Combine(hr, r));
+            todo.push(Step::Combine(hl, l));
+        } else {
+            todo.push(Step::Combine(r, hr));
+            todo.push(Step::Combine(l, hl));
+        }
+    }
+    done.pop().expect("the two trees are combined")
+}
+
+/// The items of `x` and `y`, a key in both with the item of `y` ([`combine`]).
+#[inline]
+pub fn union<I: Item>(x: &Tree<I>, y: &Tree<I>) -> Tree<I> {
+    combine(x, y, true)
+}
+
+/// The items of `y` whose key is also in `x` ([`combine`]).
+#[inline]
+pub fn meet<I: Item>(x: &Tree<I>, y: &Tree<I>) -> Tree<I> {
+    combine(x, y, false)
 }
 
 impl<I: Item> Node<I> {

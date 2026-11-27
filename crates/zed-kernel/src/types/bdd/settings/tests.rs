@@ -7,20 +7,29 @@ use crate::types::Row;
 use crate::types::bdd::tests::atom;
 use crate::types::hash::mix;
 use std::collections::BTreeSet;
+use std::sync::Arc;
+use zed_collections::treap::Node;
 
-/// Every node above its children and its settings in order, and its length right.
+/// Whether two sets are one node (or both empty).
+fn same(x: &Tree<Row>, y: &Tree<Row>) -> bool {
+    x.as_ref().map(Arc::as_ptr) == y.as_ref().map(Arc::as_ptr)
+}
+
+/// Every node above its children, its settings in order, and its length right.
 fn well_formed(t: &Tree<Row>) {
-    let mut stack: Vec<&Node<Row>> = t.as_deref().into_iter().collect();
+    let mut stack: Vec<&Node<Setting<Row>>> = t.as_deref().into_iter().collect();
+    let mut count = 0;
     while let Some(n) = stack.pop() {
-        assert_eq!(n.len, 1 + len(&n.left) + len(&n.right));
-        for c in [n.left.as_deref(), n.right.as_deref()]
+        count += 1;
+        for c in [n.left().as_deref(), n.right().as_deref()]
             .into_iter()
             .flatten()
         {
-            assert!(above(n, c));
+            assert!(n.rank() > c.rank());
             stack.push(c);
         }
     }
+    assert_eq!(len(t), count);
     let k = keys(t);
     assert!(k.windows(2).all(|w| w[0] < w[1]));
 }
@@ -101,9 +110,10 @@ fn shape(t: &Tree<Row>) -> String {
         match n {
             None => out.push('.'),
             Some(n) => {
-                out += &format!("({:?},{})", n.key.0, n.key.1);
-                stack.push(n.right.as_deref());
-                stack.push(n.left.as_deref());
+                let key = &n.item().0;
+                out += &format!("({:?},{})", key.0, key.1);
+                stack.push(n.right().as_deref());
+                stack.push(n.left().as_deref());
             }
         }
     }
@@ -113,10 +123,11 @@ fn shape(t: &Tree<Row>) -> String {
 /// The number of nodes on the longest path from the root, walked from a stack.
 fn height(t: &Tree<Row>) -> usize {
     let mut most = 0;
-    let mut stack: Vec<(&Node<Row>, usize)> = t.as_deref().map(|n| (n, 1)).into_iter().collect();
+    let mut stack: Vec<(&Node<Setting<Row>>, usize)> =
+        t.as_deref().map(|n| (n, 1)).into_iter().collect();
     while let Some((n, d)) = stack.pop() {
         most = most.max(d);
-        for c in [n.left.as_deref(), n.right.as_deref()]
+        for c in [n.left().as_deref(), n.right().as_deref()]
             .into_iter()
             .flatten()
         {
