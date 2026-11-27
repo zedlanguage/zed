@@ -103,11 +103,12 @@ pub const WRITTEN: char = ':';
 /// Opens a mention ([`mention`]): a variable of a type closed before it in the text, written
 /// by the name [`name_vars`] gives it there. Noncharacters, as the marks above are: U+FDD0 to
 /// U+FDDF are the marks of this module and zedc-check's `DECLARE`, U+FDE0 and U+FDE1 are
-/// zedc-check's placeholders (`HIDDEN`), and zedc-check swaps every noncharacter of U+FDD0 to
+/// zedc-check's placeholders (`HIDDEN`), U+FDE2 to U+FDE6 are [`LOCALS`] and U+FDE7 is
+/// [`SAME`], so these are the two after them; zedc-check swaps every noncharacter of U+FDD0 to
 /// U+FDEF out of the program's texts while a message is laid out (`ProgramTexts`).
-pub const MENTION: char = '\u{FDE2}';
+pub const MENTION: char = '\u{FDE8}';
 /// Closes what [`MENTION`] opens.
-pub const MENTION_END: char = '\u{FDE3}';
+pub const MENTION_END: char = '\u{FDE9}';
 
 /// The text of a mention of the variable `key`, written after the type that holds it: `back`
 /// is how many types ([`VARS`]) the text closes between the end of that type and the mention,

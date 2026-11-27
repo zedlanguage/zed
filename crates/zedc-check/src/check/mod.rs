@@ -1839,8 +1839,29 @@ fn lay_out_with(
 /// all in U+FDD0..=U+FDDF, or a tuple written once in its printed type, [`defs::LOCALS`]
 /// (module `defs` of the kernel). [`lay_out`] leaves a text with none as it is, though its
 /// words are names the others' names skip.
+///
+/// The printer's mentions (`defs::mention`), which [`lay_out`] reads too, open and close with
+/// U+FDE8 and U+FDE9, outside those marks, and the test is still enough, for two reasons.
+/// 1. A mention holds two [`defs::NEXT`] marks, U+FDDE, between its parts, so a text holding
+///    one is found marked here whatever else it holds.
+/// 2. A mention is read only in a text that also holds the type it names a variable of: it is
+///    written after that type in the same text (zedc-types `arrow_text_naming`), and that type
+///    is a [`defs::VARS`] region, U+FDD9, since the variable has a mark only inside one
+///    (zedc-types `write_text`). `defs::name_vars` reads a text only when the text holds a
+///    region, and it resolves a mention against the regions closed before it in that text.
+///
+/// A text holding a mention and no region would reach [`lay_out`] by 1, and keep the mention
+/// unread there, its marks in the message. So in a debug build that stops the check
+/// (`a_text_holding_a_mention_and_no_type_region_is_caught`). Cost: none in a release build;
+/// in a debug build up to two more passes over the text.
 fn holds_lay_out_mark(text: &str) -> bool {
-    text.contains(|c| ('\u{FDD0}'..='\u{FDDF}').contains(&c) || defs::LOCALS.contains(&c))
+    let holds =
+        text.contains(|c| ('\u{FDD0}'..='\u{FDDF}').contains(&c) || defs::LOCALS.contains(&c));
+    debug_assert!(
+        !text.contains(defs::MENTION) || text.contains(defs::VARS),
+        "a mention is written only after the type it names a variable of: {text:?}"
+    );
+    holds
 }
 
 /// What [`lay_out`] makes of a message whose one marked text is the note `text`
@@ -1976,11 +1997,13 @@ fn lay_out_alone(text: &Arc<str>) -> LaidAlone {
 ///
 /// Proof that the swap changes nothing else:
 /// 1. A placeholder is U+FDE0, a decimal index and U+FDE1. It holds no `$`, so `named`
-///    copies it, and no mark of U+FDD0..=U+FDDF or [`defs::LOCALS`], so `lay_out` neither
-///    starts nor ends a part in it and moves it whole with the text around it.
+///    copies it, and no mark of U+FDD0..=U+FDDF, [`defs::LOCALS`] or mention (U+FDE8 to
+///    U+FDE9), so `lay_out` neither starts nor ends a part or a mention in it and moves it
+///    whole with the text around it.
 /// 2. The printer never writes U+FDE0 (its marks are U+FDD0..=U+FDDF and
-///    [`defs::LOCALS`], U+FDE2..=U+FDE6, and U+FDE7, which `lay_out` writes and spells away
-///    within one call), and the program
+///    [`defs::LOCALS`], U+FDE2..=U+FDE6, U+FDE7, which `lay_out` writes and spells away
+///    within one call, and U+FDE8 and U+FDE9 for a mention of a variable, `defs::MENTION`),
+///    and the program
 ///    writes one only inside a string or a comment, which then is a piece here: a name is
 ///    ASCII (DESIGN.md sec:lexical), and no other token takes a noncharacter. So after the
 ///    swap each U+FDE0 left in a text starts a placeholder, and [`Self::restore`] writes
@@ -21176,6 +21199,32 @@ mod tests {
     #[should_panic(expected = "arrow 0 of a family has `partial` true")]
     fn a_family_arrow_whose_fields_disagree_is_caught() {
         family_values(&family_with_lookup(Ty::carrier(Carrier::Int)));
+    }
+
+    /// PRINT-headline-note-same-name, the guard of [`holds_lay_out_mark`]: a text holding a
+    /// mention and no type region would reach [`lay_out`] (the mention's own `NEXT` marks are in
+    /// the range) and print the mention unread, so a debug build stops there. Red before the
+    /// guard: no panic.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "a mention is written only after the type it names a variable of")]
+    fn a_text_holding_a_mention_and_no_type_region_is_caught() {
+        holds_lay_out_mark(&format!("with {}", defs::mention(0, "b0", "T")));
+    }
+
+    /// A mention after its type, as zedc-types writes one, is in a text that
+    /// [`holds_lay_out_mark`] finds marked; a text of no mark at all is not.
+    #[test]
+    fn a_mention_after_its_type_holds_a_lay_out_mark() {
+        let text = format!(
+            "{}{}b0{} with {}",
+            defs::VARS,
+            defs::VAR,
+            defs::VARS_END,
+            defs::mention(0, "b0", "T")
+        );
+        assert!(holds_lay_out_mark(&text));
+        assert!(!holds_lay_out_mark("with T"));
     }
 
     /// Plan row PERF-value-key-sites-bench: the literals recorded by [`Ck::spells`] are keyed by
