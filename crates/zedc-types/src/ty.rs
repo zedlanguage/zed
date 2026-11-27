@@ -26979,6 +26979,46 @@ mod tests {
         assert_eq!(t.to_string(), "(_, int)");
     }
 
+    /// UNDERSCORE-print-followups: a bounded variable is named in the order of its first place,
+    /// as an unbounded one is, not by the name the checker gave it (DESIGN.md sec:diagnostics,
+    /// "Types in a message": "A variable is named in the order in which the names first occur
+    /// in the printed text, left to right, whatever bounds it"); a written name is kept, and a
+    /// variable met before it skips it. Red before: `(x0: T, x1: Z) -> T for Z in …`, the
+    /// checker's name `Z`.
+    #[test]
+    fn a_bounded_variable_is_named_in_order_of_first_place() {
+        let v = |x: &str| Ty::var(x.into());
+        let make = |params: [&str; 2], result: &str| {
+            let arrow = Arrow {
+                params: params.iter().map(|&p| v(p)).collect(),
+                result: v(result),
+                partial: false,
+                stores_not_found: false,
+            };
+            let mut s = sig(vec![arrow], 2, false);
+            s.own = ["A".into(), "Z".into()].into_iter().collect();
+            s.bounds.insert("Z".into(), B_MASK);
+            s.note_held();
+            s
+        };
+        let clause = |n: &str| format!(" for {n} in {}", mask_text(B_MASK));
+        let s = make(["A", "Z"], "A");
+        assert_eq!(s.to_string(), format!("(x0: T, x1: U) -> T{}", clause("U")));
+        let s = make(["Z", "A"], "A");
+        assert_eq!(s.to_string(), format!("(x0: T, x1: U) -> U{}", clause("T")));
+        // Written `T`, the bounded variable keeps it, and `A`, met first, takes `U`.
+        let kept: [(Arc<str>, Arc<str>); 1] = [("Z".into(), "T".into())];
+        let around = Around {
+            kept: &kept,
+            ..Around::default()
+        };
+        let s = make(["A", "Z"], "A");
+        assert_eq!(
+            s.text_around(around),
+            format!("(x0: U, x1: T) -> U{}", clause("T"))
+        );
+    }
+
     /// A recursive type stands among the type variables by its name, as the order of a union
     /// puts named types (DESIGN.md sec:diagnostics); before, it stood first, `L(int) | A | Z`
     /// (MSG-union-order-rest). Named `T` or after beside marks, it is sorted with them once
