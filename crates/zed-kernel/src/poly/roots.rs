@@ -870,7 +870,7 @@ pub(super) fn positive_roots_by(
             }
         };
         if monotone {
-            out.extend(search(p, &slope, words.as_ref(), l, h, &mut spent));
+            out.extend(search(p, &slope, words.as_ref(), l, h, &mut spent, budget));
             continue;
         }
         let m = match &l * 4 < h {
@@ -887,7 +887,9 @@ pub(super) fn positive_roots_by(
 }
 
 /// The integer root of `p` in `lo..=hi`, `2 <= lo < hi`, on which `p` is strictly monotone
-/// (`slope`, `x p'(x)`, has one sign there), if it has one. With the signs of `p` at the ends
+/// (`slope`, `x p'(x)`, has one sign there), if it has one; `steps` counts the units spent,
+/// and `budget` bounds the units the scale of a Newton ratio may raise them to (the scale
+/// loop below). With the signs of `p` at the ends
 /// ([`sign_at`]) opposite, each step is a step of Sagraloff's NEWREFINE ([`refine`]): a
 /// boundary test, then the secant zeros of `p / p'` through the quarter points, each tested on
 /// a grid of `N` cells, `N` squared on a success and its square root on a bisection. A step
@@ -916,6 +918,7 @@ fn search(
     lo: BigInt,
     hi: BigInt,
     steps: &mut u64,
+    budget: u64,
 ) -> Option<BigInt> {
     let sign_at = |p: &[(u64, BigInt)], x: &BigInt| match words.and_then(|w| w.at(x, x)) {
         Some((w, x, _)) => small::sign_at(&w.p, &x),
@@ -1086,29 +1089,55 @@ fn search(
         // the bracket), so the scale stays under `2 (D bits(x) + need)`, the bits of the exact
         // values. Each scale past `s` is charged `ceil(s' / s)` units more, as the numbers have
         // about `s'` bits more than the 1-norm in place of `s`.
+        //
+        // The cap `top = D bits(x) + need` saturates at `u64::MAX` (cross-review
+        // XR-lazy-and-kernel-batch-1 round 2, Gemini B.2; it was an unchecked product). It can
+        // pass 2^64 on an input of [`integer_roots`], as a sparse degree costs no memory:
+        // 1. [`split`] cuts at every gap of at least the bits of the 1-norm of the terms below
+        //    it, so in a piece of `t` terms and 1-norm of `B` bits each gap is under `B` and
+        //    `D < t B`;
+        // 2. the brackets of [`positive_roots`] lie in `2..=1 + max |c|`, so `bits(x) <= B + 1`;
+        // 3. so `D bits(x) + need < t B (B + 1) + B + log2(t) + 5`, past 2^64 once `t B^2` is
+        //    about 2^64: `t = 2^16` terms and one coefficient of 2 MB (`B = 2^24`), or `t = 16`
+        //    and `B = 2^30`. The test
+        //    `search_on_a_sparse_high_degree_polynomial_does_not_overflow_the_scale_cap`
+        //    reaches the product with `D = 2^62` on `2048..=4096`.
+        // `at` is bounded by `top` and by `budget`, the units [`positive_roots_by`] allows: a
+        // raise whose charge would pass it is not taken. A capped scale cannot change an answer:
+        // `ratio` only places the cells of [`refine`], each then tested by an exact sign
+        // ([`sign_at`]), and [`refine`] takes a rounded value or `None` as it takes any other.
         let mut extra = 0u64;
+        let base = *steps;
         let need = |x: &BigInt| x.bits() + (p.len() as u64).ilog2() as u64 + 4;
         let mut ratio = |x: &BigInt| {
             let need = need(x);
-            let top = p.last().map_or(0, |(d, _)| *d) * x.bits() + need;
+            let top = (p.last().map_or(0, |(d, _)| *d))
+                .saturating_mul(x.bits())
+                .saturating_add(need);
             let mut at = s;
-            loop {
+            let (at, d) = loop {
                 #[cfg(test)]
                 (0..2).for_each(|_| full_eval(wide));
                 let d = scaled(slope, x, at);
                 if d.bits() >= need || at >= top {
-                    return (!d.is_zero()).then(|| (mul_int(x, &scaled(p, x, at)), d));
+                    break (at, d);
                 }
-                at = match d.is_zero() {
-                    true => 2 * at,
-                    false => at + (need - d.bits()),
+                let next = match d.is_zero() {
+                    true => at.saturating_mul(2),
+                    false => at.saturating_add(need - d.bits()),
                 }
                 .min(top);
-                extra += at.div_ceil(s);
-            }
+                let cost = next.div_ceil(s);
+                if base.saturating_add(extra).saturating_add(cost) > budget {
+                    break (at, d);
+                }
+                at = next;
+                extra = extra.saturating_add(cost);
+            };
+            (!d.is_zero()).then(|| (mul_int(x, &scaled(p, x, at)), d))
         };
         let found = refine(&mut lo, &mut hi, &mut level, &mut side, &mut ratio);
-        *steps += extra;
+        *steps = steps.saturating_add(extra);
         if let Some(x) = found {
             return Some(x);
         }
@@ -2309,7 +2338,10 @@ mod tests {
         }
         let (flo, fhi) = (eval(q, &lo), eval(q, &hi));
         assert_eq!(chain_search(q, lo.clone(), hi.clone(), flo, fhi), root);
-        assert_eq!(search(q, &times_x, None, lo, hi, &mut 0), Some(root));
+        assert_eq!(
+            search(q, &times_x, None, lo, hi, &mut 0, u64::MAX),
+            Some(root)
+        );
     }
 
     /// The roots of dense cubics of three random roots are found exactly, from 65 to 1,024
@@ -2452,8 +2484,10 @@ mod tests {
                                 let (flo, fhi) = (eval(&q, &lo), eval(&q, &hi));
                                 chain_search(&q, lo.clone(), hi.clone(), flo, fhi)
                             }
-                            _ => search(&q, &times_x, None, lo.clone(), hi.clone(), &mut 0)
-                                .expect("a root"),
+                            _ => {
+                                search(&q, &times_x, None, lo.clone(), hi.clone(), &mut 0, u64::MAX)
+                                    .expect("a root")
+                            }
                         };
                         let [rf, bi] = [&REFINED, &BISECTIONS].map(|c| c.with(|n| n.get()));
                         println!(
@@ -3218,6 +3252,53 @@ mod tests {
             if !tried {
                 assert_eq!(units, u64::from(2 * tau + 9), "tau = {tau}");
             }
+        }
+    }
+
+    /// Gemini B.2 of cross-review XR-lazy-and-kernel-batch-1 round 2: the cap `D bits(x) +
+    /// need` on the scale of `search` was an unchecked u64 product. The polynomial `x^(2^62) -
+    /// 3072 x^(2^62 - 1) - 1` on `2048..=4096` (no integer root; the root is just above 3072)
+    /// has `D bits(x)` at least `12 * 2^62`. The Newton step from either end moves it by under 1
+    /// at this degree, so NEWREFINE's `ratio` runs (red before the fix, 2026-11-27, local:
+    /// "attempt to multiply with overflow" at the cap). Then the same without its constant
+    /// term, whose root 3072 is found with and without a budget for a raised scale.
+    #[test]
+    fn search_on_a_sparse_high_degree_polynomial_does_not_overflow_the_scale_cap() {
+        let d = 1u64 << 62;
+        let p = vec![
+            (0, BigInt::from(-1)),
+            (d - 1, BigInt::from(-3072)),
+            (d, BigInt::one()),
+        ];
+        let times_x: Vec<(u64, BigInt)> = (p[1..].iter())
+            .map(|(e, c)| (*e, c * BigInt::from(*e)))
+            .collect();
+        let mut steps = 0;
+        let (lo, hi) = (BigInt::from(2048), BigInt::from(4096));
+        let found = search(
+            &p,
+            &times_x,
+            None,
+            lo.clone(),
+            hi.clone(),
+            &mut steps,
+            u64::MAX,
+        );
+        assert_eq!(found, None, "steps {steps}");
+        // With the integer root 3072, the same with no budget for a raised scale: the answer is
+        // the exact signs', not the scale's.
+        let q = &p[1..];
+        let q_x: Vec<(u64, BigInt)> = (q.iter())
+            .map(|(e, c)| (*e, c * BigInt::from(*e)))
+            .collect();
+        for budget in [u64::MAX, 0] {
+            let mut steps = 0;
+            let found = search(q, &q_x, None, lo.clone(), hi.clone(), &mut steps, budget);
+            assert_eq!(
+                found,
+                Some(BigInt::from(3072)),
+                "budget {budget}, steps {steps}"
+            );
         }
     }
 }
