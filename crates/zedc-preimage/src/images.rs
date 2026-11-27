@@ -178,7 +178,7 @@ fn prio(key: &str) -> u64 {
 /// and of the scope beside them (`S`), and the tree of the inputs it read there, each with its
 /// leaf ([`Leaf`]). The scope's names are an `N`: a [`Names`] map, or a map that gives each
 /// name's product by name (`NameProducts` in [`product`](crate::product)).
-pub struct Read<S, N, L = Leaf> {
+pub struct Read<S, N, L: Sum = Leaf> {
     /// The scope's names.
     pub names: N,
     /// What the caller keeps of the summary and of the scope.
