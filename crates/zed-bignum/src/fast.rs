@@ -2728,8 +2728,8 @@ pub fn rem_cost(aw: usize, b: &BigUint) -> f64 {
 /// `rem` chooses by, num-bigint's computed cost and [`past_leaf_cost`], times
 /// [`REM_PAST_LEAF_SCALE`]. The blocks [`rem`] reads for a quotient wider than `b` cost
 /// `newton_cost(qw, words(b))`, already one of the two `past_leaf_cost` takes the least of, so
-/// they are not computed again: [`newton_cost`], through [`transform_cost`]'s choice of points,
-/// took 72% of `rem_cost`'s instructions and 41% of the whole estimate's when computed twice
+/// they are not computed again: [`newton_cost`], then through [`transform_cost`]'s choice of
+/// points (before PERF-div-wide-reciprocal-step), took 72% of `rem_cost`'s instructions and 41% of the whole estimate's when computed twice
 /// (callgrind, 2026-11-23, on 2, 4, .., 2^200 with `x` at half of the product).
 /// O(words(b)) for the nonzero words [`sparse_div_cost`] counts. `past_leaf_cost` is the lesser
 /// of [`sparse_div_cost`] and [`newton_cost`]; the latter is computed only when
@@ -2745,16 +2745,17 @@ fn rem_cost_past_leaf(qw: usize, b: &BigUint) -> f64 {
     REM_PAST_LEAF_SCALE * least
 }
 
-/// A lower bound on [`newton_cost`]`(qw, bw)` in O(1): its formula with each
-/// [`transform_cost`]`(c)` replaced by `TRANSFORM_COST h max(1, floor(log2 h))` for
-/// `h = floor(c / 2)`. Proof that this is at most `transform_cost(c)`: `transform_cost(c)` is
-/// `TRANSFORM_COST points_cost(n)` plus a wrap term that is a sum of [`WRAP_COST`] `>= 0` times
-/// points and of `transform_cost` of fewer coefficients, so at least 0 by induction; `n` comes
-/// from [`points`]`(ceil(c / 2), floor(c / 2) + 1)`, whose `la + lb - 1` is `c`, as the power of
-/// two at or above `c` or its half, so `n >= c / 2 >= h`; and `points_cost(n) = n max(1,
-/// log2 n)` (`n` is a power of two, so `trailing_zeros(n) = log2 n`) only grows with `n`, so it
-/// is at least `h max(1, log2 h) >= h max(1, floor(log2 h))`. Each `transform_cost` in
-/// `newton_cost` has a nonnegative coefficient, so the bound carries over. Measured on 2, 4,
+/// A lower bound on [`newton_cost`]`(qw, bw)` in O(1): its formula with each `level(c)`,
+/// `TRANSFORM_COST points_cost(c.next_power_of_two())`, replaced by `TRANSFORM_COST h max(1,
+/// floor(log2 h))` for `h = floor(c / 2)`, and, for a quotient wider than the divisor, the
+/// terms of the remainder's points `level(bw)` (nonnegative) left out. Proof that `level(c)`
+/// is at least the replacement: `n = c.next_power_of_two() >= c >= h`, and `points_cost(n) = n
+/// max(1, log2 n)` (`n` is a power of two, so `trailing_zeros(n) = log2 n`) only grows with
+/// `n`, so it is at least `h max(1, log2 h) >= h max(1, floor(log2 h))`. Each `level` in
+/// `newton_cost` has a nonnegative coefficient (`5/3 + 1/3 + 2B/3` on `level(2 bw)` for `B`
+/// blocks, and `8/3` and 1 in the narrow branch), so the bound carries over; dropping the
+/// nonnegative `level(bw)` terms only lowers it. Test:
+/// `tests::the_newton_floor_is_at_most_its_cost`. Measured on 2, 4,
 /// .., 2^200 (callgrind, 2026-11-23): `newton_cost`'s choice of points took 7,700 instructions
 /// of the 49,500 the descent's estimate took, for divisors (powers of 2) whose sparse long
 /// division the bound shows cheaper.
@@ -2847,8 +2848,28 @@ fn sparse_div_cost(qw: usize, b: &BigUint) -> f64 {
 /// num-bigint's work (29,147,467 against 19,087,323 instructions; `crossover div-leaf 1 1 0
 /// 2048,2049,2896,4096,5793`, zed_icount, 2026-11-23, plan row
 /// PERF-div-narrow-quotient-factor, cross-review XR-ROOTS-REF round 2, D8): the reciprocal's
-/// work steps up by 1.77 from 2048 to 2049 words, the Level's points doubling. The wider
-/// quotients' branch keeps [`transform_cost`], to which their four shapes fit at 9.1.
+/// work steps up by 1.77 from 2048 to 2049 words, the Level's points doubling.
+///
+/// A quotient wider than the divisor is costed by the transforms its [`Divisor`] does, on the
+/// points of its one [`Level`] (plan row PERF-div-wide-reciprocal-step). Before, it was `(B +
+/// 3) transform_cost(2 bw)` for `B` blocks, and [`transform_cost`] wraps a product of `2049`
+/// words onto `4096` points where the Level does not, so `crossover div-leaf 1 1 1` read the
+/// reciprocal's work 1.83 times as great at 4096 by 2049 words as at 4096 by 2048 (40,457,584
+/// against 22,109,667 instructions, zed_icount, v5e3, b22-roots2, 2026-11-23) while the cost
+/// stayed level, and the build took the reciprocal at 1.077 times num-bigint's work there. The
+/// count, read from the code: a product is three transforms (two forward, one inverse) on its
+/// points `N`, so `level(N) / 3` a transform, `level(N) = TRANSFORM_COST N log2 N`.
+/// [`Divisor::with_way`] builds `Level::new(d, n, n)`, whose points are [`level_points`]`(n,
+/// n)`: `L`, the power of two at or above `2 bw` words, for the estimate, and `C`, that of
+/// [`cyclic_points`]`(n)`, at most `bw` words' power of two, for the remainder (taken here at
+/// `bw`'s power of two, as the narrow branch takes `level(bw)`). The build is
+/// [`approx_reciprocal`] of `bw` words, 5/3 of a product (as above), and one transform on each
+/// of `L` (`y`) and `C` (`dc`). Each block is [`Level::div_rem`]: one [`cyclic_product`] on
+/// `L` (the forward transform of `xh` and an inverse, `y` kept) and one in [`remainder`] on `C`
+/// (likewise, `dc` kept), two transforms on each. The first block is long division, O(bw)
+/// ([`Divisor::blocks`]), not counted. So `(5/3) level(L) + (level(L) + level(C)) / 3 + B (2/3)
+/// (level(L) + level(C))`. The word-level work outside the transforms (the folds, Garner's
+/// step, the corrections) is linear and left out, as in the narrow branch.
 fn newton_cost(qw: usize, bw: usize) -> f64 {
     let level = |coeffs: usize| TRANSFORM_COST * points_cost(coeffs.next_power_of_two()) as f64;
     match qw > bw {
@@ -5839,6 +5860,20 @@ mod tests {
         assert_eq!(div.div_rem(&x), x.div_rem(&d));
     }
 
+    /// [`newton_cost`] of a quotient wider than the divisor steps up where the divisor passes a
+    /// power of two of words, as the [`Level`] of its [`Divisor`] doubles its points
+    /// ([`level_points`]): measured 1.83 and 1.87 times the instructions at 2049 words of
+    /// divisor as at 2048, for quotients of about 4096 and 6145 words (plan row
+    /// PERF-div-wide-reciprocal-step). Before, on [`transform_cost`], which wraps 4098
+    /// coefficients onto 4096 points, the cost read 0.95 to 1.0 times.
+    #[test]
+    fn the_cost_of_a_wide_quotient_steps_past_a_power_of_two_of_divisor() {
+        for qw in [4096, 4097, 6145] {
+            let step = newton_cost(qw, 2049) / newton_cost(qw, 2048);
+            assert!(step > 1.5, "qw {qw}: {step}");
+        }
+    }
+
     /// [`newton_cost`] charges a quotient of `qw` words, wider than the divisor's `bw`, the
     /// blocks [`Divisor::blocks`] reads after its first: `(qw - 1) / bw` rounded up, which is
     /// `qw / bw` rounded up less one where `qw` is 1 more than a multiple of `bw`.
@@ -5853,8 +5888,14 @@ mod tests {
                 div.blocks(&a, |_, _| steps += 1);
                 let blocks = (qw - 1).div_ceil(bw);
                 assert_eq!(steps, blocks + 1, "bw {bw} qw {qw}");
-                let cost = (blocks as f64 + 3.0) * transform_cost(2 * bw);
-                assert_eq!(newton_cost(qw, bw), cost, "bw {bw} qw {qw}");
+                let level = |c: usize| TRANSFORM_COST * points_cost(c.next_power_of_two()) as f64;
+                let per_block = 2.0 * (level(2 * bw) + level(bw)) / 3.0;
+                let first = newton_cost(bw + 1, bw) - per_block;
+                let (cost, want) = (newton_cost(qw, bw), first + blocks as f64 * per_block);
+                assert!(
+                    (cost - want).abs() <= 1e-9 * want,
+                    "bw {bw} qw {qw}: {cost} {want}"
+                );
             }
         }
     }
