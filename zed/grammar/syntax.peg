@@ -36,8 +36,8 @@ Local         = 'local' Decl                                                    
 Initial       = 'initial' InitTarget '=' Expr Carry? ';'                           L6
 Carry         = 'with' 'carryForward'                                              L6
 InitTarget    = Name ':' Type                                                      L6
-              | Name ('[' IndexKey ']')+                                           L6
-              | Name % ','                                                         L6
+              | Name ('[' nest(IndexKey) ']')+                                     L6
+              | Name % ','                                                       L6
 Return        = 'return' Expr % ',' ';'                                            L1
 Emit          = 'emit' Expr ';'                                                    L4
 While         = 'while' Expr ';'                                                   L6
@@ -52,9 +52,9 @@ Path          = Path '.' Name                                                   
               | Name                                                               L1
 Pin           = ANNOT '(' STRING ','? ')'                                          L2
 
-Struct        = 'struct' Name TypeParams? '{' (StructField % ',' ','?)? '}'        L2
+Struct        = 'struct' Name TypeParams? '{' nest((StructField % ',' ','?)?) '}'  L2
               | 'struct' Name 'grammar' '{' GAlt '}'                               L20
-StructField   = 'law' Name '(' Params? ')' '=' Expr                                L12
+StructField   = 'law' Name '(' nest(Params?) ')' '=' Expr                          L12
               | Name ':' Type '=' Expr                                             L2
               | 'import' TypeApply                                                 L2
               | Field                                                              L2
@@ -63,14 +63,14 @@ Field         = 'import' Path                                                   
               | Name ':' Type                                                      L2
 TypeDecl      = 'type' Name TypeParams? '=' Type ';'                               L2
 TypeParams    = '(' ('positional'? Name) % ',' ','? ')'                            L2
-Interface     = 'interface' Name TypeParams? '{' (Member % ',' ','?)? '}'          L10
-Member        = 'law' Name '(' Params? ')' '=' Expr                                L22
+Interface     = 'interface' Name TypeParams? '{' nest((Member % ',' ','?)?) '}'    L10
+Member        = 'law' Name '(' nest(Params?) ')' '=' Expr                          L22
               | 'import' Path '(' nest(Type % ',' ','?) ')'                        L22
               | Field                                                              L10
-Law           = 'law' Name '(' Params? ')' '=' Expr (';' | Proof)                  L15
+Law           = 'law' Name '(' nest(Params?) ')' '=' Expr (';' | Proof)            L15
 
-Function      = Name '(' Params? ')' Result? Body                                  L1
-Method        = Name '.' Name ('(' Params? ')')? Result? Body                      L2
+Function      = Name '(' nest(Params?) ')' Result? Body                            L1
+Method        = Name '.' Name ('(' nest(Params?) ')')? Result? Body                L2
 Params        = (PosParam | Param) % ',' ','?                                      L1
 PosParam      = ~TupleParam                                                        L2
               | ~PositionalParam                                                   L1
@@ -82,7 +82,7 @@ Body          = '=' Expr (';' | Trailer+)                                       
               | Block Trailer*                                                     L1
 Trailer       = ~TestTable                                                         L1
               | ~Proof                                                             L15
-TestTable     = 'test' TestPorts? '{' TestCase % ',' ','? '}'                       L1
+TestTable     = 'test' TestPorts? '{' nest(TestCase % ',' ','?) '}'                 L1
 TestPorts     = 'with' PortValue % ','                                             L7
 PortValue     = PortName '=' Expr                                                  L7
 PortName      = 'main' '::' Name                                                   L7
@@ -90,14 +90,14 @@ PortName      = 'main' '::' Name                                                
 TestCase      = Expr12 '->' Expr12                                                 L1
 Proof         = 'proof' Block                                                      L15
 
-IndexedDef    = Name ('[' IndexKey ']')+ '=' Expr Boundary? ';'                    L6
+IndexedDef    = Name ('[' nest(IndexKey) ']')+ '=' Expr Boundary? ';'              L6
 IndexKey      = Name 'in' Expr                                                     L6
               | Expr                                                               L6
 Push          = ~AckPush                                                           L7
               | ~KeyedPush                                                         L7
               | ~WholePush                                                         L1
-AckPush       = Name '=' PushTarget ('[' Expr ']')* '<-' Expr ';'                  L7
-KeyedPush     = PushTarget ('[' Expr ']')+ '<-' Expr ';'                           L7
+AckPush       = Name '=' PushTarget ('[' nest(Expr) ']')* '<-' Expr ';'            L7
+KeyedPush     = PushTarget ('[' nest(Expr) ']')+ '<-' Expr ';'                     L7
 WholePush     = PushTarget '<-' Expr ';'                                           L1
 PushTarget    = Name ('.' Name)* ('::' Name)?                                      L1
 Binding       = ~TypedBinding                                                      L1
@@ -106,12 +106,12 @@ TypedBinding  = Name ':' Type '=' Expr ';'                                      
 PlainBinding  = Target % ',' '=' Expr ';'                                          L1
 Target        = Name | WILD                                                        L1
 Boundary      = 'with' BoundaryItem % ','                                          L6
-BoundaryItem  = Name ('[' IndexKey ']')+ '=' Expr                                  L6
+BoundaryItem  = Name ('[' nest(IndexKey) ']')+ '=' Expr                            L6
 Signature     = Name ':' Type ';'                                                  L7
 
 Expr          = Lambda                                                             L1
               | Expr12                                                             L1
-Lambda        = (Name | '(' Params? ')') '->' (Block | !'{' Expr)                  L1
+Lambda        = (Name | '(' nest(Params?) ')') '->' (Block | !'{' Expr)            L1
 Expr12        = Expr12 ElseTail                                                    L1
               | ~Or                                                                L1
 ElseTail      = 'else' AtomPattern '->' (!HEAD Block | !'{' Or)                    L1
