@@ -25669,8 +25669,8 @@ fn point_of(rows: &[Con], greatest: bool) -> Option<Model> {
 }
 
 /// The hulls of the symbols `syms` over the conjunction `rows`, which holds at the point `m`:
-/// each by [`hull_from_known`] over the projection of `rows` onto the symbol ([`projected_each`]), all
-/// projections made together. [`shadow`] eliminates exactly over the integers, so the
+/// each by [`hull_from_known`] over the projection of `rows` onto the symbol ([`projected_each`]),
+/// all projections made together. [`shadow`] eliminates exactly over the integers, so the
 /// projection has the integer points of `rows` read on the atoms it keeps, and the symbol's
 /// hull over it is its hull over `rows`; where every other atom is gone, the rows over the
 /// symbol alone give the hull with no question. A symbol whose projection shows no point (none

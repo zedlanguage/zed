@@ -1462,11 +1462,12 @@ fn span_mask((lo, hi): (i64, i64), blk: i64) -> u64 {
 // interval (`⌈a/64⌉ + ⌈b/64⌉ <= ⌈(a + b)/64⌉ + 1` for the two stretches, and one block each
 // where the interval starts and ends partway), and the interval, of at least U keys, holds at
 // least `(U - 126)/64` full words, at least `MIN_FILL` for `U >= 64·MIN_FILL + 126 = 1150`,
-// so its full words are one item of `fill`, whatever the number of atoms. For a table in the middle of
-// the forward pass (the sums of the first j atoms of the group in its order): once the first t
-// atoms are B, the lemma holds for each j >= t; before, the table's keys are at most `ΣB`, so
-// it has at most `⌈ΣB/64⌉ + 1` words. So every table of the group's forward pass has O(t·U/64) words
-// whatever its number of atoms, where t is the number of atoms needed to make the core B.
+// so its full words are one item of `fill`, whatever the number of atoms. For a table in the
+// middle of the forward pass (the sums of the first j atoms of the group in its order): once
+// the first t atoms are B, the lemma holds for each j >= t; before, the table's keys are at
+// most `ΣB`, so it has at most `⌈ΣB/64⌉ + 1` words. So every table of the group's forward
+// pass has O(t·U/64) words whatever its number of atoms, where t is the number of atoms
+// needed to make the core B.
 // For the family `coefficients_one_and_two` (and `overlap_rows`) of
 // `l01_38_omega_test::disj_groups`, `w_i = 1000 + (37·i² mod 991)`: the groups are `y_0 ..`
 // (step 1, values `w_i`), the shared atoms of each parity (step 2, values `w_i`), and the
