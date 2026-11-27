@@ -492,6 +492,49 @@ impl Value {
         }
     }
 
+    /// Whether no node of the value is reached twice from it, so that the value written out
+    /// (`Display`, which walks a shared part once for every path to it) holds each node's own
+    /// bytes once: for zed-native's debug info, which writes a name's value out
+    /// (DWARF-shown-value-shared-size). A tuple joined with itself, `t1 = (t0, t0)` and on, is
+    /// a few nodes per doubling, and doubled 62 times it is 2^62 copies of `t0` written out;
+    /// such a value answers false. The nodes are the sequences of tuples, keypaths and
+    /// payloads, the nodes of a string's tree (as zed-native's `held_once` on a string reads
+    /// them), big and rational numbers, and a family's map nodes, range, open range and the
+    /// parts of a list made by `++`. Atom and field names are not counted: they are source
+    /// names, of bounded size, written once for each place that holds them. A node of no
+    /// entries or bytes is not counted.
+    ///
+    /// Cost: one walk that reads a node's parts only when its address is new and stops at the
+    /// first address met again, so it reads each distinct node once: O(N) expected (a hash
+    /// set) for the N distinct nodes and entries it reads, whatever the size written out.
+    ///
+    /// Proof that the answer is right: every node is a live allocation while `self` lives,
+    /// so two nodes have one address only when they are one node. The walk reads, from the
+    /// root, every node a path reaches, unless it has stopped; it inserts each node's address
+    /// each time a path reaches it. Each path reaching a node reaches it through a distinct
+    /// slot of the nodes above it; so if some node is reached by two paths, the walk meets its
+    /// address twice and answers false (it inserts it at the first meeting and fails at the
+    /// second, or has stopped earlier at another node met twice). If every node is reached by
+    /// one path, every insert is new and the answer is true.
+    pub fn held_once(&self) -> bool {
+        let mut seen = HashSet::new();
+        let mut todo = vec![self];
+        while let Some(v) = todo.pop() {
+            let fresh = match v {
+                Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Float32(_) => true,
+                Value::Big(r) | Value::Rat(r) => seen.insert(Arc::as_ptr(r).addr()),
+                Value::Str(s) => text_held_once(s, &mut seen),
+                Value::Atom(a) => items_held_once(a.args(), &mut seen, &mut todo),
+                Value::Tuple(xs) | Value::Path(xs) => items_held_once(xs, &mut seen, &mut todo),
+                Value::Family(f) => family_held_once(f, &mut seen, &mut todo),
+            };
+            if !fresh {
+                return false;
+            }
+        }
+        true
+    }
+
     /// A string value.
     pub fn str(s: &str) -> Self {
         Value::Str(s.into())
@@ -1029,6 +1072,68 @@ fn flagged_beneath<'a>(
                     todo.extend(xs.iter());
                 }
             }
+        }
+    }
+}
+
+/// [`Value::held_once`] on a sequence: its values onto `todo` when its address is new.
+fn items_held_once<'a>(
+    xs: &'a Items,
+    seen: &mut HashSet<usize>,
+    todo: &mut Vec<&'a Value>,
+) -> bool {
+    if xs.is_empty() {
+        return true;
+    }
+    let fresh = seen.insert(Arc::as_ptr(&xs.0).cast::<u8>().addr());
+    if fresh {
+        todo.extend(xs.iter());
+    }
+    fresh
+}
+
+/// [`Value::held_once`] on a string: each non-empty node of its tree read once, as zed-native's
+/// `held_once` reads it.
+fn text_held_once(s: &Text, seen: &mut HashSet<usize>) -> bool {
+    let mut todo = vec![s];
+    while let Some(t) = todo.pop() {
+        if t.is_empty() {
+            continue;
+        }
+        if !seen.insert(t.node_id()) {
+            return false;
+        }
+        if let crate::text::Piece::Parts(parts) = t.piece() {
+            todo.extend(parts);
+        }
+    }
+    true
+}
+
+/// [`Value::held_once`] on a family: its map's nodes, its range or open range, or the parts of
+/// the list made by `++` and each list they join; the keys and values onto `todo`.
+fn family_held_once<'a>(
+    f: &'a Family,
+    seen: &mut HashSet<usize>,
+    todo: &mut Vec<&'a Value>,
+) -> bool {
+    match &f.0 {
+        Entries::Map(m) => m.each_node_once(seen, &mut |k, v| todo.extend([k, v])),
+        Entries::Range(s) => seen.insert(Arc::as_ptr(s).addr()),
+        Entries::From(v) => {
+            let fresh = seen.insert(Arc::as_ptr(v).addr());
+            if fresh {
+                todo.push(v);
+            }
+            fresh
+        }
+        Entries::Seq(c) => {
+            let mut lists = Vec::new();
+            // A list `Chain` joins is not made by `++` (`ChainTree::Leaf`), so this recursion
+            // is one level deep.
+            seen.insert(Arc::as_ptr(c).addr())
+                && c.each_part_once(seen, &mut |g| lists.push(g))
+                && lists.into_iter().all(|g| family_held_once(g, seen, todo))
         }
     }
 }
@@ -2172,6 +2277,43 @@ mod chain {
             /// The sum of its entries (`Chain::sum`), once read.
             sum: OnceLock<u64>,
         },
+    }
+
+    impl Chain {
+        /// Calls `f` on each list joined into the chain and adds the address of each part of its
+        /// tree to `seen`; false, at once, at the first part `seen` holds already
+        /// (`Value::held_once`). An empty part holds no entry and is not counted. O(parts read).
+        pub(super) fn each_part_once<'a>(
+            &'a self,
+            seen: &mut HashSet<usize>,
+            f: &mut impl FnMut(&'a Family),
+        ) -> bool {
+            let mut todo = vec![&self.tree];
+            while let Some(p) = todo.pop() {
+                if matches!(&*p.0, ChainTree::Empty) {
+                    continue;
+                }
+                if !seen.insert(Arc::as_ptr(&p.0).addr()) {
+                    return false;
+                }
+                match &*p.0 {
+                    ChainTree::Empty => {}
+                    ChainTree::Leaf(g) => f(g),
+                    ChainTree::Node { parts, .. } => todo.extend(parts.iter().flatten()),
+                    ChainTree::Deep {
+                        front,
+                        middle,
+                        back,
+                        ..
+                    } => {
+                        todo.extend(front.iter().flatten());
+                        todo.push(middle);
+                        todo.extend(back.iter().flatten());
+                    }
+                }
+            }
+            true
+        }
     }
 
     impl Part {
@@ -5315,6 +5457,104 @@ pub(crate) mod key_forms;
 mod tests {
     use super::*;
     use crate::seed::Rng;
+
+    /// A list family of `xs`, keyed from 0.
+    fn listed(xs: Vec<Value>) -> Family {
+        let map = (0i64..).map(Value::Int).zip(xs).collect();
+        Family::from_map(map)
+    }
+
+    /// [`Value::held_once`] on values each of whose nodes one path reaches: scalars, a string
+    /// joined of two others, nested tuples, atoms, a family of families, a range and a list
+    /// made by `++`; and one level of 10,000 distinct tuples, each read once.
+    #[test]
+    fn a_value_whose_nodes_are_each_reached_once_is_held_once() {
+        let big = Value::int(BigInt::from(1u8) << 200u32);
+        let s = Text::join(&Text::from("ab"), &Text::from("cd")).expect("a short string");
+        let inner = Family::from_map([(Value::Int(0), Value::str("x"))].into_iter().collect());
+        let outer = Family::from_map(
+            [(Value::Int(0), Value::Family(inner))]
+                .into_iter()
+                .collect(),
+        );
+        let joined = listed(vec![Value::Int(1)])
+            .concat(&listed(vec![Value::Int(2)]))
+            .expect("two lists");
+        for v in [
+            Value::Int(3),
+            Value::Bool(true),
+            big.clone(),
+            Value::Str(s),
+            Value::tuple(vec![Value::tuple(vec![Value::Int(1)]), big]),
+            Value::atom_with("p", vec![Value::Int(1), Value::str("q")]),
+            Value::Family(outer),
+            Value::Family(Family::range(0, 1 << 40)),
+            Value::Family(joined),
+            Value::tuple(
+                (0..10_000)
+                    .map(|i| Value::tuple(vec![Value::Int(i)]))
+                    .collect(),
+            ),
+        ] {
+            assert!(v.held_once(), "{v}");
+        }
+    }
+
+    /// [`Value::held_once`] is false where one node is reached twice: a tuple, a big number, a
+    /// string, a family and a list made by `++` each held in two places, and a tuple joined
+    /// with itself 62 times (2^62 copies written out, 63 distinct tuples), which the walk
+    /// answers after reading at most those 63 (it would not end if it read each copy).
+    #[test]
+    fn a_value_that_reaches_a_node_twice_is_not_held_once() {
+        let t = Value::tuple(vec![Value::Int(1), Value::Int(2)]);
+        let big = Value::int(BigInt::from(1u8) << 200u32);
+        let s = Value::Str(Text::from("hi"));
+        let f = Value::Family(listed(vec![Value::Int(1)]));
+        let joined = Value::Family(
+            listed(vec![Value::Int(1)])
+                .concat(&listed(vec![Value::Int(2)]))
+                .expect("two lists"),
+        );
+        for x in [t, big, s, f, joined] {
+            assert!(x.held_once(), "{x}");
+            let twice = Value::tuple(vec![x.clone(), x.clone()]);
+            assert!(!twice.held_once(), "{twice}");
+            let nested = Value::tuple(vec![Value::tuple(vec![x.clone()]), x.clone()]);
+            assert!(!nested.held_once(), "{nested}");
+        }
+        let mut doubled = Value::tuple(vec![Value::Int(1)]);
+        for _ in 0..62 {
+            doubled = Value::tuple(vec![doubled.clone(), doubled]);
+        }
+        assert!(!doubled.held_once());
+        let mut chained = Value::tuple(vec![Value::Int(1)]);
+        for i in 0..62 {
+            chained = Value::tuple(vec![chained, Value::Int(i)]);
+        }
+        assert!(chained.held_once());
+    }
+
+    /// A string joined with itself (`s ++ s`) and a list joined with itself by `++` reach the
+    /// part they join twice, inside one string or one family: [`Value::held_once`] is false,
+    /// and for a string joined with itself 62 times too; a family whose two values are one
+    /// family is too.
+    #[test]
+    fn a_string_list_or_family_holding_one_part_twice_is_not_held_once() {
+        let a = Text::from("a".repeat(5000));
+        let aa = Text::join(&a, &a).expect("a short string");
+        assert!(!Value::Str(aa).held_once());
+        let mut s = Text::from("ab");
+        for _ in 0..62 {
+            s = Text::join(&s, &s).expect("a string of 2^63 bytes held in shared nodes");
+        }
+        assert!(!Value::Str(s).held_once());
+        let xs = listed((0..100).map(Value::Int).collect());
+        let twice = xs.concat(&xs).expect("two lists");
+        assert!(!Value::Family(twice).held_once());
+        let g = Value::Family(listed(vec![Value::str("g")]));
+        let both = listed(vec![g.clone(), g]);
+        assert!(!Value::Family(both).held_once());
+    }
 
     /// Four threads each draw more than two blocks of ids: no id is drawn twice, within a thread
     /// or across threads, and none is 0, the id of the empty family (the claim at

@@ -488,6 +488,44 @@ impl<K, V> Map<K, V> {
         }
     }
 
+    /// Calls `f` on every entry, in key order, and adds the address of each node read to `seen`;
+    /// false, at once, at the first node whose address `seen` holds already: a node this map, or
+    /// another walk sharing `seen`, reaches a second time (`value::Value::held_once`). It reads
+    /// each node at most once, so it costs O(nodes + entries) of the nodes it reads before
+    /// it stops.
+    pub(crate) fn each_node_once<'a>(
+        &'a self,
+        seen: &mut std::collections::HashSet<usize>,
+        f: &mut impl FnMut(&'a K, &'a V),
+    ) -> bool {
+        fn node<'a, K, V>(
+            n: &'a Node<K, V>,
+            seen: &mut std::collections::HashSet<usize>,
+            f: &mut impl FnMut(&'a K, &'a V),
+        ) -> bool {
+            match n {
+                Node::Leaf(s) => {
+                    let fresh = seen.insert(Arc::as_ptr(s).cast::<u8>().addr());
+                    if fresh {
+                        s.iter().for_each(|(k, v)| f(k, v));
+                    }
+                    fresh
+                }
+                Node::Inner(bs) => {
+                    seen.insert(Arc::as_ptr(bs).cast::<u8>().addr())
+                        && bs.iter().all(|b| {
+                            let fresh = node(&b.child, seen, f);
+                            if let (true, Some((k, v))) = (fresh, &b.next) {
+                                f(k, v);
+                            }
+                            fresh
+                        })
+                }
+            }
+        }
+        self.root.as_ref().is_none_or(|n| node(n, seen, f))
+    }
+
     /// Whether `test` holds for every key; true for no keys. `test` must be the one test every
     /// call on a map of this `K` and `V` is made with, since a branch keeps its answer for the
     /// next call of any map that shares it; the families' (`value::Family::may_be_list`: the key
