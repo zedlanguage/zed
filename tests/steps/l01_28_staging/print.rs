@@ -17,6 +17,7 @@
 
 use zed_kernel::print::{pretty_in, written};
 use zed_kernel::term::build::{lit, var};
+use zed_kernel::text::ident::written_name;
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World};
 use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 
@@ -93,6 +94,61 @@ pub(super) fn wide(k: usize, m: usize) -> Term {
         vec!["c".into()],
         Shared::new(Term::If(Shared::new(var("c")), arm(1), arm(2))),
     )
+}
+
+/// `x1 + … + xk`, one node.
+fn sum_of_xs(k: usize) -> Shared {
+    let x = |i: usize| var(&format!("x{i}"));
+    Shared::new((2..=k).fold(x(1), |s, i| prim(Prim::Add, vec![s, x(i)])))
+}
+
+/// `c -> { x1 = 0; …; xk = 0; body }`, so that a part under `body` reading any `xj` reads a
+/// name bound at each of its places.
+fn under_zeros(k: usize, body: Shared) -> Term {
+    let t = (1..=k).rev().fold(body, |body, j| {
+        Shared::new(Term::Let(
+            format!("x{j}").into(),
+            Shared::new(lit(0i64)),
+            body,
+        ))
+    });
+    Term::Lam(vec!["c".into()], t)
+}
+
+/// `c -> { x1 = 0; …; xk = 0; T1 }`: `Tj = { xj = j; (T(j+1), { xj = j + 100; P }) }` for
+/// `j < k`, `Tk = { xk = k; P }`, and `P = x1 + … + xk` one node: each `xj` is bound in three
+/// places, and the part `P` is held under each `Tj`. The first item of each pair is built before
+/// the second, so the env of `xj` has one env set from it when the text below it is built
+/// (Claude C-1, round 2 of XR-lazy-and-kernel-batch-1, with the zeros added so that no name is
+/// read free).
+pub(super) fn chains(k: usize) -> Term {
+    let p = sum_of_xs(k);
+    let x = |i: usize| format!("x{i}");
+    let inner = Term::Let(x(k).into(), Shared::new(lit(k as i64)), p.clone());
+    let t = (1..k).rev().fold(inner, |below, j| {
+        let second = Term::Let(x(j).into(), Shared::new(lit(j as i64 + 100)), p.clone());
+        let pair = prim(Prim::Tuple, vec![below, second]);
+        Term::Let(x(j).into(), Shared::new(lit(j as i64)), Shared::new(pair))
+    });
+    under_zeros(k, Shared::new(t))
+}
+
+/// `c -> { x1 = 0; …; xk = 0; T1 }`: `Tj = { xj = j; if c { T(j+1) } else { P } }` for
+/// `j <= k`, `T(k+1) = P`, and `P = x1 + … + xk` one node: each `xj` but the first is read at a
+/// place outside its inner binder, and the `then` arm is built before the `else` (Gemini C.1,
+/// round 2 of XR-lazy-and-kernel-batch-1, with the zeros added so that no name is read free).
+pub(super) fn spine(k: usize) -> Term {
+    let p = sum_of_xs(k);
+    let x = |i: usize| format!("x{i}");
+    let t = (1..=k).rev().fold(p.clone(), |below, j| {
+        let arms = Term::If(Shared::new(var("c")), below, p.clone());
+        Shared::new(Term::Let(
+            x(j).into(),
+            Shared::new(lit(j as i64)),
+            Shared::new(arms),
+        ))
+    });
+    under_zeros(k, t)
 }
 
 /// `c -> if c { x = 1; P } else { x = 2; P }` and `P = { x = 3; (x, …, x) }` with `w` items: the
@@ -243,6 +299,174 @@ fn a_part_reading_many_names_bound_twice_reads_back_with_the_same_value() {
     }
 }
 
+/// The two families whose updates walked a chain of envs once per binder (`chains` and
+/// `spine`): the texts read back to the same value, and the text of 8 times the names is at
+/// most 24 times as long (`bench::print` times them at 400 and 3200).
+#[test]
+fn a_chain_of_envs_passed_by_one_update_and_named_by_the_next_reads_back() {
+    for make in [chains, spine] {
+        for k in 1..=8 {
+            let t = make(k);
+            reads_back_the_same(&t, &shown(&t), &bools());
+            reads_back_the_same(&t, &pretty_in(&t, 40, &none), &bools());
+            reads_back_the_same(&t, &written(&t, |x| x, &none), &bools());
+        }
+        for k in [16, 50] {
+            let (small, large) = (shown(&make(k)).len(), shown(&make(8 * k)).len());
+            assert!(
+                large <= 3 * 8 * small,
+                "{small} at {k}, {large} at {}",
+                8 * k
+            );
+        }
+    }
+}
+
+/// The text of `t` in a message: each name as the program wrote it, `x` for the kernel's `x@1`
+/// and `x@2` ([`written_name`]), as zedc-preimage prints a term.
+fn message(t: &Term) -> String {
+    written(t, written_name, &none)
+}
+
+fn let_(x: &str, e: Term, body: Term) -> Term {
+    Term::Let(x.into(), Shared::new(e), Shared::new(body))
+}
+
+fn add(a: Term, b: Term) -> Term {
+    prim(Prim::Add, vec![a, b])
+}
+
+fn sub(a: Term, b: Term) -> Term {
+    prim(Prim::Sub, vec![a, b])
+}
+
+fn ten(a: Term) -> Term {
+    prim(Prim::Mul, vec![a, lit(10i64)])
+}
+
+// Where a read of `x@1` in a message's text would name a binder of `x@2`, the binder takes a
+// new name, `x2`, and the text reads back to the same value (round 2 of
+// XR-lazy-and-kernel-batch-1: Codex D5 and C7, Gemini C.2). The values differ wherever a
+// capture would change them.
+
+/// Codex D5: the parameter read under a binder of another `x`; the kernel gives 9 for 9, the
+/// text `x -> { { x = 5; x } }` gave 5.
+#[test]
+fn a_binder_written_as_a_parameter_read_under_it_takes_a_new_name() {
+    let t = Term::Lam(
+        vec!["x@1".into()],
+        Shared::new(let_("x@2", lit(5i64), var("x@1"))),
+    );
+    let ints: Vec<Vec<Value>> = [9i64, -2].map(|n| vec![Value::Int(n)]).to_vec();
+    assert_eq!(message(&t), "x -> { x2 = 5; x }");
+    reads_back_the_same(&t, &message(&t), &ints);
+}
+
+/// Codex D5, "simultaneous differently bound parameter collisions": two parameters written
+/// alike.
+#[test]
+fn a_second_parameter_written_as_the_first_takes_a_new_name() {
+    let t = Term::Lam(
+        vec!["x@1".into(), "x@2".into()],
+        Shared::new(sub(var("x@1"), var("x@2"))),
+    );
+    let pairs: Vec<Vec<Value>> = [(9i64, 2i64), (-2, 7)]
+        .map(|(a, b)| vec![Value::Int(a), Value::Int(b)])
+        .to_vec();
+    assert_eq!(message(&t), "(x, x2) -> x - x2");
+    reads_back_the_same(&t, &message(&t), &pairs);
+}
+
+/// A control: a part reading `x@1`, bound in each arm and so read from the env, and `x@2`,
+/// bound once above the `if`, where the part is defined; nothing is captured.
+#[test]
+fn a_part_reading_two_names_written_alike_from_its_env_and_its_scope_reads_back() {
+    let items = (1..=4)
+        .map(|i| {
+            add(
+                ten(var("x@1")),
+                prim(Prim::Mul, vec![var("x@2"), lit(i as i64)]),
+            )
+        })
+        .collect();
+    let p = Shared::new(prim(Prim::Tuple, items));
+    let arm = |a: i64| Shared::new(Term::Let("x@1".into(), Shared::new(lit(a)), p.clone()));
+    let t = Term::Lam(
+        vec!["c".into()],
+        Shared::new(let_(
+            "x@2",
+            lit(2i64),
+            Term::If(Shared::new(var("c")), arm(1), arm(5)),
+        )),
+    );
+    let text = message(&t);
+    assert!(text.contains("part1"), "{text}");
+    reads_back_the_same(&t, &text, &bools());
+}
+
+/// Gemini C.2: inside a part, which reads `z` from its env, `x@1 = 1; x@2 = 2; … x@1 …`, `x@1`
+/// bound outside the part too: the env at the binder of `x@1` in the part is set at that
+/// binder, so the read of `x@1` is written as the name (`Builder::read`), under the binder of
+/// `x@2`.
+#[test]
+fn a_read_of_an_env_set_at_its_binder_under_a_binder_written_alike_reads_back() {
+    let items = (1..=4)
+        .map(|i| {
+            add(
+                ten(var("x@1")),
+                prim(Prim::Mul, vec![var("z"), lit(i as i64)]),
+            )
+        })
+        .collect();
+    let inner = Term::Let(
+        "x@2".into(),
+        Shared::new(lit(2i64)),
+        Shared::new(prim(Prim::Tuple, items)),
+    );
+    let r = Shared::new(let_("x@1", lit(1i64), inner));
+    let then = Term::Let("z".into(), Shared::new(lit(7i64)), r.clone());
+    let y = Term::Let(
+        "y".into(),
+        Shared::new(add(var("x@1"), lit(1i64))),
+        r.clone(),
+    );
+    let other = let_("z", lit(8i64), let_("x@1", lit(5i64), y));
+    let t = Term::Lam(
+        vec!["c".into()],
+        Shared::new(Term::If(
+            Shared::new(var("c")),
+            Shared::new(then),
+            Shared::new(other),
+        )),
+    );
+    let text = message(&t);
+    assert!(text.contains("part1") && text.contains("x2 = 2"), "{text}");
+    reads_back_the_same(&t, &text, &bools());
+}
+
+/// Codex C7: an update setting the slots of `x@1` and `x@2` at once, under the binder of `x@2`,
+/// with other values in each arm.
+#[test]
+fn an_update_setting_two_slots_written_alike_reads_back() {
+    let items = vec![
+        add(ten(var("x@1")), var("x@2")),
+        add(var("x@1"), ten(var("x@2"))),
+        sub(var("x@1"), var("x@2")),
+    ];
+    let p = Shared::new(prim(Prim::Tuple, items));
+    let arm = |a: i64, b: i64| {
+        let inner = Term::Let("x@2".into(), Shared::new(lit(b)), p.clone());
+        Shared::new(let_("x@1", lit(a), inner))
+    };
+    let t = Term::Lam(
+        vec!["c".into()],
+        Shared::new(Term::If(Shared::new(var("c")), arm(1, 2), arm(3, 4))),
+    );
+    let text = message(&t);
+    assert!(text.contains("part1") && text.contains("x2 = 2"), "{text}");
+    reads_back_the_same(&t, &text, &bools());
+}
+
 /// A part named in the text does not take a name the term writes: a parameter `part1` moves
 /// the part to `part2`, and a name `env1` moves the env to `env2`.
 #[test]
@@ -386,5 +610,98 @@ fn drawn_terms_with_shared_parts_read_back_with_the_same_value() {
         reads_back_the_same(&t, &shown(&t), &bools());
         reads_back_the_same(&t, &pretty_in(&t, 40, &none), &bools());
         reads_back_the_same(&t, &written(&t, |x| x, &none), &bools());
+    }
+}
+
+/// `c -> if g { x1 = a1; …; xk = ak; P } else { x1 = b1; …; xk = bk; P }` with `P` the tuple of
+/// `10 xi + i`, every slot of a `k`-slot env read in each arm with values that differ by slot
+/// and by arm, for `k` 1, 3 and 5 (Codex C4/C5: the item numbers of the env's pairs, one slot
+/// the whole env), and `k` 0, a part reading no name bound twice.
+#[test]
+fn every_slot_of_an_env_of_1_3_or_5_slots_reads_back_in_both_arms() {
+    for k in [0usize, 1, 3, 5] {
+        let x = |i: usize| format!("x{i}");
+        let items = (1..=k.max(1))
+            .map(|i| match k {
+                0 => add(ten(var("c0")), lit(i as i64)),
+                _ => add(ten(var(&x(i))), lit(i as i64)),
+            })
+            .chain([lit(0i64), lit(1i64)])
+            .collect();
+        let p = Shared::new(prim(Prim::Tuple, items));
+        let arm = |v: i64| {
+            (1..=k).rev().fold(p.clone(), |body, i| {
+                Shared::new(Term::Let(x(i).into(), Shared::new(lit(v + i as i64)), body))
+            })
+        };
+        let body = Term::If(Shared::new(var("c")), arm(10), arm(20));
+        let t = Term::Lam(vec!["c".into()], Shared::new(let_("c0", lit(3i64), body)));
+        for text in [shown(&t), message(&t)] {
+            reads_back_the_same(&t, &text, &bools());
+        }
+    }
+}
+
+/// Codex C1/C2: in one arm a chain `x = 1; y = 2; x = 3` above the part, so the update of the
+/// env at the inner `x` passes the env of `y` and that of the outer `x`, and keeps the inner
+/// `x`: the part reads 3, not 1. (Five items, so that the part is named rather than written in
+/// place at each of its places.)
+#[test]
+fn a_chain_setting_one_slot_twice_keeps_the_inner_binder() {
+    let items = (0..5)
+        .map(|i| add(add(ten(var("x")), var("y")), lit(i as i64)))
+        .collect();
+    let p = Shared::new(prim(Prim::Tuple, items));
+    let inner = Term::Let("x".into(), Shared::new(lit(3i64)), p.clone());
+    let then = let_("x", lit(1i64), let_("y", lit(2i64), inner));
+    let other = let_(
+        "x",
+        lit(4i64),
+        Term::Let("y".into(), Shared::new(lit(5i64)), p.clone()),
+    );
+    let t = Term::Lam(
+        vec!["c".into()],
+        Shared::new(Term::If(
+            Shared::new(var("c")),
+            Shared::new(then),
+            Shared::new(other),
+        )),
+    );
+    for text in [shown(&t), message(&t)] {
+        assert!(text.contains("part1"), "{text}");
+        reads_back_the_same(&t, &text, &bools());
+    }
+}
+
+/// Codex C3: a 5-slot env set in each arm, and in one arm two sibling places of the part each
+/// rebinding another slot, so each sibling's update reads the pairs of the common env, named
+/// once, defined before either sibling.
+#[test]
+fn sibling_updates_of_one_env_read_its_pairs_named_once() {
+    let x = |i: usize| format!("x{i}");
+    let items = (0..5)
+        .map(|i| add(ten(var(&x(i))), lit(i as i64)))
+        .collect();
+    let p = Shared::new(prim(Prim::Tuple, items));
+    let rebind =
+        |i: usize, v: i64| Shared::new(Term::Let(x(i).into(), Shared::new(lit(v)), p.clone()));
+    let guard = Shared::new(prim(Prim::Ge, vec![var("x0"), lit(1i64)]));
+    let siblings = Shared::new(Term::If(guard, rebind(1, 7), rebind(3, 8)));
+    let arm = |v: i64, body: Shared| {
+        (0..5).rev().fold(body, |body, i| {
+            Shared::new(Term::Let(x(i).into(), Shared::new(lit(v + i as i64)), body))
+        })
+    };
+    let t = Term::Lam(
+        vec!["c".into()],
+        Shared::new(Term::If(
+            Shared::new(var("c")),
+            arm(10, siblings),
+            arm(0, p.clone()),
+        )),
+    );
+    for text in [shown(&t), message(&t)] {
+        assert!(text.contains("part1"), "{text}");
+        reads_back_the_same(&t, &text, &bools());
     }
 }

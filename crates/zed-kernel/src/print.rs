@@ -31,13 +31,35 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
+use crate::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness, walk};
+use crate::text::ident::numbered;
 use crate::types::defs;
 use crate::value::Value;
 
-/// How a name is written: as it is (`None`), or through the function a message gives
-/// ([`written`]).
-type Names = Option<fn(&str) -> &str>;
+/// How names are written: each as it is (`written` is `None`), or through the function a
+/// message gives ([`written`]), with each binder in `fresh` written with its new spelling
+/// ([`respelled`]).
+#[derive(Clone, Copy)]
+struct Names<'a> {
+    written: Option<fn(&str) -> &str>,
+    fresh: Option<&'a HashMap<&'a str, String>>,
+}
+
+/// Each name as it is.
+const PLAIN: Names<'static> = Names {
+    written: None,
+    fresh: None,
+};
+
+impl<'a> Names<'a> {
+    /// How the name `x` is written.
+    fn spell(self, x: &'a str) -> &'a str {
+        match self.fresh.and_then(|fresh| fresh.get(x)) {
+            Some(s) => s,
+            None => self.written.map_or(x, |f| f(x)),
+        }
+    }
+}
 
 /// The names that resolve where a term is written: the program's own names and the prelude's.
 pub type Resolves<'r> = &'r dyn Fn(&str) -> bool;
@@ -48,7 +70,7 @@ pub type Resolves<'r> = &'r dyn Fn(&str) -> bool;
 fn form<'t>(
     t: &'t Term,
     resolves: Option<Resolves<'_>>,
-    names: Names,
+    names: Option<fn(&str) -> &str>,
 ) -> (Cow<'t, Term>, HashSet<*const Term>) {
     match dag::shared_form(t, resolves, names) {
         Some(f) => (Cow::Owned(f.term), f.labels),
@@ -63,7 +85,7 @@ pub fn pretty(t: &Term, width: usize) -> String {
     let local = defs::local();
     let (t, labels) = form(t, None, None);
     let mut out = String::new();
-    Doc::of(Piece::Term(&t), None, &labels).render(width, &mut out);
+    Doc::of(Piece::Term(&t), PLAIN, &labels).render(width, &mut out);
     alone(local, out)
 }
 
@@ -77,7 +99,7 @@ pub fn pretty_in(t: &Term, width: usize, resolves: Resolves<'_>) -> String {
     let (t, labels) = form(t, Some(resolves), None);
     debug_assert!(labels.is_empty(), "a scoped term has no label");
     let mut out = String::new();
-    Doc::of(Piece::Term(&t), None, &labels).render(width, &mut out);
+    Doc::of(Piece::Term(&t), PLAIN, &labels).render(width, &mut out);
     alone(local, out)
 }
 
@@ -88,16 +110,128 @@ pub fn pretty_in(t: &Term, width: usize, resolves: Resolves<'_>) -> String {
 /// `if c { false } else { b }` and `if c { a } else { true }` are written `!c && b` and
 /// `!c || a`, which mean the same; and an operator's operands are parenthesized only where
 /// the grammar's precedence needs it (P191, module [`level`]): `x - y >= 1 || x >= 0`,
-/// `a - (b - c)`, `- -x`, `(-x)^2`. Otherwise the text is that of [`pretty_in`] on one line,
-/// and costs the same.
+/// `a - (b - c)`, `- -x`, `(-x)^2`. A binder whose name, so written, would capture a read of
+/// another binder is written with a new spelling ([`respelled`]): `x -> { x2 = 5; x }`.
+/// Otherwise the text is that of [`pretty_in`] on one line, and costs the same.
 pub fn written(t: &Term, name: fn(&str) -> &str, resolves: Resolves<'_>) -> String {
     let local = defs::local();
     let (t, labels) = form(t, Some(resolves), Some(name));
+    let fresh = respelled(&t, name);
+    let names = Names {
+        written: Some(name),
+        fresh: Some(&fresh),
+    };
     let mut out = String::new();
-    Doc::of(Piece::Term(&t), Some(name), &labels)
+    Doc::of(Piece::Term(&t), names, &labels)
         .write_flat(&mut out)
         .expect("writing to a string does not fail");
     alone(local, out)
+}
+
+/// The new spelling of each binder whose written name, `name` of it, would make a read in the
+/// text of `t` name another binder: the parameter `x@1` read under a `let` of `x@2` is written
+/// `x -> { x2 = 5; x }`, not `x -> { x = 5; x }`, which reads 5 (round 2 of
+/// XR-lazy-and-kernel-batch-1: Codex D5 and C7, Gemini C.2). `t` is the term [`form`] gives,
+/// whose reads are proved right on kernel names (module `dag`), so it is enough that each read
+/// in the text names the binder its kernel name names.
+///
+/// The walk goes over `t` with each binder over the parts it binds over ([`walk::kids`]: the
+/// text writes a binder exactly where the evaluator binds it), keeping for each spelling the
+/// binders of it in scope, the innermost on top. At a read of `k`, every binder above the
+/// innermost binder of `k` on its spelling's stack, or every binder there when `k` is bound
+/// nowhere around it (a name the text does not bind), is a binder the read would name in place
+/// of `k`: its kernel name is respelled, and its entries leave the stack. Why the text then
+/// reads right: at each read of a kernel name `k` not respelled, the innermost binder of its
+/// spelling in scope is a binder of `k` when the read is reached, and a later respelling only
+/// takes binders off the stacks, so it stays so; a kernel name respelled has a spelling no
+/// other kernel name and no name of the text has, so each read of it names its innermost
+/// binder, as in `t`. The binder respelled is the one that would capture, the inner, so the
+/// names the program wrote stay where they can.
+///
+/// What this cannot tell apart: two names `t` does not bind with one spelling, `x@1` and
+/// `x@2` both free, are one name in the text; elaboration binds every name it renames, so a
+/// whole program's term has none.
+// Complexity tradeoff: checking each read against every binder around it is O(n d) for n
+// reads under d binders; with a stack for each spelling, each binder is pushed once and taken
+// off once, so the walk is O(text) with O(1) expected hash work a node, as the text itself.
+fn respelled<'t>(t: &'t Term, name: fn(&str) -> &str) -> HashMap<&'t str, String> {
+    enum Step<'t> {
+        Term(&'t Term),
+        Bind(&'t str, usize),
+        Unbind(&'t str, usize),
+    }
+    // For each spelling, its binders in scope, innermost last, each with a number.
+    let mut stacks: HashMap<&'t str, Vec<(&'t str, usize)>> = HashMap::new();
+    // For each kernel name, how many of its binders are on the stacks.
+    let mut live: HashMap<&'t str, usize> = HashMap::new();
+    let mut taken: HashSet<&'t str> = HashSet::new();
+    let mut marked: HashSet<&'t str> = HashSet::new();
+    let mut order: Vec<&'t str> = Vec::new();
+    let mut binders = 0;
+    let mut todo = vec![Step::Term(t)];
+    while let Some(step) = todo.pop() {
+        match step {
+            Step::Term(u) => {
+                if let Term::Var(k) = u {
+                    let k: &str = k;
+                    taken.insert(name(k));
+                    if !marked.contains(k) {
+                        let bound = live.get(k).is_some_and(|&n| n > 0);
+                        let stack = stacks.entry(name(k)).or_default();
+                        while let Some(&(top, _)) = stack.last()
+                            && (!bound || top != k)
+                        {
+                            stack.pop();
+                            *live.get_mut(top).expect("counted at its binder") -= 1;
+                            if marked.insert(top) {
+                                order.push(top);
+                            }
+                        }
+                    }
+                }
+                let mut parts = Vec::new();
+                walk::kids(u, |kid, binds| parts.push((kid.term(), binds)));
+                for (part, binds) in parts.into_iter().rev() {
+                    let mut xs = Vec::new();
+                    binds.each(|x| xs.push((&**x, binders + xs.len())));
+                    binders += xs.len();
+                    todo.extend(xs.iter().map(|&(x, i)| Step::Unbind(x, i)));
+                    todo.push(Step::Term(part));
+                    todo.extend(xs.iter().rev().map(|&(x, i)| Step::Bind(x, i)));
+                }
+            }
+            Step::Bind(x, i) => {
+                taken.insert(name(x));
+                if !marked.contains(x) {
+                    stacks.entry(name(x)).or_default().push((x, i));
+                    *live.entry(x).or_default() += 1;
+                }
+            }
+            Step::Unbind(x, i) => {
+                // Off the stack already if respelled since (then it is not on top), or never
+                // put on (respelled before its binder was reached).
+                if let Some(stack) = stacks.get_mut(name(x))
+                    && stack.last().is_some_and(|&(_, j)| j == i)
+                {
+                    stack.pop();
+                    *live.get_mut(x).expect("counted at its binder") -= 1;
+                }
+            }
+        }
+    }
+    // Numbered from 2 past every spelling the text writes and every one given (`numbered`).
+    let mut next: HashMap<&str, usize> = HashMap::new();
+    let mut given: HashSet<String> = HashSet::new();
+    let mut out = HashMap::with_capacity(order.len());
+    for k in order {
+        let base = name(k);
+        let from = next.get(base).copied().unwrap_or(2);
+        let (n, s) = numbered(base, from, |s| !taken.contains(s) && !given.contains(s));
+        next.insert(base, n + 1);
+        given.insert(s.clone());
+        out.insert(k, s);
+    }
+    out
 }
 
 /// `text`, a term or pattern written while `local` collected the definitions of the types in
@@ -116,7 +250,7 @@ impl fmt::Display for Term {
         let local = defs::local();
         let mut out = String::new();
         let (t, labels) = form(self, None, None);
-        Doc::of(Piece::Term(&t), None, &labels).write_flat(&mut out)?;
+        Doc::of(Piece::Term(&t), PLAIN, &labels).write_flat(&mut out)?;
         f.write_str(&alone(local, out))
     }
 }
@@ -125,7 +259,7 @@ impl fmt::Display for Pattern {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let local = defs::local();
         let mut out = String::new();
-        Doc::of(Piece::Pattern(self), None, &HashSet::new()).write_flat(&mut out)?;
+        Doc::of(Piece::Pattern(self), PLAIN, &HashSet::new()).write_flat(&mut out)?;
         f.write_str(&alone(local, out))
     }
 }
@@ -397,12 +531,12 @@ enum Piece<'a> {
 }
 
 /// The pieces one term or pattern is laid out as, in order, and how names are written.
-struct Pieces<'a>(Vec<Piece<'a>>, Names);
+struct Pieces<'a>(Vec<Piece<'a>>, Names<'a>);
 
 impl<'a> Pieces<'a> {
     /// How the name `x` is written.
     fn name(&self, x: &'a str) -> &'a str {
-        self.1.map_or(x, |f| f(x))
+        self.1.spell(x)
     }
 
     fn text(&mut self, s: impl Into<Cow<'a, str>>) -> &mut Self {
@@ -424,7 +558,7 @@ impl<'a> Pieces<'a> {
     /// parenthesized only when its level is lower; in the other printers' text, which
     /// parenthesizes each binary operator, as [`Pieces::operand`] writes it.
     fn at(&mut self, t: &'a Term, min: u8) -> &mut Self {
-        self.0.push(match self.1 {
+        self.0.push(match self.1.written {
             Some(_) => Piece::At(t, min),
             None => Piece::Operand(t),
         });
@@ -454,7 +588,7 @@ impl<'a> Pieces<'a> {
 
     /// Whether the text is [`written`]'s, which writes minimal parentheses.
     fn minimal(&self) -> bool {
-        self.1.is_some()
+        self.1.written.is_some()
     }
 
     fn pattern(&mut self, p: &'a Pattern) -> &mut Self {
@@ -1022,7 +1156,7 @@ impl<'a> Doc<'a> {
     /// pieces taken from a stack. A term in `labels`, a part of a term shared by address
     /// (identity only), is written `#n=` before its text at its first place and `#n#` alone
     /// at each other, `n` counted from 1 in the order written.
-    fn of(root: Piece<'a>, names: Names, labels: &HashSet<*const Term>) -> Doc<'a> {
+    fn of(root: Piece<'a>, names: Names<'a>, labels: &HashSet<*const Term>) -> Doc<'a> {
         let mut toks = Vec::new();
         let mut todo = vec![
             Piece::Tok(Tok::End),

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use zed_kernel::Term;
 use zed_tests::scaling::{self, FACTOR};
 
-use crate::print::{arms, lets, shown, wide};
+use crate::print::{arms, chains, lets, shown, spine, wide};
 
 /// The text's length at `d` and at `FACTOR * d` is held to a constant over the factor (a
 /// logarithm included), and the time to the order check.
@@ -78,4 +78,15 @@ fn writing_a_part_reading_many_names_bound_twice_scales() {
         |n| wide(n, n),
         |t| t.to_string(),
     );
+}
+
+/// Round 2 of XR-lazy-and-kernel-batch-1 (Claude C-1, Gemini C.1): an update walked up the
+/// chain of envs past each env with one env set from it, and the next binder's update, built
+/// after the first had passed its env, walked the same chain again, Θ(k²) in time and text for
+/// k names. `chains` binds each name in two places beside one part, `spine` binds each once
+/// over a nested `if` whose `else` holds the part.
+#[test]
+fn writing_chains_of_envs_passed_and_named_later_scales() {
+    scales("pretty_in on chains(k)", 400, chains, shown);
+    scales("pretty_in on spine(k)", 400, spine, shown);
 }

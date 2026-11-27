@@ -160,7 +160,9 @@ fn rebound(nodes: &[Node<'_>], dom: &zed_graph::Intervals) -> HashSet<Arc<str>> 
 // `if`s over one shared arm, and the method before this one passed each part the rebound names
 // it reads, `partN(x, y, …)`, O(n k) for k rebound names read through n parts. Here each node is
 // read once and its holders once, O(n) in all: a part reads its rebound names from one value
-// passed at each place (see `Builder`), so what it reads is one yes or no.
+// passed at each place (see `Builder`), so what it reads is one yes or no. The text is
+// O(n log k), not O(n): a binder of a rebound name writes the path to its slot, O(log k) pairs
+// (`Builder::update`; round 2 of XR-lazy-and-kernel-batch-1, Claude C-2).
 fn choose(
     nodes: &[Node<'_>],
     order: &[usize],
@@ -295,6 +297,8 @@ struct Builder<'a, 'r> {
     made_by: Vec<Option<(usize, Arc<str>)>>,
     /// The number of envs set from each env so far.
     children: Vec<u32>,
+    /// Whether an update has passed over each env ([`Builder::update`]).
+    passed: Vec<bool>,
     /// The name of each pair read inside an env, by the env and the number of the pair; each is
     /// written once, `envM = envN[b]`, just inside the definition of its env.
     prefixes: HashMap<(usize, usize), Arc<str>>,
@@ -313,6 +317,7 @@ impl<'a> Builder<'a, '_> {
         self.envs.push(None);
         self.made_by.push(None);
         self.children.push(0);
+        self.passed.push(false);
         self.prefix_defs.push(Vec::new());
         self.envs.len() - 1
     }
@@ -414,21 +419,31 @@ impl<'a> Builder<'a, '_> {
     //
     // Chains: the env an update is set from may be one no text has read, set at the binder just
     // above (`x1 = 1; x2 = 1; …; part(envK)` sets k envs and reads only the last). Such an env,
-    // when it has no other env set from it, is passed over: the update is written from the
-    // nearest env above it that is named or has two envs set from it (the root or a parameter
-    // at the latest, which no binder sets), with the slot of each name passed set, the inner
-    // binder of a name kept. Why that means the env of the chain: an env passed over is set at
-    // a binder above this one in the same text, and every binder of a name with a slot between
-    // them, under an env, sets the next env of the chain, so each name passed resolves here to
-    // the binder that set its slot last. An env passed over and named later, by a text built
-    // after this one, is written by its own binder all the same, as is an env passed over by
-    // none. Cost: a walk passes an env only while one env is set from it, and that count never
-    // falls, so two walks passing one env would both come up through its one child, and the
-    // first to start would be named, which stops the second: each env is passed once, O(envs)
-    // in all. A chain of c names costs the pairs on the union of their paths and the pairs
-    // beside them, in text and in time (marked up to the first pair marked already, and no
-    // sort), at most 2k and at most 2 (c log k + 1), so never more than the c updates written
-    // one by one.
+    // when it has no other env set from it and no update has passed it, is passed over: the
+    // update is written from the nearest env above it that is named, has two envs set from it,
+    // or was passed by an earlier update (the root or a parameter at the latest, which no
+    // binder sets), with the slot of each name passed set, the inner binder of a name kept. Why
+    // that means the env of the chain: an env passed over is set at a binder above this one in
+    // the same text, and every binder of a name with a slot between them, under an env, sets
+    // the next env of the chain, so each name passed resolves here to the binder that set its
+    // slot last. The env the walk stops at is named where the update reads it
+    // ([`Builder::pair`]), and an env named is written by its own binder, whose text is
+    // finished after this one (its body holds this one), so its definition is above this one
+    // in the text. That holds as well for an env passed over and named later, by a text built
+    // after this one; an env no text names is not written.
+    //
+    // Cost: each env is passed by at most one update, as a walk stops at an env passed before,
+    // so the walks cost O(envs + updates) in all. Without that stop (round 2 of
+    // XR-lazy-and-kernel-batch-1, Claude C-1 and Gemini C.1) a walk passed envs that a text
+    // built after it named while each still had one env set from it (the binder of the next
+    // env built at its end, before the other places under the env began), and the update at
+    // the next binder up walked the same chain again: `c -> { x1 = 1; if c { x2 = 2; … } else
+    // { P } }`, `P` reading every `xj`, walked Θ(k²) envs for k names and its text was Θ(k²)
+    // (`bench::print` `writing_chains_of_envs_passed_and_named_later_scales`). A chain of c
+    // names costs the pairs on the union of their paths and the pairs beside them, in text and
+    // in time (marked up to the first pair marked already, and no sort), at most 2k and at most
+    // 2 (c log k + 1), so never more than the c updates written one by one, and the updates of
+    // a term cost O((updates + envs) log k) text in all.
     fn update(&mut self, u: &Update) -> (Arc<str>, Term) {
         let to = self.envs[u.to].clone().expect("an env written is read");
         // The slots set and the numbers on their paths, marked from each slot up to the first
@@ -457,9 +472,11 @@ impl<'a> Builder<'a, '_> {
         let mut from = u.from;
         while self.envs[from].is_none()
             && self.children[from] == 1
+            && !self.passed[from]
             && let Some((above, x)) = self.made_by[from].clone()
         {
             mark(self, &x);
+            self.passed[from] = true;
             from = above;
         }
         let t = self.set_slots(from, 0, 0, self.slots.len());
@@ -852,6 +869,7 @@ pub(super) fn shared_form(
         envs: Vec::new(),
         made_by: Vec::new(),
         children: Vec::new(),
+        passed: Vec::new(),
         prefixes: HashMap::new(),
         prefix_defs: Vec::new(),
         env_count: 0,
