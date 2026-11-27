@@ -547,7 +547,11 @@ fn the_in_place_operations_take_a_path_of_any_depth() {
             let m = M as usize;
             assert_eq!(depth(&t, 2 * M - 2), m + 1);
             remove_mut(&mut t, &(2 * M));
-            p = remove(&p, &(2 * M));
+            // Each persistent result replaces `p`, and the old `p` is dismantled: after this
+            // first step its path of about 2M nodes is its own, and the compiler's drop of it
+            // would be a recursion as deep as the path (STACK-treap-drop-depth).
+            let q = remove(&p, &(2 * M));
+            dismantle(std::mem::replace(&mut p, q));
             assert_eq!(preorder(&t), preorder(&p));
             // A key just above the old middle one, of a priority between those of keys 0 and
             // 4M - 2: the walk stops at key 4M - 2, the path's third node, and splits the rest
@@ -555,16 +559,19 @@ fn the_in_place_operations_take_a_path_of_any_depth() {
             // the walk.
             assert!(depth(&t, 2 * M + 1) > 2 * m - 2);
             insert_mut(&mut t, P(2 * M + 1, 2 * M + 1));
-            p = insert(&p, P(2 * M + 1, 2 * M + 1));
+            let q = insert(&p, P(2 * M + 1, 2 * M + 1));
+            dismantle(std::mem::replace(&mut p, q));
             assert_eq!(preorder(&t), preorder(&p));
             // The key at the bottom of the left side's path, then a new key of the lowest
             // priority there: walks of about M nodes down.
             assert!(depth(&t, 2 * M - 2) > m);
             remove_mut(&mut t, &(2 * M - 2));
-            p = remove(&p, &(2 * M - 2));
+            let q = remove(&p, &(2 * M - 2));
+            dismantle(std::mem::replace(&mut p, q));
             assert_eq!(preorder(&t), preorder(&p));
             insert_mut(&mut t, P(2 * M - 3, 1));
-            p = insert(&p, P(2 * M - 3, 1));
+            let q = insert(&p, P(2 * M - 3, 1));
+            dismantle(std::mem::replace(&mut p, q));
             let got = preorder(&t);
             assert_eq!(got, preorder(&p));
             assert!(depth(&t, 2 * M - 3) > m);
