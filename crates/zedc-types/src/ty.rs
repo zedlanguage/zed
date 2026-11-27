@@ -26069,7 +26069,7 @@ impl Sig {
     ///    -> r` for a call, `r` the need's result, and the meet of the arrows for several
     ///    uses. `h(positional p) = p[0] + 1` prints `(0 -> U) -> U for U in ...`, and
     ///    `n(positional fn) = fn(1)` prints `(1 -> T) -> T`. An application whose types
-    ///    reach a part with a variable twice ([`written_once`]) counts as a use of another
+    ///    reach a part with a variable twice (`written_once`) counts as a use of another
     ///    kind, since its arrow's text could be exponentially larger than its types.
     /// 2. Applied to every such variable at once, the variables a rewrite holds rewritten in
     ///    turn: `h(positional p) = p[1](p[0])` prints `((1 -> T -> U) & (0 -> T)) -> U`, the
