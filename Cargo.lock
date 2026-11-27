@@ -1690,6 +1690,7 @@ dependencies = [
 name = "zedc-stage"
 version = "0.0.0"
 dependencies = [
+ "hashbrown 0.17.1",
  "zed-graph",
  "zed-kernel",
  "zedc-base",

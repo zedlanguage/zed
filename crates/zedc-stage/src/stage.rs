@@ -23,7 +23,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use zed_kernel::digest::{DigestMap, DigestSet};
+use hashbrown::{HashTable, hash_table};
+use std::hash::{BuildHasher, BuildHasherDefault};
+use zed_kernel::digest::{Digest, DigestMap, DigestSet};
 use zed_kernel::term::walk;
 use zed_kernel::text;
 use zed_kernel::types::{Type, defs as printed};
@@ -644,7 +646,23 @@ struct Sets {
     nodes: Vec<SetNode>,
     /// The number of names in each set.
     sizes: Vec<u32>,
-    made: DigestMap<SetNode, Set>,
+    /// The number of each node with the node's hash, found by that hash: the table reads the
+    /// node in `nodes`, as `zed_kernel::text::names::Names` finds its rules, and keeps the hash
+    /// so that growing the table rehashes no node. A map from nodes to numbers held each
+    /// 20-byte node again in a 24-byte slot, and it was most of `ends`'s bytes: two chains of
+    /// 8000 calls joined at every level make 233,665 nodes, 1.9% past the 229,376 that 2^18
+    /// slots hold at the load limit of 7/8, so the map grew to 2^19 slots where 1000 calls had
+    /// needed 2^15, 16 times for 8 times the calls, and 10.54 times the bytes in all
+    /// (STAGE-scaling-10_5, local jobs dv127 and dv129). A slot of 16 bytes makes that step
+    /// two thirds as large: 9.92 times the bytes and 10.03 the instructions (dv131). A slot of
+    /// the number alone (4 bytes) gave 8.68 times the bytes but 10.51 the instructions (dv130),
+    /// as each growth read every node again from `nodes` and hashed it, and the growths, like
+    /// the slots, came to 16 times. The node count itself grows 10.07 times (23,209 to
+    /// 233,665), and no bound on it is proved (the `Complexity tradeoff:` comment above,
+    /// COMPLEXITY.md ENDS). The steps of this table and of `nodes` remain: from 4000 to 32,000
+    /// calls the bytes grow 12.64 times (dv131), as 1,062,657 nodes fill half of `nodes`'s 2^21
+    /// places where 108,833 filled 83% of 2^17.
+    made: HashTable<(u64, Set)>,
     /// The union of each pair of sets joined, the smaller number first.
     unions: DigestMap<(Set, Set), Set>,
 }
@@ -654,10 +672,21 @@ impl Default for Sets {
         Sets {
             nodes: vec![SetNode::Empty],
             sizes: vec![0],
-            made: DigestMap::from_iter([(SetNode::Empty, EMPTY)]),
+            made: {
+                let mut made = HashTable::new();
+                let h = node_hash(&SetNode::Empty);
+                made.insert_unique(h, (h, EMPTY), |&(h, _)| h);
+                made
+            },
             unions: DigestMap::default(),
         }
     }
+}
+
+/// The hash of a node in [`Sets::made`]: the unseeded [`Digest`] the map from nodes had, as the
+/// names in a node are numbers given in the order they are read, not chosen by the program.
+fn node_hash(n: &SetNode) -> u64 {
+    BuildHasherDefault::<Digest>::default().hash_one(n)
 }
 
 /// The bits of `x` above `bit`.
@@ -670,15 +699,21 @@ impl Sets {
         let Sets {
             nodes, sizes, made, ..
         } = self;
-        *made.entry(n).or_insert_with(|| {
-            sizes.push(match n {
-                SetNode::Empty => 0,
-                SetNode::One(_) => 1,
-                SetNode::Split { zero, one, .. } => sizes[zero as usize] + sizes[one as usize],
-            });
-            nodes.push(n);
-            (nodes.len() - 1) as Set
-        })
+        let h = node_hash(&n);
+        match made.entry(h, |&(g, s)| g == h && nodes[s as usize] == n, |&(g, _)| g) {
+            hash_table::Entry::Occupied(e) => e.get().1,
+            hash_table::Entry::Vacant(e) => {
+                let s = nodes.len() as Set;
+                e.insert((h, s));
+                sizes.push(match n {
+                    SetNode::Empty => 0,
+                    SetNode::One(_) => 1,
+                    SetNode::Split { zero, one, .. } => sizes[zero as usize] + sizes[one as usize],
+                });
+                nodes.push(n);
+                s
+            }
+        }
     }
 
     fn size(&self, s: Set) -> u32 {

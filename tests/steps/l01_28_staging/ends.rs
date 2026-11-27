@@ -272,6 +272,43 @@ fn arms_that_call_different_let_functions_on_a_shared_part_are_read() {
     assert!(!ends(&Term::Lam(vec!["h1".into()], rest.clone())));
 }
 
+/// `pj = aj(p(j-1))`, `qj = bj(q(j-1))` and `pj + qj` for every j, with the names `a1, b1,
+/// a2, b2, …` read first so that their numbers interleave: each join is of two sets of j
+/// names whose tries differ everywhere, and only the pair joined one level down is shared.
+pub(super) fn two_chains_joined(k: usize) -> Term {
+    let shared = |t: &Shared| Term::Push("out".into(), t.clone());
+    let (mut p, mut q) = (Shared::new(var("n")), Shared::new(var("n")));
+    let mut sums = Vec::new();
+    for j in 1..=k {
+        p = Shared::new(app(var(&format!("a{j}")), vec![shared(&p)]));
+        q = Shared::new(app(var(&format!("b{j}")), vec![shared(&q)]));
+        sums.push(prim(Prim::Add, vec![shared(&p), shared(&q)]));
+    }
+    let mixed = (1..=k)
+        .flat_map(|j| [format!("a{j}"), format!("b{j}")])
+        .map(|x| app(var(&x), vec![]))
+        .collect();
+    sums.push(prim(Prim::Add, mixed));
+    prim(Prim::Add, sums)
+}
+
+/// `bench::ends` times 1000 and 8000 levels. Every name is free, so the chain ends; a
+/// parameter `b2` it calls stops it, a parameter `b4` it never calls does not.
+#[test]
+fn two_chains_of_calls_joined_at_every_level_are_read() {
+    for k in [1, 2, 9] {
+        assert!(ends(&two_chains_joined(k)));
+    }
+    assert!(!ends(&Term::Lam(
+        vec!["b2".into()],
+        Shared::new(two_chains_joined(3))
+    )));
+    assert!(ends(&Term::Lam(
+        vec!["b4".into()],
+        Shared::new(two_chains_joined(3))
+    )));
+}
+
 /// `k` levels of shared `if` arms, each level's arm either `t + 1` or a call of a `let`
 /// function, a parameter or a match arm on it, built bottom up: `pad` runs before each part is
 /// allocated, so the caller decides where in memory the parts land. Returns the term and each

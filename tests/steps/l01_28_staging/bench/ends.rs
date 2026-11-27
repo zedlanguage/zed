@@ -7,7 +7,7 @@ use zedc::stage::ends;
 
 use crate::ends::{
     arms_calling_let_functions, built_into_freed_blocks, let_functions, mixed_levels_read,
-    shared_and_tree_terms_read_alike, shared_arms_read, shared_arms_terms,
+    shared_and_tree_terms_read_alike, shared_arms_read, shared_arms_terms, two_chains_joined,
 };
 
 #[test]
@@ -35,6 +35,22 @@ fn arms_that_call_different_let_functions_on_a_shared_part_are_read_in_time_near
     let terms = scaling::inputs(n, arms_calling_let_functions);
     scaling::check(
         "stage::ends on k levels of arms calling let functions",
+        n,
+        |k| {
+            assert!(ends(&terms[&k]));
+        },
+    );
+}
+
+/// Each join is of two sets of `j` names whose tries differ everywhere (`ends::two_chains_joined`).
+/// It took 10.54 times the bytes while the trie nodes were found by a map holding each node
+/// again (STAGE-scaling-10_5; the comment on `Sets::made` in `crates/zedc-stage/src/stage.rs`).
+#[test]
+fn two_chains_of_calls_joined_at_every_level_are_read_in_time_near_their_size() {
+    let n = 1000;
+    let terms = scaling::inputs(n, two_chains_joined);
+    scaling::check(
+        "stage::ends on two chains of k calls joined at every level",
         n,
         |k| {
             assert!(ends(&terms[&k]));
