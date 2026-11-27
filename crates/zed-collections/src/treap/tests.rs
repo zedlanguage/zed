@@ -516,6 +516,36 @@ fn dismantle(t: Tree<P>) {
     }
 }
 
+/// STACK-treap-drop-depth: a path of 100,000 nodes down the left children and one down the right
+/// children, each dropped whole on a thread of 64 KiB of stack, which a drop recursing one level a
+/// node overflows; and one dropped while a copy of its lower half is held, which is left whole.
+#[test]
+fn a_path_is_dropped_on_a_small_stack() {
+    const M: u64 = 100_000;
+    let path = |prio: fn(u64) -> u64| -> Tree<P> {
+        let items: Vec<P> = (0..M).map(|i| P(i, prio(i))).collect();
+        let prios: Vec<u64> = items.iter().map(|p| p.1).collect();
+        crate::cartesian::build(items, &prios, |_, p, l, r| node(p, p.1, l, r))
+    };
+    let left = path(|i| i + 1);
+    let right = path(|i| M - i);
+    assert_eq!(depth(&left, 0), M as usize);
+    assert_eq!(depth(&right, M - 1), M as usize);
+    let mut held = left.as_ref().map(|n| n.left.clone());
+    for _ in 0..M / 2 - 1 {
+        held = held.map(|t| t.and_then(|n| n.left.clone()));
+    }
+    let held = held.flatten();
+    assert_eq!(len(&held), (M / 2) as usize);
+    let kept = preorder(&held);
+    crate::scaling::on_a_stack(64 * 1024, move || {
+        drop(left);
+        drop(right);
+        assert_eq!(preorder(&held), kept);
+        drop(held);
+    });
+}
+
 /// FAIL-treap-inplace-recursion-depth: each in-place operation on paths of 100,000 nodes, in a
 /// thread of a 1 MiB stack, which a recursion one call a node of them overflows. Each result is
 /// the persistent operation's tree, and a copy taken before is left as it was.
