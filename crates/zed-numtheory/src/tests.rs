@@ -1911,4 +1911,83 @@ mod floor_sums {
             assert_eq!(sum, exact, "n {n} m {m} a {a} b {b}");
         }
     }
+
+    /// A random number of `words` 64-bit words, the top one not 0, so its size is exact.
+    fn of_words(rng: &mut crate::seed::Rng, words: usize) -> BigInt {
+        let mut digits: Vec<u64> = (0..words).map(|_| rng.next_u64()).collect();
+        if let Some(top) = digits.last_mut() {
+            *top |= 1 << rng.int(0, 63);
+        }
+        let halves: Vec<u32> = digits
+            .iter()
+            .flat_map(|&d| [d as u32, (d >> 32) as u32])
+            .collect();
+        BigInt::from(num_bigint::BigUint::from_slice(&halves))
+    }
+
+    /// The short division of floorsum.rs (`div_rem_short`) against num-bigint's: divisors of
+    /// 1 to 300 words, past num-bigint's Burnikel-Ziegler sizes (over 64 words, dividends over
+    /// 128), with quotients of 0 to 400 bits, so of one step (up to 62 bits more than the
+    /// divisor) and of several; and the edges `a < b`, `a = b`, `a = b·2^k`, `a = b·2^k − 1`
+    /// and divisors `1`, `2^63`, `2^64 − 1`, `2^64` and `2^64 + 1`.
+    #[test]
+    fn the_short_division_matches_num_bigint() {
+        use num_integer::Integer;
+        let (mut rng, seed) = crate::seed::Rng::fresh("the_short_division_matches_num_bigint");
+        let check = |a: &BigInt, b: &BigInt| {
+            assert_eq!(
+                crate::floorsum::div_rem_short(a, b),
+                a.div_rem(b),
+                "seed {seed}: a {a} b {b}"
+            );
+        };
+        let one = BigInt::from(1u32);
+        let edges = [
+            one.clone(),
+            &one << 63u32,
+            (&one << 64u32) - 1u32,
+            &one << 64u32,
+            (&one << 64u32) + 1u32,
+        ];
+        for b in &edges {
+            for k in [0u32, 1, 61, 62, 63, 64, 65, 126, 127, 128, 200] {
+                let a = b << k;
+                check(&a, b);
+                check(&(&a - 1u32), b);
+                check(&(&a + 1u32), b);
+            }
+        }
+        for _ in 0..2000 {
+            let bw = rng.int(1, 300) as usize;
+            let b = of_words(&mut rng, bw);
+            let a = of_words(&mut rng, bw) << rng.int(0, 400) as u32;
+            check(&a, &b);
+            check(&(&b - 1u32), &b);
+            check(&b, &b);
+            check(&(&b << 7u32), &b);
+            check(&((&b << 130u32) - 1u32), &b);
+        }
+    }
+
+    /// The floor sum on numbers of 100 to 200 words, where each round's division is past
+    /// num-bigint's Burnikel-Ziegler sizes, against the AtCoder Library's form.
+    #[test]
+    fn the_floor_sum_matches_the_atcoder_form_on_numbers_of_100_to_200_words() {
+        let (mut rng, seed) = crate::seed::Rng::fresh(
+            "the_floor_sum_matches_the_atcoder_form_on_numbers_of_100_to_200_words",
+        );
+        for _ in 0..4 {
+            let mut size = || rng.int(100, 200) as usize;
+            let (wn, wm, wa, wb) = (size(), size(), size(), size());
+            let n = of_words(&mut rng, wn);
+            let m = of_words(&mut rng, wm);
+            let a = -of_words(&mut rng, wa);
+            let b = of_words(&mut rng, wb);
+            assert_eq!(
+                floor_sum(&n, &m, &a, &b),
+                atcoder(&n, &m, &a, &b),
+                "seed {seed}: n {n} m {m} a {a} b {b}"
+            );
+        }
+    }
 }
