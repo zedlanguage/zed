@@ -9,7 +9,7 @@
 //! linear in the units and imports; and rejects the imports inside each component, which all
 //! lie on cycles, reporting each component once at an import the graph alone fixes, naming
 //! every unit and import on one cycle through it (DESIGN.md sec:units). A unit is resolved by
-//! the query [`Query::Resolve`](crate::query::Query::Resolve), keyed by its text and the
+//! the query [`Query::Resolve`], keyed by its text and the
 //! exports of the units it imports, so an edit that leaves a unit's exports alone resolves no
 //! importer again. Linking a use of another unit's name to its definition is step L2.4.
 //!
