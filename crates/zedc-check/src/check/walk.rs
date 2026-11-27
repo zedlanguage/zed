@@ -9942,10 +9942,36 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// one), and the unknown `_`, are taken as fitting, since a caller's argument fixes them;
     /// a class narrowed to the values that are neither carrier still allows a tuple, which
     /// only a call that passes one shows. The `_` cannot be written in this zedc (refused as
-    /// unsupported), so only the variable is reached; that each way of calling the function
-    /// checks the argument, case 1 of PROOF-sweep-zedc-check-rest, is by test, not proof:
-    /// `l01_26_type_resolution::soundness::a_payload_of_a_function_s_parameter_is_checked_at_each_way_of_calling_it`
-    /// (directly, passed on, nested, a lambda, a bound value, an argument, `map`). Test:
+    /// unsupported), so only the variable is reached. The bound the variable keeps
+    /// ([`Sig::bounds`]) is checked against an argument only by `apply_one` and `apply_many`,
+    /// and by `Binds::bounded` (zedc-types) where one signature is compared with another,
+    /// which a payload type written in an arrow type would need and this zedc refuses as
+    /// unsupported. The calls that reach `apply_one` and `apply_many`, by the function of this
+    /// file that makes each (row PROOF-payload-call-paths-checked), checked by
+    /// `tests::the_callers_of_the_bound_checks_are_those_listed_at_fixed_payload_fits`, which
+    /// scans this file and fails when a call is added or removed and this list is not:
+    /// - `fixed_payload_fits`: `atom_step`
+    /// - `apply_one`: `apply_demanding`
+    /// - `apply_many`: `apply_demanding`
+    /// - `apply_demanding`: `apply`, `operator`, `resume`
+    /// - `apply`: `at_index`, `at_key`, `binary_op`, `bits_step`, `bracket_fn`,
+    ///   `carried_together`, `compare`, `compared_alone`, `components`, `construct`,
+    ///   `fold_dir_end`, `kept_lists`, `lambda_repair`, `map_end`, `min_max_tuples`,
+    ///   `mod_on_float`, `needs_hold`, `partial`, `repaired`, `resume`, `run_fit`, `sum`,
+    ///   `test_args`, `try_outside`, `word_applied`
+    ///
+    /// So every check of an argument against the bound goes through `apply_demanding`. The
+    /// callers that apply a function of the program (rather than a prelude signature such as
+    /// `op_sig`'s or `word_sig`'s, whose variables carry no payload bound) have a row each in
+    /// the test of tests/steps/l01_26_type_resolution/soundness.rs
+    /// `a_payload_of_a_function_s_parameter_is_checked_at_each_way_of_calling_it`:
+    /// `resume` (a call: directly, passed on, nested, a lambda, a bound value, an argument,
+    /// and a call that is an operand), `map_end` (`map`, `where`), `fold_dir_end` (`foldl`),
+    /// `partial` and `bracket_fn` (a bracket section), and `test_args` (a test row). That a
+    /// caller applies a prelude signature or a function of the program was read at each
+    /// call, not checked by the scan; the remaining callers (the trials `try_outside`,
+    /// `lambda_repair`, `carried_together`, `repaired`, the arrow checks `run_fit` and
+    /// `needs_hold`, and `construct`, `at_index`, `at_key`) have no row of their own. Test:
     /// `l01_27_absences::merge::an_errs_the_program_wrote_with_a_payload_that_is_no_set_of_failures_is_rejected`
     /// (its eight payloads), with the field, two-item, narrowed-parameter and accepted cases
     /// beside it in merge.rs, and `#bug` in loose.rs.
@@ -11133,7 +11159,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let Err(misfits) = fit(
             &sig,
             false,
-            receiver.is_some(),
+            receiver.as_ref().map(|(_, e)| e.span),
             &args,
             false,
             span,
@@ -11762,16 +11788,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .map(|(_, c)| c),
         };
         let sig = self.open(&sig);
-        let has_receiver = receiver.is_some();
-        let (slots, missing) = match fit(
-            &sig,
-            declared,
-            has_receiver,
-            &args,
-            curry,
-            span,
-            self.t.text,
-        ) {
+        // The receiver's span, or the call's where the receiver is no expression here.
+        let at = receiver.as_ref().map(|r| r.expr.map_or(span, |e| e.span));
+        let (slots, missing) = match fit(&sig, declared, at, &args, curry, span, self.t.text) {
             Ok(fitted) => fitted,
             Err(misfits) => return self.unfit(m, &sig, declared, &args, span, &what, misfits),
         };
@@ -12191,6 +12210,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     span: at,
                     text: text.into(),
                 });
+                let menu = misfit.first_site().into_iter().chain(menu);
                 match misfit.row() {
                     Some(row) => self.rejects_with(row, at, message, menu.collect()),
                     None => self.error_with(at, message, menu.collect()),
@@ -16902,11 +16922,48 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// order. Checked: the paper's page 2 read by eye from the authors' scan
     /// (<https://www.di.ens.fr/~cousot/COUSOTpapers/publications.www/CousotCousot-SIGPLANNotices-v12-n8-p1-12-1977.pdf>),
     /// 2026-11-24, b22-checkwalk13; Lemma 2.2.1 and the rest of the proof of Theorem 2.2 were
-    /// read on that page, the later pages were not. Not proved: (b), the monotonicity of
-    /// `check_on`, `meet` and `flow`; `meet` reads the masks of the classes of the type
-    /// variables in `n` and `t` at the time of the check, so (b) is a property of every arm
-    /// of `meet`, and an arm whose result is not monotone in those masks would refute it, as
-    /// would a program whose result changes with the order of the roots. The test
+    /// read on that page, the later pages were not.
+    ///
+    /// (b), step by step (PROOF-join-narrowed-rescan-rounds). Write C for a set of
+    /// constraints, each "join classes a and b" or "cut the mask of class a to m", and s ∧ C
+    /// for the state with them applied (the partition joined by the pairs, each mask cut).
+    /// (b1) s ↦ s ∧ C, for C fixed, is monotone and moves down: if s <= s' then s ∧ C <= s' ∧ C,
+    /// since joining the same pairs into a coarser partition leaves it coarser, and cutting
+    /// smaller masks by the same masks leaves them smaller; s ∧ C <= s by definition.
+    /// (b2) `flow(k, t)`, for the type t fixed, applies for each piece p of t a constraint
+    /// fixed by p: a variable of a class, `merge(k, v)` with v's own class (`named`, not its
+    /// root, so the pair does not depend on the partition); a carrier c, `restrict(k, c)`; a
+    /// tuple or function, `restrict(k, OTHER)`; an atom or a variable of no class, nothing; `_`
+    /// fails. So its write is s ↦ s ∧ C(t) for C(t) fixed by t, monotone by (b1). Its failure
+    /// (a mask cut to nothing) is monotone too: a cut that empties a mask of s' empties the
+    /// smaller mask of s. For a tuple or function piece it then runs `check_on` for each use
+    /// of k's root; in a coarser partition the root holds every use it holds in s' (a merge
+    /// keeps the uses of both classes), and each check only moves down, so the extra checks
+    /// of s only lower its result. With (b3) for the inner checks (an induction on the depth
+    /// of the nested checks, finite since "the checks nest at most as deep as the program has
+    /// needs", [`Self::replay`]), `flow(k, t)` is monotone.
+    /// (b3) `check_on(n, t)` is `meet(n, t)`, giving `got`, then `flow(k, got)` for the class k
+    /// of the use's result: by (b2) monotone if the writes of `meet` are, and if `got` at s
+    /// gives at least the constraints of `got` at s' (`C(got(s)) ⊇ C(got(s'))` up to the
+    /// partition). The arm `NeedKind::InDomain` writes nothing and gives the empty type, so it
+    /// is monotone. Each other arm writes through the checker's walk of calls, reads and
+    /// operators, which was not proved monotone here.
+    /// (b4) Where (b) fails as stated: `meet` makes classes. A use met on a class whose mask
+    /// names no single carrier is recorded on that class, and its result is a new class
+    /// ([`Self::need`], `let j = self.class()`), so `got(s')` can be the variable `$j` of a
+    /// class s' did not have, while at s, whose mask is the carrier `int`, `got(s)` is `int`
+    /// (inferred from `need` and the walk of operators, as for `x + 1` with x's class at
+    /// `int | f64` in s' and `int` in s; not run). Then `f(s')` joins k to `$j` and `f(s)`
+    /// cuts k to `int`: the two states are over different classes, and `f(s')` has a pair
+    /// `f(s)` lacks, so `f(s) <= f(s')` is not even defined on (partition, masks) over a fixed
+    /// set of classes, and the uses (`U`, which `need` adds to) are part of the state. The
+    /// claim that would close the proof, open: for s <= s', `f(s)` lies below `f(s')` with
+    /// each use `f(s')` left on a new class met at the masks of s, which is what the end of
+    /// the function does for a class that takes a type ([`Self::generalize`] meets each use
+    /// of such a class on that type); that is a statement about the fixpoint, not about one
+    /// operator, and the chaotic-iteration argument above must be redone over states that
+    /// carry the classes made and the uses recorded. A program whose end classes change with
+    /// the order of the roots would refute it. The test
     /// `tests::join_narrowed_joins_a_chain_whatever_the_order_of_its_roots` checks the order
     /// independence without use checks, and
     /// `l01_26_type_resolution::narrowing::the_tested_classes_end_alike_whatever_the_order_of_their_tests_and_uses`
@@ -32301,9 +32358,11 @@ fn unparen(s: &str) -> &str {
 }
 
 /// Places a call's arguments at the parameters of `sig`, as elaboration does: each positional
-/// argument at the next parameter, each named one at its parameter, `has_receiver` filling
-/// the first. It gives each parameter's argument and the parameters left out, or the misfits
-/// that keep the arguments from fitting, as elaboration finds them. `declared` is whether the
+/// argument at the next parameter, each named one at its parameter, the receiver, if the
+/// call has one, filling the first, and its span the note of a named argument that gives the
+/// first parameter a second value. It gives each parameter's argument and the parameters
+/// left out, or the misfits that keep the arguments from fitting, as elaboration finds them.
+/// `declared` is whether the
 /// call is of the declared function itself, which fills every default, and not of a value
 /// of its type, which fills only closed ones, and whose all-positional parameters take named
 /// arguments by position too; `curry` is whether the call ends in `...`; `text` is the
@@ -32314,12 +32373,13 @@ fn unparen(s: &str) -> &str {
 fn fit<'s>(
     sig: &'s Sig,
     declared: bool,
-    has_receiver: bool,
+    receiver: Option<Span>,
     args: &'s Args<'_>,
     curry: bool,
     span: Span,
     text: Option<&'s str>,
 ) -> Result<(Vec<Option<At>>, Vec<usize>), Vec<(Span, Misfit<'s>)>> {
+    let has_receiver = receiver.is_some();
     let n = sig.params.len();
     let mut slots: Vec<Option<At>> = vec![None; n];
     let mut next = 0;
@@ -32355,7 +32415,21 @@ fn fit<'s>(
         let misfit = match at.get(&**name).copied() {
             None => Misfit::NoParam(name),
             Some(j) if sig.params[j].positional => Misfit::Positional(name),
-            Some(j) if slots[j].is_some() || has_receiver && j == 0 => Misfit::Supplied(name),
+            Some(j) if slots[j].is_some() || has_receiver && j == 0 => {
+                // The value that filled the parameter, for the note at it: the argument
+                // written, or the receiver, which fills no slot; none for a value that is no
+                // expression here. The parser refuses a name written twice in one call, so
+                // the receiver is the case a program reaches; test: named_calls.rs,
+                // a_second_value_for_the_receiver_s_parameter_shows_the_receiver.
+                let first = match slots[j] {
+                    Some(a) => match args.get(a) {
+                        ArgSrc::Expr(e) => Some(e.span),
+                        ArgSrc::Got(_) => None,
+                    },
+                    None => receiver.filter(|&r| r != span),
+                };
+                Misfit::Supplied(name, first)
+            }
             Some(j) => {
                 slots[j] = Some(At::Named(i));
                 continue;
@@ -35943,6 +36017,87 @@ fn params_met_apart(sig: &Sig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Row PROOF-payload-call-paths-checked: the calls of the checks of a bounded variable
+    /// against an argument (`fixed_payload_fits`, `apply_one`, `apply_many`,
+    /// `apply_demanding`, `apply`) in this file, each by the function that makes it, are the
+    /// list in the comment at [`Ck::fixed_payload_fits`]. A function is a line `fn name` at
+    /// the start or under one indent (a method of `impl Ck`); a call is the entry's name
+    /// followed by `(`, `.apply(` for `apply`, on a line that is not a comment or a `fn`
+    /// line. The test fails when a call is added in a function the list does not name, or
+    /// when the list names one that no longer makes it.
+    #[test]
+    fn the_callers_of_the_bound_checks_are_those_listed_at_fixed_payload_fits() {
+        use std::collections::BTreeSet;
+        let src = include_str!("walk.rs");
+        let body = &src[..src
+            .find("\n#[cfg(test)]\nmod tests {")
+            .expect("the test module")];
+        let entries = [
+            ("fixed_payload_fits", "fixed_payload_fits("),
+            ("apply_one", "apply_one("),
+            ("apply_many", "apply_many("),
+            ("apply_demanding", "apply_demanding("),
+            ("apply", ".apply("),
+        ];
+        let mut found = BTreeSet::new();
+        let mut within = "";
+        for line in body.lines() {
+            let t = line.trim_start();
+            let indent = line.len() - t.len();
+            let decl = ["fn ", "pub fn ", "pub(super) fn ", "pub(crate) fn "]
+                .iter()
+                .find_map(|p| t.strip_prefix(p));
+            if let Some(rest) = decl {
+                if indent <= 4 {
+                    within = rest.split(['(', '<']).next().expect("a name");
+                }
+                continue;
+            }
+            if t.starts_with("//") {
+                continue;
+            }
+            for (entry, call) in entries {
+                if line.contains(call) {
+                    found.insert((entry.to_string(), within.to_string()));
+                }
+            }
+        }
+        let doc = &body[body
+            .find("    fn fixed_payload_fits(")
+            .expect("the function")..];
+        let doc_start = body[..body.len() - doc.len()]
+            .rfind("    /// Whether the payload")
+            .expect("its comment");
+        let doc = &body[doc_start..body.len() - doc.len()];
+        let mut listed = BTreeSet::new();
+        let mut entry: Option<String> = None;
+        for line in doc.lines().map(str::trim_start) {
+            let (head, callers) = if let Some(rest) = line.strip_prefix("/// - ") {
+                let (head, callers) = rest.split_once(": ").expect("`entry`: callers");
+                entry = Some(head.trim_matches('`').to_string());
+                (entry.clone(), callers)
+            } else if let Some(rest) = line.strip_prefix("///   ") {
+                (entry.clone(), rest)
+            } else {
+                entry = None;
+                continue;
+            };
+            let head = head.expect("a continued line follows an entry");
+            // A wrapped line ends in `,` before the next one goes on.
+            for c in callers.split(',').map(str::trim).filter(|c| !c.is_empty()) {
+                listed.insert((head.clone(), c.trim_matches('`').to_string()));
+            }
+        }
+        assert!(!listed.is_empty(), "no list found in the comment");
+        let missing: Vec<_> = found.difference(&listed).collect();
+        let stale: Vec<_> = listed.difference(&found).collect();
+        assert!(
+            missing.is_empty() && stale.is_empty(),
+            "calls not in the list at `fixed_payload_fits`: {missing:?}; \
+             listed calls not made: {stale:?}"
+        );
+    }
 
     /// `unparen` takes off only parentheses around the whole of the code, counted on its tokens
     /// (row DRY-text-shared; the cases with a parenthesis in a string were wrong on the count

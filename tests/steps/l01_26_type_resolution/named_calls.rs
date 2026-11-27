@@ -144,6 +144,30 @@ fn the_checker_and_elaboration_reject_a_misplaced_argument_alike() {
     }
 }
 
+/// A named argument that gives the receiver's parameter a second value names "an argument
+/// before it"; written on another line, the receiver is shown as well, with a note at it, so
+/// the two lines the message names are both in the output (QUESTIONS A111, plan row
+/// MSG-multi-line-context). The parser refuses a name written twice in one call, so the
+/// receiver is the first value a program reaches this error with.
+#[test]
+fn a_second_value_for_the_receiver_s_parameter_shows_the_receiver() {
+    let text = format!("{DECLS}y = 3\n  .dbl(x: 4);\n");
+    let out = rejected_with_main(&text);
+    let message = "already gave `x` one; a call gives each parameter one value";
+    assert_eq!(out.matches(message).count(), 1, "{out}");
+    let note = (out.lines())
+        .find(|l| l.contains("the first value for `x`"))
+        .unwrap_or_else(|| panic!("no note at the receiver in:\n{out}"));
+    assert!(
+        note.contains("7:5:"),
+        "the note is not at `3`, line 7: {note}\n{out}"
+    );
+    assert!(
+        out.lines().any(|l| l.trim_end().ends_with("7 | y = 3")),
+        "{out}"
+    );
+}
+
 /// A parameter of a function type has no name, as the second of `(int, int) -> int`, so a call
 /// that leaves it out names it by its place, and a repair's lambda binds a name the call does
 /// not read: the message wrote "its parameter ``, and `` has no default", its repair "pass a

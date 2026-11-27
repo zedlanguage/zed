@@ -2198,7 +2198,13 @@ impl<'a> Elab<'a> {
                 }
                 Some(j) if ff.slots[j].is_some() => {
                     let who = ff.callee.who();
-                    self.misfit(a.span, Misfit::Supplied(name), &who, ff.callee.called())
+                    // An earlier named argument of this name filled it, for the note at it;
+                    // a positional one leaves no span here, and the message names it alone.
+                    let first = (ff.call.named[..ff.ni].iter())
+                        .find(|(n, _)| n == name)
+                        .map(|(_, e)| e.span);
+                    let misfit = Misfit::Supplied(name, first);
+                    self.misfit(a.span, misfit, &who, ff.callee.called())
                 }
                 Some(j) => {
                     self.note_slot(&ff.callee, j, a);

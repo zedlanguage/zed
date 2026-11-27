@@ -64,9 +64,19 @@ fn a_variable_whose_other_place_is_a_union_printed_blank_prints_as_its_bound() {
         "{APPLY}k(v, xs, c: bool) = (apply(f: v), if c {{ v }} else {{ xs[0] }});\na = k(v: 3, xs: [1], c: true);\n"
     );
     let out = report(&src);
+    // The note of what `k` takes names `v`'s variable `T` to say its bound (plan row
+    // MSG-takes-note-names-var), a word of the message, which the names the other notes'
+    // variables take skip (`lay_out`, check/mod.rs), so here they are `U` and `V`.
+    let takes = (out.lines())
+        .find(|l| l.contains("`k` takes ("))
+        .unwrap_or_else(|| panic!("{src}\n{out}"));
+    assert!(
+        takes.contains("`k` takes (v: T, ") && takes.contains(", where T is not "),
+        "{src}\n{out}"
+    );
     assert!(
         out.contains(
-            "the type the checker found for `k` is `(v: T, xs: 0 -> U, c: bool) -> (int, T | U)`"
+            "the type the checker found for `k` is `(v: U, xs: 0 -> V, c: bool) -> (int, U | V)`"
         ),
         "{src}\n{out}"
     );

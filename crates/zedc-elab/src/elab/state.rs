@@ -219,11 +219,11 @@ impl<'a> Elab<'a> {
         who: &str,
         called: CalledKind,
     ) -> Option<T> {
-        let notes = (misfit.menu(who, called).into_iter())
-            .map(|text| Note {
+        let notes = (misfit.first_site().into_iter())
+            .chain(misfit.menu(who, called).into_iter().map(|text| Note {
                 span,
                 text: text.into(),
-            })
+            }))
             .collect();
         self.errors.push(Error {
             menu: String::new(),

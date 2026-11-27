@@ -1118,29 +1118,76 @@ fn a_payload_of_a_function_s_parameter_is_checked_at_each_way_of_calling_it() {
             "[1, 2].map(f)",
             "the function given to `map` does not take (1 | 2)",
         ),
+        // Row PROOF-payload-call-paths-checked: a row for each other caller of `Ck::apply`
+        // that applies a function of the program, as listed at `Ck::fixed_payload_fits`.
+        (
+            "f(positional s) = #errs(s);",
+            "[1, 2].where(f)",
+            "the function given to `where` does not take (1 | 2)",
+        ),
+        (
+            "f(positional a, positional s) = #errs(s);",
+            "[1, 2].foldl(0, f)",
+            "the function given to `foldl` does not take",
+        ),
+        (
+            "f(positional s) = #errs(s);",
+            "f[5]",
+            "`f` does not take (5)",
+        ),
+        (
+            "f(positional s, positional t) = #errs(s);",
+            "f[5](1)",
+            "`f` does not take (5, _)",
+        ),
+        (
+            "f(positional s) = #errs(s);",
+            "f(5) + 1",
+            "`f` does not take (5)",
+        ),
+        (
+            "f(positional s) = #errs(s) test { 5 -> 0 }",
+            "1",
+            "`f` does not take (5)",
+        ),
     ] {
         let errors = r_errors(defs, call);
         assert_eq!(errors.len(), 1, "{defs}\n{call}: {errors:?}");
         assert!(errors[0].contains(words), "{defs}\n{call}: {errors:?}");
     }
-    // Plan row MSG-takes-note-hides-bound: the note of what `f` takes says the bound on its
-    // variable, which the signature cannot print, so the refusal of `int` is explained; the
-    // printer names that variable only where it stands twice, so the note says it by the
-    // parameter.
-    let e = rejected(
-        "f(positional s) = #errs(s);\ng(positional y: int) = f(y);",
-        "\"x\"",
-    );
-    let note = e
-        .lines()
-        .find(|l| l.contains("`f` takes T"))
-        .unwrap_or_else(|| panic!("{e}"));
-    assert!(
-        note.contains("`f` takes T -> #errs(T), where the argument `s` is not "),
-        "{e}"
-    );
-    for c in ["int", "f64", "rat", "String", "bool", "f32"] {
-        assert!(note.contains(c), "{c}: {e}");
+    // Plan rows MSG-takes-note-hides-bound and MSG-takes-note-names-var: the note of what `f`
+    // takes says the bound on its variable, which the signature cannot print, so the refusal
+    // of `int` is explained, and says it by the variable's name, which the note gives the
+    // variable in its own text, so the name is printed even where the variable stands once,
+    // and inside a parameter's type, where no parameter is the variable: the map a lookup
+    // makes, `0 -> T` (the variable reached through the parameter's need), and a written
+    // `[T]`, which keeps its written name (written twice, since `T` written once is refused).
+    for (defs, takes) in [
+        (
+            "f(positional s) = #errs(s);\ng(positional y: int) = f(y);",
+            "`f` takes T -> #errs(T), where T is not ",
+        ),
+        (
+            "f(positional s) = #errs(s[0]);\ng(positional y: [int]) = f(y);",
+            "`f` takes (0 -> T) -> #errs(T), where T is not ",
+        ),
+        (
+            "f(positional s: [T], positional u: T) = #errs(u);\n\
+             g(positional y: [int]) = f(y, 1);",
+            "`f` takes ([T], T) -> #errs(T), where T is not ",
+        ),
+    ] {
+        let e = rejected(defs, "\"x\"");
+        let note = e
+            .lines()
+            .find(|l| l.contains("`f` takes ") && l.contains(" -> "))
+            .unwrap_or_else(|| panic!("{e}"));
+        assert!(note.contains(takes), "{defs}\n{e}");
+        assert!(note.contains(", where T is not "), "{defs}\n{e}");
+        assert!(!note.contains("the argument"), "{defs}\n{e}");
+        for c in ["int", "f64", "rat", "String", "bool", "f32"] {
+            assert!(note.contains(c), "{c}: {e}");
+        }
     }
 }
 
