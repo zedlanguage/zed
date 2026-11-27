@@ -2134,6 +2134,43 @@ mod tests {
         }
     }
 
+    /// The dense product `(x - 2) … (x - 65)`, whose coefficients pass 2^60 (plan row
+    /// ROOTS-dense-cluster-constant): the branch and bound with its switch and the chain alone
+    /// each give exactly `2..=65`. It prints the least wall time of three runs of each and whether
+    /// the branch and bound spent its budget and switched to the chain, so that one run on one
+    /// machine compares the two methods; the comment at [`integer_roots`] says the chain was
+    /// about 2 times faster here (40 against 80 ms), measured on another machine. Run it alone,
+    /// with `--exact --nocapture`, for the times to mean anything.
+    #[test]
+    fn the_dense_cluster_of_64_roots_on_each_method() {
+        let rs: Vec<i64> = (2..=65).collect();
+        let f = from_roots(1, &rs);
+        let p = f.terms();
+        assert!(
+            p.iter().any(|(_, c)| c.bits() > 60),
+            "the coefficients pass 2^60"
+        );
+        let want: Vec<BigInt> = rs.iter().map(|&r| BigInt::from(r)).collect();
+        let least = |run: &dyn Fn() -> Vec<BigInt>| {
+            (0..3)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    assert_eq!(run(), want);
+                    t.elapsed()
+                })
+                .min()
+                .expect("three runs")
+        };
+        let before = CHAINED.with(|c| c.get());
+        let branch = least(&|| positive_roots(p, BigInt::from(2), None));
+        let switched = CHAINED.with(|c| c.get()) > before;
+        let chain = least(&|| chain_roots(p, BigInt::from(2), None));
+        println!(
+            "(x - 2) … (x - 65): branch and bound {branch:?} (switched to the chain: \
+             {switched}), chain alone {chain:?}"
+        );
+    }
+
     /// [`chain_ends`] is the sum it is written as, for every `t` up to 300.
     #[test]
     fn chain_ends_is_the_sum_it_bounds() {
