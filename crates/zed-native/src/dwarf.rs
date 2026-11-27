@@ -23,7 +23,7 @@
 //! that name is in scope, that binding's word, a 16-byte `zed_word` of a tag (`enum zed_tag`,
 //! [`zed_rt::Word`]'s tags) and its payload, in its stack slot or as a constant; a binding to a
 //! non-scalar constant is its value, a string's bytes or another value's printed text
-//! ([`ShownTypes`]), in a lexical block of its own. So `print x`
+//! ([`ShownTypes`]), as the bytes of its location list. So `print x`
 //! shows the binding the source line sees when one name is bound twice in one function. A name
 //! bound outside a lambda and read in it is a variable of the body too: the body reads each
 //! capture from the closure once, at its start, into a slot of its own frame. `main`'s argument
@@ -333,26 +333,65 @@ pub(crate) fn add(
             let e = dwarf.unit.get_mut(sub);
             e.set(gimli::DW_AT_frame_base, AttributeValue::Exprloc(base));
             for b in bound {
-                // A binding to a non-scalar constant is a variable of its own, of its value's
-                // type, in a lexical block of the code where it is in force ([`ShownTypes`]):
-                // one variable has one type, and a name may be bound to a word over some of the
-                // code. gdb looks a name up in the innermost block that holds the pc first, as
-                // for a C name declared again in an inner block (DWARF 5 section 3.5).
+                // A binding to a non-scalar constant is shown as its value, of its value's type
+                // ([`ShownTypes`]); one variable has one type. A name bound to one such value
+                // and to no word is one variable whose location list gives the value's bytes
+                // (`DW_OP_implicit_value`, DWARF 5 section 2.6.1.1.4) over the code where it is
+                // in force, as a word's gives the word.
                 let (shown, words): (Vec<_>, Vec<_>) =
                     (b.pieces.iter()).partition(|p| matches!(p.2, Place::Shown(_)));
-                let mut blocks: BTreeMap<u32, Vec<Range>> = BTreeMap::new();
+                let mut blocks: BTreeMap<u32, Vec<(u32, u32)>> = BTreeMap::new();
                 for &&(begin, end, place) in &shown {
                     if let Place::Shown(i) = place {
-                        blocks.entry(i).or_default().push(Range::StartLength {
+                        blocks.entry(i).or_default().push((begin, end));
+                    }
+                }
+                if words.is_empty() && blocks.len() == 1 {
+                    let (i, pieces) = blocks.pop_first().unwrap();
+                    let value = &c.shown[i as usize];
+                    let ty = shown_types.of(&mut dwarf, value.string, value.bytes.len());
+                    let mut list = vec![Location::BaseAddress { address: at }];
+                    list.extend(pieces.iter().map(|&(begin, end)| {
+                        let mut x = Expression::new();
+                        x.op_implicit_value(value.bytes.clone().into());
+                        Location::OffsetPair {
+                            begin: u64::from(begin),
+                            end: u64::from(end),
+                            data: x,
+                        }
+                    }));
+                    let list = dwarf.unit.locations.add(LocationList(list));
+                    let v = dwarf.unit.add(sub, gimli::DW_TAG_variable);
+                    let e = dwarf.unit.get_mut(v);
+                    e.set(
+                        gimli::DW_AT_name,
+                        AttributeValue::String(b.name.as_bytes().to_vec()),
+                    );
+                    e.set(gimli::DW_AT_type, AttributeValue::UnitRef(ty));
+                    e.set(gimli::DW_AT_location, AttributeValue::LocationListRef(list));
+                    continue;
+                }
+                // A name bound to a word over some of the code and to such a value over other
+                // code, or to two such values, has a variable for each value, in a lexical
+                // block of the code where it is in force: gdb looks a name up in the innermost
+                // block that holds the pc first, as for a C name declared again in an inner
+                // block (DWARF 5 section 3.5). Not handled: gdb takes one innermost block, so
+                // where two such blocks of different names hold the pc (sibling blocks whose
+                // ranges overlap), the name of the block it does not take is not found there.
+                // That is how one block per name failed when it was the only form: of `s`,
+                // `t` and `u`, all in force at one line, gdb found only `u` (measured, local
+                // job dv87, test `gdb_prints_the_value_of_a_name_bound_to_a_constant_that_is_
+                // not_a_word`).
+                for (i, pieces) in blocks {
+                    let ranges = (pieces.iter())
+                        .map(|&(begin, end)| Range::StartLength {
                             begin: Address::Symbol {
                                 symbol,
                                 addend: i64::from(begin),
                             },
                             length: u64::from(end - begin),
-                        });
-                    }
-                }
-                for (i, ranges) in blocks {
+                        })
+                        .collect();
                     let value = &c.shown[i as usize];
                     let ty = shown_types.of(&mut dwarf, value.string, value.bytes.len());
                     let block = dwarf.unit.add(sub, gimli::DW_TAG_lexical_block);
