@@ -115,7 +115,7 @@ pub const LOCALS: [char; 5] = [
     LOCAL_REF_WRAP,
 ];
 
-/// Opens in `out` the text of tuple `id` of a printed type ([`LOCAL_OPEN`]), parenthesized
+/// Opens in `out` the text of tuple `id` of a printed type (`LOCAL_OPEN`), parenthesized
 /// where it stands if `wrap`.
 pub fn local_open(out: &mut String, id: usize, wrap: bool) {
     out.push(if wrap { LOCAL_OPEN_WRAP } else { LOCAL_OPEN });
@@ -127,7 +127,7 @@ pub fn local_close(out: &mut String) {
     out.push(LOCAL_CLOSE);
 }
 
-/// Writes in `out` tuple `id` of a printed type again ([`LOCAL_REF`]), parenthesized where
+/// Writes in `out` tuple `id` of a printed type again (`LOCAL_REF`), parenthesized where
 /// it stands if `wrap`.
 pub fn local_ref(out: &mut String, id: usize, wrap: bool) {
     out.push(if wrap { LOCAL_REF_WRAP } else { LOCAL_REF });

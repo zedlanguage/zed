@@ -37,7 +37,7 @@ type TextPart = (Option<Arc<str>>, std::ops::Range<usize>, usize, usize);
 /// from it (`part_tokens`), and lexed again only once its leaves are replaced.
 ///
 /// A capitalized name is a variable by the rule a written type has, applied to the text with
-/// each definition written out at each name for it ([`Times`]): so a part the printer writes
+/// each definition written out at each name for it (`Times`): so a part the printer writes
 /// once as a definition, whose variables stand once in its body and twice in the type, reads
 /// back as the type written in full (row PRINT-shared-part-exponential).
 pub fn parse_type(text: &str) -> Result<Ty, String> {
