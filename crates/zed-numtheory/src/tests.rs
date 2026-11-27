@@ -1760,3 +1760,155 @@ fn prime_powers_and_divisors_agree_with_trial_division() {
         vec![1, 4_294_967_279, 4_294_967_291, semi]
     );
 }
+
+/// The floor sums ([`floor_sum`], [`floor_sum_i128`]) against the sum itself and against the
+/// AtCoder Library's form, the plan row FLOORSUM-bits's tests.
+mod floor_sums {
+    use num_bigint::BigInt;
+
+    use crate::{floor_sum, floor_sum_i128};
+
+    /// The AtCoder Library's form of the floor sum, which `floor_sum` had before FLOORSUM-bits
+    /// (moved from zedc-affine's `lines::floor_sum`): the oracle for numbers too large to sum
+    /// term by term.
+    fn atcoder(n: &BigInt, m: &BigInt, a: &BigInt, b: &BigInt) -> BigInt {
+        use num_integer::Integer;
+        let (mut n, mut m) = (n.clone(), m.clone());
+        let pairs = |n: &BigInt| (n * &(n - 1u32)) >> 1u32;
+        let (q, mut a) = a.div_mod_floor(&m);
+        let mut ans = &pairs(&n) * &q;
+        let (q, mut b) = b.div_mod_floor(&m);
+        ans += &n * &q;
+        loop {
+            if a >= m {
+                let (q, r) = a.div_mod_floor(&m);
+                ans += &pairs(&n) * &q;
+                a = r;
+            }
+            if b >= m {
+                let (q, r) = b.div_mod_floor(&m);
+                ans += &n * &q;
+                b = r;
+            }
+            let top = &(&a * &n) + &b;
+            if top < m {
+                return ans;
+            }
+            (n, b) = top.div_mod_floor(&m);
+            std::mem::swap(&mut m, &mut a);
+        }
+    }
+
+    /// Both forms on `(n, m, a, b)` against `want`.
+    fn both(n: i64, m: i64, a: i64, b: i64, want: i64, seed: u64) {
+        let big = |x: i64| BigInt::from(x);
+        assert_eq!(
+            floor_sum(&big(n), &big(m), &big(a), &big(b)),
+            big(want),
+            "seed {seed}: n {n} m {m} a {a} b {b}"
+        );
+        assert_eq!(
+            floor_sum_i128(n.into(), m.into(), a.into(), b.into()),
+            Some(want.into()),
+            "seed {seed}: n {n} m {m} a {a} b {b}"
+        );
+    }
+
+    /// The sum term by term.
+    fn brute(n: i64, m: i64, a: i64, b: i64) -> i64 {
+        (0..n).map(|i| (a * i + b).div_euclid(m)).sum()
+    }
+
+    /// Every `n` in 0..12, `m` in 1..7 and `a`, `b` in -9..9: the corner cases `n = 0`, `a = 0`,
+    /// `b >= m`, `a >= m`, `m = 1` and negative `a` or `b` (the caller's contract: either sign)
+    /// are among them.
+    #[test]
+    fn the_floor_sums_match_the_sum_on_every_small_case() {
+        for n in 0..12 {
+            for m in 1..7 {
+                for a in -9..9 {
+                    for b in -9..9 {
+                        both(n, m, a, b, brute(n, m, a, b), 0);
+                    }
+                }
+            }
+        }
+    }
+
+    /// 20000 random `(n, m, a, b)` with `m` in 1..=60, `n` in 0..=90 and `a`, `b` in
+    /// -1000..=1000.
+    #[test]
+    fn the_floor_sums_match_the_sum_on_random_cases() {
+        let (mut rng, seed) =
+            crate::seed::Rng::fresh("the_floor_sums_match_the_sum_on_random_cases");
+        for _ in 0..20_000 {
+            let (n, m) = (rng.int(0, 90), rng.int(1, 60));
+            let (a, b) = (rng.int(-1000, 1000), rng.int(-1000, 1000));
+            both(n, m, a, b, brute(n, m, a, b), seed);
+        }
+    }
+
+    /// A random number of `digits` decimal digits, the first not 0, of either sign when
+    /// `signed`.
+    fn digits(rng: &mut crate::seed::Rng, digits: usize, signed: bool) -> BigInt {
+        let mut s: String = (0..digits)
+            .map(|k| char::from(b'0' + rng.int(i64::from(k == 0), 9) as u8))
+            .collect();
+        if signed && rng.int(0, 1) == 1 {
+            s.insert(0, '-');
+        }
+        s.parse().expect("decimal digits")
+    }
+
+    /// 300 random `(n, m, a, b)` of 10 to 300 digits each, `a` and `b` of either sign, against
+    /// the AtCoder Library's form; `floor_sum_i128` either refuses them or agrees.
+    #[test]
+    fn the_floor_sum_matches_the_atcoder_form_on_numbers_of_10_to_300_digits() {
+        let (mut rng, seed) = crate::seed::Rng::fresh(
+            "the_floor_sum_matches_the_atcoder_form_on_numbers_of_10_to_300_digits",
+        );
+        for _ in 0..300 {
+            let mut size = || rng.int(10, 300) as usize;
+            let (dn, dm, da, db) = (size(), size(), size(), size());
+            let n = digits(&mut rng, dn, false);
+            let m = digits(&mut rng, dm, false);
+            let a = digits(&mut rng, da, true);
+            let b = digits(&mut rng, db, true);
+            let want = atcoder(&n, &m, &a, &b);
+            assert_eq!(
+                floor_sum(&n, &m, &a, &b),
+                want,
+                "seed {seed}: n {n} m {m} a {a} b {b}"
+            );
+        }
+    }
+
+    /// Near the ends of `i128`: `floor_sum_i128` gives `None` when a step overflows, and
+    /// otherwise the sum, which `floor_sum` gives too. The sums: `n (n − 1) / 2 · 2^64` is
+    /// about 2^191; `pairs(MAX)` overflows; `6 · MIN` overflows; `n = 0` sums nothing; the one
+    /// term `⌊MAX / MAX⌋` is 1; the two terms `⌊2^100 / 2^100⌋` and
+    /// `⌊(2^101 − 1) / 2^100⌋` are 1 each.
+    #[test]
+    fn the_word_floor_sum_refuses_an_overflow_and_agrees_where_it_fits() {
+        let (top, low) = (i128::MAX, i128::MIN);
+        let cases = [
+            (1 << 64, 1, 1 << 64, 0, None),
+            (top, 1, top, top, None),
+            (3, 1, low, low, None),
+            (0, 7, top, top, Some(0)),
+            (1, top, top - 1, top, Some(1)),
+            (2, 1 << 100, (1 << 100) - 1, 1 << 100, Some(2)),
+        ];
+        for (n, m, a, b, want) in cases {
+            assert_eq!(floor_sum_i128(n, m, a, b), want, "n {n} m {m} a {a} b {b}");
+            let big = |x: i128| BigInt::from(x);
+            let sum = floor_sum(&big(n), &big(m), &big(a), &big(b));
+            // Each refused case has `m = 1`, whose sum is `a n (n − 1) / 2 + b n`.
+            let exact = match want {
+                Some(w) => big(w),
+                None => big(a) * big(n) * (big(n) - 1) / 2 + big(b) * big(n),
+            };
+            assert_eq!(sum, exact, "n {n} m {m} a {a} b {b}");
+        }
+    }
+}

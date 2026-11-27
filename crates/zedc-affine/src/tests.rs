@@ -537,6 +537,32 @@ mod lines {
         }
     }
 
+    /// The path past `i128`: numbers of about 2^200, and a small `n` whose sum overflows the
+    /// word form, against the sum term by term on `Int`.
+    #[test]
+    fn the_floor_sum_past_i128_matches_the_sum() {
+        let p = Int::pow2(200);
+        let cases = [
+            (
+                Int::from(5),
+                p.clone(),
+                &p + &Int::from(7),
+                -&(&p * &Int::from(3)),
+            ),
+            (Int::from(4), Int::from(3), p.clone(), Int::from(-1)),
+            (Int::from(6), &p - &Int::ONE, -&p, p.clone()),
+        ];
+        for (n, m, a, b) in cases {
+            let mut want = Int::ZERO;
+            let mut i = Int::ZERO;
+            while i < n {
+                want = &want + &(&(&a * &i) + &b).div_floor(&m);
+                i = &i + &Int::ONE;
+            }
+            assert_eq!(floor_sum(&n, &m, &a, &b), want, "n {n} m {m} a {a} b {b}");
+        }
+    }
+
     /// [`upper_envelope`] keeps exactly the lines that are above every other line somewhere,
     /// on random sets of distinct lines with slopes and intercepts in `-6..=6`. Two lines cross
     /// at `x = a / b` with `|a| <= 12` and `0 < b <= 12`, so two crossings are at least 1/144

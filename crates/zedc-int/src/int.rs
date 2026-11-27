@@ -93,7 +93,9 @@ impl Int {
     /// One.
     pub const ONE: Int = Int(Repr::Small(1));
 
-    fn big(&self) -> Cow<'_, BigInt> {
+    /// The value as a `BigInt`, for the routines over `BigInt` (`zed_numtheory::floor_sum`):
+    /// borrowed when it is big, made when it fits in `i128`.
+    pub fn big(&self) -> Cow<'_, BigInt> {
         match &self.0 {
             Repr::Small(v) => Cow::Owned(BigInt::from(*v)),
             Repr::Big(v) => Cow::Borrowed(v),
