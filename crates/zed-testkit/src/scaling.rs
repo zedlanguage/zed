@@ -418,7 +418,7 @@ pub const TIME_RUNS: usize = 5;
 /// thread's stack is what is left of the caller's, less about 5 KiB of the thread's own, so a
 /// test that sets the stack of the thread it checks on, or sets none, sets it for its runs too.
 /// It returns the bytes the thread and the threads it started allocated, which count in this
-/// thread's count too, and the elapsed time of `f` in nanoseconds (see [`counted_on_a_thread`]). A
+/// thread's count too, and the elapsed time of `f` in nanoseconds (see `counted_on_a_thread`). A
 /// panic in `f` goes on in the caller.
 pub fn alone(f: &(impl Fn() + Sync)) -> (u64, u64) {
     let stack = stacker::remaining_stack().expect("the size of this thread's stack");
@@ -530,7 +530,7 @@ pub struct Meter {
     /// Whether the checks by this meter count instructions in new processes of the test, each
     /// run at n and at 8n in one, though this meter reads processor time: [`Meter::new`]'s
     /// meter for a benchmark that runs with other tests where the hardware has no counter and
-    /// DynamoRIO's `zed_icount` is named (see [`counts_in_new_processes`]).
+    /// DynamoRIO's `zed_icount` is named (see `counts_in_new_processes`).
     pub elsewhere: bool,
 }
 
@@ -548,7 +548,7 @@ const MEASURED_OUTSIDE_A_BENCH: &[&str] = &[
 
 /// Whether the test `test` (its thread's name) may not hold a measure to a limit: it is a test
 /// (a named thread other than libtest's `main`), its path holds no `bench::`, and no entry of
-/// [`MEASURED_OUTSIDE_A_BENCH`] names it. `bench::` anywhere in the name is what
+/// `MEASURED_OUTSIDE_A_BENCH` names it. `bench::` anywhere in the name is what
 /// tools/run_tests.sh reads as a benchmark (`--skip bench::` matches anywhere in a name), so the
 /// two agree on every test.
 pub fn outside_a_bench(test: Option<&str>) -> bool {
@@ -1392,14 +1392,14 @@ pub fn fresh_inputs_by<T: Send, O: Send>(
 /// Which of the sizes n and 8n of the check this thread enters next, by a meter that runs each
 /// size in a new process when `fresh` is true, run in this process, as [`compare_by`] places
 /// them: in a process a check started for its test (`target`), each check before the target's
-/// place runs its size n only (and 8n when not `fresh`, as [`replay_or_measure`] replays it),
+/// place runs its size n only (and 8n when not `fresh`, as `replay_or_measure` replays it),
 /// and the target check its measured size only; with no target, a `fresh` check on a test's
 /// thread runs its size 8n in a new process, and its size n too unless this process runs the
 /// test alone ([`runs_alone`]); anything else runs both here.
 ///
-/// Proof that a size run here is reported as run here, case by case of [`compare_by_dyn`], whose
+/// Proof that a size run here is reported as run here, case by case of `compare_by_dyn`, whose
 /// branches this follows: (1) no test name, or `main`: `enter_check` gives `None` and
-/// [`compare_measured`] runs both sizes with `at` `None`: (true, true). (2) A target for this
+/// `compare_measured` runs both sizes with `at` `None`: (true, true). (2) A target for this
 /// test: `enter_check` gives the place `j`, the length of the test's list of checks before its
 /// push, which is the length read here, as nothing between this read and that push enters a
 /// check on this thread (the build of the inputs enters none: a check inside `make` would run
@@ -1409,10 +1409,10 @@ pub fn fresh_inputs_by<T: Send, O: Send>(
 /// safe). (3) A target for another test: `at` `None`, both here. (4) No target and `fresh`:
 /// `at` is given, so the run at 8n is in a new process, and the run at n is too when
 /// `runs_alone` is false; each falls back to this process only when the new process ran no
-/// test, which [`run_in_a_new_process`] gives for a thread whose name is not a test's (the
+/// test, which `run_in_a_new_process` gives for a thread whose name is not a test's (the
 /// fallback reads an input not built and panics, naming the cause, never measuring a build).
 /// (5) No target and not `fresh`: `at` `None`, both here. `fresh` here is computed as in
-/// [`compare_by_dyn`], from the same meter.
+/// `compare_by_dyn`, from the same meter.
 pub fn sizes_run_here(fresh: bool) -> (bool, bool) {
     let thread = std::thread::current();
     let Some(test) = thread.name().filter(|name| *name != "main") else {
@@ -1606,7 +1606,7 @@ fn check_bound_by(
 }
 
 /// [`check_order`] by the given meter and measures, for work of order `n^power`.
-/// The body is [`check_by_dyn`], which is not generic: a generic body is compiled again for
+/// The body is `check_by_dyn`, which is not generic: a generic body is compiled again for
 /// each test's closure, and in a test binary those copies share one large codegen unit that is
 /// optimized again after any edit that moves a line of the test file (BUILD-study: 11 to 16 s
 /// of LLVM per such edit of l01_26, about 4 s with one copy). The call through `&dyn` costs
@@ -1761,7 +1761,7 @@ fn fresh_target() -> Option<&'static (usize, bool, String, String)> {
 }
 
 /// Whether this process runs the test `test` and no other, as tools/run_tests.sh runs each
-/// benchmark (`<binary> --exact <test> --nocapture`) and as [`run_in_a_new_process`] starts
+/// benchmark (`<binary> --exact <test> --nocapture`) and as `run_in_a_new_process` starts
 /// one: its arguments are `--exact`, `test` as the only filter, and only flags that change the
 /// output or the number of test threads. Any other argument, known or not, gives false
 /// (FAIL-lr4-bench-annotation-update).
@@ -1874,7 +1874,7 @@ fn note_panic(test: &str, j: usize, payload: &(dyn std::any::Any + Send)) {
 }
 
 /// The command that starts `exe`, this test binary, as the process of one check's run
-/// ([`run_in_a_new_process`]); on Linux that process is killed when this one ends.
+/// (`run_in_a_new_process`); on Linux that process is killed when this one ends.
 ///
 /// Why: tools/bench_limit.sh stops a benchmark past its limit by signaling the test binary. Until
 /// 2026-11-20 it signaled that pid only; the test binary died, its process for the run at 8n
