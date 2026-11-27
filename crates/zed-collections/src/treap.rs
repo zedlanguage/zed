@@ -409,7 +409,7 @@ where
 /// tree by priority with one stack and each node made once over its children, `O(k)` (module
 /// [`crate::cartesian`], which cites, quotes and proves the construction). The indices stand
 /// for the keys in [`crate::cartesian::build`]: they are in the keys' order, so its ties, broken
-/// by the greater index, are broken by the greater key, as [`above`] breaks them.
+/// by the greater index, are broken by the greater key, as `above` breaks them.
 #[inline]
 pub fn from_sorted<I: Item>(items: Vec<I>) -> Tree<I> {
     debug_assert!(
@@ -519,13 +519,13 @@ fn combine<I: Item>(x: &Tree<I>, y: &Tree<I>, keep_one_sided: bool) -> Tree<I> {
     done.pop().expect("the two trees are combined")
 }
 
-/// The items of `x` and `y`, a key in both with the item of `y` ([`combine`]).
+/// The items of `x` and `y`, a key in both with the item of `y` (`combine`).
 #[inline]
 pub fn union<I: Item>(x: &Tree<I>, y: &Tree<I>) -> Tree<I> {
     combine(x, y, true)
 }
 
-/// The items of `y` whose key is also in `x` ([`combine`]).
+/// The items of `y` whose key is also in `x` (`combine`).
 #[inline]
 pub fn meet<I: Item>(x: &Tree<I>, y: &Tree<I>) -> Tree<I> {
     combine(x, y, false)
