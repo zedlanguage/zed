@@ -35439,7 +35439,10 @@ mod probe_order {
                 ));
             }
         }
-        assert!(asked >= 100, "seed {seed:#x}: only {asked} cases with nested disjunctions");
+        assert!(
+            asked >= 100,
+            "seed {seed:#x}: only {asked} cases with nested disjunctions"
+        );
         assert!(
             diffs.is_empty(),
             "seed {seed:#x}, {} of {asked}:\n{}",
