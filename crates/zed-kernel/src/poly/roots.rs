@@ -973,16 +973,20 @@ pub(super) fn positive_roots_by(
         //    products of numbers of O(B + s) bits, `s = 2 bits(h)`, so O(t M(B + s)) bit
         //    operations. A test is at most `D (D + 1) / 2` products by [`mul_int`] and as many
         //    sums, each of numbers of at most `B + D bits(u + 1) + bits(t) <= 4 B + bits(t)`
-        //    bits by the cap (at [`BoundSearch`]), and `bits(t) <= B` as `t <= D + 1 <= B + 1`,
-        //    so each operand has at most `5 B` bits and each product is O(M(5 B)). That is
-        //    O(M(B)) by the regularity M(c n) = O(M(n)) for a constant `c`, which the kernel's
-        //    M(n) = O(n log n) meets (zed-bignum's `fast` module doc: "`M(n)` below is the cost
-        //    of a product of two `n`-bit numbers, O(n log n) here"; `c n log(c n) <= c (1 +
-        //    log c) n log n` for `n >= 2`). `M(n) / n` not decreasing alone does not give it
-        //    (`M(n) = 2^n` meets that). Each group of `t` products, `horner_units` groups, is
-        //    then O(t M(B)), within the envelope of one unit. Filling the array is O(D + t)
-        //    copies of at most `B` bits, under one group. So a test's bit cost is at most its
-        //    `units` times the per-unit envelope O(t M(B + s)). The factor 2 of 1 to 3 is on
+        //    bits by the cap (at [`BoundSearch`], whose `B`, the most bits of a coefficient, is
+        //    at most the `B` of a unit), and `bits(t) <= B` as `t <= D + 1 <= B + 1` and `B >= 2`
+        //    (a search needs `t >= 3`, two terms taking the binomial path, so `2 <= D <= B`), so
+        //    each operand has at most `5 B` bits. Here `M(n) = n lg n`, the bound of zed-bignum's
+        //    `fast` module doc ("`M(n)` below is the cost of a product of two `n`-bit numbers,
+        //    O(n log n) here"): a product of `n`-bit numbers costs O(M(n)) bit operations, and
+        //    only that upper bound is used. It is regular, M(c n) = O(M(n)) for a constant `c >=
+        //    1`, as `c n lg(c n) <= c (1 + lg c) n lg n` for `n >= 2`, so each product is
+        //    O(M(5 B)) = O(M(B)). `M(n) / n` not decreasing alone does not give it (`M(n) = 2^n`
+        //    meets that). Each group of `t` products, `horner_units` groups, is then O(t M(B)),
+        //    within the envelope of one unit, O(t M(B + s)) as `M` does not decrease. Filling
+        //    the array is `D + 1` zeros, O(D) word operations with `D <= B`, and `t` copies of
+        //    at most `B` bits, O(t B), under one group. So a test's bit cost is at most a
+        //    constant times its `units` times the per-unit envelope. The factor 2 of 1 to 3 is on
         //    charged units, so the bound of [`positive_roots`] holds in bit operations up to
         //    the constant of that envelope, not with a factor of exactly 2. (With num-bigint's
         //    `*`, Toom-3 past its crossover, a product was not O(M(B)); round 1 of the
@@ -3092,13 +3096,33 @@ mod tests {
     /// passes (`(y + 1)^2`). No root is lost: each mode still finds 2. And `2^top` itself is
     /// covered (round 2, Gemini R2-3): on `(x - 3)^2` with `hi = 5`, `top = 2`; 2 fails, 4
     /// passes, 3 fails (`p(3) = 0`), so the search gives 4, and a search that stops a power
-    /// short of `top` gives none.
+    /// short of `top` gives none. Where `top` is no power of 2 the doubling is clamped to it
+    /// (round 3, Gemini R3-3): on `(x - 7)^2` with `hi = 9`, `top = 3`, the tests are 2, 4, 8
+    /// (passes), 6, 7, five in all, and the search gives 8; doubling past `top` would test 16
+    /// as well. On `(x - 9)^2` with `hi = 16`, `top = 3`, the powers 2, 4 and 8 fail and the
+    /// search gives none; doubling past `top` would test 16, which passes, and give 10.
     #[test]
     fn the_bound_search_covers_the_powers_up_to_top() {
         let q = from_big_roots(&[BigInt::from(3), BigInt::from(3)]);
         let mut spent = 0;
         let got = horner_bound(q.terms(), &BigInt::from(5), &mut spent);
         assert_eq!(got, Some(BigInt::from(4)));
+        let q = from_big_roots(&[BigInt::from(7), BigInt::from(7)]);
+        let q = q.terms();
+        let mut spent = 0;
+        assert_eq!(
+            horner_bound(q, &BigInt::from(9), &mut spent),
+            Some(BigInt::from(8))
+        );
+        let units = BoundSearch::new(q, &BigInt::from(9))
+            .expect("top = 3")
+            .units;
+        assert_eq!(spent, 5 * units, "the tests at 2, 4, 8, 6 and 7");
+        let q = from_big_roots(&[BigInt::from(9), BigInt::from(9)]);
+        let q = q.terms();
+        assert!(positive_from(q, &BigInt::from(16)));
+        let mut spent = 0;
+        assert_eq!(horner_bound(q, &BigInt::from(16), &mut spent), None);
         let p = from_big_roots(&[BigInt::from(2), BigInt::from(2)]);
         let p = p.terms();
         let mut spent = 0;
