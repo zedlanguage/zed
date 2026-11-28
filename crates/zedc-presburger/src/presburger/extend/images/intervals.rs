@@ -230,8 +230,36 @@ impl Merge {
 /// The union of `a` and `b`, intervals that meet or touch fused.
 // Complexity tradeoff: merging the two lists is O(|a| + |b|), which makes a chain of steps
 // quadratic. Here each maximal run of one set's intervals in the merged order moves whole
-// by a split and a join, and each fused interval costs one split: O((r + f) log n) expected
-// for r runs and f fusions. The bound over a chain is at `Shift::apply`.
+// by a split and a join, and each fused interval costs one split: O((r + f + 1) log n)
+// expected for r runs and f fusions. The bound over a chain is at `Shift::apply`.
+//
+// Proof (PROOF-shift-apply-merge-bound, the cost of one union that step 8 there uses), every
+// step. The merged order lists the intervals of both inputs by lower end; r is its number of
+// maximal runs of one input, f = |a| + |b| - |union|. Every `split`, `join` and `end` costs
+// O(log n) expected (Seidel and Aragon, cited at `prio_of`), `clone` and `ptr_eq` O(1).
+// 1. Invariant: at the top of each pass of the outer loop, `a` and `b` are suffixes of the two
+//    inputs in their own order (only `split` below a key and `absorb`, which takes a prefix,
+//    remove intervals), and every interval taken so far has a lower end at most every
+//    remaining one's. It holds at the start; a pass ends only when neither `absorb` changes
+//    `a` or `b`, so both first lower ends lie above cur's end, which is at least the lower end
+//    of each interval taken, and `done` lies below cur.
+// 2. A pass, after the swap, has fa <= fb (the first lower ends of `a` and `b`) and moves
+//    `run`, the intervals of `a` with lower end at most fb. It is not empty: it holds `a`'s
+//    first. By step 1 the interval after run's last in the merged order is of `b` (all of `a`
+//    up to fb is in run, and nothing taken earlier lies after it), so each pass ends a run of
+//    the merged order at a switch, and the passes' switches are distinct, as the taken
+//    intervals only grow. A tie fa = fb is two overlapping intervals, which fuse, so ordering
+//    ties either way changes r by at most f; the passes number at most r + f.
+// 3. `append` costs one `absorb`, one `end`, one `split` and two `join`s: O(log n). The joins
+//    are in order, as `done` lies below cur and cur below `body` (step 1).
+// 4. The inner loop: each `absorb` that changes its tree takes at least one interval whose
+//    lower end is at most cur's end, so it meets or touches cur and is fused into it, one of
+//    the f fusions; an interval is taken once. Each turn costs two `absorb`s, O(log n), and
+//    every turn but the last changes a tree, so a pass's inner loop costs O((1 + f_i) log n)
+//    for its f_i fusions, with Σ f_i <= f.
+// 5. So the passes cost O((r + f) log n), and the two last `append`s and `finish` O(log n):
+//    O((r + f + 1) log n) expected in all. Steps 2 and 4 are what step 8 at `Shift::apply`
+//    relies on: the runs are counted in the order of lower ends.
 pub(super) fn union(mut a: Tree, mut b: Tree) -> Tree {
     if a.0.is_none() {
         return b;

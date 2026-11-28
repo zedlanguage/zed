@@ -658,6 +658,18 @@ struct ShrinkPower {
     vals: Vec<Value>,
 }
 
+/// The operation that builds from an expression's value, found by `Ck::too_large_build` at
+/// the expression's span: `p` at `span`, whose operand `at` it is, with the values the text
+/// fixes for its other operands, `vals` (`vals[at]` is a placeholder). What
+/// `Ck::build_operand_fix` sizes again, outward from the build, with the smaller power in place
+/// (plan row CONST-kept-sizes: "check the operations around the build").
+struct Enclosing {
+    p: Prim,
+    span: Span,
+    at: usize,
+    vals: Vec<Value>,
+}
+
 /// A product or quotient `a * b` or `a / b` at `span` whose least size the text proves
 /// ([`Built`]): what it proves of each operand, `x` and `y`, and of the result, `r`. Found by
 /// `Ck::too_large_product`.
@@ -3072,6 +3084,10 @@ struct Ck<'t, 'a> {
     /// The other operations that build a number in full within the address space, by span
     /// (`Ck::too_large_build`), judged as [`Self::wide_products`] are.
     wide_builds: BTreeMap<Span, WideBuild>,
+    /// For each operand of an operation `Ck::too_large_build` met whose other operands the
+    /// text fixes, by the operand's span: that operation ([`Enclosing`]). Spans nest, so each
+    /// expression has at most one entry. Read only by `Ck::build_operand_fix`.
+    enclosing: HashMap<Span, Enclosing>,
     /// The classes; class `k` is the type variable `$k`. Those an admitted forward reserves
     /// are made only when it is forced (`M62`, [`probe::Classes`]).
     classes: probe::Classes<Class>,
@@ -3930,6 +3946,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             main_memory: None,
             wide_products: BTreeMap::new(),
             wide_builds: BTreeMap::new(),
+            enclosing: HashMap::new(),
             classes: Default::default(),
             data_checked: HashSet::new(),
             merge_checked: HashMap::new(),
@@ -15740,6 +15757,13 @@ fn built_bits(r: &Rat) -> Option<BigUint> {
 fn prim_folded(p: Prim, args: Vec<Value>) -> Option<Value> {
     let v = kernel_folded(p, args)?;
     (!matches!(v, Value::Atom(_))).then_some(v)
+}
+
+/// The largest `j` in `1..=top` where `fits(j)` gives a value, with that value; `None` where no
+/// `j` does. Tried from the top, so nothing is assumed of how `fits` moves with `j`
+/// (`Ck::build_operand_fix`, where the size a repair builds need not grow with `j`).
+fn largest_fitting<T>(top: u32, mut fits: impl FnMut(u32) -> Option<T>) -> Option<(u32, T)> {
+    (1..=top).rev().find_map(|j| fits(j).map(|t| (j, t)))
 }
 
 /// What an operation on literals alone is at one carrier ([`Ck::lit_fit`]): what the text gives

@@ -12684,6 +12684,23 @@ impl Scope {
         // Closure"). Carrying this to (a) needs a star's projection to be a function of the
         // closed bounds on its hubs' names alone, which the code does not show for stars
         // whose classes have a period or a coefficient other than 1.
+        // Searched for a counterexample (2026-11-28), none found: random nests of tests and
+        // joins on two hubs with coefficients 2 and 3, periods 2 and 3, written constraints
+        // `a*a >= k` and disjunctions, including joins that hold stars neither side holds
+        // (which the due loop above does not list by difference), eager against lazy at every
+        // name after every step, seeds 0 to 999; kept as the test
+        // `an_eager_join_on_stars_with_periods_and_coefficients_settles_as_the_lazy_one`. What
+        // the search did find is coarser than both: refreshing every name of the join, hubs
+        // included, narrows a hub further in some cases (seed 86: `n` from [-20, 20] to
+        // [-20, 0]), and projecting every part of every star until nothing moves narrows a
+        // leaf (seed 38: `a2` from [-5, 5] ∪ [9, ∞) to [2, 5] ∪ [9, ∞)). The joined relation,
+        // with Karr's equalities and the stated bounds, says more than either side's relation
+        // did, and neither an eager nor a lazy scope projects it again at names it holds
+        // settled. That is a precision gap of the join, the same eagerly and lazily, not a
+        // star the cut misses (row JOIN-reproject-settled-hubs). With the cut below removed,
+        // that test and the 31 eager-against-lazy tests of l01_39_reduced_product,
+        // l01_39_scope_relations and l01_39a_bit_words still pass (2026-11-28): no test shows
+        // a star that only this cut refreshes, so none checks it.
         if eager {
             for n in &cored {
                 for side in [&mut a, &mut b] {
@@ -29707,6 +29724,147 @@ mod tests {
     use super::*;
 
     mod bench;
+
+    /// Plan row PROOF-eager-hub-cut-finds-stars: random nests of tests and joins on the stars
+    /// of two hubs `n`, `m` and four leaves, with coefficients 2 and 3, periods 2 and 3,
+    /// written constraints `a*a >= k` and disjunctions, run on an eager scope and a lazy one;
+    /// after every step the eager product of each name is the lazy one settled. The lazy scope
+    /// settles every stale star when read, so an eager join whose cut at the hubs missed a
+    /// star whose projection the join changes reads that leaf coarser here. Seeds 0 to 99;
+    /// a sweep of seeds 0 to 999 (2026-11-28) found no name where the two differ.
+    #[test]
+    fn an_eager_join_on_stars_with_periods_and_coefficients_settles_as_the_lazy_one() {
+        use zed_kernel::term::build::{lit, prim, var};
+        let count: u64 = 100;
+        let all: Vec<Arc<str>> = ["n", "m", "a0", "a1", "a2", "a3"].map(Arc::from).to_vec();
+        let lin = |ts: &[(&str, i64)]| -> Term {
+            ts.iter()
+                .filter(|(_, c)| *c != 0)
+                .map(|(x, c)| match c {
+                    1 => var(x),
+                    _ => prim(Prim::Mul, vec![lit(*c), var(x)]),
+                })
+                .reduce(|a, b| prim(Prim::Add, vec![a, b]))
+                .unwrap_or(lit(0))
+        };
+        fn test(
+            rng: &mut zed_testkit::seed::Rng,
+            depth: usize,
+            lin: &dyn Fn(&[(&str, i64)]) -> Term,
+        ) -> Term {
+            let leaf = rng.pick(&["a0", "a1", "a2", "a3"]);
+            let hub = rng.pick(&["n", "m"]);
+            let other = if hub == "n" { "m" } else { "n" };
+            let k = rng.int(-4, 4);
+            match rng.below(if depth == 0 { 10 } else { 12 }) {
+                // A written constraint pins its leaf on the side that holds it alone.
+                11 | 9 if depth == 0 || rng.below(2) == 0 => prim(
+                    Prim::Ge,
+                    vec![
+                        prim(Prim::Mul, vec![var(leaf), var(leaf)]),
+                        lit(rng.int(0, 60)),
+                    ],
+                ),
+                0..3 => {
+                    let ca = rng.pick(&[1, 1, 2, 3]);
+                    let (c1, c2) = (rng.pick(&[1, 1, 2]), rng.pick(&[0, 1, 2]));
+                    prim(
+                        Prim::Ge,
+                        vec![lin(&[(leaf, ca), (hub, -c1), (other, -c2)]), lit(k)],
+                    )
+                }
+                3 => {
+                    let (c1, c2) = (rng.pick(&[1, 2]), rng.pick(&[1, 2]));
+                    prim(Prim::Ge, vec![lin(&[(hub, c1), (other, -c2)]), lit(k)])
+                }
+                4 => prim(
+                    rng.pick(&[Prim::Ge, Prim::Le]),
+                    vec![var(hub), lit(rng.int(-15, 15))],
+                ),
+                5 => prim(
+                    rng.pick(&[Prim::Ge, Prim::Le]),
+                    vec![var(leaf), lit(rng.int(-15, 15))],
+                ),
+                6 => {
+                    let p = rng.pick(&[2, 3]);
+                    let t = match rng.below(3) {
+                        0 => var(hub),
+                        1 => lin(&[(hub, 1), (other, 1)]),
+                        _ => lin(&[(hub, 1), (other, -1)]),
+                    };
+                    prim(
+                        Prim::Eq,
+                        vec![prim(Prim::Mod, vec![t, lit(p)]), lit(rng.int(0, p - 1))],
+                    )
+                }
+                7 => prim(Prim::Ge, vec![lin(&[(hub, 1), (leaf, -1)]), lit(k)]),
+                8 => prim(Prim::Ge, vec![lin(&[(hub, 1), (other, 1)]), lit(k)]),
+                9 => prim(
+                    Prim::Or,
+                    vec![test(rng, depth - 1, lin), test(rng, depth - 1, lin)],
+                ),
+                _ => prim(
+                    Prim::And,
+                    vec![test(rng, depth - 1, lin), test(rng, depth - 1, lin)],
+                ),
+            }
+        }
+        let p = Premises::new();
+        let mut start = Scope::new(
+            all.iter()
+                .map(|n| (n.clone(), Product::of_type(Type::int()))),
+        );
+        for h in ["n", "m"] {
+            start = start
+                .assume(&prim(Prim::Ge, vec![var(h), lit(-20)]), true, &p)
+                .assume(&prim(Prim::Le, vec![var(h), lit(20)]), true, &p);
+        }
+        let (mut joins, mut new_stars) = (0, 0);
+        for seed in 0..count {
+            let mut rng = zed_testkit::seed::Rng::new(seed);
+            let (mut eager, mut lazy) = (start.clone(), start.clone().lazy());
+            let mut trace = vec![format!("seed {seed}")];
+            for _ in 0..10 {
+                if eager.bottom {
+                    break;
+                }
+                if rng.below(3) != 0 {
+                    let (t, o) = (test(&mut rng, 2, &lin), rng.below(4) != 0);
+                    trace.push(format!("assume {t:?} is {o}"));
+                    eager = eager.assume(&t, o, &p);
+                    lazy = lazy.assume(&t, o, &p);
+                } else {
+                    let (t, u, v) = (
+                        test(&mut rng, 1, &lin),
+                        test(&mut rng, 1, &lin),
+                        test(&mut rng, 1, &lin),
+                    );
+                    trace.push(format!("join {t:?} and {u:?} with not it and {v:?}"));
+                    let two = |s: &Scope| {
+                        let yes = s.assume(&t, true, &p).assume(&u, true, &p);
+                        let no = s.assume(&t, false, &p).assume(&v, true, &p);
+                        (yes.join(&no), yes, no)
+                    };
+                    let (j, yes, no) = two(&eager);
+                    joins += 1;
+                    new_stars += (j.relation.stars().keys())
+                        .filter(|x| [&yes, &no].iter().any(|s| s.relation.star(x).is_none()))
+                        .count();
+                    eager = j;
+                    lazy = two(&lazy).0;
+                }
+                for x in &all {
+                    assert_eq!(eager.get(x), lazy.settled(x), "{x}\n{}", trace.join("\n"));
+                }
+            }
+        }
+        // The draw makes joins, and stars that a join holds and neither side does, which the
+        // due loop of `Scope::join` does not list by difference.
+        assert!(
+            joins > count && new_stars > 0,
+            "{joins} joins, {new_stars} new stars"
+        );
+    }
 
     use zedc_presburger::upper_hull::not_above;
 

@@ -13,6 +13,7 @@ mod fail_steps_name_plus_sign;
 mod meters;
 mod panic_guard;
 mod scaling;
+mod standing_rules;
 
 use std::collections::BTreeSet;
 use std::fs;

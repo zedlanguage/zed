@@ -20277,6 +20277,29 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// has a part wider than 64 bits is not run, since its result is the build and the kernel
     /// would compute it up to the bound for no verdict.
     fn too_large_build(&mut self, p: Prim, args: &[&'a Expr], span: Span) {
+        // Each operand whose fellow operands the text fixes: this operation builds from its
+        // value, and a repair of a build there is sized here too ([`Self::build_operand_fix`]).
+        // Recorded before the operand's own value is asked, since a sum that writes out a kept
+        // power is not folded and leaves this operation unjudged.
+        for (i, a) in args.iter().enumerate() {
+            let others = (args.iter().enumerate())
+                .map(|(o, x)| match o == i {
+                    true => Some(Value::Int(0)),
+                    false => self.fixed_value(x),
+                })
+                .collect::<Option<Vec<Value>>>();
+            if let Some(vals) = others {
+                self.enclosing.insert(
+                    a.span,
+                    Enclosing {
+                        p,
+                        span,
+                        at: i,
+                        vals,
+                    },
+                );
+            }
+        }
         // A number the checker already folded at `span` is measured as it stands; `String`
         // gives a text, so its operand is read instead.
         let folded = match p {
@@ -20368,54 +20391,75 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// digits need 616 KiB; `2^16`'s power needs 512 KiB, but its digits 1.2 MiB. `None` where
     /// no operand is such a power or no exponent `2^j`, `j >= 1`, fits.
     ///
-    /// Each exponent offered is checked: the build is sized at it and fits. The search for the
-    /// largest assumes that the size grows with `j` (the power of a base other than 0, 1 and
-    /// -1 grows with its exponent, and with it the digits, a sum's part and what a comparison
-    /// reads); where it does not, a smaller `j` that fits may be offered, never one that
-    /// does not fit. Only the build itself is sized: an operation around it that builds from
-    /// its value, as a `String` of a sum, is not, and may still pass `room` with the repair
-    /// (left open in plan row CONST-kept-sizes).
+    /// Each exponent offered is checked: the build is sized at it and fits, and so does each
+    /// operation around it that builds from its value with operands the text fixes
+    /// ([`Enclosing`]), outward from the build, each sized on the value the one inside it folds
+    /// to at that exponent: `String(b ^ (2^20) + 1)` under 1 MiB offers `2^15`, since at
+    /// `2^16` the sum fits in 512 KiB but its digits need 1.2 MiB. Where a value inside such
+    /// an operation does not fold under the fold bound, the exponent is not offered, as it
+    /// could not be checked. The first operation around that is not such a build (a product,
+    /// a call, an operand the text does not fix) ends the chain, and what it builds is left
+    /// to the run, as for the build itself.
     ///
-    /// Complexity tradeoff: the naive method tries each `j` from the top, up to 62 sizings, or
-    /// checks the whole unit again with the repair written in. Used: a binary search over
-    /// `1..=top`, at most 6 sizings, each one kernel operation on kept forms under the fold
-    /// bound, which is refused before it allocates past 16 MiB.
+    /// The search takes the largest `j` that fits by trying each from the top, and assumes
+    /// nothing of how the size moves with `j`: it need not grow. A comparison reads its
+    /// operands only as far as they agree, so `x ^ (2^j) > c` reads much where `x ^ (2^j)`
+    /// lies near `c` and little where it lies far above, and a larger `j` can fit where a
+    /// smaller one does not; a binary search, which assumed growth, then offered a smaller
+    /// `j` than the largest that fits ([`largest_fitting`]).
+    ///
+    /// Complexity tradeoff: the naive method checks the whole unit again with each repair
+    /// written in, a walk of the unit per `j`. Used: up to `top <= 62` trials, each one kernel
+    /// sizing and fold per operation in the chain, held to the fold bound, which is refused
+    /// before it allocates past 16 MiB, so a trial costs at most a fold within that bound per
+    /// operation. Where the size does grow with `j`, as for a sum or a print, which double with
+    /// it, the trials above the fold bound are refused at once and those within it cost a
+    /// geometric series, at most twice the largest; where it does not, at most 62 such folds.
+    /// The binary search took at most 6 trials but no proof covers its assumption.
     fn build_operand_fix(&self, w: &WideBuild, room: &Num) -> Option<Rewrite> {
         let s = w.shrink.as_deref()?;
-        // The bits the build makes at the exponent `±2^j`: `Some(None)` where it builds
-        // nothing kept, `None` where the power is no number (the evaluator gives an atom).
-        let sized = |j: u32| -> Option<Option<Num>> {
+        // The operands of `p` at `vals`, read at `rat` where the run reads them so: both
+        // operands of `/`, and an `int` beside a `rat`.
+        let read = |p: Prim, vals: Vec<Value>| -> Option<Vec<Value>> {
+            match p == Prim::Div || vals.iter().any(|v| matches!(v, Value::Rat(_))) {
+                true => vals.into_iter().map(at_rat).collect(),
+                false => Some(vals),
+            }
+        };
+        let bits = |b: BigUint| Num::from(num_bigint::BigInt::from(b));
+        // The most bits the build and each operation around it make at the exponent `±2^j`,
+        // `Some(None)` where none builds anything kept; `None` where one passes `room`, the
+        // power is no number (the evaluator gives an atom), or a value an operation around
+        // reads does not fold.
+        let fits = |j: u32| -> Option<Option<Num>> {
             let k = 1i64 << j;
             let k = if s.negative { -k } else { k };
             let power = prim_folded(Prim::Pow, vec![s.base.clone(), Value::Int(k)])?;
-            let mut vals = s.vals.clone();
+            let (mut p, mut span, mut vals) = (w.p, w.span, s.vals.clone());
             vals[s.at] = power;
-            if w.p == Prim::Div || vals.iter().any(|v| matches!(v, Value::Rat(_))) {
-                // The run reads both operands of `/`, and an `int` beside a `rat`, at `rat`.
-                vals = vals.into_iter().map(at_rat).collect::<Option<_>>()?;
+            let mut most: Option<Num> = None;
+            loop {
+                let vals_read = read(p, vals)?;
+                if let Some(b) = kernel_build(p, vals_read.clone()).map(bits) {
+                    if &b > room {
+                        return None;
+                    }
+                    most = Some(most.map_or(b.clone(), |m| m.max(b)));
+                }
+                let Some(up) = self.enclosing.get(&span) else {
+                    return Some(most);
+                };
+                let mut next = up.vals.clone();
+                next[up.at] = prim_folded(p, vals_read)?;
+                (p, span, vals) = (up.p, up.span, next);
             }
-            Some(kernel_build(w.p, vals).map(|b| Num::from(num_bigint::BigInt::from(b))))
         };
-        let fits =
-            |j: u32| sized(j).and_then(|b| b.as_ref().is_none_or(|b| b <= room).then_some(b));
-        // Binary search for the largest `j` in `1..=top` that fits: `lo` fits (or is 0, none
-        // found), every `j` above `hi` does not.
-        let (mut lo, mut hi, mut best) = (0u32, s.top, None);
-        while lo < hi {
-            let mid = lo + (hi - lo).div_ceil(2);
-            match fits(mid) {
-                Some(b) => (lo, best) = (mid, Some(b)),
-                None => hi = mid - 1,
-            }
-        }
-        let j = (lo >= 1).then_some(lo)?;
-        // `lo` and `best` change together, where `fits(mid)` held, so `best` is the size at `lo`.
-        let bits = best.expect("lo >= 1 is set only where fits(lo) held");
+        let (j, most) = largest_fitting(s.top, fits)?;
         let with = match s.negative {
             true => format!("-(2^{j})"),
             false => format!("(2^{j})"),
         };
-        let holds = match bits {
+        let holds = match most {
             Some(b) => format!(
                 "needs at least {}",
                 bytes_text_of(&(&b + &Num::from(7i64)).div_floor(&Num::from(8i64)))
@@ -36976,6 +37020,19 @@ fn params_met_apart(sig: &Sig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Plan row CONST-kept-sizes: the search for the exponent a repair offers assumes nothing
+    /// of how the size moves with `j`. Where `j = 3` does not fit but `5` and `1` do, as a
+    /// comparison that reads far where its operands lie close may give, the largest is `5`;
+    /// the binary search it replaced probed `3`, kept below it, and offered `1`.
+    #[test]
+    fn the_largest_fitting_exponent_is_found_where_the_size_does_not_grow() {
+        let fits = |j: u32| matches!(j, 1 | 5).then_some(j * 10);
+        assert_eq!(largest_fitting(6, fits), Some((5, 50)));
+        assert_eq!(largest_fitting(4, fits), Some((1, 10)));
+        assert_eq!(largest_fitting(6, |_| None::<u32>), None);
+        assert_eq!(largest_fitting(0, |j| Some(j)), None);
+    }
 
     /// Row PROOF-payload-call-paths-checked: the calls of the checks of a bounded variable
     /// against an argument (`fixed_payload_fits`, `apply_one`, `apply_many`,

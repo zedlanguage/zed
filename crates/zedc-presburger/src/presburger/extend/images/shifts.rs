@@ -141,8 +141,8 @@ impl Shift {
     //    order have an end of an earlier block between them, which separates them in the order
     //    of step 2 as well: Y_j has at most B_j runs there, B_j its runs in step 2, and `out`
     //    at most B_j + 1. With f_j the union's fusions, the union costs
-    //    O((2 B_j + 1 + f_j) log N) (`intervals::union`; its runs read in the order of lower
-    //    ends, as its comment states, inferred and not proved here), and Σ_j B_j = R, Σ f_j = F.
+    //    O((2 B_j + 1 + f_j + 1) log N) (`intervals::union`, whose runs are counted in the
+    //    order of lower ends, proved at that function), and Σ_j B_j = R, Σ f_j = F.
     // 9. The chain. A set starts as one interval and gains at most one interval at each cut,
     //    2 p_i cuts in step i, and a fusion removes one, so the fusions of the chain number at
     //    most 1 + 2P and N <= 1 + 2P. Summing step 7 over the chain, Φ telescopes from Φ(whole)

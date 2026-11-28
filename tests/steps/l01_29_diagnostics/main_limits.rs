@@ -139,6 +139,33 @@ fn a_smaller_power_offered_for_a_print_past_the_memory_limit_is_checked() {
     );
 }
 
+/// Plan row CONST-kept-sizes: the smaller power is checked with the operations around the
+/// build too. `b ^ (2^20) + 1` writes out 8 MiB under the 1 MiB limit, and is rejected there;
+/// at `2^16` the sum fits in 512 KiB, but the `String` around it then writes about 1.2 MiB of
+/// digits, so the repair offers `2^15` (about 616 KiB of digits), and the program with it
+/// compiles. Before, the repair sized the sum alone and offered `2^16`, which the checker then
+/// rejected at the `String`.
+#[test]
+fn a_smaller_power_offered_inside_a_print_is_checked_with_the_print() {
+    let src = "@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
+               m.stdout <- String(b ^ (2^20) + 1);\n}\n";
+    let out = rejected(src);
+    assert!(
+        out.starts_with(
+            "4:24: Number too large for the memory limit of `main`: `b ^ (2^20) + 1` needs at \
+             least 8 MiB"
+        ) && out.contains("Try `m.stdout <- String(b ^ (2^15) + 1)` instead."),
+        "{out}"
+    );
+    assert!(
+        out.contains("    m.stdout <- String(b ^ (2^15) + 1);    needs at least 616 KiB"),
+        "{out}"
+    );
+    assert!(!out.contains("2^16"), "{out}");
+    assert_eq!(built(&src.replace("2^20", "2^15")), None);
+    assert!(built(&src.replace("2^20", "2^16")).is_some());
+}
+
 #[test]
 fn a_product_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
     // Plan row CONST-too-large-products-unproved (d): `x` is `b ^ (2^16)` and `x * x`

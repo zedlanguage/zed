@@ -105,7 +105,9 @@
 # other run, with the settings it gives every run (GLIBC_TUNABLES above all, which a test binary
 # run directly gives itself by starting again, crate zed-meter-settings), writing its profiles
 # to <dir>/<piece>-<pid>.profraw; build scripts and the links made before the timed pieces write
-# <dir>/other-<pid>.profraw. Merge them with `llvm-profdata merge -sparse <dir>/*.profraw -o
+# <dir>/other-<pid>.profraw. At the end the run prints tools/cov_report.sh <dir>: region, branch
+# and line coverage per crate and per changed file, and the regions of changed functions no test
+# ran. By hand, merge them with `llvm-profdata merge -sparse <dir>/*.profraw -o
 # <file>` and read them with `llvm-cov report` or `llvm-cov show` and the binaries the run built,
 # both the toolchain's own (component llvm-tools, in `$(rustc --print
 # sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin`): the system's are of an older LLVM, which
@@ -285,7 +287,9 @@ if [ -n "$cov" ]; then
   # zrun's absolute rpaths name build/cargo only; a copy of an executable in another directory
   # (l01_36a a_stripped_zedc_builds) finds this build's dylibs, whose hashed names differ from
   # build/cargo's, only through this one.
-  export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C instrument-coverage -C link-arg=-Wl,-rpath,$root/build/cov/debug/deps"
+  # `-Z coverage-options=branch` adds branch counts to the regions (the pinned nightly takes it;
+  # TOOLS-coverage-region-report), which tools/cov_report.sh prints.
+  export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C instrument-coverage -Z coverage-options=branch -C link-arg=-Wl,-rpath,$root/build/cov/debug/deps"
   export LLVM_PROFILE_FILE=$cov/other-%p.profraw
 fi
 if [ -n "$trace" ]; then
@@ -2015,4 +2019,7 @@ grep -v 'rc=0 ' "$out/summary" | while read -r name _; do
 done
 echo "pieces: $(wc -l <"$out/summary"), failed: $bad, load: $load, cores: $cores"
 [ -z "$cov" ] || echo "coverage profiles in $cov; a scaling verdict of this run is not to be relied on"
+# The report reads the profiles and leaves the run's exit as the pieces give it: coverage is
+# printed, never required (DECIDE-coverage-gate).
+[ -z "$cov" ] || (cd "$root" && tools/cov_report.sh "$cov") || echo "tools/cov_report.sh printed no report"
 [ "$bad" = 0 ]
