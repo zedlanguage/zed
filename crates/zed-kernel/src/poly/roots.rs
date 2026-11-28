@@ -3013,6 +3013,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn red_a_sparse_degree_past_the_cap_forms_no_bound_search() {
+        let g: u64 = (1 << 20) - 1;
+        let mut terms = vec![(0, BigInt::one() << g)];
+        terms.extend((1..=4097u64).map(|i| (i * g, BigInt::one())));
+        let p = big(&terms);
+        assert_eq!(p.terms().last().expect("terms").0, 4_296_011_775);
+        let (roots, spent) = positive_roots_by(
+            p.terms(),
+            BigInt::from(2),
+            Some(BigInt::one()),
+            Horner::Built,
+        );
+        assert_eq!((roots, spent), (Vec::new(), 1));
+    }
+
+    #[test]
+    fn red_horner_units_saturates() {
+        assert_eq!(horner_units(u64::MAX, 1), u64::MAX);
+    }
+
+    #[test]
+    fn red_the_bound_search_covers_the_powers_up_to_top() {
+        let p = from_big_roots(&[BigInt::from(2), BigInt::from(2)]);
+        let p = p.terms();
+        let mut spent = 0;
+        assert_eq!(horner_bound(p, &BigInt::from(4), &mut spent), None);
+        assert!(positive_from(p, &BigInt::from(3)));
+        for horner in [Horner::Off, Horner::AtStart, Horner::Built] {
+            let roots = positive_roots_by(p, BigInt::from(2), Some(BigInt::from(4)), horner).0;
+            assert_eq!(roots, vec![BigInt::from(2)], "{horner:?}");
+        }
+    }
+
     /// [`chain_ends`] is the sum it is written as, for every `t` up to 300.
     #[test]
     fn chain_ends_is_the_sum_it_bounds() {
