@@ -49,6 +49,7 @@ const PLACES: &[&str] = &[
     "f(x) = x test @ { 1 -> 1 }",
     "x = for x in xs@ { 0 };",
     "type T = int @;",
+    "type T = int with @;",
     "type T = @ -> int;",
     "type T = string @;",
     "type T = int[@];",

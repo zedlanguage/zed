@@ -7,7 +7,9 @@ use std::collections::HashMap;
 
 use zed_tests::scaling;
 
-use crate::scaling::{Parsed, chain, deep, imports, methods, named, parsed, pass, repeated, wide};
+use crate::scaling::{
+    Parsed, chain, deep, facets, imports, methods, named, parsed, parts, pass, repeated, wide,
+};
 
 /// Checks that `pass` over `make(n)` is linear in `n`, from `n` = `base`.
 fn linear(what: &str, base: usize, make: impl Fn(usize) -> String) {
@@ -46,6 +48,24 @@ fn a_deep_display_scales() {
 #[test]
 fn a_chain_of_updates_scales() {
     linear("a chain of n updates and an update of n paths", 1000, chain);
+}
+
+#[test]
+fn a_type_of_many_local_parts_scales() {
+    linear(
+        "a list of n local parts and n nested `with type` clauses",
+        1000,
+        parts,
+    );
+}
+
+/// The list of facets does not build, so the work timed is its lexing and parsing.
+#[test]
+fn a_braced_list_of_many_facets_parses_in_linear_time() {
+    let texts: HashMap<usize, String> = [1000, 8000].into_iter().map(|n| (n, facets(n))).collect();
+    scaling::check("a `with` list of n facets, lexed and parsed", 1000, |n| {
+        std::hint::black_box(parsed(texts[&n].clone()));
+    });
 }
 
 #[test]

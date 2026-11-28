@@ -90,10 +90,44 @@ pub(super) fn named(n: usize) -> String {
     )
 }
 
-/// Every input of the benchmarks in `bench.rs` is built and formatted at small sizes.
+/// `type T = Part… with { type Part0 = int, type Part1 = (Part0, Part0), … };`, a list of `n`
+/// local parts each naming a pair of the one before, and `type U = Q0 with type Q0 = Q1 with
+/// type Q1 = Q2 … with type Q… = int;`, `n` nested `with` clauses (SPEC-with-local-part).
+pub(super) fn parts(n: usize) -> String {
+    let listed: Vec<String> = (0..n)
+        .map(|i| match i {
+            0 => "type Part0 = int".to_string(),
+            _ => format!("type Part{i} = (Part{}, Part{})", i - 1, i - 1),
+        })
+        .collect();
+    let nested: String = (0..n)
+        .map(|i| match i + 1 < n {
+            true => format!(" with type Q{i} = Q{}", i + 1),
+            false => format!(" with type Q{i} = int"),
+        })
+        .collect();
+    format!(
+        "type T = Part{} with {{ {} }};\ntype U = Q0{nested};\n",
+        n - 1,
+        listed.join(", ")
+    )
+}
+
+/// `v with { f0(0), f1(1), … }`, a list of `n` facets (SPEC-with-list), which this zedc parses
+/// and refuses as of layer L7.
+pub(super) fn facets(n: usize) -> String {
+    let fs: Vec<String> = (0..n).map(|i| format!("f{i}({i})")).collect();
+    format!("w = v with {{ {} }};\n", fs.join(", "))
+}
+
+/// Every input of the benchmarks in `bench.rs` is built and formatted at small sizes, and the
+/// list of facets, which does not build, is parsed.
 #[test]
 fn each_form_is_built_and_formatted_at_small_sizes() {
-    for make in [wide, imports, repeated, methods, deep, chain, named] {
+    for n in [1, 2, 9] {
+        parsed(facets(n));
+    }
+    for make in [wide, imports, repeated, methods, deep, chain, named, parts] {
         for n in [1, 2, 9] {
             pass(&parsed(make(n)));
         }

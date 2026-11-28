@@ -10,6 +10,7 @@ mod blocks;
 mod body_positions;
 mod formatting;
 mod later;
+mod local_parts;
 mod methods;
 mod name_values;
 mod patterns;
