@@ -147,6 +147,8 @@ mod pairs;
 mod pick_wide_tests;
 #[cfg(test)]
 mod tie_group_tests;
+#[cfg(test)]
+mod tie_pending_tests;
 // Public and not re-exported here: placing.rs reads `Formula::and`, whose impl is in this file,
 // so a `use` of it here would make an import cycle (S1F-presburger-placing-cycle).
 pub mod placing;
@@ -20215,14 +20217,17 @@ impl Omega {
             // colors (the pivots share one) and maps the system onto itself, so the run that
             // defines `y` is the image under `τ` of the run that defines `x`, step for step, and
             // ends in the same kind of leaf (the argument at `Omega::untie`, whose assumption on
-            // the later steps this shares). Kept rows (`loose`) are refused as there.
-            // Open (PRES-tie-symmetry-pending): the check reads the rows and the equalities, not
-            // the definitions not yet written into the rows (`pending`), so a swap that changes
-            // one of those is taken; [`Omega::pivot_swaps`] refuses a pivot one holds
-            // ([`Omega::pending_holds`]). Counted 2026-11-27 with a temporary probe: taken so
-            // at hundreds of steps of `l01_38_omega_test`, and at `l01_38_presburger`
-            // (`cell_sweep::overlap_at_last_level_with_k`) and `l01_25_preimage_catalog`
-            // (`ref_memo::mod_chains_with_moduli_near_2_40_and_2_62_are_answered`).
+            // the later steps this shares). Kept rows (`loose`) are refused as there. The
+            // system includes the definitions not yet written into the rows (`pending`), whose
+            // variables the rows still hold, so `τ` must map each of them onto itself too
+            // ([`Omega::pending_swaps_onto_itself`], PRES-tie-symmetry-pending); without it a
+            // swap that changes one was taken. A temporary probe (2026-11-27, every test of
+            // `l01_38_omega_test`, `l01_38_presburger` and `l01_25_preimage_catalog`) found it
+            // in three tests, `cell_sweep::overlap_at_last_level_with_k` and two of
+            // `ref_memo`: in each, a pending definition held one of the two swapped variables
+            // and not the other. `broken_swap` asks the same of the definitions before a tie
+            // once splinters are built (it compares each with its own image, not with another
+            // definition's), so both checks now read the definitions alike.
             // Before PRES-tie-symmetry every tie here was kept as two rows, and a row tie
             // on kept rows is refused, so `a' + b' == 2d'` with `a'` and `b'` alike was refused
             // (`tests::a_hull_side_past_a_symmetric_tie_is_answered`; also
@@ -20240,6 +20245,7 @@ impl Omega {
                     swapped(&e.a, x, y) == *e.a
                         && self.sys.swaps_onto_itself(x, y)
                         && self.es.swaps_onto_itself(x, y)
+                        && self.pending_swaps_onto_itself(x, y)
                 });
             if !symmetric {
                 self.es.put(s, e, &mut self.sys);
@@ -20288,18 +20294,17 @@ impl Omega {
     /// says whether no equality but `e` holds a variable. A swap of `x` and `y` maps onto
     /// itself: `e`, when its coefficients at the two are equal; every other equality, which
     /// holds neither (`alone`); the inequalities, by [`System::swaps_onto_itself`]; and the
-    /// definitions not yet written into them, when none holds either. Rows kept loose are
-    /// refused, as [`Omega::untie`] refuses them. Then the run that defines `y` is the image
-    /// under the swap of the run that defines `x`, by the argument of [`Omega::untie`], and
-    /// the swaps are checked against the rows the splinters read by [`broken_swap`] as
-    /// those of `untie` are. Before PROJECT-each-eq-slack such a tie kept `e` as a pair of
-    /// rows, which turns off every later swap of `untie` (`sys.loose`): `v0 + v3 == v1 - 1`
-    /// and `v1 == v2 + v4 + 1` in a box were refused. Used by [`Omega::swapped_pivots`] for
-    /// equalities tied with each other; the tie within one equality is the check of
-    /// PRES-tie-symmetry in [`Omega::equality`], which asks the same, with the other
-    /// equalities by [`Equalities::swaps_onto_itself`], except of the pending definitions
-    /// (PRES-tie-symmetry-pending). O(t·d·w log m) for the t tied
-    /// variables, as `untie`'s check. Test:
+    /// definitions not yet written into them, by [`Omega::pending_swaps_onto_itself`]. Rows
+    /// kept loose are refused, as [`Omega::untie`] refuses them. Then the run that defines `y`
+    /// is the image under the swap of the run that defines `x`, by the argument of
+    /// [`Omega::untie`], and the swaps are checked against the rows the splinters read by
+    /// [`broken_swap`] as those of `untie` are. Before PROJECT-each-eq-slack such a tie kept `e`
+    /// as a pair of rows, which turns off every later swap of `untie` (`sys.loose`):
+    /// `v0 + v3 == v1 - 1` and `v1 == v2 + v4 + 1` in a box were refused. Used by
+    /// [`Omega::swapped_pivots`] for equalities tied with each other; the tie within one
+    /// equality is the check of PRES-tie-symmetry in [`Omega::equality`], which asks the same,
+    /// with the other equalities by [`Equalities::swaps_onto_itself`]. O(t·d·w log m) for the
+    /// t tied variables, as `untie`'s check. Test:
     /// `l01_38_omega_test::names::tied_pivots_that_a_swap_maps_onto_itself_are_defined`.
     fn pivot_swaps(
         &self,
@@ -20310,13 +20315,13 @@ impl Omega {
         let [x, ref others @ ..] = tied[..] else {
             return None;
         };
-        let fits = |j: usize| alone(j) && e.at(j) == e.at(x) && !self.pending_holds(j);
+        let fits = |j: usize| alone(j) && e.at(j) == e.at(x);
         (self.sys.loose.is_empty()
             && !others.is_empty()
             && fits(x)
-            && others
-                .iter()
-                .all(|&y| fits(y) && self.sys.swaps_onto_itself(x, y)))
+            && others.iter().all(|&y| {
+                fits(y) && self.sys.swaps_onto_itself(x, y) && self.pending_swaps_onto_itself(x, y)
+            }))
         .then(|| {
             (others.iter())
                 .map(|&y| vec![(x.min(y), x.max(y)), (x.max(y), x.min(y))])
@@ -20324,11 +20329,19 @@ impl Omega {
         })
     }
 
-    /// Whether a definition not yet written into the rows (`pending`) holds the variable `j`:
-    /// a swap check on the rows does not see it there. O(p·w) for p pending definitions of w
-    /// terms.
-    fn pending_holds(&self, j: usize) -> bool {
-        (self.pending.iter()).any(|(_, d)| d.a.iter().any(|(i, _)| *i == j))
+    /// Whether the swap `τ` of `x` and `y` maps each definition not yet written into the rows
+    /// (`pending`) onto itself, which a swap check on the rows does not see: the rows still
+    /// hold the defined variable `v`, which `τ` fixes (a pending variable is out of the
+    /// equalities, so it is neither `x` nor `y`), and a row `r` is written as `r[v := def]`.
+    /// When `τ` maps the rows onto themselves and `τ(def) == def`, then `τ(r[v := def]) ==
+    /// τ(r)[v := def]`, a written row again, so the written rows map onto themselves; a
+    /// definition that holds only one of `x` and `y`, or both at different coefficients, is
+    /// changed by `τ` and the swap is refused. One rule for both swap checks of an equality's
+    /// tied pivots ([`Omega::equality`], [`Omega::pivot_swaps`]), item
+    /// PRES-tie-symmetry-pending; [`broken_swap`] asks the same of the definitions among the
+    /// steps. O(p·w log w) for p pending definitions of w terms.
+    fn pending_swaps_onto_itself(&self, x: usize, y: usize) -> bool {
+        (self.pending.iter()).all(|(_, d)| swapped(&d.a, x, y) == *d.a)
     }
 
     /// The pivot of each equality in `slots`, the equalities of least key that
