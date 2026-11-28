@@ -944,23 +944,30 @@ pub(super) fn positive_roots_by(
     while let Some((l, mut h)) = open.pop() {
         spent += 1;
         if spent > budget {
+            // The units spent are those before this interval, which the chain takes: at least
+            // `budget`, and more where a [`search`] of the pass before took `spent` past it
+            // (ledger FAIL-roots-chain-switch-units-capped: `budget + rented` was returned,
+            // which left out those steps; test `a_switch_to_the_chain_counts_the_search_that_
+            // passed_the_budget`).
+            let done = spent - 1;
             #[cfg(test)]
             tests::CHAINED.with(|c| c.set(c.get() + 1));
             #[cfg(test)]
-            tests::UNITS.with(|u| u.set(u.get() + budget + rented));
+            tests::UNITS.with(|u| u.set(u.get() + done + rented));
             #[cfg(test)]
             tests::SWITCHES.with(|s| s.borrow_mut().push((spent, budget, rented)));
             let roots = match a <= hi {
                 true => chain_roots(p, a, Some(hi)),
                 false => Vec::new(),
             };
-            return (roots, budget + rented);
+            return (roots, done + rented);
         }
         // Each test of the bound from above is run once the branch and bound has spent its
         // units (as built; `AtStart` runs the whole search at the first interval, for
         // `crossover roots-horner`, and is outside this proof). The claim: as built, the units
         // returned are at most twice those of the branch and bound, `spent + rented <= 2 spent`
-        // at the end and `budget + rented <= 2 budget` at the switch to the chain. Proof:
+        // at the end and `done + rented <= 2 done` at the switch to the chain, `done = spent -
+        // 1` the units before the interval the chain takes. Proof:
         // 1. Invariant `rented <= spent`. It holds at the start (`rented = 0`). `spent` only
         //    grows, which keeps it. `rented` grows only here, by `units` at a test, and the
         //    condition of this loop is `units <= spent - rented` before that test (a
@@ -968,11 +975,14 @@ pub(super) fn positive_roots_by(
         //    invariant holds after it.
         // 2. At the end of the loop over `open`, the units returned are `spent + rented <= 2
         //    spent` by 1.
-        // 3. At the switch to the chain, this check sees `spent > budget` for the first time
-        //    (`spent` may have passed `budget` inside a `search` of the pass before). The tests of
-        //    earlier passes ran with `spent <= budget` (each pass checks the budget before its
-        //    tests), so by 1 at the last of them `rented <= spent <= budget`, and no test ran
-        //    since. The units returned are `budget + rented <= 2 budget`.
+        // 3. At the switch to the chain, the check above sees `spent > budget` for the first
+        //    time, after the `spent += 1` of the interval the chain takes; `done = spent - 1`
+        //    is `spent` as the pass before left it: `budget` or more, as a [`search`] of that
+        //    pass adds its steps to `spent` with no check of the budget between them. The
+        //    invariant 1 held then, `rented <= done`, and no test of the bound from above ran
+        //    since, so the units returned are `done + rented <= 2 done`. It was `budget +
+        //    rented <= 2 budget`, which left out the steps of that search (ledger
+        //    FAIL-roots-chain-switch-units-capped).
         // 4. Each test costs at most `units` units in bit cost, not only in products. The bound
         //    of the whole at [`positive_roots`] counts a unit as at most 12 passes of O(t)
         //    products of numbers of O(B + s) bits, `s = 2 bits(h)`, so O(t M(B + s)) bit
@@ -2227,7 +2237,7 @@ mod tests {
         pub(super) static BOXES: std::cell::RefCell<Option<Vec<(BigInt, BigInt)>>> =
             const { std::cell::RefCell::new(None) };
         /// The units [`positive_roots`] has spent on this thread, a handover to the chain counted
-        /// as the whole budget.
+        /// as the units spent before it.
         pub(super) static UNITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         /// Each handover of [`positive_roots_by`] to the chain on this thread: `spent` there
         /// (with the interval the chain takes), the budget and the units of the bound from
