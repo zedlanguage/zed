@@ -2338,8 +2338,8 @@ fn row_on(f: &Formula, x: &Atom, name: &Arc<str>) -> Option<Con> {
 /// `name`), and the real shadow of each pair of a lower and an upper bound on `x` among the
 /// arm's rows on `x` ([`row_on`]) and `C`, but for the pairs of two bounds of `C` and the two
 /// sides of one equality; `false` where a shadow without atoms is false. An arm with no row on
-/// `x` is [`Formula::forget`] of it, as before. A conjunction held in more than one place in the arm
-/// is read once, as [`Conjuncts::and`] reads one.
+/// `x` is [`Formula::forget`] of it, as before. A conjunction held in more than one place in
+/// the arm is read once, as [`Conjuncts::and`] reads one.
 ///
 /// Proof that `arm && C` implies the result, which mentions no `x`. A part without a row
 /// on `x` implies its `forget`, which mentions no `x` (its doc). For a lower bound
