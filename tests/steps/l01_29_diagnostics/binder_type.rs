@@ -197,7 +197,10 @@ const SITES: &[(&str, Site)] = &[
     ),
     ("Field", Site::NotBinder("a field, which no scope binds")),
     ("TypeDecl", Site::NotBinder("declares a type")),
-    ("TypePart", Site::NotBinder("declares a local part of a type")),
+    (
+        "TypePart",
+        Site::NotBinder("declares a local part of a type"),
+    ),
     ("TypeParams", Site::Later("type Pair(int) = (int, int);\n")),
     ("Interface", Site::NotBinder("declares a type")),
     (

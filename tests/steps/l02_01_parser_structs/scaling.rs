@@ -102,30 +102,31 @@ pub(super) fn parts(n: usize) -> String {
         .collect();
     let nested: String = (0..n)
         .map(|i| match i + 1 < n {
-            true => format!(" with type Q{i} = Q{}", i + 1),
-            false => format!(" with type Q{i} = int"),
+            true => format!(" with type Nest{i} = Nest{}", i + 1),
+            false => format!(" with type Nest{i} = int"),
         })
         .collect();
     format!(
-        "type T = Part{} with {{ {} }};\ntype U = Q0{nested};\n",
+        "type Top = Part{} with {{ {} }};\ntype Nested = Nest0{nested};\n",
         n - 1,
         listed.join(", ")
     )
 }
 
-/// `parts(n)`, then `type F = A -> Q0 with type Q0 = (A, Q1) with type Q1 = (A, Q2) … with type
-/// Q… = A for A in int | rat;`: a chain of `n` clauses around a function type, each part using
-/// the variable of the `for` and the part of the clause outside it, which the resolver reads in
-/// one pass over the chain (`Resolver::part_home`, COMPLEXITY.md IMPL-with-list).
+/// `parts(n)`, then `type Fun = A -> Link0 with type Link0 = (A, Link1) with type Link1 = (A,
+/// Link2) … with type Link… = A for A in int | rat;`: a chain of `n` clauses around a function
+/// type, each part using the variable of the `for` and the part of the clause outside it, which
+/// the resolver reads in one pass over the chain (`Resolver::part_home`, COMPLEXITY.md
+/// IMPL-with-list).
 pub(super) fn part_chain(n: usize) -> String {
     let clauses: String = (0..n)
         .map(|i| match i + 1 < n {
-            true => format!(" with type Q{i} = (A, Q{})", i + 1),
-            false => format!(" with type Q{i} = A"),
+            true => format!(" with type Link{i} = (A, Link{})", i + 1),
+            false => format!(" with type Link{i} = A"),
         })
         .collect();
     format!(
-        "{}type F = A -> Q0{clauses} for A in int | rat;\n",
+        "{}type Fun = A -> Link0{clauses} for A in int | rat;\n",
         parts(n)
     )
 }
@@ -135,13 +136,30 @@ pub(super) fn built(p: &Parsed) -> (String, Vec<zedc::ast::Stmt>) {
     (p.text.clone(), unit(&p.text, &p.tokens, &p.tree).unwrap())
 }
 
-/// The input of the resolution benchmark in `bench.rs` resolves with no error at small sizes.
+/// The input of the resolution benchmark in `bench.rs` resolves at small sizes with no error
+/// but this zedc's refusal of each type declaration and each local part: every name is
+/// defined, no part is used above a part it may not see, and the `for` variable stands in the
+/// function type under each chain.
 #[test]
 fn local_parts_in_a_chain_resolve_at_small_sizes() {
+    let refusals = [
+        zed_tests::not_yet!("a type declaration"),
+        zed_tests::not_yet!("a local part declaration"),
+    ];
     for n in [1, 2, 9] {
         let (text, stmts) = built(&parsed(part_chain(n)));
-        let resolved = zedc::resolve::resolve_text(&stmts, Some(&text));
-        assert!(resolved.is_ok(), "n = {n}: {:?}", resolved.err());
+        let errors = zedc::resolve::resolve_text(&stmts, Some(&text))
+            .err()
+            .unwrap_or_default();
+        let parts = errors.iter().filter(|e| e.message == refusals[1]).count();
+        let others: Vec<&str> = errors
+            .iter()
+            .map(|e| e.message.as_str())
+            .filter(|m| !refusals.contains(m))
+            .collect();
+        assert!(others.is_empty(), "n = {n}: {others:?}");
+        // One refusal for each `with` clause: the braced list is one, and each chain has n.
+        assert_eq!(parts, 2 * n + 1, "n = {n}");
     }
 }
 
