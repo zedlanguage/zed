@@ -2214,6 +2214,7 @@ pub fn lists_flattened() -> u64 {
 /// holds the tree (step S.1f).
 mod chain {
     use super::*;
+    use zed_collections::finger::{self, Leaf};
 
     /// The entries of a list made by `++` (plan row PERF-list-concat-shared): the lists joined, in
     /// order, short ones merged into one (`LEAF`, plan row PERF-list-concat-leaf-merge), as the
@@ -2245,38 +2246,40 @@ mod chain {
         pub(super) map: std::sync::OnceLock<btree::Map<Value, Value>>,
     }
 
-    /// A part of a [`Chain`]'s tree, shared.
+    /// A part of a [`Chain`]'s tree, shared. `pub` because it is the `Part` of the `Leaf` impl of
+    /// the public [`Family`] (E0446 otherwise); this module is private, so no caller outside the
+    /// crate can name it.
     #[derive(Clone)]
-    struct Part(Arc<ChainTree>);
+    pub struct Part(finger::Tree<Family>);
 
-    /// One to four parts of one height, in order, the first `Some` and no `Some` after a `None`.
-    type ChainDigit = [Option<Part>; 4];
+    /// The finger tree of [`Chain`] ([`finger::Shape`], the tree of a string's blocks too), with
+    /// counts of entries in place of lengths in bytes: `Empty` (the middle of a deep tree that has
+    /// nothing between its ends), `Leaf` (a list joined, not empty and not made by `++`, a part of
+    /// height 0), `Node` (two or three parts of one height) or `Deep` (`front`, the nodes
+    /// `middle` holds, then `back`). The cell of each node and deep tree is the sum of its entries
+    /// (`Chain::sum`), once read.
+    type ChainTree = finger::Shape<Family>;
 
-    /// The finger tree of [`Chain`], as `text::tree::Tree` is for a string's blocks, with counts of
-    /// entries in place of lengths in bytes.
-    enum ChainTree {
-        /// The middle of a deep tree that has nothing between its ends.
-        Empty,
-        /// A list joined, not empty and not made by `++`: a part of height 0.
-        Leaf(Family),
-        /// Two or three parts of one height `h`, in order, the third `None` when there are two,
-        /// and their count of entries: a part of height `h + 1`.
-        Node {
-            len: usize,
-            parts: [Option<Part>; 3],
-            /// The sum of its entries (`Chain::sum`), once read.
-            sum: OnceLock<u64>,
-        },
-        /// `front`, then the parts of the nodes that `middle` holds, then `back`, and their count
-        /// of entries. A tree of one part is that part itself.
-        Deep {
-            len: usize,
-            front: ChainDigit,
-            middle: Part,
-            back: ChainDigit,
-            /// The sum of its entries (`Chain::sum`), once read.
-            sum: OnceLock<u64>,
-        },
+    impl Leaf for Family {
+        type Measure = usize;
+        type Cache = OnceLock<u64>;
+        type Part = Part;
+
+        // `#[inline]`, as every function of `finger` is (its comment at `Clone for Tree`).
+        #[inline]
+        fn measure(&self) -> usize {
+            self.len()
+        }
+
+        #[inline]
+        fn tree(part: &Part) -> &finger::Tree<Family> {
+            &part.0
+        }
+
+        #[inline]
+        fn part(tree: finger::Tree<Family>) -> Part {
+            Part(tree)
+        }
     }
 
     impl Chain {
@@ -2293,7 +2296,7 @@ mod chain {
                 if matches!(&*p.0, ChainTree::Empty) {
                     continue;
                 }
-                if !seen.insert(Arc::as_ptr(&p.0).addr()) {
+                if !seen.insert(p.0.addr()) {
                     return false;
                 }
                 match &*p.0 {
@@ -2319,84 +2322,28 @@ mod chain {
     impl Part {
         /// The number of entries. O(1).
         fn len(&self) -> usize {
-            match &*self.0 {
-                ChainTree::Empty => 0,
-                ChainTree::Leaf(f) => f.len(),
-                ChainTree::Node { len, .. } | ChainTree::Deep { len, .. } => *len,
-            }
+            self.0.measure()
         }
 
         /// The parts beneath this one, in order, the middle of a deep tree among them.
         fn parts(&self) -> impl DoubleEndedIterator<Item = &Part> {
-            let (a, middle, b): (&[Option<Part>], _, &[Option<Part>]) = match &*self.0 {
-                ChainTree::Empty | ChainTree::Leaf(_) => (&[], None, &[]),
-                ChainTree::Node { parts, .. } => (parts.as_slice(), None, &[]),
-                ChainTree::Deep {
-                    front,
-                    middle,
-                    back,
-                    ..
-                } => (front.as_slice(), Some(middle), back.as_slice()),
-            };
-            a.iter().flatten().chain(middle).chain(b.iter().flatten())
+            self.0.parts()
         }
 
         /// The tree `self`, a list's own tree (leaves at its top), with its last leaf replaced by
         /// that leaf then `f`'s entries, when the two hold at most [`LEAF`] entries together.
         fn with_last(&self, f: &Family) -> Option<Part> {
-            match &*self.0 {
-                ChainTree::Leaf(g) => {
-                    (g.len() + f.len() <= LEAF).then(|| chain_leaf(leaves_merged(g, f)))
-                }
-                ChainTree::Deep {
-                    len,
-                    front,
-                    middle,
-                    back,
-                    ..
-                } => {
-                    let i = back.iter().take_while(|p| p.is_some()).count() - 1;
-                    let last = back[i].as_ref()?.with_last(f)?;
-                    let mut back = back.clone();
-                    back[i] = Some(last);
-                    Some(chain_deep(
-                        len + f.len(),
-                        front.clone(),
-                        middle.clone(),
-                        back,
-                    ))
-                }
-                // A list's own tree holds leaves at its top, never a node, and is never empty.
-                ChainTree::Empty | ChainTree::Node { .. } => None,
-            }
+            finger::with_last(self, f.len(), |g: &Family| {
+                (g.len() + f.len() <= LEAF).then(|| leaves_merged(g, f))
+            })
         }
 
         /// The tree `self`, as for [`Part::with_last`], with its first leaf replaced by `f`'s
         /// entries then that leaf's, when the two hold at most [`LEAF`] entries together.
         fn with_first(&self, f: &Family) -> Option<Part> {
-            match &*self.0 {
-                ChainTree::Leaf(g) => {
-                    (f.len() + g.len() <= LEAF).then(|| chain_leaf(leaves_merged(f, g)))
-                }
-                ChainTree::Deep {
-                    len,
-                    front,
-                    middle,
-                    back,
-                    ..
-                } => {
-                    let first = front[0].as_ref()?.with_first(f)?;
-                    let mut front = front.clone();
-                    front[0] = Some(first);
-                    Some(chain_deep(
-                        len + f.len(),
-                        front,
-                        middle.clone(),
-                        back.clone(),
-                    ))
-                }
-                ChainTree::Empty | ChainTree::Node { .. } => None,
-            }
+            finger::with_first(self, f.len(), |g: &Family| {
+                (f.len() + g.len() <= LEAF).then(|| leaves_merged(f, g))
+            })
         }
     }
 
@@ -2416,17 +2363,15 @@ mod chain {
     // n = 1000 `a ++ [x]` 17.50, 19.55, 20.85, 24.13, 29.58 million instructions; the `foldl` of
     // 20,000 `a ++ [x]` 913, 954, 981, 1047, 1159 million; every ratio at 8n 7.99 to 8.08 in
     // each, and `a ++ a` 9.92, 10.18, 10.21, 9.97, 9.57 against its n log n limit 10.41. 16
-    // holds the bytes of 32 at less work. COMPLEXITY.md F223d. Text and
-    // lists keep two finger trees of one design, not one generic tree: the string's measures a
-    // pair (bytes and characters, with a refusal past `usize::MAX` bytes) and its tree is the
-    // public `Text`, whose node ids name strings in staging (`Text::node_id`), so sharing it
-    // would rewrite the string's tuned code for no change in cost.
+    // holds the bytes of 32 at less work. COMPLEXITY.md F223d. Text and lists share one finger
+    // tree, zed-collections `finger` (plan row DRY-persistent-trees-2026-11-26, step 11), each
+    // with its own leaf, measure and handle.
     /// The most entries a leaf of a list made by `++` gets by a merge at a join.
     pub(super) const LEAF: usize = 16;
 
     /// A part of height 0: the list `f`, not empty and not made by `++`.
     fn chain_leaf(f: Family) -> Part {
-        Part(Arc::new(ChainTree::Leaf(f)))
+        finger::leaf(f)
     }
 
     /// The list of `a`'s entries then `b`'s, both lists not made by `++`, as one map: O(m) for
@@ -2453,7 +2398,7 @@ mod chain {
                 _ => None,
             };
             Chain {
-                tree: merged.unwrap_or_else(|| chain_concat(&a, &[], &b)),
+                tree: merged.unwrap_or_else(|| finger::concat::<Family>(&a, &[], &b)),
                 map: std::sync::OnceLock::new(),
             }
         }
@@ -2563,7 +2508,7 @@ mod chain {
                 let kept = match &*p.0 {
                     ChainTree::Empty => return 0,
                     ChainTree::Leaf(f) => return leaf(f),
-                    ChainTree::Node { sum, .. } | ChainTree::Deep { sum, .. } => sum,
+                    ChainTree::Node { cache: sum, .. } | ChainTree::Deep { cache: sum, .. } => sum,
                 };
                 if let Some(&s) = kept.get() {
                     return s;
@@ -2589,7 +2534,7 @@ mod chain {
                 match &*t.0 {
                     ChainTree::Empty => {}
                     ChainTree::Leaf(g) => f(g),
-                    ChainTree::Node { sum, .. } | ChainTree::Deep { sum, .. } => {
+                    ChainTree::Node { cache: sum, .. } | ChainTree::Deep { cache: sum, .. } => {
                         if sum.get().is_none() {
                             todo.extend(t.parts());
                         }
@@ -2632,187 +2577,6 @@ mod chain {
                     ChainTree::Leaf(f) => self.leaf = Some(f.0.built_map().iter()),
                     _ => self.todo.extend(t.parts().rev()),
                 }
-            }
-        }
-    }
-
-    /// The node of two or three parts of one height.
-    fn chain_node(parts: &[Part]) -> Part {
-        debug_assert!((2..=3).contains(&parts.len()));
-        let len = parts.iter().map(Part::len).sum();
-        let parts = std::array::from_fn(|i| parts.get(i).cloned());
-        Part(Arc::new(ChainTree::Node {
-            len,
-            parts,
-            sum: OnceLock::new(),
-        }))
-    }
-
-    /// A digit of the given parts, one to four.
-    fn chain_digit(parts: &[Part]) -> ChainDigit {
-        debug_assert!((1..=4).contains(&parts.len()));
-        std::array::from_fn(|i| parts.get(i).cloned())
-    }
-
-    /// The deep tree of the given ends and middle, whose counts add up to `len`: the callers know
-    /// it from the tree they extend, so a push reads no part but the one it adds.
-    fn chain_deep(len: usize, front: ChainDigit, middle: Part, back: ChainDigit) -> Part {
-        debug_assert_eq!(
-            len,
-            front
-                .iter()
-                .chain(&back)
-                .flatten()
-                .map(Part::len)
-                .sum::<usize>()
-                + middle.len()
-        );
-        Part(Arc::new(ChainTree::Deep {
-            len,
-            front,
-            middle,
-            back,
-            sum: OnceLock::new(),
-        }))
-    }
-
-    fn chain_empty() -> Part {
-        Part(Arc::new(ChainTree::Empty))
-    }
-
-    // Complexity tradeoff: `chain_push_back` and `chain_push_front` are strict, as the string's
-    // (`text::push_back`), so their O(1) is amortized over a sequence of pushes each made on the
-    // result of the one before, as a chain of `++` makes them: a push onto a full end (four parts)
-    // moves three of them into the middle as a node and leaves two, so the next two pushes at that
-    // end cannot carry. Given up: a program that keeps one tree whose ends are full at every level
-    // and pushes onto that same tree again and again pays O(log n) new nodes for each of those
-    // pushes; the list is the same. Why: an O(1) bound under any reuse of an old version needs
-    // Hinze and Paterson's lazy middle (cited in full in `crate::text`) or Kaplan and Tarjan's
-    // catenable deques (cited in full in `crate::text`, where the O(1) worst case is quoted from
-    // the abstract), a cell
-    // written after the node is shared or several times the code here. Test:
-    // `value::tests::lists_joined_in_any_shape_are_equal_and_read_alike`.
-    /// `t` then the part `p`, of the height of `t`'s parts.
-    fn chain_push_back(t: &Part, p: Part) -> Part {
-        let len = t.len() + p.len();
-        match &*t.0 {
-            ChainTree::Empty => p,
-            ChainTree::Leaf(_) | ChainTree::Node { .. } => chain_deep(
-                len,
-                chain_digit(std::slice::from_ref(t)),
-                chain_empty(),
-                chain_digit(&[p]),
-            ),
-            ChainTree::Deep {
-                front,
-                middle,
-                back,
-                ..
-            } => match back {
-                [Some(a), Some(b), Some(c), Some(d)] => chain_deep(
-                    len,
-                    front.clone(),
-                    chain_push_back(middle, chain_node(&[a.clone(), b.clone(), c.clone()])),
-                    chain_digit(&[d.clone(), p]),
-                ),
-                _ => {
-                    let mut back = back.clone();
-                    back[back.iter().take_while(|p| p.is_some()).count()] = Some(p);
-                    chain_deep(len, front.clone(), middle.clone(), back)
-                }
-            },
-        }
-    }
-
-    /// The part `p` then `t`, `p` of the height of `t`'s parts.
-    fn chain_push_front(p: Part, t: &Part) -> Part {
-        let len = p.len() + t.len();
-        match &*t.0 {
-            ChainTree::Empty => p,
-            ChainTree::Leaf(_) | ChainTree::Node { .. } => chain_deep(
-                len,
-                chain_digit(&[p]),
-                chain_empty(),
-                chain_digit(std::slice::from_ref(t)),
-            ),
-            ChainTree::Deep {
-                front,
-                middle,
-                back,
-                ..
-            } => match front {
-                [Some(a), Some(b), Some(c), Some(d)] => chain_deep(
-                    len,
-                    chain_digit(&[p, a.clone()]),
-                    chain_push_front(chain_node(&[b.clone(), c.clone(), d.clone()]), middle),
-                    back.clone(),
-                ),
-                [a, b, c, _] => chain_deep(
-                    len,
-                    [Some(p), a.clone(), b.clone(), c.clone()],
-                    middle.clone(),
-                    back.clone(),
-                ),
-            },
-        }
-    }
-
-    /// `a`, the parts `between`, then `b`: trees of parts of one height, and at most four parts
-    /// between. One level of the recursion per level of the shallower tree, each building O(1)
-    /// nodes, so O(log m) in all, `m` the number of leaves of the shorter; the recursion is that
-    /// deep, under 64.
-    fn chain_concat(a: &Part, between: &[Part], b: &Part) -> Part {
-        let onto_b = |b: &Part| {
-            between
-                .iter()
-                .rev()
-                .fold(b.clone(), |t, p| chain_push_front(p.clone(), &t))
-        };
-        let onto_a = |a: &Part| {
-            between
-                .iter()
-                .fold(a.clone(), |t, p| chain_push_back(&t, p.clone()))
-        };
-        match (&*a.0, &*b.0) {
-            (ChainTree::Empty, _) => onto_b(b),
-            (_, ChainTree::Empty) => onto_a(a),
-            (ChainTree::Leaf(_) | ChainTree::Node { .. }, _) => {
-                chain_push_front(a.clone(), &onto_b(b))
-            }
-            (_, ChainTree::Leaf(_) | ChainTree::Node { .. }) => {
-                chain_push_back(&onto_a(a), b.clone())
-            }
-            (
-                ChainTree::Deep {
-                    front,
-                    middle: m1,
-                    back: b1,
-                    ..
-                },
-                ChainTree::Deep {
-                    front: f2,
-                    middle: m2,
-                    back,
-                    ..
-                },
-            ) => {
-                let mut parts: Vec<Part> = b1.iter().flatten().cloned().collect();
-                parts.extend(between.iter().cloned());
-                parts.extend(f2.iter().flatten().cloned());
-                let len = a.len() + between.iter().map(Part::len).sum::<usize>() + b.len();
-                let mut rest: &[Part] = &parts;
-                let mut nodes = Vec::with_capacity(4);
-                while !rest.is_empty() {
-                    let k = if matches!(rest.len(), 2 | 4) { 2 } else { 3 };
-                    nodes.push(chain_node(&rest[..k]));
-                    rest = &rest[k..];
-                }
-                chain_deep(
-                    len,
-                    front.clone(),
-                    chain_concat(m1, &nodes, m2),
-                    back.clone(),
-                )
             }
         }
     }

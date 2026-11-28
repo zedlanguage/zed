@@ -36,6 +36,10 @@
 //! operation `O(log n)` expected (Blelloch, Ferizovic and Sun 2016; the full comment is at the
 //! head of `treap.rs`).
 //!
+//! [`finger`]: a persistent 2-3 finger tree of leaves with a measure on each node, and its push
+//! at either end and join, the tree of strings and of lists made by `++` (Hinze and Paterson
+//! 2006; the full comment is at the head of `finger.rs`).
+//!
 //! [`by_address`]: a map key that is the address of an `Arc` and holds it, so no address in a
 //! memo is freed and given to another value while the memo lives.
 //!
@@ -64,6 +68,7 @@ pub mod by_address;
 pub mod cartesian;
 pub mod ext;
 pub mod fenwick;
+pub mod finger;
 pub mod held;
 pub mod index;
 pub mod intern;

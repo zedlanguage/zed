@@ -101,7 +101,7 @@ impl Out<'_> {
     /// `b` of m, whatever the shape of the tree. Proof: the walk of [`Text::chunks`] opens
     /// each tree node it meets once and returns each block once, so its steps are the nodes
     /// and blocks of the tree counted with their repeats, a node shared k times counted k
-    /// times. Every block is nonempty (`zed_kernel::text::tree::Tree::Block`), so at most L
+    /// times. Every block is nonempty (`zed_kernel::text::tree::Block`), so at most L
     /// blocks are met. Every `Node` has two or three nonempty parts and every `Deep` at least
     /// one part in front and one in back, so the tree, unshared, has fewer branching nodes
     /// than blocks, plus at most one empty middle for each `Deep`, itself a branching node:

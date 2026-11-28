@@ -89,7 +89,7 @@ use hashbrown::hash_table::Entry;
 use std::hash::BuildHasher;
 use std::sync::Arc;
 
-use super::tree::{Text, Tree};
+use super::tree::{Block, Text, Tree};
 use crate::digest::{DigestMap, TextState};
 
 /// How many symbols to the left a block start reads.
@@ -266,13 +266,13 @@ impl Names {
     /// joined from their parts' summaries left to right. The recursion is as deep as the tree,
     /// at most 63 levels (text.rs).
     fn sum(&mut self, t: &Text) -> Option<Arc<Sum>> {
-        let key = Arc::as_ptr(&t.0).addr();
+        let key = t.0.addr();
         if let Some((_, s)) = self.memo.get(&key) {
             return s.clone();
         }
         let s = match &*t.0 {
             Tree::Empty => None,
-            Tree::Block { block, .. } => self.leaf(block.as_bytes()),
+            Tree::Leaf(Block { block, .. }) => self.leaf(block.as_bytes()),
             Tree::Node { parts, .. } => self.fold(parts.iter().flatten()),
             // The two digits are folded on their own, and joined to the middle last: a digit
             // is shared by the deep trees a join makes above it (`concat` in tree.rs keeps the
