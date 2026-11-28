@@ -4,6 +4,7 @@
 //! COMPLETENESS.md, are in l01_29_diagnostics; the folder is split so that an edit to either
 //! half rebuilds only that half (rule in docs/layout.md, Tests).
 
+mod argument_rows;
 mod bench;
 mod carrier_names;
 mod casts;
