@@ -3231,6 +3231,21 @@ mod tests {
         }
     }
 
+    /// A root whose index `k = 2^32` does not fit a `u32`, of a value of more than `k` bits
+    /// (ledger FAIL-roots-binomial-u32-narrowing): the floor root of `2^k` is 2 and the
+    /// ceiling root of `2^k + 1` is 3. Before, every index past a `u32` gave 1 and 2, right
+    /// only for values of at most `k` bits.
+    #[test]
+    fn a_root_whose_index_is_past_a_u32_of_a_value_wider_than_it() {
+        let k = 1u64 << 32;
+        let index = Num::from(BigInt::from(k));
+        let power = BigInt::from(1u8) << k;
+        let floor = Num::from(power.clone()).floor_root_by(&index);
+        assert_eq!(floor, Some(Num::from(BigInt::from(2))));
+        let ceil = Num::from(power + 1).ceil_root_by(&index);
+        assert_eq!(ceil, Some(Num::from(BigInt::from(3))));
+    }
+
     /// `floor_root(k)` and `ceil_root(k)` of values not kept, for `k` 2, 3 and 7, by the
     /// kernel's `nth_root_rem_uint` (item PERF-wide-odd-base-ratio-9), against num-bigint's
     /// `nth_root`: 0 to 3, `k`-th powers, one below and one above them, and random values of 1

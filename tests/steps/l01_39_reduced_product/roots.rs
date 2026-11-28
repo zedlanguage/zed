@@ -251,6 +251,26 @@ fn a_polynomial_of_many_terms_has_its_one_root() {
     }
 }
 
+/// A binomial whose gap `g = 2^32` does not fit a `u32` (ledger
+/// FAIL-roots-binomial-u32-narrowing; the binomial root was taken by a root of index
+/// `u32::try_from(g)`, which panicked): `x^g - 2^g` has the roots -2 and 2, as `g` is even,
+/// and `x^g - (2^g + 2)` none, as the floor root 2 leaves the remainder 2. The constants have
+/// `g + 1` bits, 512 MiB, the least a root above 1 of a binomial of this gap needs.
+#[test]
+fn a_binomial_whose_gap_is_past_a_u32_has_its_roots() {
+    let g = 1u64 << 32;
+    let power = BigInt::from(1u8) << g;
+    let binomial = |c: &BigInt| Sparse::new([(0, -c), (g, BigInt::from(1))]);
+    assert_eq!(
+        integer_roots(&binomial(&power), None, None),
+        Roots::Listed(vec![BigInt::from(-2), BigInt::from(2)])
+    );
+    assert_eq!(
+        integer_roots(&binomial(&(power + 2)), None, None),
+        Roots::Listed(Vec::new())
+    );
+}
+
 /// The product of `x - r` for each `r` in `rs`, expanded.
 fn expanded(rs: &[BigInt]) -> Sparse {
     let mut c = vec![BigInt::from(1)];
