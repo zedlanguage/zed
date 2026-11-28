@@ -73,6 +73,7 @@ use std::sync::{Arc, OnceLock};
 use zed_collections::ext::Ext;
 use zed_collections::fenwick::Fenwick;
 use zed_collections::index::to_u32;
+use zed_collections::treap::{self, lazy::Lazy};
 
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval};
@@ -13265,24 +13266,12 @@ impl Pa {
                 a: a + &(c * &sign),
                 b: b + &(e * &sign),
             },
-            (Pa::Linear { a, b, .. }, Pa::Piecewise { var, root }) => piecewise(
-                var,
-                root,
-                Tag {
-                    mul: sign,
-                    slope: a.clone(),
-                    add: b.clone(),
-                },
-            ),
-            (Pa::Piecewise { var, root }, Pa::Linear { a, b, .. }) => piecewise(
-                var,
-                root,
-                Tag {
-                    mul: Int::ONE,
-                    slope: a * &sign,
-                    add: b * &sign,
-                },
-            ),
+            (Pa::Linear { a, b, .. }, Pa::Piecewise { var, root }) => {
+                piecewise(var, root, Tag::new(sign, a.clone(), b.clone()))
+            }
+            (Pa::Piecewise { var, root }, Pa::Linear { a, b, .. }) => {
+                piecewise(var, root, Tag::new(Int::ONE, a * &sign, b * &sign))
+            }
             (Pa::Piecewise { var, root: p }, Pa::Piecewise { root: q, .. }) => Pa::Piecewise {
                 var: var.clone(),
                 root: add_treaps(p, q, &sign),
@@ -13852,7 +13841,7 @@ fn pa_bounds(pa: &Pa, dom: &IntervalSet) -> Option<(Val, Val)> {
             } else {
                 root.clone()
             };
-            root.map(|n| n.vals.clone())
+            root.map(|n| n.sum().vals.clone())
         }
     }
 }
@@ -14237,8 +14226,9 @@ impl LetPa {
             Pa::Const(_) => true,
             Pa::Linear { .. } => in_range(ints),
             Pa::Piecewise { root, .. } => root.as_ref().is_some_and(|n| {
-                n.dense
-                    && (ints.bounds()).is_some_and(|(lo, hi)| n.span.0 <= *lo && *hi <= n.span.1)
+                let s = n.sum();
+                s.dense
+                    && (ints.bounds()).is_some_and(|(lo, hi)| s.span.0 <= *lo && *hi <= s.span.1)
             }),
         };
         match (whole, &l, &h) {
@@ -14837,7 +14827,10 @@ impl Bound {
             Pa::Const(c) => (0, mag(c)),
             Pa::Linear { a, b, .. } => (mag(a), mag(b)),
             Pa::Piecewise { root: None, .. } => (0, 0),
-            Pa::Piecewise { root: Some(r), .. } => (0, val(&r.vals.0).max(val(&r.vals.1))),
+            Pa::Piecewise { root: Some(r), .. } => {
+                let vals = &r.sum().vals;
+                (0, val(&vals.0).max(val(&vals.1)))
+            }
         };
         Bound { a, b, x, mul: 1 }
     }
@@ -15257,39 +15250,154 @@ fn cls_splice(
 }
 
 /// A persistent treap of the pieces of a [`Pa`], in the order of the input, each node
-/// shared by every summary built from it. Splitting, joining and adding a line to every
-/// value, or scaling every value ([`Tag`]), each take `O(log n)` expected time.
-type Tree = Option<Arc<PaNode>>;
+/// shared by every summary built from it: zed-collections' treap of [`PaPiece`]s, whose tags are
+/// read by [`treap::lazy`] ([`Maps`]). Splitting, joining and adding a line to every value, or
+/// scaling every value ([`Tag`]), each take `O(log n)` expected time. The number of pieces of a
+/// subtree is the node's size ([`treap::len`]), so that a sum of two summaries walks the smaller
+/// ([`add_treaps`]); the node's priority is [`prio_of`] of its piece's ends, so the shape does
+/// not depend on the order of the operations that built it.
+type Tree = treap::Tree<PaPiece>;
 
-/// One piece of a [`Pa`] and the subtree it roots.
+/// A node of a [`Tree`]: one piece and the subtree it roots.
+type PaNode = treap::Node<PaPiece>;
+
+/// One piece of a [`Pa`]: the inputs `lo..=hi`, on which the value is `a * x + b`, and the map
+/// still to be applied to the pieces below it (`a` and `b` already include the maps above).
 #[derive(Clone)]
-struct PaNode {
-    /// The piece: the inputs `lo..=hi`, on which the value is `a * x + b`.
+struct PaPiece {
     lo: End,
     hi: End,
     a: Int,
     b: Int,
+    tag: Tag,
+}
+
+/// The summary of a subtree of a [`Tree`] ([`treap::Item::sum`] of [`PaPiece`]).
+#[derive(Clone, PartialEq, Debug)]
+struct PaSum {
     /// The least and the greatest input in the subtree.
     span: (End, End),
     /// Bounds on the values in the subtree, so that inverting skips a subtree whose values
-    /// miss the demand: the least and the greatest value where no line was added to the
-    /// subtree as a whole, and otherwise those bounds moved by the line's least and greatest
-    /// value over `span` ([`Tag::vals`]), which hold the values and may be wider.
+    /// miss the demand: the least and the greatest value of the node's own piece and of each
+    /// child's bounds under the node's tag ([`Tag::vals`]), exact where no tag on the way adds
+    /// a line of slope other than 0, and otherwise bounds that hold the values and may be wider.
     vals: (Val, Val),
     /// Whether the subtree's pieces cover `span` with no gap, so that a subtree whose values
     /// lie in one piece of the demand is taken whole.
     dense: bool,
-    /// The number of pieces in the subtree, so that a sum of two summaries walks the smaller
-    /// ([`add_treaps`]).
-    len: usize,
-    /// A heap priority, fixed by the piece's ends, so the shape does not depend on the order
-    /// of the operations that built it.
-    prio: u64,
-    /// The map still to be applied to both children: `a`, `b` and `vals` of this node
-    /// already include it.
-    tag: Tag,
-    left: Tree,
-    right: Tree,
+}
+
+impl treap::Item for PaPiece {
+    type Key = End;
+    type Sum = PaSum;
+    #[inline]
+    fn key(&self) -> &End {
+        &self.lo
+    }
+    #[inline]
+    fn priority(&self) -> u64 {
+        prio_of(&self.lo, &self.hi)
+    }
+    /// The hull of the piece's values at its two ends (the line is monotone) and of each
+    /// child's bounds under this piece's tag; the span from the outer children's; dense when
+    /// both children are and each meets the piece with no input between.
+    ///
+    /// A subtree moved whole under a map takes the map of its own bounds instead, `f.vals(vals,
+    /// span)` over its span, in `O(1)` ([`sum_under`], [`apply_tag`] and the walks of
+    /// [`treap::lazy`]). Here, for a node made with a map still pending, each child's bounds are
+    /// mapped over that child's span, which are at most as wide, since the least of `slope * x`
+    /// over a child's span is at least its least over the whole span (and likewise the
+    /// greatest), and the piece's own values are exact. So every bound holds the values.
+    fn sum(&self, l: Option<&PaSum>, r: Option<&PaSum>) -> PaSum {
+        let (lo, hi, a, b) = (&self.lo, &self.hi, &self.a, &self.b);
+        let (u, v) = (value_at(lo, a, b), value_at(hi, a, b));
+        let mut vals = if u <= v { (u, v) } else { (v, u) };
+        let mut dense = true;
+        let next =
+            |x: &End, y: &End| matches!((x, y), (Fin(x), Fin(y)) if small(x) + 1 == small(y));
+        // A child's values widen these by reference when this piece holds no map, with no copy
+        // of them, as the old `node_of` did.
+        let id = self.tag == Tag::ID;
+        let mut widen_by = |s: &PaSum| match id {
+            true => widen(&mut vals, &s.vals),
+            false => widen(&mut vals, &self.tag.vals(&s.vals, &s.span)),
+        };
+        // Each end of the span is cloned once, from the outer child when there is one.
+        let start = match l {
+            Some(l) => {
+                widen_by(l);
+                dense &= l.dense && next(&l.span.1, lo);
+                l.span.0.clone()
+            }
+            None => lo.clone(),
+        };
+        let end = match r {
+            Some(r) => {
+                widen_by(r);
+                dense &= r.dense && next(hi, &r.span.0);
+                r.span.1.clone()
+            }
+            None => hi.clone(),
+        };
+        PaSum {
+            span: (start, end),
+            vals,
+            dense,
+        }
+    }
+}
+
+/// How [`treap::lazy`] reads the tags of a [`Tree`]: a piece under the tag of the piece above it
+/// takes that tag on its line, and the tag it holds is its own followed by that one.
+struct Maps;
+
+impl Lazy<PaPiece> for Maps {
+    #[inline]
+    fn pending(&self, p: &PaPiece) -> bool {
+        p.tag != Tag::ID
+    }
+    #[inline]
+    fn under(&self, parent: &PaPiece, child: &PaPiece) -> PaPiece {
+        piece_under(child, &parent.tag)
+    }
+    #[inline]
+    fn clear(&self, p: &mut PaPiece) {
+        p.tag = Tag::ID;
+    }
+    #[inline]
+    fn sum_under(&self, parent: &PaPiece, s: &PaSum) -> Option<PaSum> {
+        Some(sum_under(s, &parent.tag))
+    }
+}
+
+/// The summary of a subtree of summary `s` under the map `f`, in `O(1)` steps on its numbers:
+/// the same span and density, and the bounds moved by `f` over the whole span ([`Tag::vals`]),
+/// which hold the values and may be wider than the bounds the summary of the mapped piece over
+/// its children makes ([`treap::Item::sum`] of [`PaPiece`]). This is the rule the treap of pieces had before its move onto
+/// the generic treap (DRY-persistent-trees-2026-11-26); making the summary again from the
+/// children instead, two [`Tag::vals`] and two [`value_at`] a node, took up to 14.5% more
+/// instructions on the s22 chain families (`cj_live`, 256 and 2048, local runs, 2026-11-27).
+#[inline]
+fn sum_under(s: &PaSum, f: &Tag) -> PaSum {
+    PaSum {
+        span: s.span.clone(),
+        vals: f.vals(&s.vals, &s.span),
+        dense: s.dense,
+    }
+}
+
+/// The piece `p` with the map `f` above it applied: its line mapped, and its tag its own
+/// followed by `f` ([`Tag::then`]).
+#[inline]
+fn piece_under(p: &PaPiece, f: &Tag) -> PaPiece {
+    let (a, b) = f.line(&p.a, &p.b);
+    PaPiece {
+        lo: p.lo.clone(),
+        hi: p.hi.clone(),
+        a,
+        b,
+        tag: p.tag.then(f),
+    }
 }
 
 /// A value of a summary, or the infinity a piece's line tends to at an infinite end of its
@@ -15321,42 +15429,73 @@ fn end_val(e: &End) -> Val {
 /// adding a line to every piece of a summary ([`Pa::plus`]) costs one new node. The numbers
 /// are unbounded ([`Int`]), one machine word while they fit in `i128`, so a map never fails:
 /// a chain of `d` doublings has a coefficient of `d` bits.
+///
+/// The identity is `None` and every other map is shared behind an `Arc`, so a piece of the
+/// treap holds one word for its tag: most pieces hold the identity, and a piece is moved
+/// several times as a node is made (callgrind, s22 `chain_five_range_live_scales`, 2026-11-28:
+/// the three numbers inline were 96 of the bytes each move copied, and `Tag::ID` was compared
+/// number by number at every pending check). [`Tag::new`] keeps the identity `None`, so the
+/// derived equality is the equality of the maps.
 #[derive(Clone, PartialEq, Eq, Debug)]
-struct Tag {
+struct Tag(Option<Arc<TagMap>>);
+
+/// The numbers of a [`Tag`] other than the identity.
+#[derive(PartialEq, Eq, Debug)]
+struct TagMap {
     mul: Int,
     slope: Int,
     add: Int,
 }
 
+/// The numbers of [`Tag::ID`].
+static ID_MAP: TagMap = TagMap {
+    mul: Int::ONE,
+    slope: Int::ZERO,
+    add: Int::ZERO,
+};
+
 impl Tag {
     /// The map that changes nothing.
-    const ID: Tag = Tag {
-        mul: Int::ONE,
-        slope: Int::ZERO,
-        add: Int::ZERO,
-    };
+    const ID: Tag = Tag(None);
+
+    /// `v -> mul * v + slope * x + add`.
+    fn new(mul: Int, slope: Int, add: Int) -> Tag {
+        let m = TagMap { mul, slope, add };
+        match m == ID_MAP {
+            true => Tag::ID,
+            false => Tag(Some(Arc::new(m))),
+        }
+    }
+
+    /// Its numbers.
+    #[inline]
+    fn map(&self) -> &TagMap {
+        self.0.as_deref().unwrap_or(&ID_MAP)
+    }
 
     /// `x -> mul * x + add` on the values, with no line added.
     fn affine(mul: Int, add: Int) -> Tag {
-        Tag {
-            mul,
-            slope: Int::ZERO,
-            add,
-        }
+        Tag::new(mul, Int::ZERO, add)
     }
 
     /// `self` followed by `outer`.
     fn then(&self, outer: &Tag) -> Tag {
-        Tag {
-            mul: &self.mul * &outer.mul,
-            slope: &(&self.slope * &outer.mul) + &outer.slope,
-            add: &(&self.add * &outer.mul) + &outer.add,
-        }
+        let (s, o) = match (&self.0, &outer.0) {
+            (None, _) => return outer.clone(),
+            (_, None) => return self.clone(),
+            (Some(s), Some(o)) => (s, o),
+        };
+        Tag::new(
+            &s.mul * &o.mul,
+            &(&s.slope * &o.mul) + &o.slope,
+            &(&s.add * &o.mul) + &o.add,
+        )
     }
 
     /// The line `a * x + b` mapped.
     fn line(&self, a: &Int, b: &Int) -> (Int, Int) {
-        (&(a * &self.mul) + &self.slope, &(b * &self.mul) + &self.add)
+        let m = self.map();
+        (&(a * &m.mul) + &m.slope, &(b * &m.mul) + &m.add)
     }
 
     /// Bounds on the mapped values of a subtree whose values lie in `vals` and whose inputs
@@ -15365,14 +15504,15 @@ impl Tag {
     /// line grows toward. Exact when `slope` is 0; with a line added they hold the values
     /// and may be wider, as where the line and the subtree slope in opposite directions.
     fn vals(&self, vals: &(Val, Val), span: &(End, End)) -> (Val, Val) {
-        let (lo, hi) = map_vals(vals, &self.mul, &self.add);
-        if self.slope.is_zero() {
+        let m = self.map();
+        let (lo, hi) = map_vals(vals, &m.mul, &m.add);
+        if m.slope.is_zero() {
             return (lo, hi);
         }
         let at = |e: &End| match e {
-            Fin(v) => Val::Fin(&self.slope * &Int::from(small(v))),
-            NegInf if self.slope.is_positive() => Val::NegInf,
-            PosInf if self.slope.is_negative() => Val::NegInf,
+            Fin(v) => Val::Fin(&m.slope * &Int::from(small(v))),
+            NegInf if m.slope.is_positive() => Val::NegInf,
+            PosInf if m.slope.is_negative() => Val::NegInf,
             _ => Val::PosInf,
         };
         let (u, v) = (at(&span.0), at(&span.1));
@@ -15539,11 +15679,12 @@ fn pa_pieces(pa: &Pa) -> Vec<Piece> {
         let Some(n) = node else {
             return;
         };
-        let below = n.tag.then(f);
-        walk(&n.left, &below, out);
-        let (a, b) = f.line(&n.a, &n.b);
-        out.push((Some((n.lo.clone(), n.hi.clone())), a, b));
-        walk(&n.right, &below, out);
+        let p = n.item();
+        let below = p.tag.then(f);
+        walk(n.left(), &below, out);
+        let (a, b) = f.line(&p.a, &p.b);
+        out.push((Some((p.lo.clone(), p.hi.clone())), a, b));
+        walk(n.right(), &below, out);
     }
     match pa {
         Pa::Const(c) => vec![(None, Int::ZERO, c.clone())],
@@ -15648,139 +15789,88 @@ fn make_node(lo: End, hi: End, a: Int, b: Int, left: Tree, right: Tree) -> Arc<P
 /// a split or a join hash nothing (the priority hash was 11% of the instructions of
 /// `bench::s22::chain_probe_all_scales` when every rebuild hashed again).
 fn node_of(lo: End, hi: End, a: Int, b: Int, prio: u64, left: Tree, right: Tree) -> Arc<PaNode> {
-    let (u, v) = (value_at(&lo, &a, &b), value_at(&hi, &a, &b));
-    let mut vals = if u <= v { (u, v) } else { (v, u) };
-    let mut span = (lo.clone(), hi.clone());
-    let mut dense = true;
-    let mut len = 1;
-    let next = |x: &End, y: &End| matches!((x, y), (Fin(x), Fin(y)) if small(x) + 1 == small(y));
-    if let Some(l) = &left {
-        widen(&mut vals, &l.vals);
-        span.0 = l.span.0.clone();
-        dense &= l.dense && next(&l.span.1, &lo);
-        len += l.len;
-    }
-    if let Some(r) = &right {
-        widen(&mut vals, &r.vals);
-        span.1 = r.span.1.clone();
-        dense &= r.dense && next(&hi, &r.span.0);
-        len += r.len;
-    }
-    Arc::new(PaNode {
-        lo,
-        hi,
-        a,
-        b,
-        span,
-        vals,
-        dense,
-        len,
-        prio,
-        tag: Tag::ID,
-        left,
-        right,
-    })
+    let tag = Tag::ID;
+    treap::lazy::node_at(PaPiece { lo, hi, a, b, tag }, prio, left, right)
 }
 
-/// The subtree with every value mapped by `f`, in `O(1)` steps on its numbers.
+/// The subtree with every value mapped by `f`, in `O(1)` steps on its numbers
+/// ([`treap::lazy::mapped_as`], the summary by [`sum_under`]).
 fn apply_tag(node: &Arc<PaNode>, f: &Tag) -> Arc<PaNode> {
     if *f == Tag::ID {
         return node.clone();
     }
-    let (a, b) = f.line(&node.a, &node.b);
-    Arc::new(PaNode {
-        lo: node.lo.clone(),
-        hi: node.hi.clone(),
-        a,
-        b,
-        span: node.span.clone(),
-        vals: f.vals(&node.vals, &node.span),
-        dense: node.dense,
-        len: node.len,
-        prio: node.prio,
-        tag: node.tag.then(f),
-        left: node.left.clone(),
-        right: node.right.clone(),
-    })
+    let sum = sum_under(node.sum(), f);
+    treap::lazy::mapped_as(node, piece_under(node.item(), f), sum)
 }
 
 /// The two children with the node's tag applied.
 fn push_down(node: &PaNode) -> (Tree, Tree) {
-    let tagged = |c: &Tree| c.as_ref().map(|c| apply_tag(c, &node.tag));
-    (tagged(&node.left), tagged(&node.right))
+    let tag = &node.item().tag;
+    let tagged = |c: &Tree| c.as_ref().map(|c| apply_tag(c, tag));
+    (tagged(node.left()), tagged(node.right()))
 }
 
-/// The pieces of `left`, then those of `right`, which all lie above them.
+/// The pieces of `left`, then those of `right`, which all lie above them: the join of
+/// [`treap::lazy`], which passes the child it goes on into with its map rather than copying it
+/// (FAIL-s22-five-range-live-bytes, the shape of the `join_under` this crate had).
 fn join_treap(left: Tree, right: Tree) -> Tree {
-    let id = Tag::ID;
-    join_under(
-        left.as_ref().map(|l| (l, &id)),
-        right.as_ref().map(|r| (r, &id)),
-    )
+    treap::lazy::join(left, right, &Maps)
 }
 
 /// A subtree with a map still to apply to it: the subtree `apply_tag(node, f)` names, not yet
 /// made.
+///
+/// Why (FAIL-s22-five-range-live-bytes): a walk down a spine rebuilds every node it passes.
+/// Reading the children through [`push_down`] made a tagged copy of the child the walk goes on
+/// into, which the next step rebuilds at once; a third of the nodes made on a tagged path were
+/// made only to be dropped. The walks here ([`split_under`], [`drop_last_under`] and the rest)
+/// pass that child with its map instead, and make only the child kept whole ([`apply_tag`]),
+/// as [`treap::lazy::join`] does for [`join_treap`].
+///
+/// Proof that such a walk gives, node for node, the walk over the tagged copies: `apply_tag(n,
+/// f)` has `n`'s ends and priority, the line [`line_under`] and the tag [`tag_under`], so its
+/// children read through [`push_down`] are `apply_tag(c, tag_under(n, f))`, the pairs the walk
+/// passes on or makes. A node with the map [`Tag::ID`] is the node itself ([`apply_tag`]
+/// returns it), and the tags agree with those of the copies: `tag_under` of a child under `g`
+/// is `c.tag.then(g)`, the tag `apply_tag(c, g)` holds. The nodes rebuilt are those of the walk
+/// over the copies, with the same ends, lines, priorities and children, so the treap, its sums
+/// and its shape are the same, and so is the cost bound, `O(depth)` nodes, with fewer of them
+/// made. Test: `tests::a_join_and_a_split_under_a_map_are_those_of_the_mapped_copies`.
 type Under<'a> = (&'a Arc<PaNode>, &'a Tag);
 
 /// The map left for the children of `node` when the map `f` lies above it: the tag of
 /// `apply_tag(node, f)`.
 fn tag_under(node: &PaNode, f: &Tag) -> Tag {
     if *f == Tag::ID {
-        node.tag.clone()
+        node.item().tag.clone()
     } else {
-        node.tag.then(f)
+        node.item().tag.then(f)
     }
 }
 
 /// The line of `node`'s piece with the map `f` above it applied: the line of
 /// `apply_tag(node, f)`.
 fn line_under(node: &PaNode, f: &Tag) -> (Int, Int) {
+    let p = node.item();
     if *f == Tag::ID {
-        (node.a.clone(), node.b.clone())
+        (p.a.clone(), p.b.clone())
     } else {
-        f.line(&node.a, &node.b)
+        f.line(&p.a, &p.b)
     }
 }
 
-/// [`join_treap`] of two subtrees, each with a map above it still to apply.
-///
-/// Why (FAIL-s22-five-range-live-bytes): the join walks one spine of each side and rebuilds
-/// every node it passes. Reading the children through [`push_down`] made a tagged copy of the
-/// child the walk goes on into, which the next step rebuilds at once; a third of the nodes
-/// made on a tagged path were made only to be dropped. Here that child is passed with its map
-/// instead, and only the child kept whole is made ([`apply_tag`]).
-///
-/// Proof that the result is `join_treap(apply_tag(l, fl), apply_tag(r, fr))`, node for node:
-/// `apply_tag(n, f)` has `n`'s ends and priority, the line [`line_under`] and the tag
-/// [`tag_under`], so its children read through [`push_down`] are `apply_tag(c, tag_under(n,
-/// f))`, the pairs this function passes on or makes. A node with the map [`Tag::ID`] is the
-/// node itself ([`apply_tag`] returns it), and the tags agree with those of the copies:
-/// `tag_under` of a child under `g` is `c.tag.then(g)`, the tag `apply_tag(c, g)` holds. The
-/// nodes rebuilt are those of the old join, with the same ends, lines, priorities and
-/// children, so the treap, its sums and its shape are the same, and so is the cost bound,
-/// `O(depth)` nodes, with fewer of them made.
-fn join_under(left: Option<Under>, right: Option<Under>) -> Tree {
-    match (left, right) {
-        (None, None) => None,
-        (None, Some((r, f))) => Some(apply_tag(r, f)),
-        (Some((l, f)), None) => Some(apply_tag(l, f)),
-        (Some((l, fl)), Some((r, fr))) => {
-            if l.prio >= r.prio {
-                let g = tag_under(l, fl);
-                let (a, b) = line_under(l, fl);
-                let ll = l.left.as_ref().map(|c| apply_tag(c, &g));
-                let nr = join_under(l.right.as_ref().map(|c| (c, &g)), Some((r, fr)));
-                Some(node_of(l.lo.clone(), l.hi.clone(), a, b, l.prio, ll, nr))
-            } else {
-                let g = tag_under(r, fr);
-                let (a, b) = line_under(r, fr);
-                let rr = r.right.as_ref().map(|c| apply_tag(c, &g));
-                let nl = join_under(Some((l, fl)), r.left.as_ref().map(|c| (c, &g)));
-                Some(node_of(r.lo.clone(), r.hi.clone(), a, b, r.prio, nl, rr))
-            }
-        }
-    }
+/// The node's priority ([`prio_of`] of its piece's ends).
+#[inline]
+fn prio(node: &PaNode) -> u64 {
+    node.rank().0
+}
+
+/// Whether the leaf `new` lies above `node` in the heap order of [`join_treap`]: the higher
+/// priority, ties broken by the higher key ([`treap::Node::rank`]), as [`treap::lazy::join`]
+/// breaks them. The keys are the pieces' lower ends, which no map changes.
+#[inline]
+fn outranks(new: &PaNode, node: &PaNode) -> bool {
+    new.rank() > node.rank()
 }
 
 /// The inputs below `cut`, and the rest. A piece that holds `cut - 1` and `cut` is cut in
@@ -15825,15 +15915,16 @@ fn outer_piece(root: &Tree, last: bool) -> Option<CutPiece> {
     let mut f = Tag::ID;
     let mut node = root.as_ref()?;
     loop {
-        let next = if last { &node.right } else { &node.left };
+        let next = if last { node.right() } else { node.left() };
+        let p = node.item();
         match next {
             Some(c) => {
-                f = node.tag.then(&f);
+                f = p.tag.then(&f);
                 node = c;
             }
             None => {
-                let (a, b) = f.line(&node.a, &node.b);
-                return Some((node.lo.clone(), node.hi.clone(), a, b));
+                let (a, b) = f.line(&p.a, &p.b);
+                return Some((p.lo.clone(), p.hi.clone(), a, b));
             }
         }
     }
@@ -15905,26 +15996,27 @@ fn put_last(root: Tree, p: CutPiece) -> Tree {
 
 /// The pieces of `apply_tag(node, f)` but its last, in one walk down its right spine.
 ///
-/// The child the walk goes on into is passed with its map, not copied (as in [`join_under`],
+/// The child the walk goes on into is passed with its map, not copied ([`Under`],
 /// FAIL-s22-five-range-live-bytes): reading the children through [`push_down`] made a tagged
 /// copy of that child, which the next step rebuilt at once. Only the child kept whole is made
 /// ([`apply_tag`]). The proof that the result is that of the walk over the tagged copies, node
-/// for node, is [`join_under`]'s: `apply_tag(node, f)` has `node`'s ends and priority, the
-/// line [`line_under`], and children `apply_tag(c, tag_under(node, f))`.
+/// for node, is at [`Under`]: `apply_tag(node, f)` has `node`'s ends and priority, the line
+/// [`line_under`], and children `apply_tag(c, tag_under(node, f))`.
 fn drop_last_under((node, f): Under) -> Tree {
     let g = tag_under(node, f);
-    let l = node.left.as_ref().map(|c| apply_tag(c, &g));
-    match &node.right {
+    let l = node.left().as_ref().map(|c| apply_tag(c, &g));
+    match node.right() {
         None => l,
         Some(r) => {
             let (a, b) = line_under(node, f);
             let rest = drop_last_under((r, &g));
+            let p = node.item();
             Some(node_of(
-                node.lo.clone(),
-                node.hi.clone(),
+                p.lo.clone(),
+                p.hi.clone(),
                 a,
                 b,
-                node.prio,
+                prio(node),
                 l,
                 rest,
             ))
@@ -15938,9 +16030,10 @@ fn drop_last_under((node, f): Under) -> Tree {
 /// a join after made two walks.
 ///
 /// Proof that the result is the treap of the new set of pieces: walking down the right spine,
-/// every node passed has a priority at least `new`'s, so it stays above `new`, and its left
-/// subtree, all below `new`'s piece, is kept. At the first node `n` that `new` outranks (`>`,
-/// since on a tie [`join_treap`] keeps the left piece above), `new` takes `n`'s place: every
+/// every node passed ranks above `new` ([`outranks`]), so it stays above `new`, and its left
+/// subtree, all below `new`'s piece, is kept. At the first node `n` that `new` outranks (a
+/// higher priority, or an equal one, since `new`'s key is the higher and [`join_treap`] keeps
+/// the higher key above on a tie), `new` takes `n`'s place: every
 /// piece of `n`'s subtree but the last lies below `new`'s and has a priority at most `n`'s, so
 /// below `new`'s, and becomes its left subtree ([`drop_last_under`]); nothing lies above `new`'s
 /// piece. When no node is outranked, the walk reaches the last piece, whose priority is at
@@ -15954,28 +16047,33 @@ fn replace_last(node: &Arc<PaNode>, new: &Arc<PaNode>) -> Arc<PaNode> {
 /// [`replace_last`] of `apply_tag(node, f)`, with the child the walk goes on into passed with
 /// its map rather than copied; the proof that the nodes are the same is [`drop_last_under`]'s.
 fn replace_last_under((node, f): Under, new: &Arc<PaNode>) -> Arc<PaNode> {
-    if new.prio > node.prio {
-        let (nlo, nhi, na, nb) = (new.lo.clone(), new.hi.clone(), new.a.clone(), new.b.clone());
-        return node_of(nlo, nhi, na, nb, new.prio, drop_last_under((node, f)), None);
+    if outranks(new, node) {
+        let n = new.item();
+        let (nlo, nhi, na, nb) = (n.lo.clone(), n.hi.clone(), n.a.clone(), n.b.clone());
+        return node_of(
+            nlo,
+            nhi,
+            na,
+            nb,
+            prio(new),
+            drop_last_under((node, f)),
+            None,
+        );
     }
     let g = tag_under(node, f);
-    match &node.right {
+    match node.right() {
         // `node`'s left subtree and `new` are not both empty, so the join is a node.
-        None => join_under(node.left.as_ref().map(|c| (c, &g)), Some((new, &Tag::ID)))
-            .unwrap_or_else(|| new.clone()),
+        None => join_treap(
+            node.left().as_ref().map(|c| apply_tag(c, &g)),
+            Some(new.clone()),
+        )
+        .unwrap_or_else(|| new.clone()),
         Some(r) => {
             let (a, b) = line_under(node, f);
-            let l = node.left.as_ref().map(|c| apply_tag(c, &g));
+            let l = node.left().as_ref().map(|c| apply_tag(c, &g));
             let r = replace_last_under((r, &g), new);
-            node_of(
-                node.lo.clone(),
-                node.hi.clone(),
-                a,
-                b,
-                node.prio,
-                l,
-                Some(r),
-            )
+            let p = node.item();
+            node_of(p.lo.clone(), p.hi.clone(), a, b, prio(node), l, Some(r))
         }
     }
 }
@@ -15983,18 +16081,19 @@ fn replace_last_under((node, f): Under, new: &Arc<PaNode>) -> Arc<PaNode> {
 /// [`drop_last_under`] on the other side: the pieces of `apply_tag(node, f)` but its first.
 fn drop_first_under((node, f): Under) -> Tree {
     let g = tag_under(node, f);
-    let r = node.right.as_ref().map(|c| apply_tag(c, &g));
-    match &node.left {
+    let r = node.right().as_ref().map(|c| apply_tag(c, &g));
+    match node.left() {
         None => r,
         Some(l) => {
             let (a, b) = line_under(node, f);
             let rest = drop_first_under((l, &g));
+            let p = node.item();
             Some(node_of(
-                node.lo.clone(),
-                node.hi.clone(),
+                p.lo.clone(),
+                p.hi.clone(),
                 a,
                 b,
-                node.prio,
+                prio(node),
                 rest,
                 r,
             ))
@@ -16003,44 +16102,42 @@ fn drop_first_under((node, f): Under) -> Tree {
 }
 
 /// [`replace_last`] on the other side: `node` with its first piece replaced by the leaf `new`,
-/// which holds that piece's inputs and more below them. `new` outranks a node on a tie (`>=`),
-/// since [`join_treap`] keeps the left piece above; the proof is [`replace_last`]'s mirrored.
+/// which holds that piece's inputs and more below them. `new` outranks a node by a higher
+/// priority only, since its key is the lower and [`join_treap`] keeps the higher key above on
+/// a tie ([`outranks`]); the proof is [`replace_last`]'s mirrored.
 fn replace_first(new: &Arc<PaNode>, node: &Arc<PaNode>) -> Arc<PaNode> {
     replace_first_under(new, (node, &Tag::ID))
 }
 
 /// [`replace_first`] of `apply_tag(node, f)`, as [`replace_last_under`] on the other side.
 fn replace_first_under(new: &Arc<PaNode>, (node, f): Under) -> Arc<PaNode> {
-    if new.prio >= node.prio {
-        let (nlo, nhi, na, nb) = (new.lo.clone(), new.hi.clone(), new.a.clone(), new.b.clone());
+    if outranks(new, node) {
+        let n = new.item();
+        let (nlo, nhi, na, nb) = (n.lo.clone(), n.hi.clone(), n.a.clone(), n.b.clone());
         return node_of(
             nlo,
             nhi,
             na,
             nb,
-            new.prio,
+            prio(new),
             None,
             drop_first_under((node, f)),
         );
     }
     let g = tag_under(node, f);
-    match &node.left {
+    match node.left() {
         // `new` and `node`'s right subtree are not both empty, so the join is a node.
-        None => join_under(Some((new, &Tag::ID)), node.right.as_ref().map(|c| (c, &g)))
-            .unwrap_or_else(|| new.clone()),
+        None => join_treap(
+            Some(new.clone()),
+            node.right().as_ref().map(|c| apply_tag(c, &g)),
+        )
+        .unwrap_or_else(|| new.clone()),
         Some(l) => {
             let (a, b) = line_under(node, f);
-            let r = node.right.as_ref().map(|c| apply_tag(c, &g));
+            let r = node.right().as_ref().map(|c| apply_tag(c, &g));
             let l = replace_first_under(new, (l, &g));
-            node_of(
-                node.lo.clone(),
-                node.hi.clone(),
-                a,
-                b,
-                node.prio,
-                Some(l),
-                r,
-            )
+            let p = node.item();
+            node_of(p.lo.clone(), p.hi.clone(), a, b, prio(node), Some(l), r)
         }
     }
 }
@@ -16100,12 +16197,13 @@ fn split_around(root: Tree, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
 /// [`split_around`] of a subtree with a map above it still to apply: the parts of
 /// `split_around(Some(apply_tag(node, f)), cut)`, without the tagged copy of each node on the
 /// path, which the split rebuilds at once; the proof that the parts are the same, node for
-/// node, is [`join_under`]'s (FAIL-s22-five-range-live-bytes).
+/// node, is at [`Under`] (FAIL-s22-five-range-live-bytes).
 fn split_under((node, f): Under, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
-    if cut <= key(&node.span.0) {
+    let span = &node.sum().span;
+    if cut <= key(&span.0) {
         return (None, None, Some(apply_tag(node, f)));
     }
-    if cut > key(&node.span.1) {
+    if cut > key(&span.1) {
         return (Some(apply_tag(node, f)), None, None);
     }
     let g = tag_under(node, f);
@@ -16114,21 +16212,25 @@ fn split_under((node, f): Under, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
         None => (None, None, None),
         Some(c) => split_under((c, &g), cut),
     };
-    let (lo, hi) = (node.lo.clone(), node.hi.clone());
+    let (lo, hi) = (node.item().lo.clone(), node.item().hi.clone());
     let (a, b) = line_under(node, f);
     if cut <= key(&lo) {
-        let (ll, piece, lr) = split(&node.left);
-        let right = tagged(&node.right);
-        (ll, piece, Some(node_of(lo, hi, a, b, node.prio, lr, right)))
+        let (ll, piece, lr) = split(node.left());
+        let right = tagged(node.right());
+        (
+            ll,
+            piece,
+            Some(node_of(lo, hi, a, b, prio(node), lr, right)),
+        )
     } else if cut > key(&hi) {
-        let (rl, piece, rr) = split(&node.right);
-        let left = tagged(&node.left);
-        (Some(node_of(lo, hi, a, b, node.prio, left, rl)), piece, rr)
+        let (rl, piece, rr) = split(node.right());
+        let left = tagged(node.left());
+        (Some(node_of(lo, hi, a, b, prio(node), left, rl)), piece, rr)
     } else {
         (
-            tagged(&node.left),
+            tagged(node.left()),
             Some((lo, hi, a, b)),
-            tagged(&node.right),
+            tagged(node.right()),
         )
     }
 }
@@ -16148,28 +16250,29 @@ fn split_under((node, f): Under, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
 /// returns. The cut piece is the same piece with the same line ([`line_under`]). Test:
 /// `tests::a_join_and_a_split_under_a_map_are_those_of_the_mapped_copies`.
 fn split_below_under((node, f): Under, cut: i128) -> (Tree, Option<CutPiece>) {
-    if cut <= key(&node.span.0) {
+    let span = &node.sum().span;
+    if cut <= key(&span.0) {
         return (None, None);
     }
-    if cut > key(&node.span.1) {
+    if cut > key(&span.1) {
         return (Some(apply_tag(node, f)), None);
     }
     let g = tag_under(node, f);
-    let (lo, hi) = (&node.lo, &node.hi);
+    let (lo, hi) = (&node.item().lo, &node.item().hi);
     if cut <= key(lo) {
-        return match &node.left {
+        return match node.left() {
             None => (None, None),
             Some(c) => split_below_under((c, &g), cut),
         };
     }
     let (a, b) = line_under(node, f);
-    let left = node.left.as_ref().map(|c| apply_tag(c, &g));
+    let left = node.left().as_ref().map(|c| apply_tag(c, &g));
     if cut > key(hi) {
-        let (rl, piece) = match &node.right {
+        let (rl, piece) = match node.right() {
             None => (None, None),
             Some(c) => split_below_under((c, &g), cut),
         };
-        let kept = node_of(lo.clone(), hi.clone(), a, b, node.prio, left, rl);
+        let kept = node_of(lo.clone(), hi.clone(), a, b, prio(node), left, rl);
         (Some(kept), piece)
     } else {
         (left, Some((lo.clone(), hi.clone(), a, b)))
@@ -16179,28 +16282,29 @@ fn split_below_under((node, f): Under, cut: i128) -> (Tree, Option<CutPiece>) {
 /// [`split_below_under`] on the other side: the cut piece and the part at or above `cut` of
 /// [`split_under`], without the part below. The proof is that one's, mirrored.
 fn split_above_under((node, f): Under, cut: i128) -> (Option<CutPiece>, Tree) {
-    if cut <= key(&node.span.0) {
+    let span = &node.sum().span;
+    if cut <= key(&span.0) {
         return (None, Some(apply_tag(node, f)));
     }
-    if cut > key(&node.span.1) {
+    if cut > key(&span.1) {
         return (None, None);
     }
     let g = tag_under(node, f);
-    let (lo, hi) = (&node.lo, &node.hi);
+    let (lo, hi) = (&node.item().lo, &node.item().hi);
     if cut > key(hi) {
-        return match &node.right {
+        return match node.right() {
             None => (None, None),
             Some(c) => split_above_under((c, &g), cut),
         };
     }
     let (a, b) = line_under(node, f);
-    let right = node.right.as_ref().map(|c| apply_tag(c, &g));
+    let right = node.right().as_ref().map(|c| apply_tag(c, &g));
     if cut <= key(lo) {
-        let (piece, lr) = match &node.left {
+        let (piece, lr) = match node.left() {
             None => (None, None),
             Some(c) => split_above_under((c, &g), cut),
         };
-        let kept = node_of(lo.clone(), hi.clone(), a, b, node.prio, lr, right);
+        let kept = node_of(lo.clone(), hi.clone(), a, b, prio(node), lr, right);
         (piece, Some(kept))
     } else {
         (Some((lo.clone(), hi.clone(), a, b)), right)
@@ -16269,11 +16373,14 @@ fn clamp_treap(node: &Tree, min: bool, c: &Int) -> Option<Tree> {
 /// `abs(w) + y` with `w` of several pieces read no upper bound on `y`, PA-let-followups part
 /// 3). Test: `tests::a_chosen_summary_is_the_choice_at_every_point_with_exact_bounds`.
 fn choose_treap(node: &Tree, min: bool, c: &Int, other: &Tag) -> Option<Tree> {
-    debug_assert!(other.slope.is_zero(), "a choice maps by a tag of slope 0");
+    debug_assert!(
+        other.map().slope.is_zero(),
+        "a choice maps by a tag of slope 0"
+    );
     let Some(n) = node.as_ref() else {
         return Some(None);
     };
-    let (lo, hi) = &n.vals;
+    let (lo, hi) = &n.sum().vals;
     let cv = Val::Fin(c.clone());
     let (kept, at_c) = if min {
         (*hi <= cv, *lo >= cv)
@@ -16296,18 +16403,19 @@ fn choose_treap(node: &Tree, min: bool, c: &Int, other: &Tag) -> Option<Tree> {
         IntervalSet::range(Fin(Num::from(c)), PosInf)
     };
     let mut own = Vec::with_capacity(1);
-    invert_piece(&n.lo, &n.hi, &n.a, &n.b, &side, &mut own);
-    let (oa, ob) = other.line(&n.a, &n.b);
+    let p = n.item();
+    invert_piece(&p.lo, &p.hi, &p.a, &p.b, &side, &mut own);
+    let (oa, ob) = other.line(&p.a, &p.b);
     let mut pieces = Vec::with_capacity(3);
     match own.first() {
-        None => pieces.push((n.lo.clone(), n.hi.clone(), oa, ob)),
+        None => pieces.push((p.lo.clone(), p.hi.clone(), oa, ob)),
         Some((xl, xh)) => {
-            if *xl > n.lo {
-                pieces.push((n.lo.clone(), xl.pred(), oa.clone(), ob.clone()));
+            if *xl > p.lo {
+                pieces.push((p.lo.clone(), xl.pred(), oa.clone(), ob.clone()));
             }
-            pieces.push((xl.clone(), xh.clone(), n.a.clone(), n.b.clone()));
-            if *xh < n.hi {
-                pieces.push((xh.succ(), n.hi.clone(), oa, ob));
+            pieces.push((xl.clone(), xh.clone(), p.a.clone(), p.b.clone()));
+            if *xh < p.hi {
+                pieces.push((xh.succ(), p.hi.clone(), oa, ob));
             }
         }
     }
@@ -16379,7 +16487,7 @@ fn slice_treap(root: Tree, lo: &End, hi: &End) -> Tree {
 /// benchmark checks one ratio of sizes; it cannot show the expected bound, which rests on the
 /// priorities ([`prio_of`]).
 fn add_treaps(p: &Tree, q: &Tree, sign: &Int) -> Tree {
-    let len = |t: &Tree| t.as_ref().map_or(0, |n| n.len);
+    let len = treap::len;
     if len(p) >= len(q) {
         add_into(p.clone(), q, &Tag::affine(sign.clone(), Int::ZERO))
     } else {
@@ -16398,33 +16506,25 @@ fn add_into(big: Tree, walk: &Tree, f: &Tag) -> Tree {
     let (Some(n), Some(_)) = (walk, &big) else {
         return None;
     };
-    let below = n.tag.then(f);
-    let (a, b) = f.line(&n.a, &n.b);
-    let (lower, rest) = match &n.lo {
+    let p = n.item();
+    let below = p.tag.then(f);
+    let (a, b) = f.line(&p.a, &p.b);
+    let (lower, rest) = match &p.lo {
         Fin(v) => split_at(big, small(v)),
         _ => (None, big),
     };
-    let (within, upper) = match &n.hi {
+    let (within, upper) = match &p.hi {
         Fin(v) => split_at(rest, small(v) + 1),
         _ => (rest, None),
     };
-    let left = add_into(lower, &n.left, &below);
-    let right = add_into(upper, &n.right, &below);
-    let within = within.map(|w| {
-        apply_tag(
-            &w,
-            &Tag {
-                mul: Int::ONE,
-                slope: a,
-                add: b,
-            },
-        )
-    });
+    let left = add_into(lower, n.left(), &below);
+    let right = add_into(upper, n.right(), &below);
+    let within = within.map(|w| apply_tag(&w, &Tag::new(Int::ONE, a, b)));
     join_treap(join_treap(left, within), right)
 }
 
 /// Appends to `out` the inputs of `node`'s subtree whose value, mapped by `f` (the tags
-/// above it), lies in `z`. A subtree whose bounds on the values ([`PaNode::vals`]) miss `z`
+/// above it), lies in `z`. A subtree whose bounds on the values ([`PaSum::vals`]) miss `z`
 /// is skipped, and one whose bounds lie in one piece of `z` and whose pieces leave no gap is
 /// taken whole, so the time is `O((m + 1) log n)` for `m` pieces met, counting with them
 /// the pieces of a subtree whose bounds meet `z` where its values do not (bounds widened by
@@ -16483,7 +16583,8 @@ fn invert_treap(node: &Tree, f: &Tag, z: &IntervalSet, out: &mut Vec<(End, End)>
     let Some(n) = node else {
         return;
     };
-    let (lo, hi) = f.vals(&n.vals, &n.span);
+    let s = n.sum();
+    let (lo, hi) = f.vals(&s.vals, &s.span);
     let Some((zlo, zhi)) = z.pieces_after(|(_, zhi)| end_val(zhi) < lo).next() else {
         return;
     };
@@ -16491,15 +16592,16 @@ fn invert_treap(node: &Tree, f: &Tag, z: &IntervalSet, out: &mut Vec<(End, End)>
     if zl > hi {
         return;
     }
-    if n.dense && zl <= lo && hi <= end_val(zhi) {
-        out.push(n.span.clone());
+    if s.dense && zl <= lo && hi <= end_val(zhi) {
+        out.push(s.span.clone());
         return;
     }
-    let below = n.tag.then(f);
-    invert_treap(&n.left, &below, z, out);
-    let (a, b) = f.line(&n.a, &n.b);
-    invert_piece(&n.lo, &n.hi, &a, &b, z, out);
-    invert_treap(&n.right, &below, z, out);
+    let p = n.item();
+    let below = p.tag.then(f);
+    invert_treap(n.left(), &below, z, out);
+    let (a, b) = f.line(&p.a, &p.b);
+    invert_piece(&p.lo, &p.hi, &a, &b, z, out);
+    invert_treap(n.right(), &below, z, out);
 }
 
 /// Appends to `out` the inputs `x` in `lo..=hi` with `a * x + b` in `z`. Exact, so no end is
@@ -17977,17 +18079,18 @@ mod tests {
             stack.push((n, Tag::ID, false));
         }
         while let Some((n, f, left_done)) = stack.pop() {
-            let below = n.tag.then(&f);
+            let p = n.item();
+            let below = p.tag.then(&f);
             if !left_done {
                 stack.push((n, f, true));
-                if let Some(l) = &n.left {
+                if let Some(l) = n.left() {
                     stack.push((l, below, false));
                 }
                 continue;
             }
-            let (a, b) = f.line(&n.a, &n.b);
-            out.push((n.lo.clone(), n.hi.clone(), a, b));
-            if let Some(r) = &n.right {
+            let (a, b) = f.line(&p.a, &p.b);
+            out.push((p.lo.clone(), p.hi.clone(), a, b));
+            if let Some(r) = n.right() {
                 stack.push((r, below, false));
             }
         }
@@ -21192,10 +21295,10 @@ mod tests {
                 let vals = (-40..=lo + 12).filter_map(|x| point(&clamped, x));
                 let (vlo, vhi) =
                     vals.fold((i128::MAX, i128::MIN), |(l, h), v| (l.min(v), h.max(v)));
+                let rv = &r.sum().vals;
                 assert!(
-                    r.vals.0 <= Val::Fin(vlo.into()) && Val::Fin(vhi.into()) <= r.vals.1,
-                    "round {round}: {:?}",
-                    r.vals
+                    rv.0 <= Val::Fin(vlo.into()) && Val::Fin(vhi.into()) <= rv.1,
+                    "round {round}: {rv:?}"
                 );
             }
         }
@@ -21222,7 +21325,11 @@ mod tests {
         let vals: Vec<i128> = xs.filter_map(|x| point(t, x)).collect();
         match (t, vals.iter().min(), vals.iter().max()) {
             (Some(r), Some(&lo), Some(&hi)) => {
-                assert_eq!(r.vals, (Val::Fin(lo.into()), Val::Fin(hi.into())), "{what}");
+                assert_eq!(
+                    r.sum().vals,
+                    (Val::Fin(lo.into()), Val::Fin(hi.into())),
+                    "{what}"
+                );
             }
             (t, ..) => assert!(t.is_none(), "{what}: a treap with no value"),
         }
@@ -21433,7 +21540,8 @@ mod tests {
             // The bounds the root keeps hold the value.
             if let (Pa::Piecewise { root: Some(r), .. }, Some(w)) = (&pa, want) {
                 let w = Val::Fin(Int::from(w));
-                assert!(r.vals.0 <= w && w <= r.vals.1, "{what}: {t}: {:?}", r.vals);
+                let vals = &r.sum().vals;
+                assert!(vals.0 <= w && w <= vals.1, "{what}: {t}: {vals:?}");
             }
         }
         match &pa {
@@ -21529,7 +21637,7 @@ mod tests {
             let marks = tx.landmarks(&inputs, &Demand::Bool(true));
             tx.start(&inputs, marks);
             match tx.pa(root, ROOT) {
-                Some(Pa::Piecewise { root: Some(r), .. }) => r.vals.clone(),
+                Some(Pa::Piecewise { root: Some(r), .. }) => r.sum().vals.clone(),
                 _ => panic!("{t} has no summary with pieces"),
             }
         };
@@ -21571,11 +21679,11 @@ mod tests {
         }
         for _ in 0..rng.below(3) {
             let (below, above) = split_at(root, rng.below(60) as i128 - 40);
-            let f = Tag {
-                mul: (rng.below(5) as i128 - 2).into(),
-                slope: (rng.below(7) as i128 - 3).into(),
-                add: (rng.below(11) as i128 - 5).into(),
-            };
+            let f = Tag::new(
+                (rng.below(5) as i128 - 2).into(),
+                (rng.below(7) as i128 - 3).into(),
+                (rng.below(11) as i128 - 5).into(),
+            );
             let below = below.map(|n| apply_tag(&n, &f));
             root = join_treap(below, above);
         }
@@ -21590,12 +21698,12 @@ mod tests {
         };
         let vals: Vec<i128> = (-60..=60).filter_map(|x| point(t, x)).collect();
         let pieces = treap_pieces(t);
-        assert_eq!(n.len, pieces.len());
+        assert_eq!(treap::len(t), pieces.len());
+        let nv = &n.sum().vals;
         for v in vals {
             assert!(
-                n.vals.0 <= Val::Fin(v.into()) && Val::Fin(v.into()) <= n.vals.1,
-                "{v} outside {:?}",
-                n.vals
+                nv.0 <= Val::Fin(v.into()) && Val::Fin(v.into()) <= nv.1,
+                "{v} outside {nv:?}"
             );
         }
         let (left, right) = push_down(n);
@@ -21611,11 +21719,11 @@ mod tests {
             let Some(n) = t else {
                 return;
             };
-            for c in [&n.left, &n.right].into_iter().flatten() {
-                assert!(c.prio <= n.prio, "{} above {}", c.prio, n.prio);
+            for c in [n.left(), n.right()].into_iter().flatten() {
+                assert!(prio(c) <= prio(n), "{} above {}", prio(c), prio(n));
             }
-            heap(&n.left);
-            heap(&n.right);
+            heap(n.left());
+            heap(n.right());
         }
         let (mut rng, _) = Rng::fresh("a_split_keeps_the_heap_order");
         for _ in 0..500 {
@@ -21627,7 +21735,8 @@ mod tests {
         }
     }
 
-    /// [`join_under`] and [`split_under`] give, node for node, what the join and the split of
+    /// [`join_treap`] ([`treap::lazy::join`]) and [`split_under`] give, node for node, what the
+    /// join and the split of
     /// the tagged copies give, the definitions they replace (kept here as `join_copied` and
     /// `split_copied`, which read every child through [`push_down`]): same ends, lines,
     /// priorities, tags, sums and shape, on random summaries with tags inside, under a random
@@ -21637,61 +21746,52 @@ mod tests {
     /// (`drop_last_copied` and the rest), with a new leaf above the root and below it.
     #[test]
     fn a_join_and_a_split_under_a_map_are_those_of_the_mapped_copies() {
+        /// The piece of a node, its ends and line.
+        fn parts(n: &PaNode) -> CutPiece {
+            let p = n.item();
+            (p.lo.clone(), p.hi.clone(), p.a.clone(), p.b.clone())
+        }
         fn join_copied(left: Tree, right: Tree) -> Tree {
             match (left, right) {
                 (None, r) => r,
                 (l, None) => l,
-                (Some(l), Some(r)) if l.prio >= r.prio => {
+                // The higher rank above, ties of priority broken by the higher key, as
+                // [`treap::lazy::join`] breaks them ([`outranks`]).
+                (Some(l), Some(r)) if outranks(&l, &r) => {
                     let (ll, lr) = push_down(&l);
                     let nr = join_copied(lr, Some(r));
-                    let (lo, hi, a, b) = (l.lo.clone(), l.hi.clone(), l.a.clone(), l.b.clone());
-                    Some(node_of(lo, hi, a, b, l.prio, ll, nr))
+                    let (lo, hi, a, b) = parts(&l);
+                    Some(node_of(lo, hi, a, b, prio(&l), ll, nr))
                 }
                 (Some(l), Some(r)) => {
                     let (rl, rr) = push_down(&r);
                     let nl = join_copied(Some(l), rl);
-                    let (lo, hi, a, b) = (r.lo.clone(), r.hi.clone(), r.a.clone(), r.b.clone());
-                    Some(node_of(lo, hi, a, b, r.prio, nl, rr))
+                    let (lo, hi, a, b) = parts(&r);
+                    Some(node_of(lo, hi, a, b, prio(&r), nl, rr))
                 }
             }
         }
         fn drop_last_copied(node: &Arc<PaNode>) -> Tree {
             let (l, r) = push_down(node);
-            let (lo, hi, a, b) = (
-                node.lo.clone(),
-                node.hi.clone(),
-                node.a.clone(),
-                node.b.clone(),
-            );
+            let (lo, hi, a, b) = parts(node);
             match r {
                 None => l,
-                Some(r) => Some(node_of(lo, hi, a, b, node.prio, l, drop_last_copied(&r))),
+                Some(r) => Some(node_of(lo, hi, a, b, prio(node), l, drop_last_copied(&r))),
             }
         }
         fn drop_first_copied(node: &Arc<PaNode>) -> Tree {
             let (l, r) = push_down(node);
-            let (lo, hi, a, b) = (
-                node.lo.clone(),
-                node.hi.clone(),
-                node.a.clone(),
-                node.b.clone(),
-            );
+            let (lo, hi, a, b) = parts(node);
             match l {
                 None => r,
-                Some(l) => Some(node_of(lo, hi, a, b, node.prio, drop_first_copied(&l), r)),
+                Some(l) => Some(node_of(lo, hi, a, b, prio(node), drop_first_copied(&l), r)),
             }
         }
         fn replace_last_copied(node: &Arc<PaNode>, new: &Arc<PaNode>) -> Arc<PaNode> {
-            let (lo, hi, a, b) = (
-                node.lo.clone(),
-                node.hi.clone(),
-                node.a.clone(),
-                node.b.clone(),
-            );
-            if new.prio > node.prio {
-                let (nlo, nhi, na, nb) =
-                    (new.lo.clone(), new.hi.clone(), new.a.clone(), new.b.clone());
-                return node_of(nlo, nhi, na, nb, new.prio, drop_last_copied(node), None);
+            let (lo, hi, a, b) = parts(node);
+            if outranks(new, node) {
+                let (nlo, nhi, na, nb) = parts(new);
+                return node_of(nlo, nhi, na, nb, prio(new), drop_last_copied(node), None);
             }
             let (l, r) = push_down(node);
             match r {
@@ -21701,23 +21801,17 @@ mod tests {
                     hi,
                     a,
                     b,
-                    node.prio,
+                    prio(node),
                     l,
                     Some(replace_last_copied(&r, new)),
                 ),
             }
         }
         fn replace_first_copied(new: &Arc<PaNode>, node: &Arc<PaNode>) -> Arc<PaNode> {
-            let (lo, hi, a, b) = (
-                node.lo.clone(),
-                node.hi.clone(),
-                node.a.clone(),
-                node.b.clone(),
-            );
-            if new.prio >= node.prio {
-                let (nlo, nhi, na, nb) =
-                    (new.lo.clone(), new.hi.clone(), new.a.clone(), new.b.clone());
-                return node_of(nlo, nhi, na, nb, new.prio, None, drop_first_copied(node));
+            let (lo, hi, a, b) = parts(node);
+            if outranks(new, node) {
+                let (nlo, nhi, na, nb) = parts(new);
+                return node_of(nlo, nhi, na, nb, prio(new), None, drop_first_copied(node));
             }
             let (l, r) = push_down(node);
             match l {
@@ -21727,7 +21821,7 @@ mod tests {
                     hi,
                     a,
                     b,
-                    node.prio,
+                    prio(node),
                     Some(replace_first_copied(new, &l)),
                     r,
                 ),
@@ -21737,41 +21831,42 @@ mod tests {
             let Some(node) = root else {
                 return (None, None, None);
             };
-            if cut <= key(&node.span.0) {
+            if cut <= key(&node.sum().span.0) {
                 return (None, None, Some(node));
             }
-            if cut > key(&node.span.1) {
+            if cut > key(&node.sum().span.1) {
                 return (Some(node), None, None);
             }
             let (left, right) = push_down(&node);
-            let (lo, hi, a, b) = (
-                node.lo.clone(),
-                node.hi.clone(),
-                node.a.clone(),
-                node.b.clone(),
-            );
+            let (lo, hi, a, b) = parts(&node);
             if cut <= key(&lo) {
                 let (ll, piece, lr) = split_copied(left, cut);
-                (ll, piece, Some(node_of(lo, hi, a, b, node.prio, lr, right)))
+                (
+                    ll,
+                    piece,
+                    Some(node_of(lo, hi, a, b, prio(&node), lr, right)),
+                )
             } else if cut > key(&hi) {
                 let (rl, piece, rr) = split_copied(right, cut);
-                (Some(node_of(lo, hi, a, b, node.prio, left, rl)), piece, rr)
+                (
+                    Some(node_of(lo, hi, a, b, prio(&node), left, rl)),
+                    piece,
+                    rr,
+                )
             } else {
                 (left, Some((lo, hi, a, b)), right)
             }
         }
         fn same(t: &Tree, u: &Tree) {
+            assert_eq!(treap::len(t), treap::len(u));
             match (t, u) {
                 (None, None) => {}
                 (Some(t), Some(u)) => {
-                    assert_eq!((&t.lo, &t.hi, &t.a, &t.b), (&u.lo, &u.hi, &u.a, &u.b));
-                    assert_eq!(
-                        (&t.span, &t.vals, t.dense, t.len),
-                        (&u.span, &u.vals, u.dense, u.len)
-                    );
-                    assert_eq!((t.prio, &t.tag), (u.prio, &u.tag));
-                    same(&t.left, &u.left);
-                    same(&t.right, &u.right);
+                    assert_eq!(parts(t), parts(u));
+                    assert_eq!(t.sum(), u.sum());
+                    assert_eq!((prio(t), &t.item().tag), (prio(u), &u.item().tag));
+                    same(t.left(), u.left());
+                    same(t.right(), u.right());
                 }
                 _ => panic!("one tree is empty and the other is not"),
             }
@@ -21780,11 +21875,11 @@ mod tests {
             Rng::fresh("a_join_and_a_split_under_a_map_are_those_of_the_mapped_copies");
         let tag = |rng: &mut Rng| match rng.below(3) {
             0 => Tag::ID,
-            _ => Tag {
-                mul: (rng.below(5) as i128 - 2).into(),
-                slope: (rng.below(7) as i128 - 3).into(),
-                add: (rng.below(11) as i128 - 5).into(),
-            },
+            _ => Tag::new(
+                (rng.below(5) as i128 - 2).into(),
+                (rng.below(7) as i128 - 3).into(),
+                (rng.below(11) as i128 - 5).into(),
+            ),
         };
         let mut checked = (0, 0, 0, 0);
         // 2000 rounds: about 330 joins of two sides, well over the 100 asked below for any
@@ -21829,12 +21924,11 @@ mod tests {
             checked.0 += usize::from(p.is_some());
             // A join of the two parts, each under a map of its own.
             let (fl, fr) = (tag(&mut rng), tag(&mut rng));
-            let joined = join_under(l.as_ref().map(|n| (n, &fl)), r.as_ref().map(|n| (n, &fr)));
-            let want = join_copied(
+            let (ml, mr) = (
                 l.as_ref().map(|n| apply_tag(n, &fl)),
                 r.as_ref().map(|n| apply_tag(n, &fr)),
             );
-            same(&joined, &want);
+            same(&join_treap(ml.clone(), mr.clone()), &join_copied(ml, mr));
             checked.1 += usize::from(l.is_some() && r.is_some());
             // The walks down one spine, under the map `f`, against the same walks over the
             // tagged copy, with a new leaf that outranks the root at some draws and not at others.
@@ -21856,8 +21950,8 @@ mod tests {
                     replace_last_copied(&m, &new),
                 );
                 same(&Some(last), &Some(last_copied));
-                checked.2 += usize::from(new.prio > n.prio);
-                checked.3 += usize::from(new.prio <= n.prio);
+                checked.2 += usize::from(outranks(&new, n));
+                checked.3 += usize::from(!outranks(&new, n));
                 let x = -110 + rng.below(30) as i64;
                 let new = leaf(&mut rng, x);
                 let (first, first_copied) = (
@@ -21865,8 +21959,8 @@ mod tests {
                     replace_first_copied(&new, &m),
                 );
                 same(&Some(first), &Some(first_copied));
-                checked.2 += usize::from(new.prio >= n.prio);
-                checked.3 += usize::from(new.prio < n.prio);
+                checked.2 += usize::from(outranks(&new, n));
+                checked.3 += usize::from(!outranks(&new, n));
             }
         }
         // The draws reach the cases that matter: cuts inside a piece, joins of two sides, and
@@ -21891,18 +21985,15 @@ mod tests {
             let Some(n) = t else {
                 return;
             };
-            assert_eq!(n.prio, prio_of(&n.lo, &n.hi), "{:?}..={:?}", n.lo, n.hi);
-            for c in [&n.left, &n.right].into_iter().flatten() {
-                assert!(c.prio <= n.prio, "{} above {}", c.prio, n.prio);
+            let p = n.item();
+            assert_eq!(prio(n), prio_of(&p.lo, &p.hi), "{:?}..={:?}", p.lo, p.hi);
+            for c in [n.left(), n.right()].into_iter().flatten() {
+                assert!(prio(c) <= prio(n), "{} above {}", prio(c), prio(n));
             }
-            check(&n.left);
-            check(&n.right);
+            check(n.left());
+            check(n.right());
         }
-        let add = |c: i64| Tag {
-            mul: Int::ONE,
-            slope: Int::ZERO,
-            add: (c as i128).into(),
-        };
+        let add = |c: i64| Tag::new(Int::ONE, Int::ZERO, (c as i128).into());
         let (mut rng, _) = Rng::fresh("cuts_one_past_an_end_merge_into_the_treap_of_the_pieces");
         for kind in 0..3 {
             let steps: Vec<i64> = (1..=50)
@@ -22031,13 +22122,14 @@ mod tests {
     fn point(t: &Tree, x: i64) -> Option<i128> {
         let n = t.as_ref()?;
         let (left, right) = push_down(n);
-        if End::of(x) < n.lo {
+        let p = n.item();
+        if End::of(x) < p.lo {
             return point(&left, x);
         }
-        if End::of(x) > n.hi {
+        if End::of(x) > p.hi {
             return point(&right, x);
         }
-        (&(&n.a * &Int::from(x)) + &n.b).to_i128()
+        (&(&p.a * &Int::from(x)) + &p.b).to_i128()
     }
 
     mod written {

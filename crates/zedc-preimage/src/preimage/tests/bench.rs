@@ -40,11 +40,7 @@ fn a_summary_under_a_sloped_tag_is_inverted_and_clamped_in_time_linear_in_its_pi
             );
             root = join_treap(root, Some(node));
         }
-        let down = Tag {
-            mul: Int::ONE,
-            slope: Int::from(-1),
-            add: Int::ZERO,
-        };
+        let down = Tag::new(Int::ONE, Int::from(-1), Int::ZERO);
         root.map(|n| apply_tag(&n, &down))
     }
     let run = |root: &Tree, p: usize| {
@@ -52,7 +48,7 @@ fn a_summary_under_a_sloped_tag_is_inverted_and_clamped_in_time_linear_in_its_pi
         invert_treap(root, &Tag::ID, &IntervalSet::of(5, 5), &mut out);
         assert!(out.is_empty(), "no value is 5");
         let clamped = clamp_treap(root, true, &Int::from(5)).expect("ends well inside i128");
-        assert_eq!(clamped.as_ref().map_or(0, |n| n.len), p);
+        assert_eq!(treap::len(&clamped), p);
         std::hint::black_box(clamped);
     };
     let (small, large) = (staircase(SLOPED_P), staircase(8 * SLOPED_P));

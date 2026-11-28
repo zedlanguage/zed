@@ -333,8 +333,8 @@ impl Lazy<Sh> for Shifts {
             id: child.id,
         }
     }
-    fn cleared(&self, item: &Sh) -> Sh {
-        Sh { off: 0, ..*item }
+    fn clear(&self, item: &mut Sh) {
+        item.off = 0;
     }
 }
 
@@ -444,6 +444,33 @@ fn lazy_trees_agree_with_shifted_lists() {
     for (t, want) in &trees {
         assert_eq!(&shifted_entries(t).0, want);
     }
+}
+
+/// [`lazy::join`] of a right path and a left path of `M` nodes each, of priorities in turn, so
+/// that the merge walks all `2M` nodes, past [`DEEP`] calls and into its loop, with a shift
+/// pending at every node: the result holds the shifted keys in order, and its sizes, summaries
+/// and heap order hold. `M` is small enough for the paths' drop, which recurses, and the test's
+/// own recursive walk.
+#[test]
+fn a_lazy_join_of_two_paths_past_deep_calls() {
+    const M: i64 = 1000;
+    assert!(2 * M as usize > DEEP);
+    // Made from the bottom: node `d` of `a`, of key `2d` and priority `2(M - d) + 2`, over a
+    // right child, and node `d` of `b`, of key `10M - 2d` and priority `2(M - d) + 1`, over a
+    // left child. Each holds the shift 1, so the current key of node `d` is its key plus `d`.
+    let item = |key, id| Sh { key, off: 1, id };
+    let (mut a, mut b): (Tree<Sh>, Tree<Sh>) = (None, None);
+    for d in (0..M).rev() {
+        let p = 2 * (M - d) as u64;
+        a = Some(node(item(2 * d, d as u64), p + 2, None, a));
+        b = Some(node(item(10 * M - 2 * d, (M + d) as u64), p + 1, b, None));
+    }
+    let mut want: Vec<(i64, u64)> = (0..M).map(|d| (3 * d, d as u64)).collect();
+    want.extend((0..M).rev().map(|d| (10 * M - d, (M + d) as u64)));
+    let t = lazy::join(a, b, &Shifts);
+    let (got, sound) = shifted_entries(&t);
+    assert!(sound, "sizes, summaries and heap order");
+    assert_eq!(got, want);
 }
 
 /// An entry of a key and a priority the test chooses, to build paths; its summary is the sum of

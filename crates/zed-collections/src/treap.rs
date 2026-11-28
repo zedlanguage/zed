@@ -182,7 +182,7 @@ fn above<I: Item>(a: &Node<I>, b: &Node<I>) -> bool {
 
 /// The node of `item` and priority `prio` over `left` and `right`, its size and summary made
 /// from theirs.
-#[inline]
+#[inline(always)]
 fn node<I: Item>(item: I, prio: u64, left: Tree<I>, right: Tree<I>) -> Arc<Node<I>> {
     Arc::new(Node {
         len: 1 + len(&left) + len(&right),
