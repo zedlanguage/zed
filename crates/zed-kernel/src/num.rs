@@ -3590,6 +3590,9 @@ enum Tens {
 /// factorization. Aligning copies the coefficients when a prime the other lists divides one;
 /// under a `Watch`, that copy asks the system for its memory first, and a refusal is
 /// recorded for `refused` and the two are compared by their normal forms, as [`Ord`] does.
+/// With a wide atom the two are divided, which asks for its memory watched or not; a
+/// refusal there is recorded only under a `Watch` too, so no record is left on a thread that
+/// no run reads (FIX-rat-eq-unwatched-record).
 impl PartialEq for Rat {
     fn eq(&self, other: &Self) -> bool {
         if self.ten.is_some() || other.ten.is_some() {
@@ -3615,7 +3618,9 @@ impl PartialEq for Rat {
             return match self.div(other) {
                 Ok(q) => q.is_some_and(|q| q.is_plain() && q.num.is_one() && q.den.is_one()),
                 Err(e) => {
-                    record(Test::Equality, e);
+                    if check {
+                        record(Test::Equality, e);
+                    }
                     self.form_cmp(other) == Ordering::Equal
                 }
             };
@@ -3626,7 +3631,9 @@ impl PartialEq for Rat {
         ) {
             (Ok(a), Ok(b)) => a.num == b.num && a.den == b.den && a.pows == b.pows,
             (Err(e), _) | (_, Err(e)) => {
-                record(Test::Equality, e);
+                if check {
+                    record(Test::Equality, e);
+                }
                 self.form_cmp(other) == Ordering::Equal
             }
         }
