@@ -1165,6 +1165,17 @@ impl<T: Elem> FromIterator<T> for TreapSet<T> {
 /// (LIST-xor-finite, as `imbl`'s `==` skipped shared nodes).
 impl<T: Elem> PartialEq for TreapSet<T> {
     fn eq(&self, other: &Self) -> bool {
+        self.same_shape(other, |a, b| a == b)
+    }
+}
+
+impl<T: Elem> TreapSet<T> {
+    /// `==` ([`PartialEq`]) with `same` the test of two keys: whether the two trees have one
+    /// shape and keys `same` at each node, shared subtrees skipped. Every pair of keys `same`
+    /// is equal, so `true` says the sets are equal; `false` says they are unequal only where
+    /// `same` holds of every pair of equal keys, as `==` does (a key whose held forms differ,
+    /// under [`Elem::held_cmp`], can make two equal sets differ here).
+    fn same_shape(&self, other: &Self, same: impl Fn(&T, &T) -> bool) -> bool {
         if self.ptr_eq(other) {
             return true;
         }
@@ -1188,7 +1199,7 @@ impl<T: Elem> PartialEq for TreapSet<T> {
             match pair {
                 (None, None) => {}
                 (Some(a), Some(b)) if Arc::ptr_eq(a, b) => {}
-                (Some(a), Some(b)) if a.len == b.len && a.key == b.key => {
+                (Some(a), Some(b)) if a.len == b.len && same(&a.key, &b.key) => {
                     stack.push((a.left.as_ref(), b.left.as_ref()));
                     stack.push((a.right.as_ref(), b.right.as_ref()));
                 }
@@ -1250,13 +1261,28 @@ pub struct HashConsTable<T> {
     swept_at: usize,
 }
 
-/// A set ordered by its keys as held ([`Elem::held_cmp`]), compared as sequences; one tree is
-/// equal at once.
+/// A set ordered by its keys as held ([`Elem::held_cmp`]), compared as sequences; one tree, or
+/// two of one shape with keys held alike at each node, is equal at once.
+///
+/// Complexity tradeoff (SCALE-tuple-mins-chain): the bucket a set is shared in holds the equal
+/// set when one is alive, and a comparison of the two as sequences walks every key, `O(n)`. Two
+/// equal sets made apart by one insert each into one shared set, as `min` of a chain of tuples
+/// `(i, _, i)` makes the literals of the first and last components, share all but `O(log n)`
+/// nodes, so the walk of [`TreapSet::same_shape`], which skips shared subtrees, is `O(log n)`:
+/// the `n` links of that chain cost `O(n log n)`, not `O(n^2)`
+/// (`bench::sharing_equal_sets_made_apart_from_one_set_scales`). Two sets are equal exactly when
+/// their trees have one shape and one key at each node (the `PartialEq` comment, after Seidel
+/// and Aragon), and keys held alike are equal (`held_cmp` is `Equal` only for equal keys), so a
+/// `true` from that walk is `Equal`, and the order is the one before, since such sets are equal
+/// as sequences too. On `false` the sequences are compared as before. Cost: a walk that ends
+/// at once on unequal sizes or sums of weights, which unequal sets of one bucket have except on
+/// a collision of the sums or keys whose weights tie (`bench::Tied`); there the walk may visit
+/// up to every node before the comparison, `O(n)`, the order of that comparison's own bound.
 struct Held<T>(TreapSet<T>);
 
 impl<T: Elem> Ord for Held<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        if self.0.ptr_eq(&other.0) {
+        if (self.0).same_shape(&other.0, |a, b| a.held_cmp(b) == Ordering::Equal) {
             return Ordering::Equal;
         }
         let (mut a, mut b) = (self.0.iter(), other.0.iter());
