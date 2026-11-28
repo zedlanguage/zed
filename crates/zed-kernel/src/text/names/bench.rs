@@ -62,7 +62,9 @@ fn naming_n_and_8n_doubled_texts() {
     // names in far fewer steps and would make the small size cheaper than the rest.
     let base = |i: usize| -> String {
         let d = |k: usize, from: u8| char::from(from + (i / 7usize.pow(k as u32) % 7) as u8);
-        [d(0, b'a'), d(1, b'h'), d(2, b'p'), 'x', 'y'].iter().collect()
+        [d(0, b'a'), d(1, b'h'), d(2, b'p'), 'x', 'y']
+            .iter()
+            .collect()
     };
     let texts = crate::scaling::inputs(4, |n| {
         (0..n).map(|i| doubled(&base(i), 40)).collect::<Vec<_>>()

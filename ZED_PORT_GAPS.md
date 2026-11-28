@@ -4158,3 +4158,9 @@ Each table below is a memo table whose life is one scope: a struct made for one 
   `Box::into_raw` handles and `#[no_mangle] extern "C"`, belong to the shim's side of the foreign
   boundary. The Zed side needs only what a foreign call already needs: pointers with lengths in,
   an opaque handle out, and a release call for each handle.
+
+## Entries from PERF-names-doubled-join-cost (`crates/zed-kernel/src/text/names.rs`)
+
+| Rust construct | Sites | Gap | At the port |
+|---|---|---|---|
+| A `DigestMap<(u64, u64), Arc<Sum>>` memo of joins, keyed by the names of the two texts joined, filled and read inside `&mut self` calls of one dictionary | `Names::joins`, read and filled in `Names::join` | Shared memo tables (gap 2) | the dictionary threaded through the naming as a state receiver, the memo a family `(int, int) ->? Sum` inside it |
