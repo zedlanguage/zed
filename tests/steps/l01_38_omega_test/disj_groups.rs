@@ -1127,9 +1127,11 @@ pub(super) mod row_sums {
     /// (`y0` in {0, 2, 4} with `y0 == -2·y1`), signs of every kind, a gcd of 2, a gcd of 3 that
     /// leaves no point, coprime coefficients, and a third atom in no row; and on ranges of width
     /// 10^12 and 10^15, where the join would list one interval per value of `y1 = 3·y0`, the
-    /// answer is two ranges met with the class 0 modulo 3, and no join runs (`JOINED` is
-    /// `None`). Red before green, on origin/main at abac8b5c4: `JOINED` was
-    /// `Some((20000000, false))`, the join stopped at its limit.
+    /// answer is two ranges met with the class 0 modulo 3, and no join runs: the test asserts
+    /// that `JOINED` is `None`, not any count of units. Red before green, on origin/main at
+    /// abac8b5c4 (local job, 2026-11-28): `JOINED` was `Some((18874430, false))`, the join
+    /// stopped at its work limit (`JOIN_LIMIT`, where the stop falls at the operation that would
+    /// pass it); the small cases were exact there too.
     #[test]
     fn one_equation_over_two_atoms_is_answered_exactly() {
         let cases = [
