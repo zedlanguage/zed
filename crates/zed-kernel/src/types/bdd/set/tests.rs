@@ -717,9 +717,9 @@ impl<T: std::hash::Hash> std::hash::Hash for Counted<T> {
 /// `TypeSet`, `empty/escape.rs` `vid` and `intern`) compare each of `n` keys with `O(log n)`
 /// others, whether or not the keys share a hash: tuple types of the rows of one digest
 /// ([`rows_of_one_digest`]), and the big integers `2^64 + k (2^61 - 1)`, which `Hash for Value`
-/// writes as one residue mod `2^61 - 1`. The structures they replaced are run on the same keys
-/// as the red case: at n 4096 they compare a tied key with every key of its hash, at least
-/// `n (n - 1) / 2` comparisons in all. A B-tree search compares about `2 log2 b` keys on
+/// writes as one residue mod `2^61 - 1`. The structures they replaced are run on the first 512
+/// of the keys as the red case: they compare a tied key with every key of its hash, at least
+/// `512 × 511 / 2` comparisons in all. A B-tree search compares about `2 log2 b` keys on
 /// average, since it searches each node it passes linearly (`(2B - 1) ⌈log_B b⌉` in the worst
 /// case, std's `B = 6`). The set searches three times a key (inserted, then asked for and
 /// inserted again); the interner four times, since `TiedInterner::intern` searches again to
@@ -736,7 +736,11 @@ fn tied_sets_and_ids_compare_each_key_a_few_times() {
     use zed_collections::intern::Interner;
     let n: usize = 4096;
     let bound = 8 * n * n.ilog2() as usize;
-    let quadratic = n * (n - 1) / 2;
+    // The structures replaced are run on the first `old_n` keys only: at least `old_n (old_n -
+    // 1) / 2` comparisons show them quadratic as well as `n (n - 1) / 2` would, and the run at
+    // `n` took most of the test's 7.55 s alone (ledger TEST-kernel-tests-under-1s, author P169).
+    let old_n: usize = 512;
+    let quadratic = old_n * (old_n - 1) / 2;
     let count = |run: &mut dyn FnMut()| {
         COUNTED.with(|c| c.set(0));
         run();
@@ -763,8 +767,9 @@ fn tied_sets_and_ids_compare_each_key_a_few_times() {
         // of the test's 8.3 s alone (b22-free2 prof30, v5e VM, load 1.8; FAIL-s4-model-near-limit).
         if family == "apart" || !crate::address::SHORT {
             let mut old: HashSet<Counted<Type>, BuildHasherDefault<Digest>> = HashSet::default();
-            let old_cmps = count(&mut || keys.iter().for_each(|k| _ = old.insert(k.clone())));
-            assert_eq!(old.len(), n);
+            let old_cmps =
+                count(&mut || keys[..old_n].iter().for_each(|k| _ = old.insert(k.clone())));
+            assert_eq!(old.len(), old_n);
             if family == "tied" {
                 assert!(old_cmps >= quadratic, "the old set: {old_cmps} comparisons");
             }
@@ -792,8 +797,8 @@ fn tied_sets_and_ids_compare_each_key_a_few_times() {
         assert_eq!(ids.len(), n);
         assert!(cmps <= bound, "{family}: {n} integers, {cmps} comparisons");
         let mut old: Interner<&Counted<Value>, BuildHasherDefault<Digest>> = Interner::default();
-        let old_cmps = count(&mut || keys.iter().for_each(|k| _ = old.intern(k)));
-        assert_eq!(old.len(), n);
+        let old_cmps = count(&mut || keys[..old_n].iter().for_each(|k| _ = old.intern(k)));
+        assert_eq!(old.len(), old_n);
         if family == "tied" {
             assert!(old_cmps >= quadratic, "the old ids: {old_cmps} comparisons");
         }

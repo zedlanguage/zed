@@ -4561,8 +4561,13 @@ mod tests {
                     wide.clone(),
                     BigInt::from(7).pow(3000u32),
                 ] {
+                    // The answer from the cofactor alone, `v_p(c p^v) = v + v_p(c)`: division by
+                    // `p` one at a time on `n` itself, up to 8,192 divisions of a number of up
+                    // to 13,000 bits each, was most of the test's 1.83 s alone (ledger
+                    // TEST-kernel-tests-under-1s, author P169).
+                    let (vc, rest) = by_one(c.clone(), p);
+                    let want = (u64::from(v) + vc, rest);
                     let n = c * BigInt::from(p).pow(v);
-                    let want = by_one(n.clone(), p);
                     assert_eq!(valuation(n.clone(), p), want, "p {p}, v {v}");
                     for cap in [0u64, 1, 2047, 2048, 4097] {
                         let (k, rest) = valuation_upto(n.clone(), p, cap);

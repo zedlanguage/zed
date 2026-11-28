@@ -1308,13 +1308,21 @@ fn random_tuples(s: &mut Rng) -> Vec<Type> {
 
 /// `overlaps` on random types of tuples of one to three components, negated ones and the
 /// tuples of every length less some among them ([`check_classes`]): the runs on later
-/// components and the first components of a negated one-tuple type.
+/// components and the first components of a negated one-tuple type. Here on 250 draws from a
+/// fresh seed each run; 1,000, as the test drew until TEST-kernel-tests-under-1s (1.15 s
+/// alone), run in [`bench::joined_in_random_tuples_scales`].
 #[test]
 fn types_that_meet_are_joined_in_random_unions_and_negations_of_tuples() {
+    joined_in_random_tuples(250);
+}
+
+/// The check of [`types_that_meet_are_joined_in_random_unions_and_negations_of_tuples`] on
+/// `cases` draws.
+fn joined_in_random_tuples(cases: usize) {
     let (mut s, _) =
         Rng::fresh("types_that_meet_are_joined_in_random_unions_and_negations_of_tuples");
     let (mut met, mut apart) = (0, 0);
-    for case in 0..1000 {
+    for case in 0..cases {
         let ts = random_tuples(&mut s);
         check_classes(case, &ts, &mut met, &mut apart);
     }
@@ -2375,8 +2383,17 @@ fn random_instance(draw: &mut Rng) -> Option<Type> {
 /// parts, apart from the search the verdicts come from. A refusal is allowed and counted
 /// (row TEST-kernel-unreached-paths-4: the search's paths for cofinite sets, tuples, atoms and
 /// recursive groups, reached here with an answer to check).
+/// Here on the first 500 draws; the 3,000 the test drew until TEST-kernel-tests-under-1s
+/// (2.08 s alone) run in [`bench::membership_on_random_types_scales`].
 #[test]
 fn random_types_agree_with_membership_on_a_finite_set_of_values() {
+    let decided = random_types_agree_with_membership(500);
+    assert!(decided > 330, "only {decided} decided");
+}
+
+/// The check of [`random_types_agree_with_membership_on_a_finite_set_of_values`] on the first
+/// `cases` draws. Returns how many verdicts were decided.
+fn random_types_agree_with_membership(cases: usize) -> usize {
     let (values, bound) = values_and_bound();
     assert!(
         values.iter().all(|v| bound.contains(v)),
@@ -2385,7 +2402,7 @@ fn random_types_agree_with_membership_on_a_finite_set_of_values() {
     let mut draw = Rng::new(0x5eed);
     let (mut decided, mut refused) = (0, 0);
     let mut previous = Type::top();
-    for case in 0..3000 {
+    for case in 0..cases {
         let rec = case % 3 == 0;
         let t = random_type(&mut draw, 3, rec);
         let held: Vec<bool> = values.iter().map(|v| t.contains(v)).collect();
@@ -2418,7 +2435,7 @@ fn random_types_agree_with_membership_on_a_finite_set_of_values() {
         previous = t;
     }
     eprintln!("{decided} decided, {refused} refused");
-    assert!(decided > 2000, "only {decided} decided");
+    decided
 }
 
 // Append to: `crates/zed-kernel/src/types/empty/tests.rs`
@@ -4000,22 +4017,26 @@ fn overlaps_are_the_same_in_every_order_on_repeated_stems() {
 /// Random cells of [`random_cells`] of at most five types, from one seed: the classes are the
 /// same in every order, each from an empty group cache, and without the shortcuts of `joined`
 /// (PROOF-kernel-overlaps-order). [`check_classes`] tries four orders of every case with the
-/// cache kept; this tries all of them, for fewer cases.
+/// cache kept; this tries all of them, for fewer cases: the first 100 draws, not the 400 drawn
+/// until TEST-kernel-tests-under-1s (2.12 s alone). A bench of `n` against `8n` draws measured
+/// 10.9, past the limit of 10.5, as the cases a draw keeps vary widely in size, so the draws
+/// past 100 are not run.
 #[test]
 fn overlaps_are_the_same_in_every_order_on_random_cells() {
-    let (checked, taken) = overlaps_in_every_order_from(1, 5);
+    let (checked, taken) = overlaps_in_every_order_from(1, 5, 100);
     assert!(
         checked > 0 && taken[0] > 0,
         "cases checked and `shared_chain` taken"
     );
 }
 
-/// The cases of [`random_cells`] from `seed` of at most `max` types, each checked by
-/// [`same_classes_in_every_order`]. Returns how many were checked and the shortcuts taken.
-fn overlaps_in_every_order_from(seed: u64, max: usize) -> (usize, [usize; 2]) {
+/// The first `cases` draws of [`random_cells`] from `seed`, those of at most `max` types each
+/// checked by [`same_classes_in_every_order`]. Returns how many were checked and the
+/// shortcuts taken.
+fn overlaps_in_every_order_from(seed: u64, max: usize, cases: usize) -> (usize, [usize; 2]) {
     let mut s = Xorshift64::new(seed | 1);
     let (mut checked, mut taken) = (0, [0; 2]);
-    for case in 0..400 {
+    for case in 0..cases {
         let ts = random_cells(&mut s);
         if ts.len() <= max {
             let t = same_classes_in_every_order(&format!("seed {seed} case {case}"), &ts);
@@ -4306,4 +4327,27 @@ fn a_closure_in_a_type_dropped_is_not_shown() {
     );
     assert_eq!(Search::default().rep(&t), None);
     assert_ne!(t.verdict(), Verdict::Inhabited);
+}
+
+/// The sizes the tests above drew until TEST-kernel-tests-under-1s, each at `8n`. Each draw is
+/// of bounded size, so the work of `n` draws is O(n).
+mod bench {
+    /// [`super::random_types_agree_with_membership`] on the first `n` draws; 3,000 at `8n`.
+    #[test]
+    fn membership_on_random_types_scales() {
+        crate::scaling::check("verdicts against membership on n random types", 375, |n| {
+            let decided = super::random_types_agree_with_membership(n);
+            if n == 3_000 {
+                assert!(decided > 2_000, "only {decided} of {n} decided");
+            }
+        });
+    }
+
+    /// [`super::joined_in_random_tuples`] on `n` draws; 1,000 at `8n`.
+    #[test]
+    fn joined_in_random_tuples_scales() {
+        crate::scaling::check("overlaps on n random types of tuples", 125, |n| {
+            super::joined_in_random_tuples(n)
+        });
+    }
 }

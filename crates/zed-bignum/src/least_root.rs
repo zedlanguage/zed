@@ -682,12 +682,96 @@ fn power_at_most(t: &BigUint, k: u64, a: &BigUint) -> bool {
     if hi.at_most(a) {
         return true;
     }
+    #[cfg(test)]
+    tests::EXACT_POWERS.with(|n| n.set(n.get() + 1));
     pow_uint(t, k) <= *a
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    thread_local! {
+        /// How many times [`power_at_most`] has taken the power itself, its bounds undecided.
+        pub(super) static EXACT_POWERS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// A number of exactly `bits` bits, its top bit set, from `rng`.
+    fn random_bits(rng: &mut crate::seed::Rng, bits: u64) -> BigUint {
+        let words: Vec<u64> = (0..bits.div_ceil(64)).map(|_| rng.next_u64()).collect();
+        let mut t = BigUint::from_slice(
+            &words
+                .iter()
+                .flat_map(|w| [*w as u32, (w >> 32) as u32])
+                .collect::<Vec<_>>(),
+        ) >> (64 * bits.div_ceil(64) - bits);
+        t.set_bit(bits - 1, true);
+        t
+    }
+
+    /// Ledger TEST-power-at-most-wide-bases: the leaf of [`nth_root_near`] takes the power
+    /// itself at most twice for one root, so each of its turns is `O(log k)` products of
+    /// 128-bit numbers but for two. Proof: the leaf's bases have at most `R <= b + 64` bits
+    /// (step 7, `b` the bits of `k`), so its bounds are exact on `t` and within a factor `1 +
+    /// k 2^(-126)` of `t^k`. Let `r` be the root, `r^k <= a < (r + 1)^k`. A turn tries a `t`
+    /// other than `r` and `r + 1` either at most `r - 1`, where `t^k <= (r - 1)^k <= r^k (1 -
+    /// 1/r)^k`, or at least `r + 2`, where `t^k >= (r + 2)^k > (r + 1)^k (1 + 1/(r + 1))^k`;
+    /// either way `a` is a factor `1 + k / 2^(b + 64)` or more from `t^k`, past the bounds'
+    /// factor for `b < 61`, which every index of a value held in memory has (`k < bits(a)`).
+    /// The leaf tries each `t` at most once, so only `t = r` and `t = r + 1` can reach the
+    /// power. Checked at roots of 1 to `b + 64` bits (every leaf width) for indices 2 to 1000,
+    /// at `a = r^k - 1`, `r^k`, `r^k + 1`, `(r + 1)^k - 1` and random values, and through the
+    /// recursion at a root of 4,096 bits; and the bounds against the power for bases of 256,
+    /// 1,024 and 4,096 bits, wider than any leaf base, where they are undecided next to `t^k`.
+    #[test]
+    fn a_root_takes_the_power_itself_at_most_twice() {
+        let (mut rng, _) = crate::seed::Rng::fresh("a_root_takes_the_power_itself_at_most_twice");
+        let check = |a: &BigUint, k: u64| {
+            EXACT_POWERS.with(|n| n.set(0));
+            let (r, rem) = nth_root_rem_uint(a, k);
+            let taken = EXACT_POWERS.with(Cell::get);
+            assert!(
+                taken <= 2,
+                "k = {k}, a of {} bits: {taken} powers",
+                a.bits()
+            );
+            assert_eq!(pow_uint(&r, k) + &rem, *a, "k = {k}");
+            assert!(pow_uint(&(r + 1u32), k) > *a, "k = {k}");
+        };
+        for k in [2u64, 3, 5, 64, 65, 1000] {
+            let widest = u64::from(k.bit_len()) + 64;
+            for bits in (1..=widest).step_by(7).chain([widest]) {
+                let r = random_bits(&mut rng, bits);
+                let p = pow_uint(&r, k);
+                let next = pow_uint(&(&r + 1u32), k);
+                for a in [&p - 1u32, p.clone(), &p + 1u32, &next - 1u32] {
+                    check(&a, k);
+                }
+                check(&random_bits(&mut rng, p.bits()), k);
+            }
+        }
+        let r = random_bits(&mut rng, 4096);
+        for k in [3u64, 64] {
+            let p = pow_uint(&r, k);
+            for a in [&p - 1u32, p.clone(), &p + 1u32] {
+                check(&a, k);
+            }
+        }
+        for bits in [256u64, 1024, 4096] {
+            let t = random_bits(&mut rng, bits);
+            for k in [1u64, 2, 3, 5, 64] {
+                let p = pow_uint(&t, k);
+                for a in [&p - 1u32, p.clone(), &p + 1u32, &p >> 1u32, &p << 1u32] {
+                    assert_eq!(
+                        power_at_most(&t, k, &a),
+                        p <= a,
+                        "t of {bits} bits, k = {k}"
+                    );
+                }
+            }
+        }
+    }
 
     /// [`power_at_most`] against the power itself, at `t^k` and its neighbors one apart, which
     /// lie between the bounds where `t^k` is wider than [`BOUND_BITS`] and `t` is no power of
@@ -702,15 +786,7 @@ mod tests {
             .map(BigUint::from)
             .collect();
         for bits in [31u64, 64, 65, 127, 128, 129, 192] {
-            let words: Vec<u64> = (0..bits.div_ceil(64)).map(|_| rng.next_u64()).collect();
-            let mut t = BigUint::from_slice(
-                &words
-                    .iter()
-                    .flat_map(|w| [*w as u32, (w >> 32) as u32])
-                    .collect::<Vec<_>>(),
-            ) >> (64 * bits.div_ceil(64) - bits);
-            t.set_bit(bits - 1, true);
-            bases.push(t);
+            bases.push(random_bits(&mut rng, bits));
             bases.push(BigUint::one() << (bits - 1));
         }
         for t in &bases {

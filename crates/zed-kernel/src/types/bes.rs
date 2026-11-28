@@ -1430,30 +1430,49 @@ mod tests {
         );
     }
 
-    /// Draws of the wide shape in `decide_agrees_with_the_game_on_systems_drawn_at_random`.
-    /// The draws are fixed by the seed; the only two that reach the one-`Mor` step's second
-    /// least fixed point are wide draws 89,504 and 413,455, and the 40,000 small draws reach
-    /// every other path. So the count stops a little after the second (it was 600,000, which
-    /// took up to 19.6 s alone at load 40 against the test's 24 s limit, `decide` 6 s of
-    /// every 9), and the draws are checked in two tests of about 6 s each (load 52 to 68),
-    /// each asserting that its half still reaches the pass.
+    /// Draws of the wide shape in [`draws_agree_with_the_game`]. The draws are fixed by the
+    /// seed; the only two that reach the one-`Mor` step's second least fixed point are wide
+    /// draws 89,504 and 413,455, and the 40,000 small draws reach every other path. So the
+    /// count stops a little after the second (it was 600,000, which took up to 19.6 s alone at
+    /// load 40 against the test's 24 s limit, `decide` 6 s of every 9).
     const WIDE_DRAWS: u64 = 420_000;
 
-    /// The draws of `decide_agrees_with_the_game_on_systems_drawn_at_random` are numbered
-    /// from 0, the 40,000 small ones first; this one starts the second half of the test, which
-    /// holds the second draw that reaches the second pass (wide draw 413,455, so 453,455).
-    const SECOND_HALF: u64 = 250_000;
+    /// The draws of [`draws_agree_with_the_game`] are numbered from 0, the 40,000 small ones
+    /// first, so the wide draws that reach the second pass (89,504 and 413,455) are 129,504 and
+    /// 453,455.
+    const SECOND_PASS_DRAWS: [u64; 2] = [129_504, 453_455];
 
+    /// The 40,000 small draws, which reach every path but one, and the wide draws within 64 of
+    /// the two that reach the second least fixed point of the one-`Mor` step. The other wide
+    /// draws, checked in two tests of 4 to 5 s alone until ledger TEST-kernel-tests-under-1s
+    /// (author P169: a correctness test takes well under 1 s alone), are checked by the
+    /// benchmark `bench::decide_on_wide_draws_scales`. Draws not checked are drawn and not
+    /// built, so the stream is the same.
     #[test]
     fn decide_agrees_with_the_game_on_systems_drawn_at_random() {
-        draws_agree_with_the_game(0..SECOND_HALF);
+        let near = |i: u64| SECOND_PASS_DRAWS.iter().any(|d| i.abs_diff(*d) <= 64);
+        let second = draws_agree_with_the_game(|i| i < 40_000 || near(i), 453_455 + 65);
+        assert!(
+            second >= 2,
+            "the second least fixed point of the one-Mor step taken {second} times, want 2"
+        );
     }
 
-    /// The second half of the draws, a test of its own so each half stays well inside the
-    /// time limit of one test.
-    #[test]
-    fn decide_agrees_with_the_game_on_systems_drawn_at_random_second_half() {
-        draws_agree_with_the_game(SECOND_HALF..u64::MAX);
+    mod bench {
+        /// [`super::draws_agree_with_the_game`] on the first `n` wide draws, after the small
+        /// ones: each draw is a system of at most 43 nodes, so the work is O(n). At `8n =
+        /// 420,000` it checks every wide draw (`super::WIDE_DRAWS`), both that reach the second
+        /// pass among them.
+        #[test]
+        fn decide_on_wide_draws_scales() {
+            crate::scaling::check("decide and the game on n wide draws", 52_500, |n| {
+                let n = n as u64;
+                let second = super::draws_agree_with_the_game(|i| i >= 40_000, 40_000 + n);
+                if n == super::WIDE_DRAWS {
+                    assert!(second >= 2, "the second pass taken {second} times, want 2");
+                }
+            });
+        }
     }
 
     /// Item PROOF-refused-469-undecided-child: every node `decide` refuses reaches a node of a
@@ -1493,7 +1512,9 @@ mod tests {
     /// Draws every system in turn, so the seed reaches each draw the same way, and checks
     /// `decide` against the game on the draws numbered in `checked`; asserts that those
     /// draws take the second least fixed point of the one-`Mor` step at least once.
-    fn draws_agree_with_the_game(checked: std::ops::Range<u64>) {
+    /// Checks `decide` against the game on the draws `checked` holds, of the draws numbered
+    /// below `end`, and returns the times the one-`Mor` step took its second least fixed point.
+    fn draws_agree_with_the_game(checked: impl Fn(u64) -> bool, end: u64) -> u64 {
         // xorshift64 from a fixed seed, kept: the draws numbered in `checked`, and the draw
         // that takes the second least fixed point, are those of this stream.
         let mut rng = zed_hash::Xorshift64::new(0x9e37_79b9_7f4a_7c15);
@@ -1506,14 +1527,14 @@ mod tests {
         let mut index = 0;
         for (draws, span, wide) in [(40_000, 10, false), (WIDE_DRAWS, 40, true)] {
             for _ in 0..draws {
+                if index >= end {
+                    break;
+                }
                 index += 1;
                 let n = 3 + next(span) as u32;
                 let mors = 1 + next(5);
-                let mut g = Bes::new();
+                let mut nodes = Vec::with_capacity(n as usize);
                 for _ in 0..n {
-                    g.add(Kind::Bot, vec![]);
-                }
-                for v in 0..n {
                     let kind = match (wide, next(if wide { 40 } else { 32 })) {
                         (false, 0) => Kind::Top,
                         (_, 0) | (false, 1) => Kind::Bot,
@@ -1529,10 +1550,17 @@ mod tests {
                             .map(|_| next(u64::from(n)) as u32)
                             .collect(),
                     };
-                    g.set(v, kind, children);
+                    nodes.push((kind, children));
                 }
-                if !checked.contains(&(index - 1)) {
+                if !checked(index - 1) {
                     continue;
+                }
+                let mut g = Bes::new();
+                for _ in 0..n {
+                    g.add(Kind::Bot, vec![]);
+                }
+                for (v, (kind, children)) in (0..n).zip(nodes) {
+                    g.set(v, kind, children);
                 }
                 g.seal();
                 let want = by_the_game(&g);
@@ -1549,14 +1577,10 @@ mod tests {
                 }
             }
         }
-        let second = super::SECOND_PASSES.with(std::cell::Cell::get) - second_before;
-        assert!(
-            second >= 1,
-            "the second least fixed point of the one-Mor step taken {second} times, want 1"
-        );
         assert!(
             decided > 10 * refused,
             "{decided} decided, {refused} refused"
         );
+        super::SECOND_PASSES.with(std::cell::Cell::get) - second_before
     }
 }

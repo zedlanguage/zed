@@ -948,6 +948,8 @@ pub(super) fn positive_roots_by(
             tests::CHAINED.with(|c| c.set(c.get() + 1));
             #[cfg(test)]
             tests::UNITS.with(|u| u.set(u.get() + budget + rented));
+            #[cfg(test)]
+            tests::SWITCHES.with(|s| s.borrow_mut().push((spent, budget, rented)));
             let roots = match a <= hi {
                 true => chain_roots(p, a, Some(hi)),
                 false => Vec::new(),
@@ -2227,6 +2229,11 @@ mod tests {
         /// The units [`positive_roots`] has spent on this thread, a handover to the chain counted
         /// as the whole budget.
         pub(super) static UNITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        /// Each handover of [`positive_roots_by`] to the chain on this thread: `spent` there
+        /// (with the interval the chain takes), the budget and the units of the bound from
+        /// above.
+        pub(super) static SWITCHES: std::cell::RefCell<Vec<(u64, u64, u64)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
         /// The evaluations [`chain_cells`] has made at the ends of stretches on this thread.
         pub(super) static END_EVALS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         /// The steps of [`refine`] in [`search`] and [`chain_search`] on this thread that cut
@@ -2805,8 +2812,9 @@ mod tests {
             }
         }
         // Roots at the powers of 2 up to `2^m`, and one past each: alternating signs, and
-        // roots where the cuts of the branch and bound fall.
-        for m in [4u64, 16, 48] {
+        // roots where the cuts of the branch and bound fall. `m = 48` took 2.9 s a root set in
+        // a debug build (34 ms at `m = 16`) and is not run (ledger TEST-kernel-tests-under-1s).
+        for m in [4u64, 16] {
             let at: Vec<BigInt> = (1..=m).map(|j| BigInt::one() << j).collect();
             let past: Vec<BigInt> = at.iter().map(|x| x + 1).collect();
             for rs in [at, past] {
@@ -2817,6 +2825,54 @@ mod tests {
                     Roots::Listed(want)
                 );
             }
+        }
+    }
+
+    /// Ledger FAIL-roots-chain-switch-units-capped: at the switch to the chain,
+    /// [`positive_roots_by`] returns the units it spent, `done + rented` with `done = spent - 1`,
+    /// where a [`search`] of the pass before took `spent` past the budget. Red before:
+    /// `budget + rented` was returned, which left out the steps of that search. The products
+    /// below have roots far apart, so a search of one root's interval runs past the budget
+    /// before the next interval is popped (found among 3,030 switches on random products of 2
+    /// to 5 roots of up to 200 bits, 1,962 of which came past the budget; `spent` 11, 34 and
+    /// 138 at budgets 6, 14 and 50 here). The roots are listed, so the chain answers rightly.
+    #[test]
+    fn a_switch_to_the_chain_counts_the_search_that_passed_the_budget() {
+        let int = |s: &str| s.parse::<BigInt>().expect("an integer");
+        let sets = [
+            vec![
+                int("676217352717"),
+                int("5192296858534827628530814220720211"),
+            ],
+            vec![
+                int("316912650057057350480029223056"),
+                int("4835703278459084867151106"),
+                int("5192296858534827628530706461805701"),
+            ],
+            vec![
+                int("39614081257132169058068011624"),
+                int("1298074214633706907133217887697299"),
+                int("87112285931760246646623899502597777161276"),
+                int("1427247692705959881058285969449495436855340822"),
+                int("730750818665451459101842416358141510264725757921"),
+            ],
+        ];
+        for rs in sets {
+            let mut want = rs.clone();
+            want.sort();
+            let f = from_big_roots(&rs);
+            SWITCHES.with(|s| s.borrow_mut().clear());
+            let (roots, units) = positive_roots_by(f.terms(), BigInt::from(2), None, Horner::Built);
+            assert_eq!(roots, want);
+            let switches = SWITCHES.with(|s| s.take());
+            let [(spent, budget, rented)] = switches[..] else {
+                panic!("{} switches to the chain for {rs:?}", switches.len());
+            };
+            assert!(
+                spent - 1 > budget,
+                "{spent} units at a budget of {budget}: {rs:?}"
+            );
+            assert_eq!(units, spent - 1 + rented, "{rs:?}");
         }
     }
 

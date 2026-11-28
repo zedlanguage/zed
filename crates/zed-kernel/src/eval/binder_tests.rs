@@ -759,12 +759,20 @@ fn every_var(t: &Term, out: &mut BTreeSet<String>) {
     });
 }
 
-/// On 20,000 trees of every form, `reads` is the tree walk's set exactly; on 20,000 terms whose
+/// On 2,500 trees of every form, `reads` is the tree walk's set exactly; on 2,500 terms whose
 /// parts are shared at random, it holds the tree walk's set and only names the term reads.
+/// The 20,000 seeds of each kind run in [`bench::reads_on_random_terms_scales`]
+/// (TEST-kernel-tests-under-1s: 1.07 s alone with 20,000).
 #[test]
 fn reads_agrees_with_a_walk_of_the_tree_on_random_terms() {
+    reads_agrees_on_random_terms(2_500);
+}
+
+/// The check of [`reads_agrees_with_a_walk_of_the_tree_on_random_terms`] on seeds 1 to `seeds`
+/// of each kind.
+fn reads_agrees_on_random_terms(seeds: u64) {
     for share in [false, true] {
-        for seed in 1..=20_000u64 {
+        for seed in 1..=seeds {
             let mut g = Gen {
                 rng: Xorshift64::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1),
                 pool: Vec::new(),
@@ -796,10 +804,13 @@ fn reads_agrees_with_a_walk_of_the_tree_on_random_terms() {
 /// ([`Gen::nest`]): `reads` holds the tree walk's set and lies within [`upper_of`], which
 /// leaves out a name read only where the binders on its one path bind it (row
 /// TEST-reads-deep-sharing). Seen to fail with `scoped_names` reading every shared node
-/// inside a node reached twice apart too, which the test above misses.
+/// inside a node reached twice apart too, which the test above misses. On 2,500 seeds, not the
+/// 20,000 run until TEST-kernel-tests-under-1s (3.38 s alone). A bench of `n` against `8n`
+/// seeds measured 10.3, near the limit of 10.5, as the cost of a draw varies widely, so the
+/// seeds past 2,500 are not run.
 #[test]
 fn reads_lies_between_the_tree_walk_and_the_shared_bound_on_deeply_shared_terms() {
-    for seed in 1..=20_000u64 {
+    for seed in 1..=2_500u64 {
         let mut g = Gen {
             rng: Xorshift64::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1),
             pool: Vec::new(),
@@ -818,6 +829,20 @@ fn reads_lies_between_the_tree_walk_and_the_shared_bound_on_deeply_shared_terms(
         assert!(
             got.iter().all(|x| upper.contains(x)),
             "seed {seed}: {got:?} ⊈ {upper:?}: {t:?}"
+        );
+    }
+}
+
+mod bench {
+    /// [`super::reads_agrees_on_random_terms`] on `n` seeds of each kind: each term has depth 5
+    /// at most, so the work is O(n). At `8n` it checks the 20,000 seeds the test checked until
+    /// TEST-kernel-tests-under-1s.
+    #[test]
+    fn reads_on_random_terms_scales() {
+        crate::scaling::check(
+            "reads against the tree walk on n random terms",
+            2_500,
+            |n| super::reads_agrees_on_random_terms(n as u64),
         );
     }
 }
