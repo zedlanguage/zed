@@ -79,6 +79,40 @@ fn n_bounded_shapes_fit_themselves_renamed_scales() {
     });
 }
 
+/// n shapes `((X_i, #m_i),)` against themselves renamed `((Y_i, #m_i),)`, every variable
+/// bounded to several carriers: the shapes agree at their one component, a pair each, and
+/// differ only inside it, at the atom, so each member fits only the shape of its own atom.
+/// The shapes are filed by the components inside a tuple too (TYPES-bucket-members-share-shape,
+/// `Place` in ty.rs), so each member's bucket holds its one shape and the whole is n log n.
+/// Before, the shapes were one bucket, and the second member, failing the first shape, was
+/// refused. Besides its ratio: the function fits at each size. Small instance: l01_22 kinds
+/// `members_that_each_fit_only_the_shape_of_their_own_atom_are_accepted`.
+#[test]
+fn n_shapes_told_apart_inside_a_tuple_fit_themselves_renamed_scales() {
+    let what = "n shapes told apart by an atom inside their one tuple, against themselves renamed";
+    let make = |n: usize| {
+        let union = |ts: Vec<Ty>| ts.into_iter().reduce(|a, b| a.union(&b)).unwrap();
+        let shape = |p: &str, i: usize| {
+            let atom = Ty::lit(&Value::atom(&format!("m{i}")));
+            Ty::tuple(vec![Ty::tuple(vec![Ty::var(format!("{p}{i}").into()), atom])])
+        };
+        let shapes = |p: &str| union((0..n).map(|i| shape(p, i)).collect());
+        let int = Ty::carrier(Carrier::Int);
+        let s = own_sig("X", n, Some(EVERY), shapes("X"), int.clone());
+        let q = own_sig("Y", n, Some(EVERY), shapes("Y"), int);
+        (s, q)
+    };
+    let n = 1000;
+    let sigs: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|n| (n, make(n)))
+        .collect();
+    scaling::check_order(what, n, 1, |n| {
+        let (s, q) = &sigs[&n];
+        assert!(fits_sig(s, q), "{what} at {n}");
+    });
+}
+
 /// n tuples, each a row of k joined components (k = 2, 3, 4) against the two shapes that
 /// hold it only split at its last component, and the same rows written out: the joined form
 /// is split at the component the shapes differ on ([`Comparing::split_at`] in ty.rs), so it
