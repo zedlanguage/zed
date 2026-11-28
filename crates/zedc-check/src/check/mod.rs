@@ -21232,6 +21232,22 @@ mod tests {
         assert!(!holds_lay_out_mark("with T"));
     }
 
+    /// zedc-check's own marks, [`DECLARE`] and the placeholders [`HIDDEN`], are three code
+    /// points, none of them a printer mark (`defs::ALL_MARKS`), and all in the range
+    /// U+FDD0..=U+FDEF that is swapped out of the program's texts.
+    #[test]
+    fn the_checkers_marks_are_none_of_the_printers() {
+        let ours: Vec<char> = DECLARE.chars().chain([HIDDEN.0, HIDDEN.1]).collect();
+        assert_eq!(ours.len(), 3, "DECLARE is one character");
+        for (i, &c) in ours.iter().enumerate() {
+            assert!(('\u{FDD0}'..='\u{FDEF}').contains(&c), "U+{:X}", c as u32);
+            assert!(!ours[..i].contains(&c), "U+{:X} is two of ours", c as u32);
+            if let Some((name, _)) = defs::ALL_MARKS.iter().find(|&&(_, m)| m == c) {
+                panic!("U+{:X} is the printer's {name} too", c as u32);
+            }
+        }
+    }
+
     /// Plan row PERF-value-key-sites-bench: the literals recorded by [`Ck::spells`] are keyed by
     /// their values in `spelled` and `mixed`, so a value written two ways is one key, mixed, and
     /// two values are two keys. `31` and `0x1F`; 10^19 from its digits and from a decimal

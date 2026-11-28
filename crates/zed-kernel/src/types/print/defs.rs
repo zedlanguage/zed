@@ -161,6 +161,39 @@ pub const LOCALS: [char; 5] = [
     LOCAL_REF_WRAP,
 ];
 
+/// Every mark the printer writes into a message's text, by name, one entry a mark:
+/// `every_mark_is_its_own_character` tests that no two share a code point. Before this list,
+/// PRINT-shared-part-exponential's [`LOCALS`] and PRINT-headline-note-same-name's [`MENTION`]
+/// were written on two branches with the same two code points, and git merged them without a
+/// conflict. A new mark joins this list in the change that adds it. zedc-check's own marks
+/// (`DECLARE`, U+FDD8, and the placeholders `HIDDEN`, U+FDE0 and U+FDE1) are not printer marks
+/// and stay out of it; its test `the_checkers_marks_are_none_of_the_printers` keeps them apart.
+pub const ALL_MARKS: &[(&str, char)] = &[
+    ("TYPE", TYPE),
+    ("TYPE_END", TYPE_END),
+    ("WRAP", WRAP),
+    ("COUNT", COUNT),
+    ("SOFT", SOFT),
+    ("REF", REF),
+    ("END", END),
+    ("WAIT", '\u{FDD7}'),
+    ("VARS", VARS),
+    ("VARS_END", VARS_END),
+    ("UNION", UNION),
+    ("UNION_END", UNION_END),
+    ("VAR", VAR),
+    ("NEXT", NEXT),
+    ("SOFT_WRAP", SOFT_WRAP),
+    ("LOCAL_OPEN", LOCAL_OPEN),
+    ("LOCAL_OPEN_WRAP", LOCAL_OPEN_WRAP),
+    ("LOCAL_CLOSE", LOCAL_CLOSE),
+    ("LOCAL_REF", LOCAL_REF),
+    ("LOCAL_REF_WRAP", LOCAL_REF_WRAP),
+    ("SAME", SAME),
+    ("MENTION", MENTION),
+    ("MENTION_END", MENTION_END),
+];
+
 /// Opens in `out` the text of tuple `id` of a printed type (`LOCAL_OPEN`), parenthesized
 /// where it stands if `wrap`.
 pub fn local_open(out: &mut String, id: usize, wrap: bool) {
@@ -1435,6 +1468,28 @@ pub fn local() -> Option<Collecting> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No two marks of [`ALL_MARKS`] share a code point or a name, each is a noncharacter of
+    /// U+FDD0..=U+FDEF (the range zedc-check swaps out of the program's texts), and [`WAIT`] is
+    /// the entry written for it. Red control (run 2026-11-28): with [`MENTION`] back at U+FDE2,
+    /// it equals [`LOCAL_OPEN`] and this fails.
+    #[test]
+    fn every_mark_is_its_own_character() {
+        let mut chars = HashMap::new();
+        let mut names = HashSet::new();
+        for &(name, c) in ALL_MARKS {
+            assert!(
+                ('\u{FDD0}'..='\u{FDEF}').contains(&c),
+                "{name}: U+{:X} out of range",
+                c as u32
+            );
+            if let Some(other) = chars.insert(c, name) {
+                panic!("U+{:X} is two marks, {other} and {name}", c as u32);
+            }
+            assert!(names.insert(name), "{name} is listed twice");
+        }
+        assert!(WAIT.chars().eq(['\u{FDD7}']));
+    }
 
     /// A union of the marks `keys` alone, as zedc-types writes a variable printed by a mark.
     fn marks(keys: &[&str]) -> String {
