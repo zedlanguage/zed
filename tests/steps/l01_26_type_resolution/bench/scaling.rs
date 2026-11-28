@@ -1209,3 +1209,61 @@ fn replacing_variables_in_wrappers_of_a_shared_row_scales() {
         },
     );
 }
+
+/// XR-heldname-print-batch round 1, B3a: the signature of `scaling::wide_live_union(m)`, whose
+/// union of `m` variables is looked at again as each variable falls to one place, prints and
+/// gives the variables standing twice (`Sig::standing_twice`) in time linear in `m`. Before,
+/// each look read every variable of the union, m² in all. Small instance, with the work
+/// counted: `scaling::wide_live_union_is_not_rescanned_per_falling_variable`.
+#[test]
+fn a_wide_live_union_is_weighed_in_linear_time() {
+    use super::super::scaling::wide_live_union;
+    use super::super::standing_twice::read_sig;
+    scaling::check_inputs(
+        "the signature of a union of m variables, each falling to one place, printed",
+        2000,
+        |m| read_sig(&wide_live_union(m)),
+        |s| {
+            assert!(s.to_string().len() > 4);
+            assert!(s.standing_twice().is_empty());
+        },
+    );
+}
+
+/// The printed text of the signature `(a: int) -> R_m for T in int | f64`, with R_0 = `(T, T)`
+/// and R_{i+1} = `(R_i, R_i)`: `T` stands only in rows the printer writes once each as
+/// definitions, a chain of about `m` of them, each naming the one before.
+fn chain_of_definitions(m: usize) -> String {
+    use super::super::standing_twice::read_sig;
+    use std::sync::Arc;
+    let bounded = read_sig("(a: T) -> T for T in int | f64");
+    let t = bounded.arrows[0].result.clone();
+    let mut s = read_sig("(a: int) -> int");
+    s.own.insert(Arc::from("T"));
+    s.bounds = bounded.bounds.clone();
+    s.arrows[0].result = (0..m).fold(Ty::tuple(vec![t.clone(), t]), |r, _| {
+        Ty::tuple(vec![r.clone(), r])
+    });
+    let text = s.to_string();
+    assert!(text.contains("type Part"), "{text}");
+    text
+}
+
+/// XR-heldname-print-batch round 1, B1: reading back a text whose bounded variable stands only
+/// in a chain of `m` definitions (`read::parse_type`, `Denote::reach`) takes time linear in `m`,
+/// up to the log of the sets: each definition is walked once for the function type, not once
+/// per path to it. Small instance: `scaling::a_bound_used_only_in_lifted_parts_reads_back_as_
+/// bounded`.
+#[test]
+fn reading_a_long_chain_of_definitions_holding_a_bounded_variable_scales() {
+    scaling::check_inputs(
+        "a text of m definitions over a bounded variable, read back",
+        1000,
+        chain_of_definitions,
+        |text| {
+            let t = zedc::check::read::parse_type(text).unwrap_or_else(|e| panic!("{e}"));
+            let s = t.fns.iter().next().expect("a function");
+            assert!(s.bounds.contains_key("T"));
+        },
+    );
+}

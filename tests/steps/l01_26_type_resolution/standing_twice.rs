@@ -337,6 +337,93 @@ fn a_bounded_variable_in_a_tuple_written_once_stands_at_each_place_of_the_tuple(
     }
 }
 
+/// `arrows` with its variable `S` replaced by `row`, its own variables but `S` kept, and the
+/// bounds of `bounds`.
+fn with_row(
+    arrows: &str,
+    row: &zedc::check::ty::Ty,
+    bounds: &zedc::check::ty::Sig,
+) -> zedc::check::ty::Sig {
+    use std::sync::Arc;
+    use zedc::check::ty::Binds;
+    let binds: Binds = [(Arc::<str>::from("S"), row.clone())].into();
+    let mut s = read_sig(arrows).replace(&binds);
+    s.own.retain(|v| &**v != "S");
+    s.own.extend(bounds.bounds.keys().cloned());
+    s.bounds = bounds.bounds.clone();
+    s
+}
+
+/// XR-heldname-print-batch round 1, Codex B4-N: the places of a bounded variable inside a
+/// tuple written once fall with the places of the tuple a union printed `_` erases. The tuple
+/// `(N, int)` is one node at both places; a union of it and a variable standing once (`P`, `Q`)
+/// prints `_` alone. With no place erased `N` stands twice; with one erased, once; with both
+/// erased, nowhere. The text shows the same.
+#[test]
+fn a_bounded_variable_falls_with_the_erased_places_of_its_tuple() {
+    let inner = read_sig("((x: (N, int)) -> int for N in int | f64)");
+    let row = inner.arrows[0].params[0].clone();
+    for (arrows, places) in [
+        ("(a: int) -> (S, S)", 2),
+        ("(a: int) -> (S, P | S)", 1),
+        ("(a: int) -> (P | S, Q | S)", 0),
+    ] {
+        let s = with_row(arrows, &row, &inner);
+        let shown = s.to_string();
+        assert_eq!(places_of(&shown, "N"), places, "{arrows}: {shown}");
+        assert_eq!(
+            s.standing_twice().contains("N"),
+            places >= 2,
+            "{arrows}: {shown}"
+        );
+    }
+}
+
+/// XR-heldname-print-batch round 1, Codex B2: the places of a tuple written once as a
+/// definition cross from two or more to one and to none as unions printed `_` erase them,
+/// each count capped at two (`Weights`). The tuple R_6 (R_0 = `(T, T)`, R_{i+1} = `(R_i,
+/// R_i)`, one node at both places) stands three times, two of them in one pair: 2+1, then 2,
+/// 1 and 0 places left. At two or more it is a definition, the sixth and last, named at each
+/// place left; at one it is written once there, as `(Part5, Part5)`, its rows inside still
+/// named (five definitions, the last named twice); at none no definition is written. Each
+/// text reads back and prints again to itself.
+#[test]
+fn shared_tuple_places_cross_two_then_one_without_losing_the_definition() {
+    use zedc::check::ty::Ty;
+    let bounded = read_sig("(a: T) -> T for T in int | f64");
+    let t = bounded.arrows[0].result.clone();
+    let row = (0..6).fold(Ty::tuple(vec![t.clone(), t]), |r, _| {
+        Ty::tuple(vec![r.clone(), r])
+    });
+    let mut report = Vec::new();
+    let mut bad = 0;
+    for (arrows, left) in [
+        ("(a: T) -> ((S, S), S)", 3),
+        ("(a: T) -> ((S, S), P | S)", 2),
+        ("(a: T) -> ((S, Q | S), P | S)", 1),
+        ("(a: T) -> ((R | S, Q | S), P | S)", 0),
+    ] {
+        let s = with_row(arrows, &row, &bounded);
+        let text = s.to_string();
+        let defs = text.matches("type Part").count();
+        let line = text.lines().last().unwrap_or("");
+        let last = format!("Part{defs}");
+        let named = line.matches(last.as_str()).count();
+        let back = zedc::check::read::parse_type(&text).map(|b| b.to_string());
+        let ok = match left {
+            0 => defs == 0,
+            1 => defs == 5 && named == 2,
+            _ => defs == 6 && named == left,
+        } && back.as_deref() == Ok(text.as_str());
+        bad += usize::from(!ok);
+        report.push(format!(
+            "{arrows}, {left} left: {}\n{text}\n  {defs} definitions, {last} named {named} times in the signature; read back: {back:?}",
+            if ok { "ok" } else { "WRONG" }
+        ));
+    }
+    assert_eq!(bad, 0, "\n{}", report.join("\n"));
+}
+
 /// Row TEST-takes-note-name-in-definition: the result of `k` holds tuples written once, as
 /// definitions (row PRINT-shared-part-exponential), whose variables are unbounded, beside a
 /// variable bounded by `apply`'s parameter. The note of what `k` takes and the type the

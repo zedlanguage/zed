@@ -794,12 +794,29 @@ fn forty_shared_rows_holding_a_bounded_variable_print_in_linear_text() {
 /// twice at each level: `f`'s text names no part that holds `h`'s variable, as the bounds clause
 /// of `h` is written inside `f`'s text, where `h` stands, and a definition is read at the top of
 /// the text; so `h`'s rows are written in full. The text reads back as the signature.
+///
+/// Five levels (XR-heldname-print-batch r1, B4: at two, a row is short enough to be written in
+/// full even where it could be named), with the control that letting a tuple holding a name
+/// another function binds be written once (`set_ignore_other_binders`) makes the text name
+/// parts, and so fails the test.
 #[test]
 fn a_returned_function_with_its_own_bound_writes_its_rows_in_full() {
-    let src = "w(positional x: int | f64) = 0;\np(positional s, positional v) = (s, (s, v));\nf(positional a1, positional a2) = {\n  h(positional y) = (w(y), p(p(y, a1), a2));\n  h\n};\n";
-    let text = printed_back(src, 2).unwrap_or_else(|e| panic!("{e}"));
-    assert!(!text.contains("type "), "{text}");
-    assert_eq!(text.matches(" for ").count(), 1, "{text}");
+    let src = "w(positional x: int | f64) = 0;\np(positional s, positional v) = (s, (s, v));\nf(positional a1, positional a2) = {\n  h(positional y) = (w(y), p(p(p(p(p(y, a1), a2), a1), a2), a1));\n  h\n};\n";
+    let check = || -> Result<String, String> {
+        let text = printed_back(src, 5)?;
+        match !text.contains("type ") && text.matches(" for ").count() == 1 {
+            true => Ok(text),
+            false => Err(format!("names parts or clauses wrongly:\n{text}")),
+        }
+    };
+    check().unwrap_or_else(|e| panic!("{e}"));
+    zedc::check::ty::set_ignore_other_binders(true);
+    let control = check();
+    zedc::check::ty::set_ignore_other_binders(false);
+    assert!(
+        control.is_err(),
+        "the control prints as the test wants:\n{control:?}"
+    );
 }
 
 /// A name bound by two functions in one text: `f` bounds `a0`, which stands in its shared
@@ -887,6 +904,14 @@ fn a_bound_used_only_in_lifted_parts_reads_back_as_bounded() {
         }
     }
     assert_eq!(bad, 0, "\n{}", report.join("\n"));
+    // Control: a clause whose variable stands only in a definition the type never names
+    // bounds nothing, and the reading still rejects it; the names a definition writes do not
+    // excuse a clause the reader has not found on a signature.
+    let unnamed = "type Part1 = (T, T);\n(a: int) -> int for T in int | f64";
+    match zedc::check::read::parse_type(unnamed) {
+        Ok(t) => panic!("`{unnamed}` reads back as {t}"),
+        Err(e) => assert!(e.contains("is on no signature that names it"), "{e}"),
+    }
 }
 
 /// XR-heldname-print-batch round 1, Codex B1, the held case: `T` stands directly only in the
@@ -908,14 +933,219 @@ fn a_bound_held_only_through_a_definition_is_held() {
     );
 }
 
-/// XR-heldname-print-batch round 1, Claude C-1: the example DESIGN.md gives at zed ad1433e
-/// (sec:diagnostics, "Types in a message") for `bounded_rows(3, 0)`.
+/// XR-heldname-print-batch round 1, Claude C-1: the example of DESIGN.md (sec:diagnostics,
+/// "Types in a message") of a bound in shared rows. At zed ad1433e it gave a text with two
+/// definitions for `bounded_rows(3, 0)`, which the printer writes in full: a row is named only
+/// where the definitions are shorter than the copies they replace (`defs::lift`). The example
+/// is now `bounded_rows(6, 0)`, whose text is this, and reads back as the signature, bound and
+/// all ([`printed_back`]).
 #[test]
 fn the_design_example_of_a_bound_in_shared_rows_prints_as_written() {
+    let three = printed_back(&bounded_rows(3, 0), 3).unwrap_or_else(|e| panic!("{e}"));
+    assert!(!three.contains("type "), "{three}");
     assert_eq!(
-        sig_of(&bounded_rows(3, 0), "f").to_string(),
-        "type Part1 = (T, (T, U));\ntype Part2 = (Part1, (Part1, V));\n(T, U, V, W) -> (0, (Part2, (Part2, W))) for T in int | f64"
+        printed_back(&bounded_rows(6, 0), 6).unwrap_or_else(|e| panic!("{e}")),
+        "type Part1 = ((T, (T, U)), ((T, (T, U)), V));\ntype Part2 = (Part1, (Part1, W));\ntype Part3 = (Part2, (Part2, T5));\ntype Part4 = (Part3, (Part3, T6));\n(T, U, V, W, T5, T6, T7) -> (0, (Part4, (Part4, T7))) for T in int | f64"
     );
+}
+
+/// XR-heldname-print-batch round 1, Claude C-2: a variable bounded by a need, not by carriers
+/// (`a0`, passed to `apply` at a function that may fail, so bounded by what it is not), that
+/// stands in shared rows six levels deep. No definition names it ([`Shared::of`] places only
+/// rows whose bounded variables are bounded by carriers alone), so its rows are written in full
+/// at each place. Measured before the decision (job XR2D, `--nocapture`): the text gives no
+/// clause for the variable, `(T, U) -> (int, (T, (T, U)))` at 1 level, where nothing is named,
+/// and it reads back unbounded, another signature, named or not; that gap is the printer's
+/// and older than this batch (row PRINT-need-bound-clause).
+#[test]
+fn a_variable_bounded_by_a_need_is_not_named_in_shared_rows() {
+    let apply = "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\n";
+    let src = |n: usize| {
+        let params: Vec<String> = (0..=n).map(|i| format!("positional a{i}")).collect();
+        let rows = (1..=n).fold("a0".to_string(), |s, i| format!("p({s}, a{i})"));
+        format!(
+            "{apply}p(positional s, positional v) = (s, (s, v));\nf({}) = (apply(f: a0), {rows});\n",
+            params.join(", ")
+        )
+    };
+    for n in [1, 6] {
+        let s = sig_of(&src(n), "f");
+        let need = (s.bounds.iter()).find(|(_, m)| **m & zedc::check::ty::OTHER != 0);
+        assert!(need.is_some(), "no variable bounded by a need: {s}");
+        let text = s.to_string();
+        assert!(!text.contains("type "), "{n} levels: {text}");
+    }
+}
+
+/// XR-heldname-print-batch round 1, Codex B3b, row PRINT-returned-bound-shared-rows-exponential:
+/// the outer function returns `h`, which bounds its own `N`, with result R_m, R_0 = `(N, int)`
+/// and R_{i+1} = `(R_i, R_i)`, one row node at both places. `N` is bound by `h`, not by the
+/// outer function, so the print writes the rows in full (a definition would be read outside
+/// `h`'s clause); a walk that only counts (`Sig::standing_twice`) writes each row's text once
+/// for the opening of `h` ([`Walk::local`]) and enters O(m) tuples, where it entered each once
+/// per path, 2^m. Checked at m and 8m, the work counted (`row_entries`).
+#[test]
+fn returned_bound_shared_rows_do_not_expand_paths() {
+    use super::standing_twice::read_sig;
+    use std::sync::Arc;
+    use zedc::check::ty::{reset_row_entries, row_entries};
+    let h = read_sig("(x: N) -> N for N in int | f64");
+    let n = h.arrows[0].result.clone();
+    let int = read_sig("(a: int) -> int").arrows[0].result.clone();
+    let outer = |m: usize| {
+        let mut h = h.clone();
+        h.arrows[0].result = (0..m).fold(Ty::tuple(vec![n.clone(), int.clone()]), |r, _| {
+            Ty::tuple(vec![r.clone(), r])
+        });
+        let mut s = read_sig("(a: int) -> int");
+        s.arrows[0].result = Ty::func(Arc::new(h));
+        s
+    };
+    let mut work = Vec::new();
+    for m in [20, 160] {
+        let s = outer(m);
+        reset_row_entries();
+        let twice = s.standing_twice();
+        let entries = row_entries();
+        assert!(twice.is_empty(), "{twice:?}");
+        assert!(
+            entries <= 8 * (m as u64 + 2),
+            "{entries} tuples entered counting the places of {m} levels"
+        );
+        work.push(entries);
+    }
+    assert!(work[1] <= 10 * work[0], "{work:?}");
+}
+
+/// XR-heldname-print-batch round 1, Codex B4-N: [`Sig::standing_twice`] on 18 levels of
+/// shared rows, unbounded and with a bound inside them, enters each row's text once, not once
+/// per path: a deterministic count of the tuples it enters (`row_entries`), where the walk
+/// before row PERF-standing-twice-shared-empty entered 2^18. Also 40 levels with a bound inside
+/// the rows (Gemini B4-2), within a time limit: the bounded variable stands twice (at the
+/// parameter and in the rows), as the printed text has it.
+#[test]
+fn standing_twice_enters_each_shared_row_a_bounded_number_of_times() {
+    use zedc::check::ty::{reset_row_entries, row_entries};
+    for (src, n) in [(shared_rows(18, false), 18), (bounded_rows(18, 0), 18)] {
+        let s = sig_of(&src, "f");
+        reset_row_entries();
+        let _ = s.standing_twice();
+        let entries = row_entries();
+        assert!(
+            entries <= 8 * (n + 2),
+            "{entries} tuples entered at {n} levels"
+        );
+    }
+    let (sent, got) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let s = sig_of(&bounded_rows(40, 0), "f");
+        reset_row_entries();
+        let twice = s.standing_twice();
+        let _ = sent.send((s, twice, row_entries()));
+    });
+    let (s, twice, entries) = got
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the variables standing twice in 40 levels of shared rows are found within 10 s");
+    assert!(entries <= 8 * 42, "{entries} tuples entered at 40 levels");
+    let bounded: Vec<_> = s.bounds.keys().cloned().collect();
+    assert!(!bounded.is_empty(), "{s}");
+    for v in bounded {
+        assert!(twice.contains(&v), "`{v}` does not stand twice: {twice:?}");
+    }
+}
+
+/// The rows of [`shared_rows`] over what `a0 else #a -> 0` leaves of `a0`, at `n` levels: the
+/// innermost row holds the leftover, printed `T \ s` with `s` = `#a | #a(..)`, which the
+/// printer may name as a part (Gemini's witness in XR-heldname-print-batch round 1, B1-2).
+fn leftover_rows(n: usize) -> String {
+    let params: Vec<String> = (0..=n).map(|i| format!("positional a{i}")).collect();
+    let rows = (1..=n).fold("r".to_string(), |s, i| format!("p({s}, a{i})"));
+    format!(
+        "p(positional s, positional v) = (s, (s, v));\nf({}) = {{ r = a0 else #a -> 0; {rows} }};\n",
+        params.join(", ")
+    )
+}
+
+/// XR-heldname-print-batch round 1, B1-2: a row holding what a test leaves of a variable is
+/// written in full at each place, not as a definition: the reader makes the difference
+/// `T \ #a`, with its need, only inside a function type, so in a definition the need was lost
+/// and the text read back as another type. Read back, the text gives the same text and the
+/// same needs, one for each the signature has, of the same kinds, at 6 levels and at 1. At 1
+/// level, where no row is shared, it did not either: the reader made a new leftover, with its
+/// own need, at each of the two places `T \ s` is written, and the need `Narrow::Not(s)`, not
+/// the `Narrow::Atom` of `else #a`, which the printer writes as that `s` (zedc-check
+/// `Denote::left_of`). The types are not compared both ways ([`printed_back`]): no signature
+/// with a leftover, even `g(r) = r else #a -> 0`, is a subtype of the text read back, since
+/// the leftover read has another name (`T\0`) than the signature's (`U`); measured, row
+/// SUBTYPE-leftover-renamed.
+#[test]
+fn a_lifted_row_keeps_its_leftover_need_beside_an_absorbed_union() {
+    let kinds = |s: &zedc::check::ty::Sig| -> Vec<String> {
+        s.needs.iter().map(|n| format!("{:?}", n.kind)).collect()
+    };
+    let mut bad = Vec::new();
+    for n in [1, 6] {
+        let s = sig_of(&leftover_rows(n), "f");
+        let text = s.to_string();
+        let back = match zedc::check::read::parse_type(&text) {
+            Ok(back) => back,
+            Err(e) => {
+                bad.push(format!("{n} levels: {text}: {e}"));
+                continue;
+            }
+        };
+        let (want, got) = (kinds(&s), back.fns.first().map(|b| kinds(b)));
+        match () {
+            () if !text.contains(" \\ ") => bad.push(format!("{n} levels, no leftover: {text}")),
+            () if back.to_string() != text => {
+                bad.push(format!("{n} levels: {text} reads back as {back}"))
+            }
+            () if want.len() != 1 || got.as_ref() != Some(&want) => bad.push(format!(
+                "{n} levels: {text}\n  needs {want:?}\n  read  {got:?}"
+            )),
+            () => {}
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// The signature `(a: int) -> (X0 | … | X(n-1), Q | (X0, …, X(n-1)))`: the union `Q | (…)`
+/// is written `_`, since `Q` stands once, and each `Xi` then falls from two places to one,
+/// each time looking again at the wide union of the `Xi`, which is not written `_` at the end.
+pub(super) fn wide_live_union(n: usize) -> String {
+    let xs: Vec<String> = (0..n).map(|i| format!("X{i}")).collect();
+    format!("(a: int) -> ({}, Q | ({}))", xs.join(" | "), xs.join(", "))
+}
+
+/// XR-heldname-print-batch round 1, B3a: deciding which unions are written `_` (`Walk::weigh`)
+/// does work linear in the size of the type on `wide_live_union(n)`, for the print and for
+/// `Sig::standing_twice`. Before, each of the `n` falls looked at the whole union of the `Xi`
+/// again, n² variables read. The work is counted by `ty::union_looks`; at 64 and 512 variables
+/// it must stay under 16 per variable. The time is benched by `bench::scaling::
+/// a_wide_live_union_is_weighed_in_linear_time`.
+#[test]
+fn wide_live_union_is_not_rescanned_per_falling_variable() {
+    use super::standing_twice::read_sig;
+    use zedc::check::ty::{reset_union_looks, union_looks};
+    let mut bad = Vec::new();
+    for n in [64, 512] {
+        let s = read_sig(&wide_live_union(n));
+        reset_union_looks();
+        let text = s.to_string();
+        let printing = union_looks();
+        reset_union_looks();
+        let twice = s.standing_twice();
+        let counting = union_looks();
+        for (what, looks) in [("print", printing), ("standing_twice", counting)] {
+            if looks > 16 * n as u64 {
+                bad.push(format!("{what} at {n}: {looks} looks"));
+            }
+        }
+        if n == 64 && !twice.is_empty() {
+            bad.push(format!("standing twice at 64: {twice:?} in {text}"));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
 /// Over seeded random signatures whose result is a tree of tuples, each tuple built over two
