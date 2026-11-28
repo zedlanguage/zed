@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 
 use hashbrown::{HashTable, hash_table};
 use std::hash::{BuildHasher, BuildHasherDefault};
+use zed_collections::patricia::{branching_bit, mask};
 use zed_kernel::digest::{Digest, DigestMap, DigestSet};
 use zed_kernel::term::walk;
 use zed_kernel::text;
@@ -689,11 +690,6 @@ fn node_hash(n: &SetNode) -> u64 {
     BuildHasherDefault::<Digest>::default().hash_one(n)
 }
 
-/// The bits of `x` above `bit`.
-fn above(x: Name, bit: Name) -> Name {
-    x & !(bit | (bit - 1))
-}
-
 impl Sets {
     fn make(&mut self, n: SetNode) -> Set {
         let Sets {
@@ -732,7 +728,7 @@ impl Sets {
                     zero,
                     one,
                 } => {
-                    if above(x, bit) != prefix {
+                    if mask(x, bit) != prefix {
                         return false;
                     }
                     s = if x & bit == 0 { zero } else { one };
@@ -774,10 +770,10 @@ impl Sets {
     /// The union of the nonempty sets `s` and `t`, whose names start with `p` and `q`, which
     /// differ above both sets' split bits.
     fn join(&mut self, p: Name, s: Set, q: Name, t: Set) -> Set {
-        let bit = 1 << (p ^ q).ilog2();
+        let bit = branching_bit(p, q);
         match p & bit {
-            0 => self.split(above(p, bit), bit, s, t),
-            _ => self.split(above(p, bit), bit, t, s),
+            0 => self.split(mask(p, bit), bit, s, t),
+            _ => self.split(mask(p, bit), bit, t, s),
         }
     }
 
@@ -795,7 +791,7 @@ impl Sets {
                 zero,
                 one,
             } => {
-                if above(x, bit) != prefix {
+                if mask(x, bit) != prefix {
                     let o = self.one(x);
                     self.join(x, o, prefix, s)
                 } else if x & bit == 0 {
@@ -820,7 +816,7 @@ impl Sets {
                 zero,
                 one,
             } => {
-                if above(x, bit) != prefix {
+                if mask(x, bit) != prefix {
                     None
                 } else if x & bit == 0 {
                     let zero = self.remove(zero, x)?;
@@ -876,7 +872,7 @@ impl Sets {
                     let zero = self.union(s0, t0);
                     let one = self.union(s1, t1);
                     self.split(p, m, zero, one)
-                } else if m > n && above(q, m) == p {
+                } else if m > n && mask(q, m) == p {
                     if q & m == 0 {
                         let zero = self.union(s0, t);
                         self.split(p, m, zero, s1)
@@ -884,7 +880,7 @@ impl Sets {
                         let one = self.union(s1, t);
                         self.split(p, m, s0, one)
                     }
-                } else if n > m && above(p, n) == q {
+                } else if n > m && mask(p, n) == q {
                     if p & n == 0 {
                         let zero = self.union(s, t0);
                         self.split(q, n, zero, t1)
@@ -1339,10 +1335,10 @@ impl Maps {
     /// The union of the nonempty maps `m` and `n`, whose names start with `p` and `q`, which
     /// differ above both maps' split bits.
     fn join(&mut self, p: Name, m: Map, q: Name, n: Map) -> Map {
-        let bit = 1 << (p ^ q).ilog2();
+        let bit = branching_bit(p, q);
         match p & bit {
-            0 => self.split(above(p, bit), bit, m, n),
-            _ => self.split(above(p, bit), bit, n, m),
+            0 => self.split(mask(p, bit), bit, m, n),
+            _ => self.split(mask(p, bit), bit, n, m),
         }
     }
 
@@ -1361,7 +1357,7 @@ impl Maps {
                 zero,
                 one,
             } => {
-                if above(x, bit) != prefix {
+                if mask(x, bit) != prefix {
                     let o = self.make(MapNode::One(x, b));
                     self.join(x, o, prefix, m)
                 } else if x & bit == 0 {
@@ -1387,7 +1383,7 @@ impl Maps {
                     zero,
                     one,
                 } => {
-                    if above(x, bit) != prefix {
+                    if mask(x, bit) != prefix {
                         return None;
                     }
                     m = if x & bit == 0 { zero } else { one };
@@ -1432,9 +1428,9 @@ impl Maps {
                     let zero = self.restrict(sets, m0, s0);
                     let one = self.restrict(sets, m1, s1);
                     self.split(p, mb, zero, one)
-                } else if mb > n && above(q, mb) == p {
+                } else if mb > n && mask(q, mb) == p {
                     self.restrict(sets, if q & mb == 0 { m0 } else { m1 }, s)
-                } else if n > mb && above(p, n) == q {
+                } else if n > mb && mask(p, n) == q {
                     self.restrict(sets, m, if p & n == 0 { s0 } else { s1 })
                 } else {
                     NO_MAP

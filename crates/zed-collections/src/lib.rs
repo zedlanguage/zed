@@ -41,6 +41,10 @@
 //!
 //! [`ext`]: a totally ordered set with the two infinities added, for the ends of intervals.
 //!
+//! [`patricia`]: the prefix of a key at a branching bit and the highest bit in which two keys
+//! differ, the two bit operations of a big-endian Patricia trie over `u32` keys (Okasaki and Gill
+//! 1998, §5).
+//!
 //! [`period`]: the least period of a sequence that is a whole number of copies of a block, by
 //! the prefix function, O(n).
 //!
@@ -65,6 +69,7 @@ pub mod index;
 pub mod intern;
 pub mod intervals;
 pub mod min_add;
+pub mod patricia;
 pub mod period;
 pub mod priority;
 pub mod search;
