@@ -8600,7 +8600,48 @@ impl<'t, 'a> Ck<'t, 'a> {
         } else {
             s.clone()
         };
-        if cur.has_fwd_needs() && sig_vars(&cur).iter().any(|v| !cur.own.contains(v)) {
+        // A forward of a signature that reads a variable from around it, which the renaming
+        // of the signature around names with that one's (FAIL-map-chain-clashing-held-name-
+        // quadratic): the test reads the facts, O(1) a signature, where it walked
+        // `sig_vars(&cur)` against `cur.own`, O(size of the nest) a signature and O(n^2) over
+        // a chain of n links, each holding `k(x) = y -> (x, y)` in its callee. That test also
+        // took a variable bound by a function `cur` holds (`k`'s `x` and `y`, bound by `k` and
+        // its lambda) for one read from around, and decoded every link. The decode is for a
+        // signature that holds an outer variable (`r10_promote_open_fwds`), which is what the
+        // new test asks ([`Sig::binds_all_its_variables`], proved there); the old one was
+        // wider than that. The signatures the old test decoded and the new one does not are
+        // those that bind all their variables but hold one not their own, bound by a function
+        // they hold. Why the decode is not needed there, step by step, and what is not proved.
+        // (1) Such a `cur` reads nothing from around it (the proof at
+        // `binds_all_its_variables`), so no name that the renaming of a signature around gives
+        // reaches a variable of `cur` from outside `cur`; the reason this decode exists, a
+        // forward of a signature holding a variable that the signature around names, does
+        // not arise. (2) A variable `v` own to a function `f` that `cur` holds is quantified
+        // at `f`, so no need of `cur` outside `f` holds `v`: `cur`'s forwards hold it, if at
+        // all, inside `f`'s type as a whole, and their internal results are classes of `cur`'s
+        // needs, not `v`. (3) Left compact, `cur`'s forward is named by `finished_with` of the
+        // signature at the top of the nest as any compact forward is: its runs at the places
+        // `Sig::vars_marks` gives over the whole nest (the proof in `sig_walk`, which walks
+        // the nest at any depth), and its held names last, by (i) to (iii) at `finished_with`;
+        // neither proof asks that the signature holding the forward hold its own variables
+        // alone. Not proved: that a compact forward and its flat needs are named alike in
+        // every signature (row PROOF-map-chain-d-skip-and-admit, open, which every forward
+        // left compact rests on, the top-level ones as well); (3) uses it for a forward in a
+        // closed signature nested in another, and the step (2), that each internal result of
+        // such a forward is an own variable of `cur` in E, rests on admission's `#16`, read
+        // but not proved here. Measured: over `zedc-check --lib` the old test decoded at 310
+        // places in 5 tests (`r10_forward_sweep_of_leaves_depths_and_siblings_agrees_with_e`
+        // 168, `r10_chain_of_maps_by_a_function_returning_a_lambda_decodes_no_link` 96,
+        // `r10_map_by_a_chain_function_agrees_with_e` 38,
+        // `r10_function_with_own_variables_held_in_a_map_agrees_with_e` 4,
+        // `r10_promoted_forward_results_are_own_variables` 4), which compare with E's text
+        // (`expected.out`; for the four cases added with this fix, D's text before it) except
+        // the second, which counts decodes, and the new test decodes at none; with this decode removed outright the 112 r10 tests pass,
+        // so no test reaches a signature that holds an outer variable and a forward
+        // (2026-11-28). Tests: r10_tests.rs
+        // `r10_chain_of_maps_by_a_function_returning_a_lambda_decodes_no_link`, and every
+        // r10 test that compares D's text with E's (`expected.out`).
+        if cur.has_fwd_needs() && !cur.binds_all_its_variables() {
             // Tagged: [`Self::finished_with`] renames each tagged result to its name.
             let decoded = Self::r10_decode_fwd_needs(&cur, true);
             if child_changed {
@@ -8887,8 +8928,52 @@ impl<'t, 'a> Ck<'t, 'a> {
                         if t.fns.is_empty() && t.tuples.is_empty() && t.payloads.is_empty() {
                             return t.clone();
                         }
+                        // Each held function that binds all its variables is finished here,
+                        // once for every caller (FAIL-map-chain-clashing-held-name-quadratic;
+                        // before, only those that hold their own variables alone, so
+                        // `k(x) = y -> (x, y)`, whose lambda reads `k`'s `x`, kept its classes
+                        // written `$k` and every caller decoded its forward). The test is
+                        // `tys_hold_only_closed_fns`'s, which sets `FwdNeed::held_open_fn`.
+                        // Proof that every caller gives the names written here, step by step.
+                        // (1) `f` is closed: each variable it holds at any depth is own to a
+                        // signature on its path within `f` (`Sig::binds_all_its_variables`,
+                        // proved there), so none is read from a caller. (2) The finished
+                        // copy is `finished_with(f.settle(stale))` (`finished_arc_with`),
+                        // which reads `f`, the classes (`&self`: the finish pass changes no
+                        // class) and the memos of the pass, which give one result per address:
+                        // so one copy, made from `f` alone, the same in every caller, as for a
+                        // function that holds its own variables alone, the case before. (3)
+                        // It writes each variable of `f` by the name `printed` gives it in the
+                        // caller (a class by its class's name, another by its own spelling)
+                        // unless `rename_apart` named it apart within `f`, which happens only
+                        // where an item before it in `f`'s order kept the same name with
+                        // another key (the proof at `rename_apart`), and gives no fresh name
+                        // otherwise. (4) Every variable of `f` is a held name of each
+                        // forward whose callee holds `f` in a leaf need: by (1) each is own
+                        // to a signature of `f`'s nest, so in its `VarFacts::names` (`of`
+                        // adds each own variable there), which `FwdNeed::held_names_of` lists,
+                        // through each child forward's held names for a deeper callee; and a
+                        // caller's facts gather them (`VarFacts::fwd_names`). (5) So in the
+                        // caller's `finished_with` each variable of `f` is an item of
+                        // `rename_apart`, put last, with the same key and name as in (3): if
+                        // (3) named one apart in `f`, two of the caller's held items have one
+                        // name and two keys, the later is renamed (`apart`), and the caller
+                        // takes the flat form, which E names; if not, each is written in the
+                        // callee by the name it is printed by, the premise of the proof that
+                        // a held name not named apart leaves every name as E's order gives it
+                        // (at `finished_with`, (i) to (iii)). A held name whose class has a
+                        // type is decoded by the caller as before (`solved`). (6) A function
+                        // not closed is left as before, and the forward then has
+                        // `held_open_fn` set and a class among its held names where one
+                        // stays `$k`, which the caller decodes (`unnamed`). Not taken: the
+                        // test `holds_only_own_variables` alone (O(n^2) over a chain mapping
+                        // by `k`, 31.9 times the time at 8n). Cost: the same as before, each
+                        // function finished once in the pass (`fwd_memo`), and the test
+                        // O(1) on the kept facts.
                         t.with_held_fns(|f| {
-                            if f.holds_only_own_variables() && !f.facts().classes.is_empty() {
+                            let closed =
+                                f.holds_only_own_variables() || f.binds_all_its_variables();
+                            if closed && !f.facts().classes.is_empty() {
                                 let nf = self.finished_arc_with(f, made, fwd_memo);
                                 if !Arc::ptr_eq(&nf, f) {
                                     changed = true;
@@ -9039,17 +9124,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         // which hold the type: such a one is decoded as well. The proof also needs each held
         // name to be written in the callee as the name it is printed by, since the callee
         // stands as it is: a class with a name that the callee still writes as the class
-        // (`unnamed` below; the callee's function was not finished, as it holds a variable
-        // not its own) is decoded as well, as the renaming then reaches it in the flat needs
+        // (`unnamed` below; the callee's function was not finished, as it reads a variable
+        // from around it) is decoded as well, as the renaming then reaches it in the flat needs
         // (c_ret_capture in the tests: `$0` in the callee where the eager checker has `U`;
-        // only the digests differed). Cost: one item for each held
+        // only the digests differed, while the finishing took only functions holding their
+        // own variables alone). Cost: one item for each held
         // name, O(H log H) for H held names over the walk of the facts, which the eager
         // checker pays as variables of the flat needs; O(1) on a chain of `.map(id)`, whose
         // held names are `id`'s alone. The decode costs the flat needs of the forwards decoded,
         // once (the eager cost); a program where each link of a chain holds a function whose
         // variable a name of the link's own takes pays it at each link, O(n^2) over n links
-        // as under the eager checker; no bench measures that yet (row
-        // FAIL-map-chain-clashing-held-name-quadratic).
+        // as under the eager checker. Since row FAIL-map-chain-clashing-held-name-quadratic a
+        // held function that binds all its variables is finished, so only one that reads a
+        // variable from around it leaves its class `unnamed` and pays this; the benches
+        // `n_maps_by_a_function_whose_held_name_clashes_check_in_linear_time` and
+        // `n_maps_by_a_function_returning_a_lambda_that_reads_its_parameter_check_in_linear_time`
+        // (l08_02_remaps) measure the closed cases, and no bench measures the open one.
         let mut flat_memo: Option<FlatMemo> = None;
         let (vars, b, order, given) = loop {
             let s = &s_ref;
@@ -9067,18 +9157,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .collect();
             // A held class still written `$k` in a callee, where the eager checker writes its
             // name: the callee was not finished there, since a function its forward holds
-            // holds a variable not its own (`k(x) = y -> (x, y)`, whose lambda reads `x`;
-            // `r10_finish_one_fwd_callee`, `VarFacts::fwd_unfinished`), and the renaming
-            // below, which cannot enter the callee, would leave `$0` where the eager checker
-            // writes `U` (c_ret_capture in the tests; only the digests differed). Decoded as
-            // well. Cost: O(1) per signature, the bit read; the decode it asks for is the
-            // eager cost at each signature that holds such a forward, so a chain of links each
-            // mapping by such a function is O(n^2), as on main, where `#4-own-vars` refused it
-            // (row FAIL-map-chain-clashing-held-name-quadratic). Not taken: the test "the held
-            // name is a class", which holds of `id`'s `$0` too, whose callee is finished
-            // (`T`), and so decoded every link of a chain of `.map(id)` (27.1 times the
-            // instructions at 8n); and finishing the function in the shared callee, which
-            // would need a proof that the names it gets there are those every caller gives.
+            // reads a variable from around it (`r10_finish_one_fwd_callee`,
+            // `FwdNeed::held_open_fn`, `VarFacts::fwd_unfinished`), and the renaming below,
+            // which cannot enter the callee, would leave `$0` where the eager checker writes
+            // its name. Decoded as well. Cost: O(1) per signature, the bit read; the decode it
+            // asks for is the eager cost at each signature that holds such a forward. A
+            // function that binds all its variables (`k(x) = y -> (x, y)`, whose lambda reads
+            // `k`'s `x`) is finished in the shared callee, with the proof there that every
+            // caller gives the names it gets, so a chain of links each mapping by `k` decodes
+            // none (row FAIL-map-chain-clashing-held-name-quadratic: before, only functions
+            // holding their own variables alone were finished, and that chain was O(n^2),
+            // 31.9 times the time at 8n). Not taken: the test "the held name is a class",
+            // which holds of `id`'s `$0` too, whose callee is finished (`T`), and so decoded
+            // every link of a chain of `.map(id)` (27.1 times the instructions at 8n).
             let mut unnamed = s.facts().fwd_unfinished;
             for v in &vars {
                 let Some(t) = b.get(v) else { continue };
@@ -10158,6 +10249,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             held_names: f.summary.held_names.clone(),
             held_outer: f.summary.held_outer.clone(),
             held_foreign_fn: f.summary.held_foreign_fn,
+            held_open_fn: f.summary.held_open_fn,
             held_classes: f.summary.held_classes.clone(),
             digest_base_rank: 0,
             digest_summary: None,

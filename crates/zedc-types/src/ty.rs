@@ -2679,6 +2679,17 @@ pub fn tys_hold_only_own_fns<'a>(tys: impl Iterator<Item = &'a Ty>) -> bool {
         .is_some_and(|fns| fns.iter().all(|f| f.holds_only_own_variables()))
 }
 
+/// Whether each function `tys` hold outside functions binds all its variables
+/// ([`Sig::holds_only_own_variables`] or [`Sig::binds_all_its_variables`]): the functions
+/// `Ck::r10_finish_one_fwd_callee` (zedc-check) finishes inside a callee, so that a forward
+/// whose leaf needs hold only such functions has its held names written by name there
+/// ([`FwdNeed::held_open_fn`]).
+pub fn tys_hold_only_closed_fns<'a>(tys: impl Iterator<Item = &'a Ty>) -> bool {
+    fns_outside_tys(tys, |_| true).is_some_and(|fns| {
+        (fns.iter()).all(|f| f.holds_only_own_variables() || f.binds_all_its_variables())
+    })
+}
+
 /// [`fns_outside`] over the types `tys`.
 fn fns_outside_tys<'a>(
     tys: impl Iterator<Item = &'a Ty>,
@@ -4653,12 +4664,15 @@ pub struct VarFacts {
     /// function held where no forward holds a function, as nearly all.
     pub fwd_names: NameSet,
     /// Whether a signature of the nest keeps a compact forward that has a class among its
-    /// held names and holds a function holding a variable not its own
-    /// ([`FwdNeed::held_foreign_fn`]): `Ck::r10_finish_one_fwd_callee` finishes only the held
-    /// functions that hold only their own variables, so such a forward's callee may still
-    /// write a held class as `$k` where the eager checker writes its name, and
-    /// `Ck::finished_with` decodes it (`k(positional x) = y -> (x, y)` in `m.map(k)`, whose
-    /// lambda reads `x`). ORed as `binds` is, O(h) for the h held names of each forward.
+    /// held names and holds a function that binds some variable of its nest by no signature
+    /// of it ([`FwdNeed::held_open_fn`]): `Ck::r10_finish_one_fwd_callee` finishes only the
+    /// held functions that bind all their variables ([`Sig::binds_all_its_variables`]), so
+    /// such a forward's callee may still write a held class as `$k` where the eager checker
+    /// writes its name, and `Ck::finished_with` decodes it. Before FAIL-map-chain-clashing-held-name-
+    /// quadratic the finishing took only the functions holding their own variables alone,
+    /// and this bit read [`FwdNeed::held_foreign_fn`], so `k(x) = y -> (x, y)` in `m.map(k)`,
+    /// whose lambda reads `k`'s `x`, was decoded at every link of a chain, O(n^2). ORed as
+    /// `binds` is, O(h) for the h held names of each forward.
     pub fwd_unfinished: bool,
     /// Whether a signature of the nest lists a class variable `$k` (own, bounded or held, or
     /// a held name or outer variable of a forward it keeps) that no type of it writes, so
@@ -4713,7 +4727,7 @@ impl VarFacts {
                 g.binds |= internal;
                 g.internal |= internal;
                 g.fwd_unfinished |=
-                    fwd.held_foreign_fn && fwd.held_names.iter().any(|v| class_id(v).is_some());
+                    fwd.held_open_fn && fwd.held_names.iter().any(|v| class_id(v).is_some());
                 for nm in &fwd.held_names {
                     add(&mut g.fwd_names, nm);
                     g.add_to(false, nm, &mut added);
@@ -6055,6 +6069,15 @@ pub struct FwdNeed {
     /// alone, panics on such a substitution, and [`Need::map_tys`] on any compact forward
     /// (landing round 6).
     pub held_foreign_fn: bool,
+    /// Whether a function held, outside functions, in the needs the block stands for, a
+    /// child forward's among them, binds a variable of its nest by no signature of it
+    /// ([`tys_hold_only_closed_fns`] false): one `Ck::r10_finish_one_fwd_callee` does not
+    /// finish, so its classes stay written `$k` in the callee ([`VarFacts::fwd_unfinished`]).
+    /// It implies [`Self::held_foreign_fn`], since a function that holds only its own
+    /// variables binds them all. Made with it and read only by the facts, so it is stale
+    /// where that bit is, and never read so, by the same decodes
+    /// (FAIL-map-chain-clashing-held-name-quadratic).
+    pub held_open_fn: bool,
     /// Cached outer class variables if `#4` is dropped in a negative-control test.
     pub held_classes: BTreeSet<Arc<str>>,
     /// Base rank at which `digest_summary` was built (so `emit_sig` never double-shifts).
@@ -23500,14 +23523,15 @@ impl Sig {
         )
     }
 
-    /// Whether each variable it holds, at any depth, is an own variable of the signature that
-    /// holds it outside functions, or of a function around that one within it: whether it
-    /// holds only its own variables and those of the functions inside it. Each signature of
-    /// the nest is asked whether every variable its types hold outside functions is its own
-    /// ([`Sig::own`]); a variable of a function around it within the nest is not taken, so the
-    /// answer is false for `(x: T) -> (y: T) -> T for T in int`, whose inner function holds the
-    /// `T` of the outer one. Such a signature reads the same in any comparison: every variable
-    /// it holds is bound by a signature within it. Worked out at the first call, for it and for
+    /// Whether each variable it holds, at any depth, is an own variable ([`Sig::own`]) of the
+    /// signature that holds it outside functions. Each signature of the nest is asked whether
+    /// every variable its types hold outside functions is its own; a variable of a function
+    /// around it within the nest does not count, so the answer is false for
+    /// `(x: T) -> (y: T) -> T for T in int`, whose inner function holds the `T` of the outer
+    /// one, and for `k(x) = y -> (x, y)`, whose lambda holds `k`'s `x`.
+    /// [`Sig::binds_all_its_variables`] is the weaker test that counts those. Such a
+    /// signature reads the same in any comparison: every variable it holds is bound by a
+    /// signature within it. Worked out at the first call, for it and for
     /// each function it holds that lacks the answer, innermost first, and kept, as
     /// [`Sig::holds_no_variable`] is (`found_in_nest`), so a nest asked from the outermost
     /// in costs its size once.
@@ -23520,6 +23544,45 @@ impl Sig {
             },
             |s| fns_outside(s, |v| s.own.contains(v)),
         )
+    }
+
+    /// Whether each variable it holds, at any depth, is bound by a signature of its nest: an
+    /// own variable of the signature that holds it or of one around that one within this
+    /// one. Weaker than [`Sig::holds_only_own_variables`], which asks each signature for its
+    /// own variables alone: `k(x) = y -> (x, y)` binds every variable it holds, though its
+    /// lambda holds `x`, `k`'s. A signature that binds all its variables is a closed term:
+    /// nothing in it is read from around, so what is made from it alone (its finished form,
+    /// `Ck::finished_with` in zedc-check) is the same wherever it is held.
+    /// Proof that it is `outer` and `outer_classes` of [`Sig::facts`] both empty. Write
+    /// `O(s)` for `outer ∪ outer_classes` of `s`, `V(s)` for the variables its types hold
+    /// outside functions, `F(s)` for the functions they hold there, and `H(s)` for the names
+    /// its compact forwards read from around (`held_outer`, `held_classes`). By
+    /// [`VarFacts::of`]: `tys` puts each variable of `V(s)` into `outer` or `outer_classes`,
+    /// by whether it is a class (`add_to` gives false only for one this walk added already,
+    /// which is in the set then), and merges `O(f)` for each `f` of `F(s)` (`held`); then
+    /// each own variable is removed from both; then each name of `H(s)` that is not own is
+    /// added. So `O(s) = ((V(s) ∪ ⋃ O(f)) ∪ H(s)) \ own(s)`. By induction on the depth of
+    /// the nest (each function is held by `Arc`, made before its holder, so the nest is a
+    /// finite DAG): `O(s)` is the set of variables `v` held at some signature `g` of the nest
+    /// such that no signature on the path from `s` to `g`, both included, has `v` own. The
+    /// base, a signature with no function: `O(s) = (V(s) ∪ H(s)) \ own(s)`, the path being
+    /// `s` alone. The step: `v ∈ O(s)` iff `v` is not own to `s` and is held at `s` or is in
+    /// some `O(f)`, by the hypothesis held at a `g` below `f` with no signature from `f` to
+    /// `g` owning it; with `s` prepended, the path from `s` to `g` owns it nowhere. So `O(s)`
+    /// is empty iff every variable held anywhere in the nest is own to a signature on its
+    /// path, which is the property. A row or payload shape whose bits are empty is not
+    /// entered by `tys`, and holds no variable at any depth, so it adds none to either side.
+    /// Complexity tradeoff: O(1) on top of the facts, which every caller of it reads anyway
+    /// (two emptiness tests of kept treaps). The naive version, a walk of the nest collecting
+    /// the own variables of every signature (as the probe of row
+    /// FAIL-map-chain-clashing-held-name-quadratic did), costs the size of the nest at each
+    /// ask: O(n^2) over a chain of n functions each holding the one before. This is the
+    /// level test of Rémy (INRIA RR-1766, 1992) and of Kuan and MacQueen (ML 2007): a
+    /// summary kept on each term, worked out from those of its parts, read in O(1) where the
+    /// naive test walks the term (verification/bib.md, Remy_1992_RR1766, Kuan_2007).
+    pub fn binds_all_its_variables(&self) -> bool {
+        let f = self.facts();
+        f.outer.is_empty() && f.outer_classes.is_empty()
     }
 
     /// Whether it has needs, or a function its arrows return at any depth has: such a
@@ -27600,6 +27663,7 @@ mod tests {
             held_names: BTreeSet::new(),
             held_outer: BTreeSet::new(),
             held_foreign_fn: false,
+            held_open_fn: false,
             held_classes: BTreeSet::new(),
             digest_base_rank: 0,
             digest_summary: None,

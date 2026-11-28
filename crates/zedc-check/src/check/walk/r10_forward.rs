@@ -175,6 +175,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let held_names = FwdNeed::held_names_of(sig);
         let mut held_outer: BTreeSet<Arc<str>> = BTreeSet::new();
         let mut held_foreign_fn = false;
+        let mut held_open_fn = false;
         let mut held_classes: BTreeSet<Arc<str>> = BTreeSet::new();
         let mut tie_uf = TieUf::new();
 
@@ -241,6 +242,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     held_free = held_free.max(fwd.held_free);
                     held_outer.extend(fwd.held_outer.iter().cloned());
                     held_foreign_fn |= fwd.held_foreign_fn;
+                    held_open_fn |= fwd.held_open_fn;
                     held_classes.extend(fwd.held_classes.iter().cloned());
                 }
                 _ => {
@@ -279,6 +281,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     n.vars_in(&mut nv_tie);
                     tie_uf.union_group(nv_tie.order.iter());
                     held_foreign_fn |= !zedc_types::ty::tys_hold_only_own_fns(n.tys());
+                    // The functions `r10_finish_one_fwd_callee` finishes, by the same test.
+                    held_open_fn |= !zedc_types::ty::tys_hold_only_closed_fns(n.tys());
                     for t in n.tys() {
                         let vf = t.var_facts();
                         // A function held in the need's types that binds variables of its own
@@ -357,11 +361,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // `r10_finish_fwd_callee`, which gives `f` its names alone
                         // (`finished_arc_with`, as `f` holds only its own variables); those
                         // are the names E's caller gives it unless one is named apart there,
-                        // which (3) decodes. Where `f` holds a function that reads a variable
-                        // not its own (`k(x) = y -> (x, y)`: the lambda reads `x`), (4) leaves
+                        // which (3) decodes. A function `f` that binds all its variables but
+                        // holds one that reads a variable of a function around it within `f`
+                        // (`k(x) = y -> (x, y)`: the lambda reads `k`'s `x`) is finished by (4)
+                        // as well, with the proof at `r10_finish_one_fwd_callee` that every
+                        // caller gives the names it gets (FAIL-map-chain-clashing-held-name-
+                        // quadratic). Where `f` reads a variable from around it, (4) leaves
                         // `f` as it is and its classes stay written `$k` in the callee, where E
                         // writes their names: (3) decodes there too, since the forward then has
-                        // `held_foreign_fn` set (by `tys_hold_only_own_fns`, the test the
+                        // `held_open_fn` set (by `tys_hold_only_closed_fns`, the test the
                         // finishing makes, below) and a class among its held names
                         // (`VarFacts::fwd_unfinished`, `unnamed` in `finished_with`; the test
                         // `r10_map_by_a_chain_function_agrees_with_e`, whose digests differed
@@ -804,6 +812,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             held_names,
             held_outer,
             held_foreign_fn,
+            held_open_fn,
             held_classes,
             intrinsic_fails,
             exposed_needs,

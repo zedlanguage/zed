@@ -1980,14 +1980,53 @@ fn r10_chain_of_maps_by_id_decodes_no_link() {
     }
 }
 
+/// FAIL-map-chain-clashing-held-name-quadratic: as the test above, with `k(x) = y -> (x, y)`
+/// in place of `id`. `k`'s lambda reads `x`, a variable not its own, but every variable of
+/// `k` is bound within `k`, so each callee finishes it (`Sig::binds_all_its_variables`) and
+/// writes its held names by name, and `finished_with` decodes no link. Red before: each link
+/// was decoded twice, by `r10_promote_one`'s test of `sig_vars` against `own` and by
+/// `finished_with` for the held classes left `$k` (`VarFacts::fwd_unfinished`), O(n^2) needs.
+#[test]
+fn r10_chain_of_maps_by_a_function_returning_a_lambda_decodes_no_link() {
+    for with_call in [false, true] {
+        for n in [10usize, 40] {
+            let mut src =
+                String::from("k(positional x) = y -> (x, y);\nh0(positional m) = m.map(k);\n");
+            for i in 1..n {
+                src.push_str(&format!("h{i}(positional m) = h{}(m).map(k);\n", i - 1));
+            }
+            if with_call {
+                src.push_str(&format!("a = h{}({{\"k\" -> 0}})[\"k\"];\n", n - 1));
+            }
+            reset_fwd_decode_count();
+            let (info, stats) = run_with_cfg(&src, R10Config::default());
+            let decodes = fwd_decode_count();
+            assert!(info.errors.is_empty(), "n={n}: {:?}", info.errors);
+            assert_eq!(
+                stats.kept_at_generalize,
+                n - 1,
+                "n={n} call={with_call}: kept"
+            );
+            assert_eq!(
+                decodes,
+                u64::from(with_call),
+                "n={n} call={with_call}: decodes"
+            );
+            let needs: usize = info.sigs.values().map(|s| s.needs.len()).sum();
+            assert_eq!(needs, 2 * n - 1, "n={n} call={with_call}: needs in all");
+        }
+    }
+}
+
 /// FAIL-map-chain-own-vars-carry: programs beside those of L3-G1 above, where D may refuse a
 /// forward, and must still give E's results and signatures. A chain function passed to a map
 /// inside another chain's link (`k(mm) = mm.map(h3)`) holds a compact forward with internal
 /// results, refused as `#4-own-vars` (row FAIL-map-chain-of-chain-fns-refused). A function
-/// that returns a lambda reading its parameter (`k(x) = y -> (x, y)`) is not finished inside
-/// the callee, as it holds a variable not its own, so the callee keeps its class `$0` where E
-/// writes the name `U`: `Ck::finished_with` decodes there (`unnamed`; before, only the digest
-/// of `h1` differed). The others hold lambdas that capture a parameter, curried and nested
+/// that returns a lambda reading its parameter (`k(x) = y -> (x, y)`) was not finished inside
+/// the callee, as it holds a variable not its own, so the callee kept its class `$0` where E
+/// writes the name `U`, and `Ck::finished_with` decoded there (`unnamed`; before that, only the
+/// digest of `h1` differed); since FAIL-map-chain-clashing-held-name-quadratic it is finished
+/// there, as it binds all its variables. The others hold lambdas that capture a parameter, curried and nested
 /// lambdas, and a parameter function held in a tuple.
 ///
 /// It is also the test of the premise of `#4-outer` (PROOF-map-chain-d-skip-and-admit, point
@@ -2041,6 +2080,42 @@ fn r10_map_by_a_chain_function_agrees_with_e() {
             "returned_lambda_reading_a_parameter_alone",
             "k(positional x) = y -> (x, y);\nh0(positional m) = m.map(k);\n\
              h1(positional m) = h0(m).map(f -> f(0));\n"
+                .to_string(),
+            None,
+        ),
+        // FAIL-map-chain-clashing-held-name-quadratic: `k` finished inside each callee, as it
+        // binds every variable it holds; the caller's own names, `k` held beside the chain,
+        // and a caller's lambda reading its parameter beside it, must still read as E's.
+        // E was removed before these four were written: their lines in `expected.out` are
+        // D's before the fix (7b56a1245), which decoded every link to the flat form E builds.
+        (
+            "chain_of_maps_by_a_function_returning_a_lambda",
+            "k(positional x) = y -> (x, y);\nh0(positional m) = m.map(k);\n\
+             h1(positional m) = h0(m).map(k);\nh2(positional m) = h1(m).map(k);\n\
+             g(positional m) = (z -> (z, z), h2(m));\n"
+                .to_string(),
+            None,
+        ),
+        (
+            "chain_of_maps_by_k_beside_k",
+            "k(positional x) = y -> (x, y);\nh0(positional m) = m.map(k);\n\
+             h1(positional m) = h0(m).map(k);\ng(positional m) = (k, h1(m), k);\n"
+                .to_string(),
+            None,
+        ),
+        (
+            "chain_of_maps_by_k_beside_a_capturing_lambda",
+            "k(positional x) = y -> (x, y);\nh0(positional m) = m.map(k);\n\
+             h1(positional m) = h0(m).map(k);\n\
+             g(positional a, positional m) = (a, x -> (x, a), h1(m), y -> y);\n"
+                .to_string(),
+            None,
+        ),
+        (
+            "chain_of_maps_by_k_in_a_lambda",
+            "k(positional x) = y -> (x, y);\nh0(positional m) = m.map(k);\n\
+             h1(positional m) = h0(m).map(k);\n\
+             g(positional a) = (z -> (z, z), m -> (m, h1(m)), n -> (h1(n), n), a);\n"
                 .to_string(),
             None,
         ),
