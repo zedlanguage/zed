@@ -1572,3 +1572,59 @@ fn a_literal_is_in_a_type_alike_whatever_the_root_under_a_watch() {
         "a in {{a, b}} with no memory under a watch: root a gives {at_a:?}, root b gives {at_b:?}"
     );
 }
+
+/// FIX-rat-cmp-refusal-shape, the checker's side: with no `Watch`, as in a type query, a
+/// refused order is not recorded and `Ord for Rat` falls back to the order of the forms. Here
+/// `a` is 3·2^100 kept as a power, `a2` the same value built as one integer, and `b` is
+/// 3·2^100 - 1. Whether `#a` is inside "every rational but `a2` and `b`" (`scalar_cell`, the emptiness
+/// search's cell test) is a finite set against a cofinite one, which `Lits::within` answers by
+/// disjointness. The right answer is no, as
+/// `a` equals `a2`. With `b` at the root, ordering `a` against `b` is refused with no memory.
+/// The forms put `a` (coefficient 3) below `b`, while `a2` lies above `b` by value, so the
+/// search misses `a2`. The sets then look disjoint and the difference empty: a wrong subtype
+/// answer that would accept a wrong program. With `a2` at the root, `a` is found equal to it (with no `Watch`, equality does
+/// not ask for memory) and the answer is no. Red until a set's answer stops depending on its
+/// shape.
+#[test]
+fn a_literal_is_not_inside_a_set_that_excludes_it_whatever_the_root_with_no_watch() {
+    use crate::num::{Rat, fixed_room};
+    use num_bigint::{BigInt, BigUint};
+    let a = || {
+        let p = Rat::int(BigInt::from(2))
+            .pow(&BigUint::from(100u32))
+            .unwrap();
+        Value::Rat(Arc::new(p.mul(&Rat::int(BigInt::from(3))).unwrap()))
+    };
+    let a2 = || Value::Rat(Arc::new(Rat::int(BigInt::from(3) << 100u32)));
+    let b = || Value::Rat(Arc::new(Rat::int((BigInt::from(3) << 100u32) - 1)));
+    let inside = |root_is_b: bool, room: Option<u64>| -> bool {
+        std::thread::spawn(move || {
+            let root = if root_is_b { b() } else { a2() };
+            TEST_ROOT.with_borrow_mut(|r| *r = Some(root.clone()));
+            let but = &Type::rat()
+                & &!Type::union_all([Type::lit(&a2()).unwrap(), Type::lit(&b()).unwrap()]);
+            let set = but.p().rats.values.clone();
+            assert_eq!(set.len(), 2);
+            let top = set.iter().max_by_key(|v| v.priority()).unwrap().clone();
+            assert!(top.held_cmp(&root).is_eq(), "the root is forced");
+            let one = Type::lit(&a()).unwrap();
+            // `one - but` is empty: both are scalar-only, so `scalar_cell` decides it by
+            // `Lits::within` on the rationals, the emptiness search's cell test
+            // (types/empty.rs:6820).
+            let ask = || one.scalar_cell(&but, false).expect("both are scalar types");
+            match room {
+                Some(bits) => fixed_room(bits, ask),
+                None => ask(),
+            }
+        })
+        .join()
+        .unwrap()
+    };
+    assert!(!inside(false, None), "control, root a2");
+    assert!(!inside(true, None), "control, root b");
+    assert!(!inside(false, Some(0)), "root a2, no memory");
+    assert!(
+        !inside(true, Some(0)),
+        "#a is inside every rational but a2 and b with no memory and b at the root, though a = a2"
+    );
+}
