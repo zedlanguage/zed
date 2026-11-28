@@ -13158,7 +13158,7 @@ fn adopted(a: &Arg, p: &Ty, rough: bool) -> Result<Option<(Ty, Adoptions)>, (Spa
         let Some(c) = expected(l, want).map_err(|m| (l.site, m))? else {
             return Ok(None);
         };
-        // Complexity tradeoff: reading a decimal's digits as a `rat` costs O(n^1.47) in its
+        // Complexity tradeoff: reading a decimal's digits as a `rat` costs O(n log^2 n) in its
         // length (COMPLEXITY.md K41), and a tried repair, `rat(n) + 0.5` for `n + 0.5` with
         // `n` an int, needs only whether the call checks. Typed `rat`, the literal is read in
         // O(n) ([`fits`] read its syntax); a repair whose check needs the literal's value, as
@@ -13535,7 +13535,7 @@ pub fn float_range(s: &str, forced: Option<FloatFormat>, r: &LiteralRounding) ->
 /// `bool`, though [`adopt`] leaves it as it is there, so `0.0f64` fits `f64` alone of the
 /// carriers `<` takes. A decimal literal without a suffix is exactly a `rat` whenever its
 /// text reads as a number, so that case scans the text and reads none of its digits: reading
-/// them is O(n^1.47) (COMPLEXITY.md K41), and a literal is tried at every arrow and repair
+/// them is O(n log^2 n) (COMPLEXITY.md K41), and a literal is tried at every arrow and repair
 /// that holds `rat`. The digits are read when the literal adopts.
 fn fits(l: &Lit, c: Carrier) -> bool {
     if !c.numeric() {
@@ -14442,7 +14442,7 @@ fn carrier_names(cs: &[Carrier]) -> String {
 
 /// The value of the literal `l`, with its `-`, at the carrier `c`; `None` where it is not
 /// exactly a value of `c`, or is a decimal at `int`. A decimal's digits are read at `rat`,
-/// which costs O(n^1.47) in their number (COMPLEXITY.md K41).
+/// which costs O(n log^2 n) in their number (COMPLEXITY.md K41).
 fn lit_value(l: &Lit, c: Carrier) -> Option<Value> {
     if l.past_f64.is_some() && c == Carrier::F64 {
         return None;

@@ -34375,7 +34375,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// and its other values read at `rat`, or `None` where a decimal may come from elsewhere:
     /// a call or another branch whose type holds an `f64`, or a decimal with a suffix.
     // Complexity tradeoff: one walk over the `if`'s tree of branches, each visited once, an
-    // adoption per decimal literal (O(n^1.47) in its digits, COMPLEXITY.md K41, as any decimal
+    // adoption per decimal literal (O(n log^2 n) in its digits, COMPLEXITY.md K41, as any decimal
     // literal at `rat` costs), then the n singletons joined in pairs, O(n log n), and one
     // read of the result ([`read_at`]). The naive form, [`read_at`] alone, refuses the `if`,
     // since it does not know where its decimals come from.
