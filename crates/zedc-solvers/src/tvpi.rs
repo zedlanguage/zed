@@ -40,6 +40,38 @@
 //! pass `(nodes + 1)·(edges + nodes)`, the work of Bellman's `nodes + 1` passes, each over every
 //! edge, plus a walk of the parents per pass.
 //!
+//! # One order
+//!
+//! A search stopped by the bound answers by how far it got, and that depends on the order in
+//! which edges are scanned (FAIL-tvpi-budget-order: before this, the edges out of a node were
+//! scanned in the order of their rows, and on the fixture `parity` of the tests some orders of
+//! the same rows crossed and others stopped). So the edges are sorted by
+//! `(from, to, num, den, k)` and repeats dropped. The one-variable bounds are kept as a maximum,
+//! a constant row below 0 answers `true` wherever it stands, the nodes are numbered by the
+//! sorted variables and queued first in node order, so every step of the search is a function of
+//! the set of rows: any order of the same rows gives the same answer, stopped or not.
+//!
+//! The stop cannot be replaced by a proved bound on the raises, because on some rows the raises
+//! never end: on `x` even (`2y >= x >= 2y`) and odd (`x >= 2z + 1 >= x`) with `x >= 0`, every
+//! round raises `x` by one, the cycles have gain 1 and constant 0 so no loop inequality fires,
+//! and no value crosses (the rows are empty at every integer point, with rational points;
+//! `every_row_order_gives_one_answer_where_the_search_stops_at_its_bound`). A renaming of the
+//! variables still renumbers the nodes, so where the search stops the answer may depend on the
+//! names (FAIL-tvpi-budget-naming); where it ends before the bound it does not ("Proof").
+//!
+//! # Cycles of gain 1
+//!
+//! Before the search, the edges of gain 1 (`|a| = |b|`) are read as difference constraints:
+//! with `num = den` and `z_from` an integer, the edge says `z_to >= z_from + ceil(-k / den)`. A
+//! cycle of these whose constants sum to `s > 0` composes to `z_v >= z_v + s`, so the rows are
+//! empty (the infeasible loop of \[AS\], with each edge rounded first); this needs no starting
+//! bound (FAIL-tvpi-unreached-cycle: `x - y >= 1`, `y - x >= 1` alone). Written for
+//! `p = -z` as `p_to <= p_from - ceil(-k / den)`, such a cycle is a negative cycle, and
+//! `negsssp::potential_alone` (Duong's algorithm) reports one exactly when it exists: a
+//! potential `p` with `p_to <= p_from + w` on every edge sums to `0 <= Σ w` around any cycle,
+//! and the search returns a potential whenever no cycle is negative. The answer depends on the
+//! set of edges only.
+//!
 //! # Proof
 //!
 //! Let `T` map values (integers or `-∞` or `+∞` at each node) to the values raised by every edge
@@ -65,11 +97,13 @@
 //!
 //! So whenever the search ends before its bound on scans, the answer is whether `F` crosses or
 //! is infinite, which `T`, and so the rows alone, defines: renaming the variables renames the
-//! nodes and changes nothing else, and the order of the rows changes only the order of the
-//! queue. Only a search stopped by the bound can answer by the order. That is also why a
-//! `G > 1` bound is not written to the other node of `v`: the bound is valid, but which cycles
-//! the parents show depends on the order, so writing it would make the values, and an answer,
-//! depend on the order, where testing it only reaches sooner an answer 3 shows is `F`'s.
+//! nodes and changes nothing else. The order of the rows changes nothing at all ("One order");
+//! only a search stopped by the bound can answer by the names. That is also why a `G > 1`
+//! bound is not written to the other node of `v`: the bound is valid, but which cycles the
+//! parents show depends on the numbering, so writing it would make the values, and an answer,
+//! depend on the names, where testing it only reaches sooner an answer 3 shows is `F`'s. The
+//! check of the cycles of gain 1 runs first and answers `true` only by a valid loop inequality
+//! ("Cycles of gain 1"), so it keeps every answer sound and depends on the rows alone.
 //!
 //! # Complexity tradeoff
 //!
@@ -82,11 +116,14 @@
 //! Numbers grow by at most the bits of one coefficient per raise, so the cost is polynomial in the
 //! size of the rows; where the bounds settle or a cycle shows them crossing in a few rounds, as
 //! on the capped one-way torus (every node raised twice, then one walk), the cost is linear in the
-//! rows. What is given up: completeness. Rows empty only over the rationals through a cycle of
-//! gain above 1 that no bound pushes past its fixed point, or through nodes no bound reaches
-//! (the search starts only at nodes a one-variable row gives a value, so `x - y >= 1`,
-//! `y - x >= 1` alone is not shown empty, though its loop has gain 1), are not found, nor is
-//! integer emptiness beyond the rounding of each edge. A complete test costs
+//! rows. The check of the cycles of gain 1 adds Duong's `O((m + n log log n) log² n log(nW))`
+//! on those edges only (none on the torus). What is given up: completeness. Rows empty only
+//! over the rationals through a cycle of gain above 1 that no bound pushes past its fixed
+//! point, or through a cycle of gain other than 1 that no bound reaches (the search starts only
+//! at nodes a one-variable row gives a value; a reached or unreached cycle whose edges all have
+//! gain 1 is found), or through a cycle of gain 1 whose edges have other gains (`2/1` then
+//! `1/2`) that no bound reaches, are not found, nor is integer emptiness beyond the rounding of
+//! each edge (`parity` in the tests, which reaches the bound). A complete test costs
 //! `n` searches like this one at least (\[HN\] runs Procedure 2.1 inside a binary search per
 //! variable). Trigger: none; every TVPI row is read. Tests: `tvpi::tests` and
 //! `l01_38_omega_test::names::a_capped_one_way_torus_is_decided`, with the scaling benchmarks
@@ -126,10 +163,14 @@
 use std::collections::VecDeque;
 
 use super::linear::Term;
+use super::negsssp;
 use zedc_int::int::Int;
 use zedc_int::q::Q;
 
-/// An edge `from → to`: every integer point has `z[to] >= (num·z[from] - k) / den`.
+/// An edge `from → to`: every integer point has `z[to] >= (num·z[from] - k) / den`. Ordered by
+/// its fields in turn, which is the one order of the edges the search takes (module doc, "One
+/// order").
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Edge {
     from: usize,
     to: usize,
@@ -146,7 +187,8 @@ pub fn empty<'r>(rows: impl IntoIterator<Item = (&'r [Term], &'r Int)>) -> bool 
 }
 
 /// The answer of [`empty`], `None` when the search stopped at its bound on scans, where the
-/// answer may depend on the order of the rows (module doc, "Proof").
+/// answer may depend on the names of the variables, never on the order of the rows (module
+/// doc, "One order" and "Proof").
 fn search<'r>(rows: impl IntoIterator<Item = (&'r [Term], &'r Int)>) -> Option<bool> {
     let rows: Vec<(&[Term], &Int)> = rows.into_iter().filter(|(a, _)| a.len() <= 2).collect();
     let mut vars: Vec<usize> = rows
@@ -194,7 +236,13 @@ fn search<'r>(rows: impl IntoIterator<Item = (&'r [Term], &'r Int)>) -> Option<b
             _ => {}
         }
     }
-    edges.sort_unstable_by_key(|e| e.from);
+    // One order of the edges, whatever the order of the rows (FAIL-tvpi-budget-order): the
+    // search below then depends on the set of rows alone (module doc, "One order").
+    edges.sort_unstable();
+    edges.dedup();
+    if difference_cycle(nodes, &edges) {
+        return Some(true);
+    }
     let mut first = vec![0; nodes + 1];
     for e in &edges {
         first[e.from + 1] += 1;
@@ -213,6 +261,21 @@ fn search<'r>(rows: impl IntoIterator<Item = (&'r [Term], &'r Int)>) -> Option<b
         walks: 0,
     }
     .run()
+}
+
+/// Whether the edges of gain 1 (`num = den`) have a cycle whose constants sum above 0, which
+/// shows the rows empty with no starting bound (FAIL-tvpi-unreached-cycle; module doc, "Cycles
+/// of gain 1"). Such an edge says `z_to >= z_from + ceil(-k / den)`, that is
+/// `-z_to <= -z_from - ceil(-k / den)`, so a cycle of positive sum is a negative cycle of the
+/// weights `-ceil(-k / den)`, which [`negsssp::potential_alone`] finds exactly.
+fn difference_cycle(nodes: usize, edges: &[Edge]) -> bool {
+    let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); nodes];
+    let mut any = false;
+    for e in edges.iter().filter(|e| e.num == e.den) {
+        out[e.from].push((e.to, -&(-&e.k).div_ceil(&e.den)));
+        any = true;
+    }
+    any && negsssp::potential_alone(&out).is_none()
 }
 
 /// The state of the search of [`empty`].
@@ -435,10 +498,16 @@ mod tests {
         let cap = (&[(0, -1)][..], 100);
         let cycle = [(&[(0, 1), (1, -1)][..], -1), (&[(1, 1), (0, -1)][..], -1)];
         assert_eq!(answer(&rows(&[cycle[0], cycle[1], cap])), Some(true));
-        // With no bound no node has a value, the search starts nowhere and the cycle is not met
-        // (module doc, "What is given up"); the stages of the Omega test before it decide such
-        // rows.
-        assert_eq!(answer(&rows(&cycle)), Some(false));
+        // With no bound no node has a value and the search starts nowhere; the cycle of gain 1
+        // is found with no starting bound (FAIL-tvpi-unreached-cycle), also with its rows
+        // scaled to coefficients 3 and constant -1, read as `z_y >= z_x + ceil(1/3)`.
+        assert_eq!(answer(&rows(&cycle)), Some(true));
+        let scaled = [(&[(0, 3), (1, -3)][..], -1), (&[(1, 3), (0, -3)][..], -1)];
+        assert_eq!(answer(&rows(&scaled)), Some(true));
+        // A cycle of gain 1 and constant 0 beside one with a positive constant: 2x >= y, y >= 2x
+        // (gains 1/2 and 2) is not a cycle of the difference edges, and has points.
+        let mixed = [(&[(0, 2), (1, -1)][..], 0), (&[(1, 1), (0, -2)][..], 0)];
+        assert_eq!(answer(&rows(&mixed)), Some(false));
         // x - y >= 0 and y - x >= 0 have points.
         let flat = [(&[(0, 1), (1, -1)][..], 0), (&[(1, 1), (0, -1)][..], 0)];
         assert_eq!(answer(&rows(&[flat[0], flat[1], cap])), Some(false));
@@ -524,9 +593,9 @@ mod tests {
     }
 
     /// Random TVPI rows over at most 4 variables, each boxed in `-r..=r`, checked against the
-    /// points of the box (sound: never `true` with a point) and under a renaming and a reversal
-    /// of the rows (the same answer where neither search stopped at its bound, module doc
-    /// "Proof"). Returns how many were shown empty, and how many searches stopped.
+    /// points of the box (sound: never `true` with a point), under a reversal of the rows (the
+    /// same answer always, module doc "One order") and under a renaming and a reversal (the
+    /// same answer where neither search stopped at its bound, module doc "Proof"). Returns how many were shown empty, and how many searches stopped.
     fn random_rows_agree(rng: &mut Rng, cases: usize) -> (usize, usize) {
         let r = 3;
         let mut shown = (0, 0);
@@ -567,6 +636,9 @@ mod tests {
                     (a, k.clone())
                 })
                 .collect();
+            // The rows reversed alone give the same answer, stopped or not ("One order").
+            let reversed: Vec<(Vec<Term>, Int)> = rs.iter().rev().cloned().collect();
+            assert_eq!(answer(&reversed), got, "case {case}: {rs:?} reversed");
             let other = answer(&renamed);
             if got.is_some() && other.is_some() {
                 assert_eq!(other, got, "case {case}: {rs:?} renamed");
@@ -575,6 +647,67 @@ mod tests {
             shown.1 += usize::from(got.is_none()) + usize::from(other.is_none());
         }
         shown
+    }
+
+    /// `x` even (`2y >= x >= 2y`) and odd (`x >= 2z + 1 >= x`), `0 <= x <= u`, and
+    /// `w >= y - 1000`, which only adds a second edge out of the lower node of `y`. Empty at
+    /// every integer point, with rational points; from `x >= 0` the edges raise `x` by about one
+    /// per round with no end (both cycles have gain 1 and constant 0), so the search crosses
+    /// only when `u` is small and otherwise stops at its bound (FAIL-tvpi-budget-order). Before
+    /// the edges were put in one order, the place of the edge to `w` among the edges out of `y`
+    /// moved the last scan by one, and at cap 48 some orders of the rows crossed and others
+    /// stopped (measured 2026-11-28 over 300 random orders per cap; edges out of `x` or `z`, or
+    /// 2 such rows, showed no cap that differed).
+    fn parity(u: i64) -> Vec<(Vec<Term>, Int)> {
+        rows(&[
+            (&[(1, 2), (0, -1)], 0),
+            (&[(0, 1), (1, -2)], 0),
+            (&[(0, 1), (2, -2)], -1),
+            (&[(2, 2), (0, -1)], 1),
+            (&[(0, 1)], 0),
+            (&[(0, -1)], u),
+            (&[(3, 1), (1, -1)], 1000),
+        ])
+    }
+
+    /// Every order of `rs`, by Heap's algorithm.
+    fn orders(rs: &[(Vec<Term>, Int)]) -> Vec<Vec<(Vec<Term>, Int)>> {
+        let mut rs = rs.to_vec();
+        let mut c = vec![0; rs.len()];
+        let mut all = vec![rs.clone()];
+        let mut i = 1;
+        while i < rs.len() {
+            if c[i] < i {
+                rs.swap(if i % 2 == 0 { 0 } else { c[i] }, i);
+                all.push(rs.clone());
+                c[i] += 1;
+                i = 1;
+            } else {
+                c[i] = 0;
+                i += 1;
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn every_row_order_gives_one_answer_where_the_search_stops_at_its_bound() {
+        assert_eq!(orders(&parity(0)).len(), 5040);
+        let given: Vec<Option<bool>> = (0..=200).map(|u| answer(&parity(u))).collect();
+        // Small caps cross before the bound and large ones stop at it.
+        let last = given
+            .iter()
+            .rposition(|a| *a == Some(true))
+            .expect("a cap the search crosses");
+        assert!(given.contains(&None), "no cap reaches the bound: {given:?}");
+        // Every order, at every cap from well below the last crossed one to well above it.
+        let caps = given.iter().enumerate().take(last + 9);
+        for (u, want) in caps.skip(last.saturating_sub(8)) {
+            let rs = parity(u as i64);
+            for (i, order) in orders(&rs).iter().enumerate() {
+                assert_eq!(answer(order), *want, "cap {u}, order {i}: {order:?}");
+            }
+        }
     }
 
     #[test]
