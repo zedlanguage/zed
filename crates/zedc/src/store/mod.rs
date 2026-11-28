@@ -37,5 +37,6 @@ pub use zedc_presburger::presburger;
 pub use zedc_solvers::linear;
 pub use zedc_solvers::live3;
 pub use zedc_solvers::negsssp;
+pub use zedc_solvers::tvpi;
 pub use zedc_solvers::twovar;
 pub use zedc_solvers::utvpi;
