@@ -705,6 +705,39 @@ mod rat {
         });
     }
 
+    /// FIX-rat-eq-unwatched-record (XR-rat-cmp-refusal-plan META1 D6): an equality the system
+    /// refuses with no `Watch` records nothing, as an order does (`Ord for Rat` checks
+    /// `WATCHED`). `q^2` kept with the wide atom `q = 2^64 + 13` against the same value built
+    /// is the arm that divides (`Rat::div`), which asks for room watched or not, so under
+    /// `fixed_room(0)` it is refused. A record left with no run to read it stays on the thread:
+    /// [`refused`] hands it to whatever reads next, a `Watch` saves and restores it, and it
+    /// keeps [`HOLDING`] above 0, which sends every evaluator step to the thread-local
+    /// (`replace_refused`). The record is read by `replace_refused(None)`, which also restores
+    /// `HOLDING` if this test is red; `HOLDING` itself is shared with the tests running beside
+    /// this one, so it is not compared. Red before the fix (`Some((Equality, ..))`).
+    #[test]
+    fn a_refused_equality_records_nothing_with_no_watch() {
+        let q = || BigInt::from((1i128 << 64) + 13);
+        let kept = Rat::int(q()).pow(&BigUint::from(2u32)).unwrap();
+        let built = Rat::int(q() * q());
+        assert!(kept.has_wide(), "q^2 keeps its wide atom");
+        assert!(!built.has_wide(), "the built value has none");
+        assert!(kept == built, "equal, given the memory");
+        assert!(!WATCHED.get(), "no watch here");
+        let left = fixed_room(0, || {
+            let _ = kept == built;
+            assert!(
+                kept.div(&built).is_err(),
+                "the dividing arm is refused with no memory"
+            );
+            replace_refused(None)
+        });
+        assert!(
+            left.is_none(),
+            "an equality refused with no watch left {left:?} on the thread"
+        );
+    }
+
     /// `is_even`, `small_integer`, `in_lowest_terms` and the text `Display` writes, on the
     /// forms each reads: a power of 2 kept or in the coefficient, the bound of 64 bits on both
     /// sides (`2^63`, `u64::MAX`, `2^64`, `3^40`, `3^64`), and a denominator of 1, a negative
