@@ -569,21 +569,7 @@ fn rows_shared_on_many_paths_are_replaced_once() {
 fn a_function_of_forty_shared_rows_prints_in_linear_text() {
     let (sent, got) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let read = |n: usize| -> Result<String, String> {
-            let s = sig_of(&shared_rows(n, false), "f");
-            let text = s.to_string();
-            let back = zedc::check::read::parse_type(&text).map_err(|e| format!("{text}: {e}"))?;
-            if n <= 6 {
-                let want = Ty::func(s);
-                if !(back.subtype(&want) && want.subtype(&back)) {
-                    return Err(format!("{text} reads back as another type: {back}"));
-                }
-            }
-            match back.to_string() == text {
-                true => Ok(text),
-                false => Err(format!("{text} reads back as {back}")),
-            }
-        };
+        let read = |n: usize| printed_back(&shared_rows(n, false), n);
         let texts: Result<Vec<String>, String> = [2, 3, 6, 40].into_iter().map(read).collect();
         let _ = sent.send(texts);
     });
@@ -599,6 +585,149 @@ fn a_function_of_forty_shared_rows_prints_in_linear_text() {
         );
     }
     assert_eq!(texts[0], "(T, U, V) -> ((T, (T, U)), ((T, (T, U)), V))");
+}
+
+/// The signature of `f` in `src` printed, read back with `read::parse_type` and printed again
+/// to the same text; at `n` ≤ 6 levels the type read back is also compared with the signature
+/// both ways.
+fn printed_back(src: &str, n: usize) -> Result<String, String> {
+    let s = sig_of(src, "f");
+    let text = s.to_string();
+    let back = zedc::check::read::parse_type(&text).map_err(|e| format!("{text}: {e}"))?;
+    if n <= 6 {
+        let want = Ty::func(s);
+        if !(back.subtype(&want) && want.subtype(&back)) {
+            return Err(format!("{text} reads back as another type: {back}"));
+        }
+    }
+    match back.to_string() == text {
+        true => Ok(text),
+        false => Err(format!("{text} reads back as {back}")),
+    }
+}
+
+/// Where a union written `_` stands in [`underscore_rows`].
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Underscore {
+    /// Beside the shared rows: `(rows, if c { (0, 0) } else { xs[i] })`.
+    Beside,
+    /// Around them: `if c { rows } else { xs[i] }`.
+    Holding,
+    /// At the first of their two places: `{ r = rows; (if c { r } else { xs[i] }, r) }`.
+    First,
+    /// At the first place of a tuple that holds them beside another such union: `{ r = (rows,
+    /// if c { (0, 0) } else { xs[i] }); (if d { r } else { ys[j] }, r) }`.
+    Cascade,
+}
+
+/// The `n` shared rows of [`shared_rows`] in the result of `f`, with a union written `_` (a
+/// pair of ints beside an element of a parameter that stands once) placed as `form` says (row
+/// PRINT-shared-underscore-union-tuple).
+pub(super) fn underscore_rows(n: usize, form: Underscore) -> String {
+    let params: Vec<String> = (0..=n).map(|i| format!("positional a{i}")).collect();
+    let rows = (1..=n).fold("a0".to_string(), |s, i| format!("p({s}, a{i})"));
+    let blank = "if c { (0, 0) } else { xs[i] }";
+    let result = match form {
+        Underscore::Beside => format!("({rows}, {blank})"),
+        Underscore::Holding => format!("if c {{ {rows} }} else {{ xs[i] }}"),
+        Underscore::First => format!("{{ r = {rows}; (if c {{ r }} else {{ xs[i] }}, r) }}"),
+        Underscore::Cascade => {
+            format!("{{ r = ({rows}, {blank}); (if d {{ r }} else {{ ys[j] }}, r) }}")
+        }
+    };
+    format!(
+        "p(positional s, positional v) = (s, (s, v));\nf({}, xs, i, ys, j, c: bool, d: bool) = {result};\n",
+        params.join(", ")
+    )
+}
+
+/// The signature of `f` in [`underscore_rows`] written as a tree, each tuple in full at each
+/// place: `2^n` copies of the innermost row, so only for small `n`.
+fn underscore_rows_in_full(n: usize, form: Underscore) -> String {
+    let names = ["T", "U", "V", "W", "X", "Y", "Z"];
+    let rows = (1..=n).fold("T".to_string(), |s, i| {
+        format!("({s}, ({s}, {}))", names[i])
+    });
+    let vars = match form {
+        Underscore::Holding => vec!["_"; n + 1].join(", "),
+        _ => names[..=n].join(", "),
+    };
+    let result = match form {
+        Underscore::Beside => format!("({rows}, _)"),
+        Underscore::Holding => "_".to_string(),
+        Underscore::First => format!("(_, {rows})"),
+        Underscore::Cascade => format!("(_, ({rows}, _))"),
+    };
+    format!("({vars}, xs: _, i: _, ys: _, j: _, c: bool, d: bool) -> {result}")
+}
+
+/// Row PRINT-shared-underscore-union-tuple: a union written `_` beside, around, or at the
+/// first place of the shared rows of [`shared_rows`] leaves the rows written once each, so the
+/// text grows linearly in `n`. Before the row a union written `_` in a text that wrote a tuple
+/// once made the printer write the text again with every tuple in full, `2^n` copies of the
+/// innermost row. The print runs on a thread of its own with a time limit, so that the old path
+/// fails at the limit. The benchmark is
+/// `bench::scaling::shared_rows_beside_a_union_written_blank_print_in_linear_time`.
+///
+/// Each text reads back, and at `n` ≤ 6 the type read back is compared both ways with the type
+/// read from [`underscore_rows_in_full`], not with the signature as [`printed_back`] does: a
+/// `_` does not say which variables its union holds, so no type read back from a text with a
+/// `_` compares both ways with the signature (measured: false at one level, where the text
+/// names nothing). Nor is the type read back printed again to the same text: a `_` takes the
+/// places it covers out of the text, so the type read back holds a tuple at fewer places and
+/// may write it in full (`First` at three levels).
+#[test]
+fn forty_shared_rows_beside_a_union_written_blank_print_in_linear_text() {
+    use Underscore::*;
+    use zedc::check::read::parse_type;
+    let forms = [Beside, Holding, First, Cascade];
+    let (sent, got) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let texts: Result<Vec<(Underscore, usize, String)>, String> = (forms.iter())
+            .flat_map(|&form| [2, 3, 6, 40].map(|n| (form, n)))
+            .map(|(form, n)| {
+                let at = format!("{form:?} at {n} levels");
+                let text = sig_of(&underscore_rows(n, form), "f").to_string();
+                let back = parse_type(&text).map_err(|e| format!("{at}: {text}: {e}"))?;
+                if n <= 6 {
+                    let full = underscore_rows_in_full(n, form);
+                    let whole = parse_type(&full).map_err(|e| format!("{at}: {full}: {e}"))?;
+                    if !(back.subtype(&whole) && whole.subtype(&back)) {
+                        return Err(format!("{at}: {text} reads back as {back}, not as {full}"));
+                    }
+                }
+                Ok((form, n, text))
+            })
+            .collect();
+        let _ = sent.send(texts);
+    });
+    let texts = got
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the signatures of 40 shared rows beside a union written _ print within 10 s")
+        .unwrap_or_else(|e| panic!("{e}"));
+    for (form, n, text) in &texts {
+        assert!(
+            text.len() <= 64 * (n + 2),
+            "{form:?}: {} bytes at {n} levels:\n{text}",
+            text.len()
+        );
+    }
+    // At three levels the rows' second level is shared below a tuple written once, and is
+    // named where the rows stand once outside the `_`: before the row, `First` and `Cascade`
+    // were written in full.
+    let at_three: Vec<&str> = (texts.iter())
+        .filter(|(_, n, _)| *n == 3)
+        .map(|(_, _, t)| t.as_str())
+        .collect();
+    let params = "(T, U, V, W, xs: _, i: _, ys: _, j: _, c: bool, d: bool) -> ";
+    let part = "type Part1 = ((T, (T, U)), ((T, (T, U)), V));\n";
+    let beside = format!(
+        "{params}((((T, (T, U)), ((T, (T, U)), V)), (((T, (T, U)), ((T, (T, U)), V)), W)), _)"
+    );
+    let holding = "(_, _, _, _, xs: _, i: _, ys: _, j: _, c: bool, d: bool) -> _".to_string();
+    let first = format!("{part}{params}(_, (Part1, (Part1, W)))");
+    let cascade = format!("{part}{params}(_, ((Part1, (Part1, W)), _))");
+    assert_eq!(at_three, [beside, holding, first, cascade], "{at_three:#?}");
 }
 
 /// `r(positional line, bump = 1) = { a1 = (line else #none -> 0) + bump; a2 = (line else

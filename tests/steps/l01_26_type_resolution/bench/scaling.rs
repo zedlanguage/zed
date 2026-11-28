@@ -15,7 +15,8 @@ use super::super::scaling::{
     meeting_on_different_sets, met_and_within, nested_overload, never_arguments, overlapping_rows,
     overloads, payloads, resolved, results_holding_a_variable, results_met_alone,
     results_with_functions_met, shared_overloads, shared_rows, sum, sums_of_a_line_or_a_count,
-    tuple, variables, wide_arrows, wide_destructuring, wider_overloads, with_a_function_arrow,
+    tuple, underscore_rows, variables, wide_arrows, wide_destructuring, wider_overloads,
+    with_a_function_arrow,
 };
 
 /// Runs `want` on the unit `text(m)` at `n` and `8 * n`, both read and resolved before either
@@ -656,6 +657,35 @@ fn a_function_of_n_shared_rows_prints_in_linear_time() {
                 "{} bytes at {m} levels",
                 text.len()
             );
+        },
+    );
+}
+
+/// Row PRINT-shared-underscore-union-tuple: the signatures of `f` in `underscore_rows(n)`, each
+/// form, whose shared rows stand beside, inside, or at a place of a union written `_`, print in
+/// time and text linear in `n`. The signatures are checked before the timing, so the runs time
+/// the print alone. Besides its ratio: the text is at most 64 bytes a level. Small instance,
+/// read back: `scaling::forty_shared_rows_beside_a_union_written_blank_print_in_linear_text`.
+#[test]
+fn shared_rows_beside_a_union_written_blank_print_in_linear_time() {
+    use super::super::scaling::Underscore::*;
+    let n = 800;
+    let forms = [Beside, Holding, First, Cascade];
+    let sigs = scaling::inputs(n, |m| {
+        forms.map(|form| super::super::sig_of(&underscore_rows(m, form), "f"))
+    });
+    scaling::check(
+        "the signatures of n shared rows beside a union written _, printed",
+        n,
+        |m| {
+            for s in &sigs[&m] {
+                let text = s.to_string();
+                assert!(
+                    text.len() <= 64 * (m + 2),
+                    "{} bytes at {m} levels",
+                    text.len()
+                );
+            }
         },
     );
 }
