@@ -25446,6 +25446,12 @@ impl Walk {
     // ([`defs::name_vars`]), so the two walks and the naming are O(n log n) (COMPLEXITY.md
     // F169). Memory: one node per type of the text and one entry per place of a variable.
     fn plan(&mut self, scope: &mut Scope) -> Option<Plan> {
+        self.weigh(scope).0
+    }
+
+    /// As [`Walk::plan`], with the weights it leaves: how many times each type stands in the
+    /// text read back, capped at two, none inside a union written `_` ([`Weights::node`]).
+    fn weigh(&mut self, scope: &mut Scope) -> (Option<Plan>, Weights) {
         let root: Vec<usize> = (0..scope.same.len()).map(|k| scope.root(k)).collect();
         // Each variable counts once in a union: `x` and what `x else 0` leaves of it are one.
         let mut occ = Vec::with_capacity(self.occ.len());
@@ -25482,7 +25488,7 @@ impl Walk {
             .filter(|&k| weights.node[k] > 0 && absorbs(&self.nodes[k], &weights))
             .collect();
         if work.is_empty() && (0..root.len()).all(|r| weights.var(r) < 2) {
-            return None;
+            return (None, weights);
         }
         let mut absorbed = vec![false; self.nodes.len()];
         while let Some(k) = work.pop() {
@@ -25511,11 +25517,12 @@ impl Walk {
         }
         // A union written `_` inside another is marked too, but the second pass never enters
         // it: it steps over the outer one whole.
-        Some(Plan {
+        let plan = Plan {
             absorbed,
             count: (0..root.len()).map(|r| weights.var(r)).collect(),
             root,
-        })
+        };
+        (Some(plan), weights)
     }
 }
 
@@ -25867,7 +25874,7 @@ fn write_parts<'a>(
         (Print::Sig(_, at), _, Some(s)) => Print::Sig(s, at),
         (start, ..) => start,
     };
-    let shared = Shared::of(&start, spell);
+    let shared = Shared::of(&start, spell, true);
     let (marked, sets) = write_text(start, out, scope, spell, &shared);
     // Inside a message the marks and references stay, and the message names them with its own
     // words, so that a variable is never named as another type of the message is.
@@ -25891,7 +25898,7 @@ fn write_parts<'a>(
 /// time: its variables are named by the whole text ([`Walk`]). So is a tuple with variables,
 /// but one placed as [`Shared::local`] says (row PRINT-shared-part-exponential): a tuple held
 /// in two places or more, below a part, whose variables are all bound by the one function the
-/// text writes, and that holds no function, no payload and no variable bounded by carriers, is
+/// text writes, its bounded ones included, and that holds no function and no payload, is
 /// written in full at its first place outside the unions written `_` only, marked so that [`defs::lift`] takes that text as a
 /// soft part's body once its variables are named, and by reference at the others. Its
 /// variables then stand once in the text for each place, as [`Walk::plan`] counts them; the
@@ -25978,8 +25985,13 @@ impl Shared {
     }
 
     /// The shared closed parts of the text from `start`, their bodies placed in the table, and
-    /// those an earlier print for the table placed ([`Settled`]).
-    fn of(start: &Print<'_>, spell: Option<Spell<'_>>) -> Shared {
+    /// those an earlier print for the table placed ([`Settled`]). With `placing` false, for a
+    /// walk that only counts the places of variables ([`Sig::standing_twice`]), no table is
+    /// read or written: no closed part is placed, every one is passed over
+    /// ([`Shared::closed`]), and only the tuples written once ([`Shared::local`]) are found, as
+    /// for the print, so that the count walks each such tuple once, not at each of its places
+    /// (row PERF-standing-twice-shared-empty).
+    fn of(start: &Print<'_>, spell: Option<Spell<'_>>, placing: bool) -> Shared {
         #[derive(Clone, Copy)]
         enum Node<'a> {
             Ty(&'a Ty),
@@ -25988,7 +26000,10 @@ impl Shared {
             Sig(&'a Sig, Option<&'a Arc<Sig>>),
             Shape(&'a Shape),
         }
-        let mut shared = Shared::default();
+        let mut shared = Shared {
+            closed: !placing,
+            ..Shared::default()
+        };
         let first = match *start {
             Print::Ty(t, _) | Print::Found(t) => Node::Ty(t),
             Print::Sig(s, _) | Print::Family(s) => Node::Sig(s, None),
@@ -25999,7 +26014,13 @@ impl Shared {
         };
         let spelled = spell.is_some();
         // The function whose variables a part written once may hold, and the names some other
-        // function binds, or any function bounds by carriers ([`Shared::local`]).
+        // function binds, its own or bounded by carriers ([`Shared::local`]). The owner's own
+        // variables bounded by carriers may stand in such a part: the text writes each by its
+        // name, and the owner's one bounds clause, at the end of its text, binds it at every
+        // use of the part's definition. A name another function binds may mean that
+        // function's variable at one place of the part and the owner's at another, so a part
+        // holding it is written in full at each place (row
+        // PRINT-bounded-var-in-shared-tuple-exponential).
         let owner = sole_sig(start);
         let mut others: HashSet<Arc<str>> = HashSet::new();
         // By address: every node is borrowed from `start` for the whole walk, so no key names
@@ -26014,7 +26035,7 @@ impl Shared {
         let mut order: Vec<Node<'_>> = Vec::new();
         // Each node with whether it is left, on top and below a part.
         let mut stack: Vec<(Node<'_>, bool, bool, bool)> = vec![(first, false, true, false)];
-        defs::with_kept_of(|settled: &mut Settled| {
+        let mut walk = |settled: &mut Settled| {
             while let Some((node, left, top, below)) = stack.pop() {
                 if left {
                     order.push(node);
@@ -26061,11 +26082,9 @@ impl Shared {
                         let (places, held) = sigs.entry(key.0).or_insert((0usize, false));
                         *places += 1;
                         *held |= below;
-                        if *places == 1 && owner.is_some() {
+                        if *places == 1 && owner.is_some_and(|o| !std::ptr::eq(o, s)) {
                             others.extend(s.bounds.keys().cloned());
-                            if owner.is_none_or(|o| !std::ptr::eq(o, s)) {
-                                others.extend(s.own.iter().cloned());
-                            }
+                            others.extend(s.own.iter().cloned());
                         }
                         if *places == 1 {
                             stack.push((node, true, top, below));
@@ -26084,8 +26103,14 @@ impl Shared {
                     }
                 }
             }
-        })
-        .expect("a printed text has a table of definitions (defs::local)");
+        };
+        // Counting, the parts an earlier print placed are not read: they are closed, and so
+        // passed over.
+        match placing {
+            true => defs::with_kept_of(walk)
+                .expect("a printed text has a table of definitions (defs::local)"),
+            false => walk(&mut Settled::default()),
+        }
         // Each body is written with the parts inside it placed already, by reference.
         let place = |start: Print<'_>, shared: &Shared| {
             let mut body = String::new();
@@ -26094,12 +26119,15 @@ impl Shared {
         };
         let mut placed: Vec<(Node<'_>, String)> = Vec::new();
         // Whether each tuple may be written once with its variables ([`Shared::local`]): its
-        // components hold no function and no payload, each variable they hold the owner binds
-        // and no other function binds or any bounds, and each tuple they hold may be so. A
-        // tuple is left after those it holds, so one look at each component, O(n) in all with
-        // a hash lookup per tuple and variable.
+        // components hold no function and no payload, each variable they hold the owner binds,
+        // as its own or bounded by carriers, and no other function binds, and each tuple they
+        // hold may be so. A tuple is left after those it holds, so one look at each component,
+        // O(n) in all with a hash lookup per tuple and variable.
         let mut writable: HashMap<NodeId, bool> = HashMap::new();
-        let free = |v: &Arc<str>| owner.is_some_and(|o| o.own.contains(v)) && !others.contains(v);
+        let free = |v: &Arc<str>| {
+            owner.is_some_and(|o| o.own.contains(v) || o.bounds.contains_key(v))
+                && !others.contains(v)
+        };
         for (rank, node) in order.into_iter().enumerate() {
             if let (Node::Row(r), Some(_)) = (node, owner) {
                 let ok = r.iter().all(|c| {
@@ -26117,6 +26145,7 @@ impl Shared {
                 }
             }
             match node {
+                _ if !placing => {}
                 Node::Row(r) if matches!(rows[&r.node()], (2.., true)) && !r.holds_vars() => {
                     let name = place(Print::Row(r, PrintAt::Any), &shared);
                     shared.rows.insert(r.node(), name.clone());
@@ -26833,8 +26862,13 @@ impl Sig {
     // TEST-standing-twice-matches-printer). Used: the printer's first walk and plan, O(n log n)
     // in the size n of the text, the cost of printing it; the tuples and functions that hold
     // no variable, which a print may write by reference, are passed over ([`Shared::closed`]),
-    // and the types of the unions printed `_` are marked in one sweep, O(n). A caller that
-    // prints the signature after asking pays the print twice, the same order.
+    // and the tuples with variables that the print writes once ([`Shared::local`]) are walked
+    // once, their places weighed by the plan's [`Weights`], as the print does. Until row
+    // PERF-standing-twice-shared-empty the walk passed no such tuple, so it entered a tuple
+    // held twice at each of n levels 2^n times: the bench
+    // `the_variables_standing_twice_in_n_shared_rows_are_found_in_linear_time` did not end in
+    // 60 s at 800 levels. A caller that prints the signature after asking pays the print
+    // twice, the same order.
     pub fn standing_twice(&self) -> HashSet<Arc<str>> {
         let absorbed = Absorb::sig(self);
         let s = absorbed.as_ref().unwrap_or(self);
@@ -26843,13 +26877,10 @@ impl Sig {
             named: Some(Vec::new()),
             ..Walk::default()
         };
-        let shared = Shared {
-            closed: true,
-            ..Shared::default()
-        };
         let start = Print::Sig(s, PrintAt::Any);
+        let shared = Shared::of(&start, None, false);
         walk_parts(start, &mut String::new(), &mut scope, &mut walk, &shared);
-        let plan = walk.plan(&mut scope);
+        let (plan, weights) = walk.weigh(&mut scope);
         // The walk opened `s` first, on an empty scope, so its unbounded variables have the
         // numbers a scope opened on `s` alone gives them ([`Scope::open`]).
         let mut slots = Scope::default();
@@ -26862,28 +26893,16 @@ impl Sig {
                 twice.insert(v.clone());
             }
         }
-        // The types inside a union printed `_` alone, which hold no place.
-        let mut gone = vec![false; walk.nodes.len()];
-        if let Some(plan) = &plan {
-            let mut k = 0;
-            while k < walk.nodes.len() {
-                match plan.absorbed[k] {
-                    true => {
-                        let end = walk.nodes[k].end;
-                        gone[k..end].fill(true);
-                        k = end;
-                    }
-                    false => k += 1,
-                }
-            }
-        }
+        // Each place of a bounded variable counts as many times as its type stands in the text
+        // read back ([`Weights::node`]): none inside a union printed `_` alone, and in the text
+        // of a tuple written once, once for each place of the tuple left, capped at two.
         let mut count: HashMap<Arc<str>, usize> = HashMap::new();
         for (k, v) in walk.named.into_iter().flatten() {
             let carriers = s.bounds.get(&v).is_some_and(|&m| m & OTHER == 0);
-            if !gone[k] && carriers {
+            if carriers {
                 let c = count.entry(Arc::clone(&v)).or_default();
-                *c += 1;
-                if *c == 2 {
+                *c += usize::from(weights.node[k]);
+                if *c >= 2 {
                     twice.insert(v);
                 }
             }
