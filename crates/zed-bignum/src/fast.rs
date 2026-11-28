@@ -2752,9 +2752,15 @@ fn rem_cost_past_leaf(qw: usize, b: &BigUint) -> f64 {
 /// terms of the remainder's points `level(bw)` (nonnegative) left out. Proof that `level(c)`
 /// is at least the replacement: `n = c.next_power_of_two() >= c >= h`, and `points_cost(n) = n
 /// max(1, log2 n)` (`n` is a power of two, so `trailing_zeros(n) = log2 n`) only grows with
-/// `n`, so it is at least `h max(1, log2 h) >= h max(1, floor(log2 h))`. Each `level` in
-/// `newton_cost` has a nonnegative coefficient (`5/3 + 1/3 + 2B/3` on `level(2 bw)` for `B`
-/// blocks, and `8/3` and 1 in the narrow branch), so the bound carries over; dropping the
+/// `n`, so it is at least `h max(1, log2 h) >= h max(1, floor(log2 h))`. The estimate's
+/// [`transform_cost`]`(2 w - 1)`, `w` = `bw` or `qw`, is at least the same replacement for `c =
+/// 2 w`, `h = w`: it is `TRANSFORM_COST points_cost(n)` plus a nonnegative top term
+/// (`WRAP_COST n` and a cost), on the points `n` of [`points`]`(w, w)`, which are the power of
+/// two at or above `2 w - 1 >= w` or, wrapped, half of it, which wraps only where `w <= n`
+/// ([`wrap_flip`]); so `n >= w` and the step above applies. Each term has a nonnegative
+/// coefficient (`5/3` on `level(2 bw)` and `1/3 + 2B/3` on `transform_cost(2 bw - 1)` for `B`
+/// blocks, and `5/3` on `level(2 qw)`, 1 on `transform_cost(2 qw - 1)` and 1 on `level(bw)` in
+/// the narrow branch), so the bound carries over; dropping the
 /// nonnegative `level(bw)` terms only lowers it. Test:
 /// `tests::the_newton_floor_is_at_most_its_cost`. Measured on 2, 4,
 /// .., 2^200 (callgrind, 2026-11-23): `newton_cost`'s choice of points took 7,700 instructions
@@ -2842,9 +2848,12 @@ fn sparse_div_cost(qw: usize, b: &BigUint) -> f64 {
 /// from 1898 words (DRY-numeric-shared-rest, 2026-11-20).
 ///
 /// A quotient at most as wide as the divisor costs its products on the points of its
-/// [`Level`] ([`level_points`]): the power of two at or above `2 qw` words for the estimate
-/// and at or above about `bw` for the remainder, which never wrap their top coefficients as
-/// [`transform_cost`] may. With [`transform_cost`] the cost of `2049` by `2049` words read
+/// [`Level`] ([`level_points`]): [`transform_cost`]`(2 qw - 1)` for the estimate, which
+/// [`Level::estimate`] wraps as [`transform_cost`] does (plan row
+/// PERF-transform-cubic-ratio-to-9), the build's [`approx_reciprocal`] at 5/3 of a product on
+/// the power of two at or above `2 qw` words, and the power of two at or above about `bw` for
+/// the remainder. Before the estimate wrapped, its points were the power of two at or above
+/// `2 qw` words, and with [`transform_cost`] the cost of `2049` by `2049` words read
 /// about that of `2048` by `2048`, and the build took the reciprocal there at 1.527 times
 /// num-bigint's work (29,147,467 against 19,087,323 instructions; `crossover div-leaf 1 1 0
 /// 2048,2049,2896,4096,5793`, zed_icount, 2026-11-23, plan row
@@ -2861,7 +2870,9 @@ fn sparse_div_cost(qw: usize, b: &BigUint) -> f64 {
 /// count, read from the code: a product is three transforms (two forward, one inverse) on its
 /// points `N`, so `level(N) / 3` a transform, `level(N) = TRANSFORM_COST N log2 N`.
 /// [`Divisor::with_way`] builds `Level::new(d, n, n)`, whose points are [`level_points`]`(n,
-/// n)`: `L`, the power of two at or above `2 bw` words, for the estimate, and `C`, that of
+/// n)`: `L`, the points [`points`]`(bw, bw)` gives, for the estimate (costed as
+/// [`transform_cost`]`(2 bw - 1)`, since [`Level::estimate`] wraps as it does; the build stays
+/// on the power of two at or above `2 bw`), and `C`, that of
 /// [`cyclic_points`]`(n)`, at most `bw` words' power of two, for the remainder (taken here at
 /// `bw`'s power of two, as the narrow branch takes `level(bw)`). The build is
 /// [`approx_reciprocal`] of `bw` words, 5/3 of a product (as above), and one transform on each
@@ -2880,11 +2891,13 @@ fn newton_cost(qw: usize, bw: usize) -> f64 {
     let level = |coeffs: usize| TRANSFORM_COST * points_cost(coeffs.next_power_of_two()) as f64;
     match qw > bw {
         true => {
-            let (linear, cyclic) = (level(2 * bw), level(bw));
+            let (linear, cyclic) = (transform_cost(2 * bw - 1), level(bw));
             let blocks = (qw - 1).div_ceil(bw) as f64;
-            5.0 * linear / 3.0 + (linear + cyclic) / 3.0 + blocks * 2.0 * (linear + cyclic) / 3.0
+            5.0 * level(2 * bw) / 3.0
+                + (linear + cyclic) / 3.0
+                + blocks * 2.0 * (linear + cyclic) / 3.0
         }
-        false => 8.0 * level(2 * qw) / 3.0 + level(bw),
+        false => 5.0 * level(2 * qw) / 3.0 + transform_cost(2 * qw - 1) + level(bw),
     }
 }
 
@@ -4612,13 +4625,16 @@ fn cyclic_points(bits: u64) -> usize {
 }
 
 /// The points of the two products of a [`Level`] for a divisor of `bits` bits whose top `k`
-/// bits give the reciprocal: the estimate's, on the `2 yw` words of a product of two numbers of
-/// `yw` words, `k` bits' words, and the remainder's ([`cyclic_points`]); the reciprocal's own
-/// need no more than the first.
+/// bits give the reciprocal: the estimate's, those [`points`] gives a product of two numbers of
+/// `yw` words, `k` bits' words (half the power of two at or above its `2 yw - 1` coefficients,
+/// wrapped by [`Level::estimate`], where [`transform_cost`] says that is cheaper), and the
+/// remainder's ([`cyclic_points`]). The reciprocal's own need no more than the first: its top
+/// step is on `cyclic_points(64 yw)`, the power of two at or above `yw` words, and the wrapped
+/// points are at least `yw` ([`points`] wraps only a factor that fits).
 fn level_points(bits: u64, k: u64) -> (usize, usize) {
     // Unreachable: a reciprocal of `k` bits in memory has fewer words than a `usize` counts.
     let yw = usize::try_from(k.div_ceil(64)).expect("a number whose words fit in memory");
-    ((2 * yw).next_power_of_two(), cyclic_points(bits))
+    (points(yw, yw).0, cyclic_points(bits))
 }
 
 /// `2^e mod (2^(64 m) - 1)`, as `m` words: one bit.
@@ -4816,15 +4832,18 @@ struct Printer {
 
 /// A divisor `d`, of `n` bits, divided by many times, with what each division needs
 /// transformed once (per prime of [`FIELDS`], [`Field::spectrum`]): `y`, the spectra of
-/// `X' = X - 2^w` on enough points for its product with a number of `yw` words, `X` the
+/// `X' = X - 2^w` on the points of its product with a number of `yw` words, wrapped or not
+/// ([`level_points`], [`Level::estimate`]), `X` the
 /// reciprocal of `t`, the top `k <= n` bits of `d`, shifted to `w = 64 yw` bits, with
-/// `T X <= 2^2w <= T (X + 2)`, `T = t 2^(w - k)` (the floor, or [`approx_reciprocal`]); and `dc`,
+/// `T X <= 2^2w <= T (X + 2)`, `T = t 2^(w - k)` (the floor, or [`approx_reciprocal`]); `low`,
+/// the words of `X'`, whose top words a wrapped product reads; and `dc`,
 /// the spectra of `d` on `m` points, `64 m >= n - 55` ([`cyclic_points`]), or more.
 struct Level {
     d: Vec<u64>,
     bits: u64,
     yw: usize,
     y: [Vec<u64>; 3],
+    low: Vec<u64>,
     dc: [Vec<u64>; 3],
 }
 
@@ -4845,6 +4864,7 @@ impl Level {
         trim(&mut low);
         Level {
             y: spectra(&low, linear, tw),
+            low,
             dc: spectra(&d, cyclic, tw),
             // Unreachable: `w / 64` is the word count of a reciprocal held in memory.
             yw: usize::try_from(w / 64).expect("a number whose words fit in memory"),
@@ -4869,8 +4889,7 @@ impl Level {
         }
         let xh = shr_words(x, self.bits);
         debug_assert!(xh.len() <= self.yw, "x / 2^n is below 2^w");
-        let (yx, carry) = cyclic_product(&xh, &self.y, tw);
-        debug_assert_eq!(carry, 0, "the product fits in its points");
+        let yx = self.estimate(&xh, tw);
         let mut q = xh;
         add_words(&mut q, yx.get(self.yw..).unwrap_or(&[]));
         drop(yx);
@@ -4911,6 +4930,63 @@ impl Level {
         }
         debug_assert!(steps <= 4, "the estimate is at most four off");
         (q, r)
+    }
+
+    /// `xh X'` as words, `xh` of at most `yw` words, by a cyclic product on the `n` points of
+    /// `y`. Where its `c = lx + ly - 1` coefficients (`lx` and `ly` the words of `xh` and `X'`
+    /// to their top nonzero one) exceed `n`, the product is wrapped as [`Field::linear_on`]
+    /// wraps one: the cyclic product holds `c_t + c_(n + t)` at `t < r = c - n`, and the top
+    /// `r` coefficients `c_(n + t)` are those of the product of the top `min(lx, r)` words of
+    /// `xh` and `min(ly, r)` of `X'` alone (a word `xh_i` reaches `c_(n + t)` only with some
+    /// `X'_j`, `j <= ly - 1`, so `i >= n - ly + 1 = lx - r`, and the same for `X'`), found by
+    /// [`Field::linear`] and subtracted modulo each prime before Garner's step. A cyclic
+    /// product needs each factor within its points: `xh` has at most `yw` words and `X'` at most
+    /// `yw`, and [`level_points`] wraps only where both fit in `n` ([`points`]). So the
+    /// estimate of a quotient of `2^j + 1` words is on `2^(j + 1)` points, not `2^(j + 2)`
+    /// (plan row PERF-transform-cubic-ratio-to-9). The coefficients, each at most
+    /// `min(lx, ly) (2^64 - 1)^2 < 2^185`, are found exactly by the three primes, and the
+    /// product, below `2^(64 (lx + ly))`, fits in `c` words and one word of carry. O(M(yw)).
+    fn estimate(&self, xh: &[u64], tw: &Roots) -> Vec<u64> {
+        let n = self.y[0].len();
+        let top = |x: &[u64]| x.len() - x.iter().rev().take_while(|&&v| v == 0).count();
+        let (lx, ly) = (top(xh), top(&self.low));
+        if lx == 0 || ly == 0 {
+            return Vec::new();
+        }
+        debug_assert!(lx <= n && ly <= n, "each factor fits in the points");
+        let coeffs = lx + ly - 1;
+        let [mut r0, mut r1, mut r2] =
+            [0, 1, 2].map(|k| FIELDS[k].cyclic(&xh[..lx], &self.y[k], &tw[k]));
+        if coeffs > n {
+            let r = coeffs - n;
+            let (ra, rb) = (lx.min(r), ly.min(r));
+            let a = from_words(xh[lx - ra..lx].to_vec());
+            let b = from_words(self.low[ly - rb..ly].to_vec());
+            let mut fb = Vec::new();
+            for (k, v) in [&mut r0, &mut r1, &mut r2].into_iter().enumerate() {
+                let f = &FIELDS[k];
+                let d = f.linear(&a, 0, Some((&b, 0)), &tw[k], &mut fb);
+                // `d_i` is the coefficient at `lx - ra + ly - rb + i = n + t` for
+                // `i = t + ra + rb - 1 - r`, and `ra + rb >= r + 1` since both are at least 1
+                // and one is `r`.
+                let high = &d[ra + rb - 1 - r..];
+                debug_assert_eq!(high.len(), r, "the top `r` coefficients");
+                for (x, &h) in v.iter_mut().zip(high) {
+                    *x = f.sub(*x, h);
+                }
+                v.truncate(n);
+                v.extend_from_slice(high);
+            }
+        } else {
+            r0.truncate(coeffs);
+        }
+        let carry = garner(&mut r0, &r1, &r2);
+        debug_assert!(
+            carry >> 64 == 0,
+            "the product fits in its words and one more"
+        );
+        r0.push(carry as u64);
+        r0
     }
 }
 
@@ -5043,6 +5119,7 @@ impl Printer {
             let low = (&y - (BigUint::one() << w)).to_u64_digits();
             levels.push(Level {
                 y: spectra(&low, linear),
+                low,
                 dc,
                 yw: dw.len(),
                 d: dw,
@@ -5877,7 +5954,9 @@ mod tests {
     /// ([`level_points`]): measured 1.83 and 1.87 times the instructions at 2049 words of
     /// divisor as at 2048, for quotients of about 4096 and 6145 words (plan row
     /// PERF-div-wide-reciprocal-step). Before, on [`transform_cost`], which wraps 4098
-    /// coefficients onto 4096 points, the cost read 0.95 to 1.0 times.
+    /// coefficients onto 4096 points, the cost read 0.95 to 1.0 times. Since the estimate wraps
+    /// as well ([`Level::estimate`], PERF-transform-cubic-ratio-to-9), only the build's points
+    /// and the remainder's ([`cyclic_points`]) double there, and the step is theirs.
     #[test]
     fn the_cost_of_a_wide_quotient_steps_past_a_power_of_two_of_divisor() {
         for qw in [4096, 4097, 6145] {
@@ -5901,7 +5980,7 @@ mod tests {
                 let blocks = (qw - 1).div_ceil(bw);
                 assert_eq!(steps, blocks + 1, "bw {bw} qw {qw}");
                 let level = |c: usize| TRANSFORM_COST * points_cost(c.next_power_of_two()) as f64;
-                let per_block = 2.0 * (level(2 * bw) + level(bw)) / 3.0;
+                let per_block = 2.0 * (transform_cost(2 * bw - 1) + level(bw)) / 3.0;
                 let first = newton_cost(bw + 1, bw) - per_block;
                 let (cost, want) = (newton_cost(qw, bw), first + blocks as f64 * per_block);
                 assert!(
