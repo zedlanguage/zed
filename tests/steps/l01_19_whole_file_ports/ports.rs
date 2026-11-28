@@ -673,31 +673,31 @@ fn a_test_row_of_a_port_function_is_checked_for_its_shape() {
     };
     let cases = [
         (
-            "key",
+            "row_shape_key",
             r#"("a", ["hi"]) -> { result: (), out: ["hi a"] }"#,
             "3:9: A test key gives the output port `out` of `greet` as `[]`, the port before \
              the row pushes to it.",
         ),
         (
-            "not_record",
+            "row_shape_not_record",
             r#"("a", []) -> ()"#,
             "3:16: A row of `greet`, which pushes to its parameter `out`, expects a record: \
              `{ result: …, out: […] }`.",
         ),
         (
-            "unknown",
+            "row_shape_unknown",
             r#"("a", []) -> { result: (), out: ["hi a"], err: [] }"#,
             "3:50: `err` is not an output port of `greet`: the record of a row of it has the \
              fields `result` and `out`.",
         ),
         (
-            "twice",
+            "row_shape_twice",
             r#"("a", []) -> { result: (), out: ["hi a"], out: [] }"#,
             "3:45: the field `out` is given twice, and each field is given once. Remove one of \
              the two.",
         ),
         (
-            "no_result",
+            "row_shape_no_result",
             r#"("a", []) -> { out: ["hi a"] }"#,
             "3:16: A row of `greet` gives its result as the field `result`: \
              `{ result: …, out: […] }`.",
