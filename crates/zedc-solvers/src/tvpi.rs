@@ -47,17 +47,30 @@
 //! scanned in the order of their rows, and on the fixture `parity` of the tests some orders of
 //! the same rows crossed and others stopped). So the edges are sorted by
 //! `(from, to, num, den, k)` and repeats dropped. The one-variable bounds are kept as a maximum,
-//! a constant row below 0 answers `true` wherever it stands, the nodes are numbered by the
-//! sorted variables and queued first in node order, so every step of the search is a function of
+//! a constant row below 0 answers `true` wherever it stands, the nodes are numbered as in "One
+//! numbering" and queued first in node order, so every step of the search is a function of
 //! the set of rows: any order of the same rows gives the same answer, stopped or not.
 //!
 //! The stop cannot be replaced by a proved bound on the raises, because on some rows the raises
 //! never end: on `x` even (`2y >= x >= 2y`) and odd (`x >= 2z + 1 >= x`) with `x >= 0`, every
 //! round raises `x` by one, the cycles have gain 1 and constant 0 so no loop inequality fires,
 //! and no value crosses (the rows are empty at every integer point, with rational points;
-//! `every_row_order_gives_one_answer_where_the_search_stops_at_its_bound`). A renaming of the
-//! variables still renumbers the nodes, so where the search stops the answer may depend on the
-//! names (FAIL-tvpi-budget-naming); where it ends before the bound it does not ("Proof").
+//! `every_row_order_gives_one_answer_where_the_search_stops_at_its_bound`).
+//!
+//! # One numbering
+//!
+//! Numbering the nodes by the sorted variables made the answer of a stopped search depend on
+//! the names (FAIL-tvpi-budget-naming: on `parity`, cap 48 crossed under one of its 24 namings
+//! and stopped under the others). So the nodes are numbered by the structure of the rows: the
+//! stable coloring of canonical color refinement (Berkholz, Bonsma and Grohe, in
+//! `zed_kernel::refine`) of the graph of the nodes, the edge ends labeled by direction, gain and
+//! constant, and each node's link to its partner, from starting colors that name no variable;
+//! the variables are ordered by the colors of their two nodes. Where the refinement separates
+//! the variables, every step of the search is then a function of the set of rows
+//! (`every_naming_gives_one_answer_where_the_search_stops_at_its_bound`). Variables it leaves
+//! in one class keep the order of their names; that a stopped search's answer never depends on
+//! that order is NOT PROVED (FAIL-tvpi-refinement-ties; see `numbering`). Where the search ends
+//! before the bound the names never matter ("Proof").
 //!
 //! # Cycles of gain 1
 //!
@@ -98,7 +111,8 @@
 //! So whenever the search ends before its bound on scans, the answer is whether `F` crosses or
 //! is infinite, which `T`, and so the rows alone, defines: renaming the variables renames the
 //! nodes and changes nothing else. The order of the rows changes nothing at all ("One order");
-//! only a search stopped by the bound can answer by the names. That is also why a `G > 1`
+//! only a search stopped by the bound, on variables the refinement leaves in one class, may
+//! answer by the names ("One numbering"). That is also why a `G > 1`
 //! bound is not written to the other node of `v`: the bound is valid, but which cycles the
 //! parents show depends on the numbering, so writing it would make the values, and an answer,
 //! depend on the names, where testing it only reaches sooner an answer 3 shows is `F`'s. The
@@ -164,6 +178,7 @@ use std::collections::VecDeque;
 
 use super::linear::Term;
 use super::negsssp;
+use zed_kernel::refine::refine_places;
 use zedc_int::int::Int;
 use zedc_int::q::Q;
 
@@ -186,9 +201,9 @@ pub fn empty<'r>(rows: impl IntoIterator<Item = (&'r [Term], &'r Int)>) -> bool 
     search(rows) == Some(true)
 }
 
-/// The answer of [`empty`], `None` when the search stopped at its bound on scans, where the
-/// answer may depend on the names of the variables, never on the order of the rows (module
-/// doc, "One order" and "Proof").
+/// The answer of [`empty`], `None` when the search stopped at its bound on scans. It never
+/// depends on the order of the rows, nor on the names of variables the color refinement tells
+/// apart (module doc, "One order", "One numbering" and "Proof").
 fn search<'r>(rows: impl IntoIterator<Item = (&'r [Term], &'r Int)>) -> Option<bool> {
     let rows: Vec<(&[Term], &Int)> = rows.into_iter().filter(|(a, _)| a.len() <= 2).collect();
     let mut vars: Vec<usize> = rows
@@ -236,6 +251,18 @@ fn search<'r>(rows: impl IntoIterator<Item = (&'r [Term], &'r Int)>) -> Option<b
             _ => {}
         }
     }
+    // Nodes numbered by the structure of the rows, not by the names of the variables
+    // (FAIL-tvpi-budget-naming; module doc, "One numbering").
+    let at = numbering(&val, &edges);
+    let mut by_place = vec![None; nodes];
+    for (v, b) in val.into_iter().enumerate() {
+        by_place[at[v]] = b;
+    }
+    let val = by_place;
+    for e in &mut edges {
+        e.from = at[e.from];
+        e.to = at[e.to];
+    }
     // One order of the edges, whatever the order of the rows (FAIL-tvpi-budget-order): the
     // search below then depends on the set of rows alone (module doc, "One order").
     edges.sort_unstable();
@@ -261,6 +288,73 @@ fn search<'r>(rows: impl IntoIterator<Item = (&'r [Term], &'r Int)>) -> Option<b
         walks: 0,
     }
     .run()
+}
+
+/// The new number of each node: the variables ordered by the stable colors of their two nodes
+/// (canonical color refinement, [`refine_places`]), the old order breaking ties only between
+/// variables the refinement leaves in one color class; each variable keeps its lower node even
+/// and its upper node odd (module doc, "One numbering").
+// Complexity tradeoff: a numbering that no renaming changes is a canonical labeling of the
+// graph, which individualization and refinement (McKay and Piperno's nauty and Traces) find in
+// time exponential in the worst case. Used: color refinement alone, O((V + E) log V) for the
+// `V = 2n' + 2m'` vertices (`n'` nodes, `2m'` edge ends, `n'` pairings) and `E = 2·(2m' + n')`
+// arcs, which is a function of the rows wherever it separates the variables. Given up: the
+// variables it cannot tell apart (as on a regular graph of like rows) are ordered by name.
+// NOT PROVED (FAIL-tvpi-refinement-ties): that the order of the scans inside a tied class never
+// moves the scan at which the search crosses or stops. Residual case: the queue scans first the
+// tied node of the smaller name, which then sees values its class partners raised in the same
+// pass, so a run near the bound might cross under one naming and stop under another. Measured
+// 2026-11-28, no naming changed the answer or the number of scans: 100 random namings per cap,
+// at caps 12 below to 12 above the last crossed one, of rings of `parity` gadgets joined by
+// `x_next >= x + c` (c = 0 and -1000; rings 6+3+3, 4, 2+2, 4+2), and 300 of 2 and 3 copies.
+fn numbering(val: &[Option<Int>], edges: &[Edge]) -> Vec<usize> {
+    let nodes = val.len();
+    // Starting colors: a node by its kind and its bound, an edge end by its direction and its
+    // edge's gain and constant, the pairing of a variable's two nodes by a key of its own; each
+    // key's color is its rank among the keys, so a renaming leaves every color unchanged.
+    #[derive(PartialEq, Eq, PartialOrd, Ord)]
+    enum Key<'a> {
+        Node(bool, Option<&'a Int>),
+        End(bool, &'a Int, &'a Int, &'a Int),
+        Pair,
+    }
+    // Places `(node it is a place of, node it holds)`: each edge from both ends, each node
+    // holding its partner.
+    let mut places = Vec::with_capacity(2 * edges.len() + nodes);
+    let mut keys: Vec<Key> = (0..nodes)
+        .map(|v| Key::Node(v & 1 == 1, val[v].as_ref()))
+        .collect();
+    for e in edges {
+        places.push((e.from, e.to));
+        keys.push(Key::End(true, &e.num, &e.den, &e.k));
+        places.push((e.to, e.from));
+        keys.push(Key::End(false, &e.num, &e.den, &e.k));
+    }
+    for v in 0..nodes {
+        places.push((v, v ^ 1));
+        keys.push(Key::Pair);
+    }
+    let mut ranked: Vec<usize> = (0..keys.len()).collect();
+    ranked.sort_unstable_by(|&a, &b| keys[a].cmp(&keys[b]));
+    // The number of distinct keys: 0 when there are no variables (no vertices at all).
+    let mut color = vec![0; keys.len()];
+    let mut colors = 0;
+    for (i, &x) in ranked.iter().enumerate() {
+        if i == 0 || keys[x] != keys[ranked[i - 1]] {
+            colors += 1;
+        }
+        color[x] = colors - 1;
+    }
+    let color = refine_places(color, colors, nodes, places.iter().copied());
+    let mut vars: Vec<usize> = (0..nodes / 2).collect();
+    // Stable: variables of one color pair keep the order of their names.
+    vars.sort_by_key(|&p| (color[2 * p], color[2 * p + 1]));
+    let mut at = vec![0; nodes];
+    for (i, &p) in vars.iter().enumerate() {
+        at[2 * p] = 2 * i;
+        at[2 * p + 1] = 2 * i + 1;
+    }
+    at
 }
 
 /// Whether the edges of gain 1 (`num = den`) have a cycle whose constants sum above 0, which
@@ -571,6 +665,18 @@ mod tests {
         assert!(!is_empty(&[]));
     }
 
+    #[test]
+    fn rows_with_no_variables_are_numbered_with_no_colors() {
+        // No variable: the graph `numbering` refines has no vertex and no color (a first
+        // version gave it one color and the refinement's worklist failed on it).
+        assert_eq!(answer(&[]), Some(false));
+        assert_eq!(answer(&rows(&[(&[], 0)])), Some(false));
+        assert_eq!(answer(&rows(&[(&[], -1)])), Some(true));
+        // Two terms of one variable that cancel leave a row of no variable, while the variable
+        // still has its two nodes.
+        assert_eq!(answer(&rows(&[(&[(0, 1), (0, -1)], 0)])), Some(false));
+    }
+
     /// Whether the rows have an integer point with every variable in `-r..=r`.
     fn has_point_in(rs: &[(Vec<Term>, Int)], n: usize, r: i64) -> bool {
         let mut x = vec![-r; n];
@@ -736,7 +842,11 @@ mod tests {
         for (u, want) in caps.skip(last.saturating_sub(8)) {
             let rs = parity(u as i64);
             for name in &names {
-                assert_eq!(answer(&renamed(&rs, name)), *want, "cap {u}, names {name:?}");
+                assert_eq!(
+                    answer(&renamed(&rs, name)),
+                    *want,
+                    "cap {u}, names {name:?}"
+                );
             }
         }
     }
