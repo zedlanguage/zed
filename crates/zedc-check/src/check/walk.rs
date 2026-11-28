@@ -12285,7 +12285,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             let gsig = only_fn(self.env.get(&id)?)?;
             let np = gsig.params.len();
             let cend = callee.span.end;
-            (named.is_empty() && positional.len() > np).then(|| (k, e, cend, positional, id, gsig))
+            (named.is_empty() && positional.len() > np)
+                .then_some((k, e, cend, positional, id, gsig))
         });
         let Some((k, e, cend, gp, id, gsig)) = found else {
             return;
