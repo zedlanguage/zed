@@ -5350,9 +5350,35 @@ impl Drop for ViaLink {
     }
 }
 
-/// The calls that passed a need on ([`Need::via`]).
+/// The calls that passed a need on ([`Need::via`]), and the arrows current where the need was
+/// made ([`ArrowTrail`]). Neither is part of the need's equality or hash (below).
 #[derive(Clone, Default)]
-pub struct CallPath(pub Option<Arc<ViaLink>>);
+pub struct CallPath(pub Option<Arc<ViaLink>>, pub ArrowTrail);
+
+/// The lambdas checked at the arrows of an intersection of function types that hold a place
+/// where the checker is, innermost first, each with the arrow it is checked at: what the
+/// checker uses to name the lambda whose arrows give a span two rebuildings (row
+/// MSG-arrow-lambda-nested-cause, zedc-check `Ck::arrow_cause`). A need made inside such
+/// lambdas carries the trail current when it was made ([`CallPath`]), so that a refusal met
+/// when the need is met later, at a call of the function around, names a lambda by the arrows
+/// of the walk that made the need.
+// Complexity tradeoff: a cons list, so that a push, a pop and the copy kept with a need or a
+// fit are O(1) (one `Arc` clone); the list is walked, O(depth), only at a refusal. The naive
+// form, a `Vec` of frames copied into each need, costs O(depth) per need made.
+#[derive(Clone, Default, Debug)]
+pub struct ArrowTrail(pub Option<Arc<ArrowFrame>>);
+
+/// One frame of an [`ArrowTrail`]: the lambda at `lam`, checked at its arrow `arrow`, and the
+/// frames around it.
+#[derive(Debug)]
+pub struct ArrowFrame {
+    /// The lambda's span.
+    pub lam: Span,
+    /// The arrow of the intersection it is checked at, from 0.
+    pub arrow: usize,
+    /// The frame of the lambda around it, if any.
+    pub up: Option<Arc<ArrowFrame>>,
+}
 
 /// The links outermost first, as the notes read them ([`CallPath::for_each_note`]), so that a
 /// path built of `Cons` links and the same path with a shared `Join` prefix (the form
@@ -5368,13 +5394,14 @@ impl std::fmt::Debug for CallPath {
 }
 
 impl CallPath {
-    /// Prepends one outer link `(at, text)` onto `tail` in O(1).
+    /// Prepends one outer link `(at, text)` onto `tail` in O(1), keeping `tail`'s trail.
     pub fn prepend(at: Span, text: Arc<str>, tail: &CallPath) -> CallPath {
-        CallPath(Some(Arc::new(ViaLink::Cons {
+        let path = Arc::new(ViaLink::Cons {
             at,
             text,
             next: tail.0.clone(),
-        })))
+        });
+        CallPath(Some(path), tail.1.clone())
     }
 
     /// Combines a shared inner-to-outer `prefix_rev` with one leaf link `(at, text)` and `tail`
@@ -5391,11 +5418,14 @@ impl CallPath {
             next: tail.0.clone(),
         });
         match prefix_rev {
-            None => CallPath(Some(leaf)),
-            Some(p) => CallPath(Some(Arc::new(ViaLink::Join {
-                prefix_rev: p,
-                tail: Some(leaf),
-            }))),
+            None => CallPath(Some(leaf), tail.1.clone()),
+            Some(p) => CallPath(
+                Some(Arc::new(ViaLink::Join {
+                    prefix_rev: p,
+                    tail: Some(leaf),
+                })),
+                tail.1.clone(),
+            ),
         }
     }
 

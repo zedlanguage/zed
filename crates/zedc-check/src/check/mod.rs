@@ -2192,6 +2192,42 @@ struct Alone {
     takes: u8,
 }
 
+/// The lambda to name for two rebuildings at one span, made under the trails `first` and `now`
+/// ([`ty::ArrowTrail`], innermost first): both trails are turned outermost first, and of the
+/// lambdas they share from the outside in, up to the first place where the two name different
+/// lambdas or one ends, the innermost whose arrow differs between the two. `None` where none
+/// differs (row MSG-arrow-lambda-nested-cause; the rule of the orchestrator's decision of
+/// 2026-11-23).
+///
+/// Why that lambda: a span is checked at two types only by the arrows of the lambdas around it
+/// (the proof at `Ck::coerce_at`), and the trails list those lambdas with the arrow each was
+/// checked at for each rebuilding. A shared lambda checked at the same arrow both times gave
+/// the span the same part of its type both times; the innermost one whose arrow differs is the
+/// nearest lambda whose two checks the span's two types come from, and passing it once at each
+/// arrow, the repair offered, checks its body once per arrow, where those two types no longer
+/// meet. With `g -> bothK(h: k -> pass(x: g))` passed to `both`, the trails at `g` are
+/// (`both`'s lambda at arrow 0, `bothK`'s at 0) and (at 1, at 0): the outer lambda is named.
+/// Past a place where the trails name different lambdas, frames belong to different places
+/// in the text and are not compared.
+// Complexity: O(d) in the depths of the two trails, once per refusal; the naive form, the
+// innermost recorded lambda around the span, is O(l) in the lambdas recorded but names the
+// inner lambda in the example above, whose repair is refused again.
+fn arrow_cause(first: &ty::ArrowFrame, now: &ty::ArrowFrame) -> Option<Span> {
+    let outside_in = |f: &ty::ArrowFrame| {
+        let mut frames = vec![(f.lam, f.arrow)];
+        let mut up = f.up.as_deref();
+        while let Some(g) = up {
+            frames.push((g.lam, g.arrow));
+            up = g.up.as_deref();
+        }
+        frames.reverse();
+        frames
+    };
+    let (a, b) = (outside_in(first), outside_in(now));
+    let shared = a.iter().zip(&b).take_while(|(x, y)| x.0 == y.0);
+    shared.filter(|(x, y)| x.1 != y.1).last().map(|(x, _)| x.0)
+}
+
 /// A class of values that must share one carrier: a node of the union-find forest of
 /// docs/thresholds.md, replacement 1. Only a root's fields other than `parent` and `rank`
 /// are read.
@@ -3113,6 +3149,15 @@ struct Ck<'t, 'a> {
     /// in the body are met later, at a call of the generic function the lambda lies in, and
     /// rebuild spans in the body then (`an_arrow_lambda_refused_through_a_call_s_needs_is_named`).
     arrow_lambdas: HashMap<Span, Arc<Sig>>,
+    /// The lambdas checked at the arrows of an intersection that hold the place being checked,
+    /// each with its arrow ([`ty::ArrowTrail`]): pushed and popped by [`Self::fit_step`]
+    /// around each check of such a body; while a need is met ([`Self::meet`]), the trail the
+    /// need was made under, where it has one. A need made now takes it ([`Self::passed_on`]).
+    arrow_now: ty::ArrowTrail,
+    /// For each span with a fit, the trail current when its first fit was written
+    /// ([`Self::set`]), where one was: of two rebuildings at a span, the one kept. Compared
+    /// with [`Self::arrow_now`] at the refusal of a second one ([`Self::arrow_cause`]).
+    fit_arrows: HashMap<Span, Arc<ty::ArrowFrame>>,
     /// How many lambdas are being checked at the arrows of an intersection outside a trial
     /// (`FitF::joined` in walk.rs): while any is, a bare `else` is not refused at each arrow
     /// but joined in [`Self::else_joined`], and refused once when the outermost ends
@@ -3862,6 +3907,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             remap_keys: Vec::new(),
             meet_alike: Vec::new(),
             arrow_lambdas: HashMap::new(),
+            arrow_now: ty::ArrowTrail::default(),
+            fit_arrows: HashMap::new(),
             arrow_fits: 0,
             else_joined: Vec::new(),
             else_joined_at: HashMap::new(),
@@ -12607,18 +12654,30 @@ impl Ck<'_, '_> {
     ///
     /// A different rebuilding at one span needs that span checked at two types, which only
     /// the arrows of such a lambda make (the proof at [`Self::coerce_at`]), so a span in no
-    /// recorded lambda keeps the other words. The lambda named is the innermost that holds
-    /// `at`; with one lambda checked at an intersection inside another, the outer one's arrows
-    /// may be those that make the two types, and naming the inner one there is not proved
-    /// right (row MSG-arrow-lambda-nested-cause). Cost: O(l) for the l lambdas recorded, once
-    /// per refusal; the naive way, a stack cut when each body ends, loses the lambda before a
-    /// later call meets the body's needs.
+    /// recorded lambda keeps the other words. The lambda named is the one whose arrows differ
+    /// between the two rebuildings ([`arrow_cause`]), from the trail of the first fit at `at`
+    /// ([`Self::fit_arrows`]) and the trail current now ([`Self::arrow_now`]): with one lambda
+    /// checked at an intersection inside another, `g -> bothK(h: k -> pass(x: g))` passed to
+    /// `both`, the outer one's arrows give `g` its two types, and it is named, not the inner
+    /// one (row MSG-arrow-lambda-nested-cause). Where either trail is missing (a fit written
+    /// outside such a lambda, a need made before its trail was kept, as one decoded from a
+    /// compact forward whose path holds none) or no common lambda's arrow differs, the lambda named is the
+    /// innermost recorded one that holds `at`, as before. Cost: O(l) for the l lambdas
+    /// recorded and O(d) for the depth of the trails, once per refusal; the naive way, a stack
+    /// cut when each body ends, loses the lambda before a later call meets the body's needs.
     fn arrow_lambda_twice(&mut self, at: Span) -> bool {
-        let Some((l, e)) = (self.arrow_lambdas.iter())
-            .filter(|(l, _)| l.start <= at.start && at.end <= l.end)
-            .min_by_key(|(l, _)| (l.end - l.start, l.start))
-            .map(|(l, e)| (*l, e.clone()))
-        else {
+        let caused = match (self.fit_arrows.get(&at), &self.arrow_now.0) {
+            (Some(first), Some(now)) => arrow_cause(first, now),
+            _ => None,
+        };
+        let caused = caused.and_then(|l| Some((l, self.arrow_lambdas.get(&l)?.clone())));
+        let innermost = || {
+            (self.arrow_lambdas.iter())
+                .filter(|(l, _)| l.start <= at.start && at.end <= l.end)
+                .min_by_key(|(l, _)| (l.end - l.start, l.start))
+                .map(|(l, e)| (*l, e.clone()))
+        };
+        let Some((l, e)) = caused.or_else(innermost) else {
             return false;
         };
         let code = self.code(Some(at)).unwrap_or("the value");
@@ -12663,6 +12722,21 @@ impl Ck<'_, '_> {
         }
         if let Undo::ArrowLambda(l, v) = w {
             return Undo::ArrowLambda(l, set!(self.arrow_lambdas, l, v));
+        }
+        // The trail of a span's first fit, for [`arrow_cause`]: kept where the fit is
+        // written to a span that had none, dropped where the span's fit is taken away. A
+        // trial's undo writes back what each write found, so a first fit the trial wrote is
+        // taken away with its trail, and one it replaced keeps the trail it had. O(1).
+        if let Undo::Fit(k, v) = &w {
+            match (v, &self.arrow_now.0) {
+                (None, _) => {
+                    self.fit_arrows.remove(k);
+                }
+                (Some(_), Some(now)) if !self.info.fits.contains_key(k) => {
+                    self.fit_arrows.insert(*k, now.clone());
+                }
+                _ => {}
+            }
         }
         let i = &mut self.info;
         match w {

@@ -1105,6 +1105,10 @@ pub(super) struct FitF<'a> {
     /// arrow, checked outside a trial. Its bare `else`s are refused once, when the outermost
     /// such fit ends ([`Ck::else_unnamed`]).
     joined: bool,
+    /// While the body is checked at an arrow of an intersection of more than one arrow, the
+    /// trail [`Ck::arrow_now`] held before this lambda's frame was pushed, put back when the
+    /// body ends.
+    outer: ty::ArrowTrail,
 }
 
 #[derive(Clone, Copy)]
@@ -13436,6 +13440,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             x: 0,
             waiting: None,
             joined,
+            outer: ty::ArrowTrail::default(),
         };
         self.fit_step(m, Box::new(s));
     }
@@ -13454,6 +13459,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Some(FitWait::Body) => {
                 let r = m.take_ty();
+                // The body's check at this arrow ended: the frame pushed for it goes (an
+                // intersection of one arrow pushed none, and `outer` is the trail as it was).
+                if s.e.arrows.len() > 1 {
+                    self.arrow_now = std::mem::take(&mut s.outer);
+                }
                 // The answer must lie in the arrow's value type, not its lookup type: for a
                 // partial arrow `K ->? V` the lookup is `V | #notFound`, and the `#notFound`
                 // there is the mark of an absent key, while what a function answers is a value
@@ -13603,6 +13613,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             // the record by hand.
             if s.e.arrows.len() > 1 {
                 self.record_arrow_lambda(s.span, s.e.clone());
+                // The frame of this lambda at this arrow, current while the body is checked
+                // ([`Ck::arrow_now`], row MSG-arrow-lambda-nested-cause); taken off at
+                // `FitWait::Body`. O(1).
+                let frame = ty::ArrowFrame {
+                    lam: s.span,
+                    arrow: s.a,
+                    up: self.arrow_now.0.clone(),
+                };
+                let now = ty::ArrowTrail(Some(Arc::new(frame)));
+                s.outer = std::mem::replace(&mut self.arrow_now, now);
             }
             s.waiting = Some(FitWait::Body);
             m.k(Frame::FitLambda(s));
@@ -17691,9 +17711,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The path of a need made now ([`Need::via`]): that of the callee's need being met at a
-    /// call, if one is ([`Ck::passing_on`]). O(1): one shared link is cloned.
+    /// call, if one is ([`Ck::passing_on`]), with the trail of arrows current now
+    /// ([`Ck::arrow_now`]), so that a refusal met when the need is met later names the lambda
+    /// by the arrows that held when it was made. O(1): one shared link and one frame cloned.
     fn passed_on(&self) -> CallPath {
-        self.passing_on.last().cloned().unwrap_or_default()
+        let mut path = self.passing_on.last().cloned().unwrap_or_default();
+        path.1 = self.arrow_now.clone();
+        path
     }
 
     /// Records that the use at `span` needs `kind` of each value of class `k`, and gives what
@@ -18095,6 +18119,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.need_chain.push(n.span);
         self.meet_alike.push((n.span, n.site(), n.alike.clone()));
         self.replaying += 1;
+        // The arrows that held where the need was made are current while it is met, so that
+        // a rebuilding it writes and a refusal it meets are placed under them
+        // ([`Self::arrow_lambda_twice`]); a need made under no such lambda keeps the trail of
+        // the walk around, as a call in a lambda's body meets its callee's needs there. A
+        // trail from the walk around is not joined to the need's own: a need's lambdas lie in
+        // the body of the function that made it, and `arrow_cause` (mod.rs) compares only the
+        // lambdas two trails share.
+        let around = match &n.via.1.0 {
+            Some(_) => Some(std::mem::replace(&mut self.arrow_now, n.via.1.clone())),
+            None => None,
+        };
         self.need_args = match &n.kind {
             NeedKind::Call { positional, .. } => {
                 Some(positional.iter().map(Ty::holds_vars).collect())
@@ -18415,6 +18450,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             frame.entries(&n.on, r);
         }
         self.replaying -= 1;
+        if let Some(t) = around {
+            self.arrow_now = t;
+        }
         self.need_chain.pop();
         self.meet_alike.pop();
         self.need_args = None;
@@ -36979,6 +37017,82 @@ mod tests {
         assert!(ck.arrow_lambdas.contains_key(&kept));
         ck.undo(&saved);
         assert!(ck.arrow_lambdas.contains_key(&kept));
+    }
+
+    /// The lambda `arrow_cause` names for two rebuildings at one span (row
+    /// MSG-arrow-lambda-nested-cause, decision (a) and (b) of 2026-11-23): the innermost shared
+    /// lambda whose arrow differs, compared from the outside in up to the first lambda the two
+    /// trails do not share; `None`, where the caller keeps its old choice, where no shared
+    /// lambda's arrow differs. Trails of different depths are compared over the lambdas they
+    /// share.
+    #[test]
+    fn the_lambda_named_for_two_rebuildings_is_the_innermost_whose_arrow_differs() {
+        let (outer, inner, other) = (
+            Span { start: 0, end: 40 },
+            Span { start: 10, end: 30 },
+            Span { start: 12, end: 28 },
+        );
+        // A trail from frames given outermost first.
+        let trail = |frames: &[(Span, usize)]| {
+            let mut up = None;
+            for &(lam, arrow) in frames {
+                up = Some(Arc::new(ty::ArrowFrame { lam, arrow, up }));
+            }
+            up.expect("a frame")
+        };
+        let cause = |a: &[(Span, usize)], b: &[(Span, usize)]| arrow_cause(&trail(a), &trail(b));
+        // The outer lambda's arrows differ, the inner one's agree: the outer one.
+        assert_eq!(
+            cause(&[(outer, 0), (inner, 0)], &[(outer, 1), (inner, 0)]),
+            Some(outer)
+        );
+        // The inner one's differ: the inner one.
+        assert_eq!(
+            cause(&[(outer, 0), (inner, 0)], &[(outer, 0), (inner, 1)]),
+            Some(inner)
+        );
+        // Both differ: the innermost.
+        assert_eq!(
+            cause(&[(outer, 0), (inner, 0)], &[(outer, 1), (inner, 1)]),
+            Some(inner)
+        );
+        // Different depths: the lambdas shared are compared.
+        assert_eq!(cause(&[(outer, 0)], &[(outer, 1), (inner, 0)]), Some(outer));
+        assert_eq!(cause(&[(outer, 0), (inner, 0)], &[(outer, 0)]), None);
+        // Past the first lambda the trails do not share, nothing is compared.
+        assert_eq!(
+            cause(&[(outer, 0), (inner, 0)], &[(outer, 0), (other, 1)]),
+            None
+        );
+        assert_eq!(cause(&[(inner, 0)], &[(other, 1)]), None);
+    }
+
+    /// The trail of a span's first fit is kept with it and goes when the fit is taken away,
+    /// so a trial that wrote the first fit at a span takes its trail back with its `undo`;
+    /// a later fit at the span keeps the first one's trail.
+    #[test]
+    fn the_trail_of_a_first_fit_goes_with_the_fit() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
+        let (at, lam) = (Span { start: 3, end: 4 }, Span { start: 0, end: 9 });
+        let frame = |arrow| {
+            ty::ArrowTrail(Some(Arc::new(ty::ArrowFrame {
+                lam,
+                arrow,
+                up: None,
+            })))
+        };
+        ck.arrow_now = frame(0);
+        let undo = ck.set(Undo::Fit(at, Some(Fit::Read(Carrier::Int))));
+        assert_eq!(ck.fit_arrows.get(&at).map(|f| f.arrow), Some(0));
+        ck.arrow_now = frame(1);
+        let again = ck.set(Undo::Fit(at, Some(Fit::Read(Carrier::F64))));
+        assert_eq!(ck.fit_arrows.get(&at).map(|f| f.arrow), Some(0));
+        ck.set(again);
+        assert_eq!(ck.fit_arrows.get(&at).map(|f| f.arrow), Some(0));
+        ck.set(undo);
+        assert!(!ck.fit_arrows.contains_key(&at));
     }
 
     /// The signature of a function of one positional parameter `x` of type `param` that gives
