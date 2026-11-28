@@ -696,22 +696,23 @@ fn syntax_with_old_break() -> String {
 }
 
 /// The fuzz finds a sentence the old `break` derives with every lookahead satisfied but the
-/// parser rejects. Seed 12 at five sentences per ring was found by running seeds from 1 (the
-/// first of them that finds it at this size; 37, 38, 62 and 82 do too) after the `with { }` list
-/// and the type's local parts came in (IMPL-with-list; seed 90, found by running seeds 1 to 500
-/// after the array, set and map displays went to ring L1, LAYER-audit-open item F, no longer
-/// does; seed 27, found after the type-level `else` went out and the `else` tail took a union of
-/// atoms in parentheses, QUESTIONS A113, no longer does; seed 11, found after `()` became a
-/// tuple value, seed 85 after the type-level `else` came in, seed 13 after the `if` statement,
-/// seed 294 before it and seed 45 before that no longer do); if a grammar change moves it, run
-/// the seeds again with a test that calls `fuzz_of` on this test's two specs for each seed and
-/// keeps those that meet the asserts below (the `fuzz` binary cannot: `Spec::open` reads the
-/// grammar of the tree it was built in). The same seed on the real grammar finds nothing, so the
-/// failure comes from the change.
+/// parser rejects. Seed 38 at five sentences per ring was found by running seeds from 1 (the
+/// first of them that finds it at this size; 62, 94 and 96 do too) after Block's display
+/// alternative went to ring L1 (FAIL-grammar-fuzz-seed-16384521090608770973; seed 12, found
+/// after the `with { }` list and the type's local parts came in, IMPL-with-list, no longer does;
+/// seed 90, found by running seeds 1 to 500 after the array, set and map displays went to ring
+/// L1, LAYER-audit-open item F, no longer does; seed 27, found after the type-level `else` went
+/// out and the `else` tail took a union of atoms in parentheses, QUESTIONS A113, no longer does;
+/// seed 11, found after `()` became a tuple value, seed 85 after the type-level `else` came in,
+/// seed 13 after the `if` statement, seed 294 before it and seed 45 before that no longer do);
+/// if a grammar change moves it, run the seeds again with a test that calls `fuzz_of` on this
+/// test's two specs for each seed and keeps those that meet the asserts below (the `fuzz` binary
+/// cannot: `Spec::open` reads the grammar of the tree it was built in). The same seed on the real
+/// grammar finds nothing, so the failure comes from the change.
 #[test]
 fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
     const N: usize = 5;
-    const SEED: i64 = 12;
+    const SEED: i64 = 38;
     let real = spec_dir("fuzz_real", &design(""), "");
     let real = Spec::open(&real.root()).expect("the spec reads");
     let (outcome, out) = fuzz_of(&real, N, SEED);
