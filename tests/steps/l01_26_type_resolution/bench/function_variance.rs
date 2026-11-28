@@ -942,11 +942,13 @@ fn needs_made_inside_nested_arrow_lambdas_scale() {
              c0(f) = f(y: 1);\n",
         );
         // `inc`, not a lambda: a lambda's parameter is positional, and `f` is called by name.
+        // `(call, 1)[1]`: the lambda must return `int`, and the call's result is not known
+        // until its need is met (as in `an_arrow_lambda_refused_through_a_call_s_needs_is_named`).
         for i in 0..n {
             let j = i + 1;
             src.push_str(&format!(
-                "o{i}(f) = both(h: g -> bothK(h: k -> f(y: {i})));\na{i} = o{i}(f: inc);\n\
-                 c{j}(f) = both(h: g -> bothK(h: k -> c{i}(f: f)));\n"
+                "o{i}(f) = both(h: g -> bothK(h: k -> (f(y: {i}), 1)[1]));\na{i} = o{i}(f: inc);\n\
+                 c{j}(f) = both(h: g -> bothK(h: k -> (c{i}(f: f), 1)[1]));\n"
             ));
         }
         src.push_str(&format!("d = c{n}(f: inc);\n"));
