@@ -78,6 +78,13 @@ pub struct R10Config {
     /// to the function's own calls (`defer` not empty), as before that row, not only one whose
     /// needs mention such a variable; the reference the default check is compared with.
     pub refuse_any_defer: bool,
+    /// FAIL-map-chain-held-name-renamed-apart-quadratic reference (plan section 8, D5): a
+    /// signature whose held name is named apart decodes its forwards and names the flat form
+    /// (`r10_flat_held`), as the checker did before that row's part A. Until part A is written
+    /// this is the only route, so the switch changes nothing yet; part A's naming in the eager
+    /// order must read it and keep this route under it, and the red tests that compare with it
+    /// assert that the default route decodes nothing.
+    pub flat_on_apart: bool,
 }
 
 impl Default for R10Config {
@@ -98,6 +105,7 @@ impl Default for R10Config {
             skip_held_names: false,
             finish_only_closed_held: false,
             refuse_any_defer: false,
+            flat_on_apart: false,
         }
     }
 }

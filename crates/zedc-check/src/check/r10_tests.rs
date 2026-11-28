@@ -5082,7 +5082,9 @@ fn r10_seeded_chains_closed_in_the_callee_agree_with_the_control() {
 /// it `W` in its flat needs. That decode is O(i) at link i, so bench 3 of row
 /// FAIL-map-chain-open-held-fn-quadratic stays at 54.8 times the instructions at 8n (53.7
 /// before this row, 2026-11-28); row FAIL-map-chain-held-name-renamed-apart-quadratic. The
-/// count is pinned at one a link so a change in either cause shows here.
+/// count is pinned at one a link so a change in either cause shows here. Since that row's
+/// plan (T7, D23) the one decode a link is pinned under `flat_on_apart` and the default check
+/// must decode none (red until part A).
 #[test]
 fn r10_a_chain_whose_links_hold_a_lambda_beside_the_call_admits_each_link() {
     let head =
@@ -5095,10 +5097,20 @@ fn r10_a_chain_whose_links_hold_a_lambda_beside_the_call_admits_each_link() {
         let decodes = fwd_decode_count();
         assert!(info.errors.is_empty(), "n={n}: {:?}", info.errors);
         assert_eq!(stats.refused.get("#12"), None, "n={n}: {:?}", stats.refused);
+        reset_fwd_decode_count();
+        let (_, flat_stats) = run_with_cfg(&src, flat_on_apart());
         assert_eq!(
-            decodes,
+            fwd_decode_count(),
             n as u64 - 1,
-            "n={n}: one decode a link, the held name named apart"
+            "n={n}: under flat_on_apart, one decode a link, the held name named apart"
+        );
+        assert_eq!(
+            flat_stats.refused, stats.refused,
+            "n={n}: admission differs"
+        );
+        assert_eq!(
+            decodes, 0,
+            "n={n}: by default the held name is named in the eager order, with no decode"
         );
         let control = R10Config {
             refuse_any_defer: true,
@@ -5242,7 +5254,9 @@ fn r10_a_deferred_variable_in_a_second_level_sigma_is_refused() {
 /// else, so no held item clashes and the template is reused as written: no forward is
 /// decoded. `g2` holds its own lambda `y -> (y, y)` before the call, whose variable is printed
 /// by the same name as the held `id`'s, so `finished_with` names one apart and takes the flat
-/// form: one decode. Each program's output, alone and with both callers, is the control's
+/// form: one decode, now only under `flat_on_apart`; by default part A of row
+/// FAIL-map-chain-held-name-renamed-apart-quadratic names it with no decode (plan T4, red until
+/// part A), and the output is the flat form's. Each program's output, alone and with both callers, is the control's
 /// (`finish_only_closed_held`, whose callers decode as E did) on every field: text, decoded
 /// needs, own variables and digests ([`info_eq_full`]), and with both callers each decodes as
 /// it does alone. Negative control: with the held names left out of `finished_with`
@@ -5279,8 +5293,18 @@ fn r10_two_callers_of_one_callee_reuse_held_template_only_without_clash() {
             panic!("{msg}\n{src}");
         }
     }
+    let (f2, nf2) = decodes_of(&clash, flat_on_apart());
+    if let Err(msg) = info_eq_full("g2 flat_on_apart", &f2, &d2) {
+        panic!("{msg}\n{clash}");
+    }
     assert_eq!(n1, 0, "g1 reuses the template: no decode");
-    assert_eq!(n2, 1, "g2's clash takes the flat form: {n2} decodes");
+    assert_eq!(
+        nf2, 1,
+        "under flat_on_apart, g2's clash takes the flat form: {nf2} decodes"
+    );
+    // Plan FAIL-map-chain-held-name-renamed-apart-quadratic T4: by default g2's held name is
+    // named in the eager order, with no decode (red until part A).
+    assert_eq!(n2, 0, "g2's clash decoded {n2} forwards");
     assert_eq!(nb, n1 + n2, "each caller decodes as it does alone");
     let skip = R10Config {
         skip_held_names: true,
@@ -5289,8 +5313,8 @@ fn r10_two_callers_of_one_callee_reuse_held_template_only_without_clash() {
     let (s2, m2) = decodes_of(&clash, skip);
     let (c2, _) = run_with_cfg(&clash, control);
     assert!(
-        m2 < n2,
-        "with held names skipped, g2 decoded {m2}, as without ({n2})"
+        m2 < nf2,
+        "with held names skipped, g2 decoded {m2}, as the flat form ({nf2})"
     );
     assert!(
         info_eq_full("g2 skip", &c2, &s2).is_err(),
@@ -5427,6 +5451,219 @@ fn r10_calls_with_unmentioned_deferred_variables_agree_with_the_control() {
             panic!("{msg}\n{src}");
         }
     }
+}
+
+/// One check of `src` under `cfg`, with the forwards it decoded on this thread.
+fn run_counting(src: &str, cfg: R10Config) -> (Info, u64) {
+    reset_fwd_decode_count();
+    let (info, _) = run_with_cfg(src, cfg);
+    (info, fwd_decode_count())
+}
+
+/// The reference of row FAIL-map-chain-held-name-renamed-apart-quadratic (plan section 8, D5):
+/// a held name named apart takes the flat form.
+fn flat_on_apart() -> R10Config {
+    R10Config {
+        flat_on_apart: true,
+        ..R10Config::default()
+    }
+}
+
+/// Plan FAIL-map-chain-held-name-renamed-apart-quadratic, section 8: each program is checked
+/// by default and under [`flat_on_apart`]. The two outputs must agree on every field
+/// ([`info_eq_full`]), the default check must take the compact branch (no decode), and the
+/// reference must decode, so the program does name a held name apart and the test is not
+/// empty. Every program is run and every fault reported at once, so a red run is the census.
+fn apart_census(programs: &[(String, String)]) {
+    let mut faults = Vec::new();
+    for (label, src) in programs {
+        let (d, n) = run_counting(src, R10Config::default());
+        let (c, nc) = run_counting(src, flat_on_apart());
+        if !d.errors.is_empty() {
+            faults.push(format!("{label}: errors {:?}", d.errors));
+        }
+        if let Err(msg) = info_eq_full(label, &c, &d) {
+            faults.push(msg);
+        }
+        if n != 0 {
+            faults.push(format!(
+                "{label}: {n} decodes (flat_on_apart {nc}): the compact branch was not taken"
+            ));
+        }
+        if nc == 0 {
+            faults.push(format!(
+                "{label}: the reference decodes nothing, so no held name is named apart"
+            ));
+        }
+    }
+    assert!(
+        faults.is_empty(),
+        "{} faults:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+}
+
+/// `id` and the `h0` of plan section 8 T3: a callee holding `id`, beside a lambda.
+const APART_HEAD: &str =
+    "id(positional x) = x;\nh0(positional a, positional m) = (m.map(id), x -> (x, a));\n";
+/// T3b's two-level `h0`: the held `id` is a child's, composed at the parent.
+const APART_HEAD_TWO_LEVEL: &str = "id(positional x) = x;\nh0b(positional a, positional m) = \
+     (m.map(id), x -> (x, a));\nh0(positional a, positional m) = (h0b(a, m), x -> (x, a));\n";
+/// The functions T3's links pass lambdas to. The plan writes `f` with one argument and with
+/// two (program H); the two-argument one is `f2` here.
+const APART_HELPERS: &str =
+    "f(positional k) = k;\ng(positional k) = k;\nf2(positional k, positional l) = (k, l);\n";
+/// T3's link bodies A-K (the plan has no E or I), each an `h1(a, m)` after the head.
+const APART_BODIES: [(&str, &str); 9] = [
+    ("A", "(h0(a, m), f(y -> (y, a)))"),
+    ("B", "(h0(a, m), x -> (x, a), f(y -> (y, a)))"),
+    ("C", "(f(y -> (y, a)), h0(a, m))"),
+    ("D", "(h0(a, m), f(y -> (y, a)), g(z -> (z, a)))"),
+    ("F", "(h0(a, m), m.map(y -> z -> (y, z, a)))"),
+    ("G", "(h0(a, m), x -> (x, a), f(y -> z -> (y, z, a)))"),
+    ("H", "(h0(a, m), x -> (x, a), f2(y -> (y, a), z -> (z, a)))"),
+    ("J", "(h0(a, m), f(x -> y -> (x, y)), x -> (x, a))"),
+    ("K", "(h0(a, m), x -> (x, a))"),
+];
+
+fn apart_programs(head: &str, prefix: &str) -> Vec<(String, String)> {
+    APART_BODIES
+        .iter()
+        .map(|(l, b)| {
+            let src = format!("{head}{APART_HELPERS}h1(positional a, positional m) = {b};\n");
+            (format!("{prefix}{l}"), src)
+        })
+        .collect()
+}
+
+/// Plan FAIL-map-chain-held-name-renamed-apart-quadratic T2 (part A's counters that exist
+/// today): on the chain of [`r10_a_chain_whose_links_hold_a_lambda_beside_the_call_admits_each_link`]
+/// at n = 10 and 40, the default check decodes no forward and equals the reference, which
+/// decodes once a link. Red on the base: n-1 decodes, as the reference. `held_view_fallbacks`,
+/// `decode_enters` and `place_decodes` join this test with part A's counters.
+#[test]
+fn r10_beside_chain_shares_results_and_does_not_rewalk_spines() {
+    let head =
+        "id(positional x) = x;\nh0(positional a, positional m) = (m.map(id), x -> (x, a));\n";
+    let link = "h{i}(positional a, positional m) = (h{p}(a, m), x -> (x, a));\n";
+    for n in [10usize, 40] {
+        let src = link_chain(head, link, n);
+        let (c, nc) = run_counting(&src, flat_on_apart());
+        assert_eq!(nc, n as u64 - 1, "n={n}: the reference decodes once a link");
+        let (d, nd) = run_counting(&src, R10Config::default());
+        if let Err(msg) = info_eq_full(&format!("n={n}"), &c, &d) {
+            panic!("{msg}");
+        }
+        assert_eq!(
+            nd, 0,
+            "n={n}: {nd} decodes, the held name named apart by decoding"
+        );
+    }
+}
+
+/// Plan FAIL-map-chain-held-name-renamed-apart-quadratic T3 (Claude Q3 r1): an own variable
+/// after, before and between the forward of `h0`, in programs A-K, each equal to the reference
+/// with the compact branch taken. Red on the base: each decodes. Control: two different
+/// programs are told apart by [`info_eq_full`].
+#[test]
+fn r10_apart_names_follow_e_order_when_an_own_variable_follows_the_forward() {
+    let programs = apart_programs(APART_HEAD, "");
+    let (a, _) = run_with_cfg(&programs[0].1, R10Config::default());
+    let (k, _) = run_with_cfg(&programs[8].1, R10Config::default());
+    assert!(
+        info_eq_full("A vs K", &a, &k).is_err(),
+        "A and K compare equal"
+    );
+    apart_census(&programs);
+}
+
+/// Plan T3b: T3's programs over the two-level `h0`, so the held `id` reaches `h1` through a
+/// child forward composed at a parent offset. Red on the base: each decodes.
+#[test]
+fn r10_apart_names_follow_e_order_through_a_two_level_forward() {
+    apart_census(&apart_programs(APART_HEAD_TWO_LEVEL, "two-level "));
+}
+
+/// Plan T3c (D14, D19; Gemini B1.1): three held functions inside one block's run of internal
+/// results, each its own held signature (so its own held locator and no F2), called from a
+/// link whose own variables take `T, U, V, W`, and Gemini's variant with closed `f1` and `f3`
+/// around `id2`. Each must take the compact branch and equal the reference. Red on the base.
+/// The per-identity census of D23 (key, flat position, F2/F3 status) needs part A's
+/// counters and joins this test with them.
+#[test]
+fn r10_apart_names_inside_a_run_of_internal_results() {
+    let ids = "id1(positional x) = x;\nid2(positional x) = x;\nid3(positional x) = x;\n\
+               h0(positional m) = { r1 = m.map(id1); r2 = r1.map(id2); r3 = r2.map(id3); r3 };\n";
+    let closed = "f1(positional x: int) = x + 1;\nid2(positional x) = x;\n\
+                  f3(positional x: int) = x + 2;\n\
+                  h0(positional m) = { r1 = m.map(f1); r2 = r1.map(id2); r3 = r2.map(f3); r3 };\n";
+    let one = "h1(positional a, positional m) = (h0(m), x -> (x, a));\n";
+    let more =
+        "h1(positional a, positional b, positional m) = (h0(m), x -> (x, a), y -> (y, b));\n";
+    let programs = [
+        ("ids", ids, one),
+        ("ids, more own", ids, more),
+        ("f1 id2 f3", closed, one),
+        ("f1 id2 f3, more own", closed, more),
+    ]
+    .map(|(l, h, k)| (l.to_string(), format!("{h}{k}")));
+    apart_census(&programs);
+}
+
+/// Plan T6, edge paths (D19; Claude P1): META3's most likely wrong case, a held function `k`
+/// holding another (`id`) whose binder has the same spelling. Fault the default must not
+/// show: keys copied from children without the edge path. Red on the base: it decodes.
+///
+/// The plan's other two edge-path links, `h0` called twice and `h0` beside `h0b`, are not
+/// here: on the base no form of them names a held name apart, so the reference decodes
+/// nothing and the census would hold nothing (PLAN.md section 8, D19, red-test fixture
+/// changes). A second call of the callee in the link, with or without own variables of the
+/// callee or the link, takes the decode away in the reference as in the default check.
+#[test]
+fn r10_apart_held_identities_keyed_by_edge_path() {
+    let nested =
+        "id(positional x) = x;\nk(positional x) = [x].map(id);\nh0(positional m) = m.map(k);\n";
+    let programs = [(
+        "nested same spelling".to_string(),
+        format!("{nested}h1(positional a, positional m) = (h0(m), x -> (x, a));\n"),
+    )];
+    apart_census(&programs);
+}
+
+/// Plan T6, Gemini M4: a sigma image spelled like the held name (`h1(m) = (h0(m), x -> (x,
+/// m))`, called with a list). Faults the default must not show: the view applied to a sigma
+/// image, or outside the held signature. Red on the base: it decodes.
+///
+/// D21 (a)'s lambda holding the forward, `h1(a, m) = x -> (x, a, h0(m))`, is not here: on the
+/// base no form with the call inside a lambda names a held name apart, so the reference
+/// decodes nothing (PLAN.md section 8, D21, red-test fixture changes).
+#[test]
+fn r10_apart_view_beside_a_sigma_image() {
+    let head = "id(positional x) = x;\nh0(positional m) = m.map(id);\n";
+    let programs = [(
+        "sigma image".to_string(),
+        format!("{head}h1(positional m) = (h0(m), x -> (x, m));\nr = h1([1]);\n"),
+    )];
+    apart_census(&programs);
+}
+
+/// Plan T6, an internally clashing held function (Gemini M3): `f`'s own `y -> y` clashes inside
+/// `f`, so part A must take the F3 fallback, which decodes as the reference does; the output
+/// equals the reference's. Not red on the base (the base decodes here too): it holds the
+/// fallback in place once part A is written. Fault: dropping the F3 fallback.
+#[test]
+fn r10_apart_internally_clashing_held_function_falls_back() {
+    let src = "f(positional x) = (x, y -> y);\nh0(positional m) = m.map(f);\n\
+               h1(positional a, positional b, positional m) = (h0(m), z -> (z, a, b));\n";
+    let (c, nc) = run_counting(src, flat_on_apart());
+    let (d, nd) = run_counting(src, R10Config::default());
+    assert!(d.errors.is_empty(), "{:?}", d.errors);
+    if let Err(msg) = info_eq_full("M3", &c, &d) {
+        panic!("{msg}");
+    }
+    assert!(nc > 0, "the reference names nothing apart");
+    assert_eq!(nd, nc, "the fallback decodes as the reference does");
 }
 
 mod bench;
