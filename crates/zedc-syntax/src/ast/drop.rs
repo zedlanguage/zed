@@ -257,6 +257,10 @@ fn type_kids(kind: &mut TypeKind, out: &mut Vec<Type>) {
             out.push(*ty);
             out.extend(bounds.into_iter().map(|b| b.carriers));
         }
+        TypeKind::Local { ty, parts } => {
+            out.push(*ty);
+            out.extend(parts.into_iter().map(|p| p.ty));
+        }
     }
 }
 

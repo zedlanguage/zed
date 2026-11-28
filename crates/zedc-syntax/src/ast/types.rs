@@ -10,8 +10,8 @@ use std::mem;
 
 use super::builder::{Builder, Built};
 use super::{
-    Error, Every, Expr, ExprKind, Note, Param, Pattern, RangeEnd, Target, Type, TypeBound,
-    TypeKind, TypeParam, UnaryOp,
+    Error, Every, Expr, ExprKind, LocalPart, Note, Param, Pattern, RangeEnd, Target, Type,
+    TypeBound, TypeKind, TypeParam, UnaryOp,
 };
 use crate::lex::{Span, Tok};
 use zedc_base::rejection::Row;
@@ -41,9 +41,31 @@ impl Builder<'_, '_> {
         // names as the arms here, and only `Form::Type` calls this function.
         let kind = match self.tree.name(n) {
             "Type" if kids.len() == 1 => return self.ty(kids[0]),
-            "Type" if kids.len() == 2 && self.tree.name(kids[1]) == "TypeBounds" => {
-                let ty = Box::new(self.ty(kids[0])?);
-                let pairs = self.kids(kids[1]);
+            // `Type = Arrow TypeFacet* TypeWhere? TypeBounds?`. Of the `with` clauses, the local
+            // part declarations are built (`T with type P = U`, SPEC-with-local-part); a facet,
+            // of layer L7, and `where`, of layer L10, are not, and the first of them is the form
+            // named, before any part of the type is built.
+            "Type" => {
+                let (&first, clauses) = kids.split_first().expect("Type begins with its Arrow");
+                let facets = clauses.partition_point(|&k| self.tree.name(k) == "TypeFacet");
+                let (facets, rest) = clauses.split_at(facets);
+                let facet_call =
+                    |f: usize| (self.kids(f).iter()).any(|&i| self.tree.name(i) == "FacetCall");
+                if let Some(&f) = facets.iter().find(|&&f| facet_call(f)) {
+                    return Err(self.later(f));
+                }
+                if let Some(&w) = rest.first().filter(|&&w| self.tree.name(w) == "TypeWhere") {
+                    return Err(self.later(w));
+                }
+                let mut ty = self.ty(first)?;
+                for &f in facets {
+                    ty = self.local_parts(ty, f)?;
+                }
+                let Some(&clause) = rest.first() else {
+                    return Ok(ty);
+                };
+                let ty = Box::new(ty);
+                let pairs = self.kids(clause);
                 let mut bounds = Vec::with_capacity(pairs.len() / 2);
                 let mut seen = HashMap::new();
                 for &[v, c] in pairs.as_chunks::<2>().0 {
@@ -57,7 +79,6 @@ impl Builder<'_, '_> {
                 }
                 TypeKind::For { ty, bounds }
             }
-            "Type" => return Err(self.later(kids[1])),
             // `TypeSuffix = '[' nest(RangeLit) ']'` is its first alternative; a list of
             // refinements and `matching` are later forms.
             "TypePostfix" if self.tree.nodes[kids[1]].alt == 0 => {
@@ -162,6 +183,35 @@ impl Builder<'_, '_> {
             _ => unreachable!("make builds only these rules as types"),
         };
         Ok(Type { kind, span })
+    }
+
+    /// `ty` with the local part declarations of node `f`, a `TypeFacet` that holds no facet:
+    /// `'with' TypePart` or `'with' '{' TypePart % ',' '}'`, each `TypePart` being `'type' Name
+    /// '=' Arrow`. Its text runs from the start of `ty` to the end of `f`.
+    fn local_parts(&mut self, ty: Type, f: usize) -> Result<Type, Error> {
+        let items = self.kids(f);
+        let mut parts = Vec::with_capacity(items.len());
+        for &p in items {
+            let [name, body] = self.kids(p)[..] else {
+                unreachable!("TypePart = 'type' Name '=' Arrow")
+            };
+            parts.push(LocalPart {
+                name: self.word(self.tree.nodes[name].start).to_string(),
+                span: self.span(name),
+                ty: self.ty(body)?,
+            });
+        }
+        let span = Span {
+            start: ty.span.start,
+            end: self.span(f).end,
+        };
+        Ok(Type {
+            kind: TypeKind::Local {
+                ty: Box::new(ty),
+                parts,
+            },
+            span,
+        })
     }
 
     /// The operands of the left-recursive chain of node `n`, in written order: the list of the

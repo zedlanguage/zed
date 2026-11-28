@@ -46,9 +46,9 @@ use zedc_base::rejection::Row;
 
 pub use node::{
     Annot, Arm, BinaryOp, BoundaryItem, CARRY_FORWARD, Error, Every, Expr, ExprKind, Field,
-    Function, Import, ImportKind, IndexKey, IndexedDef, Initial, MainHeader, Method, Note, Param,
-    Pattern, Port, PortName, PortValue, RangeEnd, RemapLevel, Stmt, StmtKind, StrPart, Struct,
-    Target, TestPorts, Type, TypeBound, TypeDecl, TypeKind, TypeParam, UnaryOp, Update,
+    Function, Import, ImportKind, IndexKey, IndexedDef, Initial, LocalPart, MainHeader, Method,
+    Note, Param, Pattern, Port, PortName, PortValue, RangeEnd, RemapLevel, Stmt, StmtKind, StrPart,
+    Struct, Target, TestPorts, Type, TypeBound, TypeDecl, TypeKind, TypeParam, UnaryOp, Update,
     type_var_form,
 };
 
@@ -594,6 +594,11 @@ impl<'a, 's> Builder<'a, 's> {
     /// `with { … }` and the suffixes after it, which apply to the updated value.
     fn reduce_tail(&mut self, of: Expr, t: usize) -> Result<Expr, Error> {
         match (self.tree.layer(t), self.kids(t)) {
+            // A braced list that attaches a facet, `x with { n = 1, units("m") }`
+            // (SPEC-with-list), is of the facet's layer, L7, as `x with units("m")` is.
+            (2, ks) if ks.iter().any(|&k| self.tree.name(k) == "FacetCall") => {
+                return Err(self.later_as(t, "the facet attachment"));
+            }
             (2, _) => {}
             (3, &[op]) => {
                 let op = self.node(op)?;

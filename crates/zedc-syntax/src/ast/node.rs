@@ -1023,6 +1023,16 @@ pub enum TypeKind {
         /// The variables, in written order.
         bounds: Vec<TypeBound>,
     },
+    /// A type with local part declarations, `T -> (P, P) with type P = (T, T)` or `T with {
+    /// type P = (T, T), type Q = (P, int) }` (DESIGN.md, the `with` row of the operator table,
+    /// SPEC-with-local-part): each part names a type for `ty` and for the parts after it, and
+    /// nothing else sees it. A bounds clause around it binds its variables in the parts too.
+    Local {
+        /// The type the parts are named for.
+        ty: Box<Type>,
+        /// The parts, in written order.
+        parts: Vec<LocalPart>,
+    },
 }
 
 impl Type {
@@ -1045,15 +1055,21 @@ impl Type {
         out
     }
 
-    /// Its parameter list if it is a function type, a bounds clause around one included: `x`
-    /// for a parameter named and not `positional`, and `_` for the others, which a call does
-    /// not name; and the clauses around it.
+    /// Its parameter list if it is a function type, a bounds clause or local parts around one
+    /// included: `x` for a parameter named and not `positional`, and `_` for the others, which
+    /// a call does not name; and the clauses around it.
     fn param_list(&self) -> Option<(Vec<&str>, Vec<&TypeBound>)> {
         let mut t = self;
         let mut bounds = Vec::new();
-        while let TypeKind::For { ty, bounds: bs } = &t.kind {
-            bounds.extend(bs);
-            t = ty;
+        loop {
+            t = match &t.kind {
+                TypeKind::For { ty, bounds: bs } => {
+                    bounds.extend(bs);
+                    ty
+                }
+                TypeKind::Local { ty, .. } => ty,
+                _ => break,
+            };
         }
         match &t.kind {
             TypeKind::Arrow { params, .. } => Some((
@@ -1129,13 +1145,15 @@ impl Type {
         Ok(true)
     }
 
-    /// Whether it is a bounds clause around an intersection.
+    /// Whether it is a bounds clause around an intersection, local parts between them included.
     fn is_clause_around_and(&self) -> bool {
         let mut t = self;
-        while let TypeKind::For { ty, .. } = &t.kind {
+        let mut clause = false;
+        while let TypeKind::For { ty, .. } | TypeKind::Local { ty, .. } = &t.kind {
+            clause |= matches!(t.kind, TypeKind::For { .. });
             t = ty;
         }
-        matches!(t.kind, TypeKind::And(_))
+        clause && matches!(t.kind, TypeKind::And(_))
     }
 
     /// The carrier names of a bound, a union of them, in the order of a union and each once, so
@@ -1188,6 +1206,17 @@ pub struct TypeBound {
     pub span: Span,
     /// The bound, a union of carriers.
     pub carriers: Type,
+}
+
+/// A local part declaration of a type, `type P = (T, T)` after `with`.
+#[derive(Debug)]
+pub struct LocalPart {
+    /// The part's name.
+    pub name: String,
+    /// The name's text.
+    pub span: Span,
+    /// The type it names.
+    pub ty: Type,
 }
 
 /// A parameter of a function type: `int`, `x: int` or `positional x: int`.

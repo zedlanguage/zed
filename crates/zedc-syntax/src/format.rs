@@ -1072,7 +1072,7 @@ impl<'a> Formatter<'a> {
                     self.put(format!("{n} "));
                 }
                 self.put("is ");
-                then![stack; Job::Ty { t: ty, min: 2 }, put(")")];
+                then![stack; Job::Ty { t: ty, min: 3 }, put(")")];
             }
             Pattern::Lit(e) => self.raw(e, 0, stack),
             Pattern::Range { from, to, .. } => {
@@ -1476,7 +1476,7 @@ impl<'a> Formatter<'a> {
                 then![stack;
                     at(of, REDUCE),
                     put(format!(" is {not}")),
-                    Job::Ty { t, min: 2 },
+                    Job::Ty { t, min: 3 },
                 ];
             }
             ExprKind::Else {
@@ -1744,17 +1744,17 @@ impl<'a> Formatter<'a> {
                 // The one component of `(T,)` is followed by a comma too.
                 then![stack; list(ts, listed(ts.len() == 1), ", "), put(close)];
             }
-            TypeKind::Union(ts) => stack.push(list(ts, 3, " | ")),
-            TypeKind::And(ts) => stack.push(list(ts, 4, " & ")),
+            TypeKind::Union(ts) => stack.push(list(ts, 4, " | ")),
+            TypeKind::And(ts) => stack.push(list(ts, 5, " & ")),
             TypeKind::Diff(a, b) => {
                 let min = match a.kind {
-                    TypeKind::Diff(..) => 2,
-                    _ => 4,
+                    TypeKind::Diff(..) => 3,
+                    _ => 5,
                 };
                 then![stack;
                     Job::Ty { t: a, min },
                     put(" \\ "),
-                    Job::Ty { t: b, min: 4 },
+                    Job::Ty { t: b, min: 5 },
                 ];
             }
             TypeKind::Arrow {
@@ -1763,7 +1763,7 @@ impl<'a> Formatter<'a> {
                 result,
             } => {
                 let arrow = if *partial { " ->? " } else { " -> " };
-                then![stack; put(arrow), Job::Ty { t: result, min: 1 }];
+                then![stack; put(arrow), Job::Ty { t: result, min: 2 }];
                 match &params[..] {
                     [
                         TypeParam {
@@ -1777,7 +1777,7 @@ impl<'a> Formatter<'a> {
                         }
                         // A key is a `TypeNot` (author P222): a union, intersection or difference
                         // is parenthesized, `(int | #a) -> int`.
-                        _ => stack.push(Job::Ty { t: p, min: 4 }),
+                        _ => stack.push(Job::Ty { t: p, min: 5 }),
                     },
                     ps => {
                         self.put("(");
@@ -1791,11 +1791,11 @@ impl<'a> Formatter<'a> {
                 result,
             } => {
                 then![stack;
-                    Job::Ty { t: lower, min: 4 },
+                    Job::Ty { t: lower, min: 5 },
                     put(" .. "),
-                    Job::Ty { t: upper, min: 4 },
+                    Job::Ty { t: upper, min: 5 },
                     put(" -> "),
-                    Job::Ty { t: result, min: 1 },
+                    Job::Ty { t: result, min: 2 },
                 ];
             }
             TypeKind::Apply(name, ps) => {
@@ -1827,7 +1827,7 @@ impl<'a> Formatter<'a> {
                     RangeEnd::Open => {}
                 }
                 then![stack;
-                    Job::Ty { t: of, min: 6 },
+                    Job::Ty { t: of, min: 7 },
                     put("["),
                     bound(low),
                     put(high.op()),
@@ -1836,12 +1836,29 @@ impl<'a> Formatter<'a> {
             TypeKind::For { ty, bounds } => {
                 // The bounds go on the stack last first, so they print in order.
                 for (i, b) in bounds.iter().enumerate().rev() {
-                    then![stack; put(format!("{} in ", b.name)), Job::Ty { t: &b.carriers, min: 2 }];
+                    then![stack; put(format!("{} in ", b.name)), Job::Ty { t: &b.carriers, min: 3 }];
                     if i > 0 {
                         stack.push(put(", "));
                     }
                 }
+                // Local parts stand bare before the clause, which binds its variables in them.
                 then![stack; Job::Ty { t: ty, min: 1 }, put(" for ")];
+            }
+            // `T with type P = U`, or a braced list for several parts (SPEC-with-local-part).
+            // The type before `with` is an arrow or local parts; each part's type is an arrow.
+            TypeKind::Local { ty, parts } => {
+                let braced = parts.len() > 1;
+                if braced {
+                    stack.push(put(" }"));
+                }
+                for (i, p) in parts.iter().enumerate().rev() {
+                    then![stack; put(format!("type {} = ", p.name)), Job::Ty { t: &p.ty, min: 2 }];
+                    if i > 0 {
+                        stack.push(put(", "));
+                    }
+                }
+                let with = if braced { " with { " } else { " with " };
+                then![stack; Job::Ty { t: ty, min: 1 }, put(with)];
             }
             TypeKind::Record(fields) => {
                 self.put("{ ");
@@ -1859,15 +1876,16 @@ fn listed(comma: bool) -> u8 {
     u8::from(comma)
 }
 
-/// Type precedence levels: a bounds clause, an arrow, a union or difference, an intersection, a
-/// primary.
+/// Type precedence levels: a bounds clause, local parts, an arrow, a union or difference, an
+/// intersection, a primary.
 fn type_level(t: &Type) -> u8 {
     match t.kind {
         TypeKind::For { .. } => 0,
-        TypeKind::Arrow { .. } | TypeKind::Bounded { .. } => 1,
-        TypeKind::Union(_) | TypeKind::Diff(..) => 2,
-        TypeKind::And(_) => 3,
-        _ => 6,
+        TypeKind::Local { .. } => 1,
+        TypeKind::Arrow { .. } | TypeKind::Bounded { .. } => 2,
+        TypeKind::Union(_) | TypeKind::Diff(..) => 3,
+        TypeKind::And(_) => 4,
+        _ => 7,
     }
 }
 

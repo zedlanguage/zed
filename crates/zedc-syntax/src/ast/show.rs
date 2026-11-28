@@ -666,6 +666,14 @@ fn ty<'a>(t: &'a Type, out: &mut Vec<Show<'a>>) {
             }
             out.push(Text(")"));
         }
+        TypeKind::Local { ty, parts } => {
+            out.extend([Text("(local "), Show::Type(ty)]);
+            for p in parts {
+                out.extend([Text(" ("), Text(&p.name), Text(" "), Show::Type(&p.ty)]);
+                out.push(Text(")"));
+            }
+            out.push(Text(")"));
+        }
         TypeKind::Record(fields) => {
             out.push(Text("(record"));
             for (n, t) in fields {

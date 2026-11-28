@@ -2508,6 +2508,7 @@ impl Resolver<'_> {
                     }
                 }
                 Task::Close => self.close(),
+                Task::BindPart(name, span) => self.bind(name, span, span, Kind::Type, None),
                 Task::ArrowEnd => {
                     self.arrows.pop();
                 }
@@ -4568,6 +4569,21 @@ impl Resolver<'_> {
                 todo.push(Task::ForEnd(ty, bounds));
                 todo.push(Task::Ty(ty));
             }
+            // `T with type P = U` (SPEC-with-local-part): each part is bound in a scope of the
+            // parts' own, after its type is read, so the parts after it and the type before
+            // `with` see it, and its own type and every type outside do not; a part shadows a
+            // type of its name from outside. The form is of layer L2, refused in a program,
+            // and its names are resolved all the same.
+            TypeKind::Local { ty, parts } => {
+                if self.printed.is_none() {
+                    self.later(t.span, "a local part declaration");
+                }
+                self.open();
+                todo.extend([Task::Close, Task::Ty(ty)]);
+                for p in parts.iter().rev() {
+                    todo.extend([Task::BindPart(&p.name, p.span), Task::Ty(&p.ty)]);
+                }
+            }
             TypeKind::Atom(_) | TypeKind::Every(Every::Atom | Every::Tuple) => {}
             TypeKind::Tuple(ts) | TypeKind::Union(ts) => {
                 todo.extend(ts.iter().rev().map(Task::Ty));
@@ -5346,6 +5362,9 @@ enum Task<'a> {
     Close,
     /// The end of a function type, which is no longer open around the place.
     ArrowEnd,
+    /// A local part declaration of a type whose type is read: its name and the name's text,
+    /// bound in the parts' scope.
+    BindPart(&'a str, Span),
     /// The end of the type of a bounds clause, and the clause's bounds.
     ForEnd(&'a Type, &'a [TypeBound]),
     /// The end of a function's signature: the type names after it are in its body.

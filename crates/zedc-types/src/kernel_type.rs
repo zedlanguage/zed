@@ -54,6 +54,10 @@ fn kernel_form(
                  arguments before a type is read"
             )
         }
+        TypeKind::Local { .. } => unreachable!(
+            "name resolution rejects every local part declaration of a type, of layer L2, \
+             before a type is read"
+        ),
         // The kernel has no list type: reading `[V]` as the arrow `int ->? V` the checker
         // denotes it by would make `f is [int]` hold for a function `f` that is no list, since
         // the kernel's arrow does not say that a list is data (LIST-type-written). Without a
@@ -301,6 +305,7 @@ fn type_parts(t: &Type) -> Vec<&Type> {
         | TypeKind::Record(_)
         | TypeKind::Array(_)
         | TypeKind::Range { .. }
-        | TypeKind::For { .. } => Vec::new(),
+        | TypeKind::For { .. }
+        | TypeKind::Local { .. } => Vec::new(),
     }
 }

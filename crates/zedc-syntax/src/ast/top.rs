@@ -218,9 +218,12 @@ impl Builder<'_, '_> {
         if self.tree.name(e) != "Reduce" {
             return false;
         }
+        // A braced list, `x with { f(…), g(…) }` (SPEC-with-list), is the `ReduceTail` of layer
+        // 2, and is a declaration when it holds a facet, a `FacetCall` among its kids.
         let t = *self.kids(e).last().expect("a Reduce has kids");
         self.tree.name(t) == "ReduceTail"
-            && self.tree.layer(t) == 7
             && self.word(self.tree.nodes[t].start) == "with"
+            && (self.tree.layer(t) == 7
+                || (self.kids(t).iter()).any(|&k| self.tree.name(k) == "FacetCall"))
     }
 }

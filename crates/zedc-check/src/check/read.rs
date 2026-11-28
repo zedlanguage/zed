@@ -316,6 +316,15 @@ fn read_part(
                     "`{text}` holds a range type, which the checker never prints as a type"
                 ));
             }
+            // The checker names a part of a printed type with a definition before it, `type
+            // T0 = …;`, and does not print a local part declaration yet (plan row
+            // PRINT-returned-bound-local-parts).
+            TypeKind::Local { .. } => {
+                return Err(format!(
+                    "`{text}` holds a local part declaration `with type`, which the checker \
+                     does not print"
+                ));
+            }
             TypeKind::Name(n)
                 if zedc_syntax::fixed_width::is_alias(n) && !binds.contains_key(n.as_str()) =>
             {

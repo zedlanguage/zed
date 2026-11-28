@@ -142,7 +142,7 @@ Reduce        = Reduce ReduceTail                                               
 ReduceTail    = '><' Postfix ReducePolicy?                                         L3
               | 'as' '(' InPattern ')' Suffix*                                     L8
               | 'into' '(' nest(OutPattern) ')' Suffix*                            L8
-              | 'with' '{' nest(Update % ',' ','?) '}' Suffix*                     L2
+              | 'with' '{' nest(WithItem % ',' ','?) '}' Suffix*                   L2
               | 'with' FacetCall Suffix*                                           L7
               | 'without' FacetCall Suffix*                                        L12
 ReducePolicy  = 'compensated' | 'tree' | 'unordered'                               L9
@@ -179,6 +179,8 @@ MemberSuffix  = '.' Name                                                        
 SafeSuffix    = '?.' Name                                                          L1
 SpreadSuffix  = '*.' Name                                                          L6
 ReadSuffix    = '::' Name                                                          L1
+WithItem      = ~Update                                                            L2
+              | ~FacetCall                                                         L7
 Update        = Name ('.' Name)* '=' Expr                                                    L2
               | KeyPath '=' Expr                                                   L5
 KeyPath       = KeyPath ('.' Name | '[' nest(Expr) ']')                            L5
@@ -281,6 +283,11 @@ KeyOp         = '(' | '[' | '.' | '?.' | '*.' | '::' | '^' | '*' | '/' | 'div' |
 
 Type          = Arrow TypeFacet* TypeWhere? TypeBounds?                            L1
 TypeFacet     = 'with' FacetCall                                                   L7
+              | 'with' '{' nest(TypeItem % ',' ','?) '}'                           L2
+              | 'with' TypePart                                                    L2
+TypeItem      = ~FacetCall                                                         L7
+              | ~TypePart                                                          L2
+TypePart      = 'type' Name '=' Arrow                                              L2
 TypeWhere     = 'where' Expr12                                                     L10
 TypeBounds    = 'for' (Name 'in' TypeUnion) % ','                                  L1
 Arrow         = ArrowParams ('->' | '->?') Arrow                                   L1

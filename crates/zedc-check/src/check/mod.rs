@@ -4575,6 +4575,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     TypeKind::For { ty, .. }
                     | TypeKind::Range { of: ty, .. }
                     | TypeKind::Array(ty) => stack.push(ty),
+                    TypeKind::Local { .. } => unreachable!("{NO_LOCAL_PARTS}"),
                     TypeKind::Name(_)
                     | TypeKind::Atom(_)
                     | TypeKind::Every(_)
@@ -19776,6 +19777,7 @@ fn free_type_vars(t: &Type) -> Vec<&str> {
                 bounded.extend(bounds.iter().map(|b| b.name.as_str()));
                 stack.push(ty);
             }
+            TypeKind::Local { .. } => unreachable!("{NO_LOCAL_PARTS}"),
         }
     }
     let mut seen = HashSet::new();
@@ -19880,6 +19882,13 @@ fn emptied(t: &Type, out: &mut Vec<Note>) {
     explain_empty(t, |p| empty.contains(&p.span), out);
 }
 
+/// Why the checker meets no `TypeKind::Local`: name resolution refuses a local part declaration
+/// of a type in a program, a form of layer L2, and the reader of printed types refuses one
+/// (`read::parse_type`), since the checker does not print one yet (plan row
+/// PRINT-returned-bound-local-parts).
+const NO_LOCAL_PARTS: &str = "name resolution and the reader of printed types refuse every \
+                              local part declaration of a type before the checker reads it";
+
 /// `t` with each `for` clause around it taken off: a clause has the value of the type it bounds.
 fn bare(mut t: &Type) -> &Type {
     while let TypeKind::For { ty, .. } = &t.kind {
@@ -19958,6 +19967,7 @@ fn explain_empty(t: &Type, found: impl Fn(&Type) -> bool, out: &mut Vec<Note>) {
                     TypeKind::Record(fs) => fs.iter().map(|(_, t)| t).collect(),
                     TypeKind::Array(t) | TypeKind::Range { of: t, .. } => vec![t],
                     TypeKind::For { ty, .. } => vec![ty],
+                    TypeKind::Local { .. } => unreachable!("{NO_LOCAL_PARTS}"),
                 };
                 stack.extend(parts.into_iter().rev().map(Work::Find));
                 continue;
@@ -20339,6 +20349,7 @@ impl<'a> Denote<'a> {
                 ]);
                 return;
             }
+            TypeKind::Local { .. } => unreachable!("{NO_LOCAL_PARTS}"),
         };
         self.push(t, leaf, vals);
     }
