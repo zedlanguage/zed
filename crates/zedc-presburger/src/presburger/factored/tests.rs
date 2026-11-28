@@ -469,11 +469,13 @@ fn tiny_bic(t: &Tiny, rng: &mut Rng) -> Prob {
 /// pair, every drop replays, the pairs left are within the single-holder rule's, and renaming
 /// changes nothing. Controls: the mutant `frame_bad` must fail a replay or change a verdict,
 /// and dropping every pair with a free atom (no Theorem D) must change a verdict, which shows
-/// the oracle can see a wrong drop.
+/// the oracle can see a wrong drop. Step 5's sign events leave the same pairs as its row
+/// rechecks (`Opts::row_rechecks`), in a family where step 5's Def-set tests drop some pair.
 fn tiny_family(what: &str, generate: fn(&mut Rng) -> Tiny, n: usize, seed: u64) {
     let mut rng = Rng::new(seed);
     let (mut differ, mut skip, mut replay_bad, mut drops, mut sh_bad, mut ren_bad) =
         (0, 0, 0, 0, 0, 0);
+    let (mut events_differ, mut def_drops) = (0, 0);
     let (mut m_replay, mut m_differ, mut c_differ) = (0, 0, 0);
     for i in 0..n {
         let t = generate(&mut rng);
@@ -488,6 +490,15 @@ fn tiny_family(what: &str, generate: fn(&mut Rng) -> Tiny, n: usize, seed: u64) 
             ..Opts::default()
         };
         let out = solve(&p, log);
+        let rows_out = solve(
+            &p,
+            Opts {
+                row_rechecks: true,
+                ..Opts::default()
+            },
+        );
+        events_differ += usize::from(rows_out.left != out.left);
+        def_drops += usize::from(out.log.iter().any(|d| d.1 < 3));
         replay_bad += usize::from(!replay_ok(&p, &out));
         drops += usize::from(out.left.len() < all.len());
         sh_bad += usize::from(!within_single_holder(&p, &out.left));
@@ -523,7 +534,16 @@ fn tiny_family(what: &str, generate: fn(&mut Rng) -> Tiny, n: usize, seed: u64) 
         "tiny {what}: n={n} verdict_differs={differ} skipped={skip} replay_failures={replay_bad} \
          with_a_drop={drops} not_within_single_holder={sh_bad} renaming_differs={ren_bad} | \
          controls: frame_bad replay_failures={m_replay} verdict_differs={m_differ}; \
-         drop_any_free verdict_differs={c_differ}"
+         drop_any_free verdict_differs={c_differ} | sign events vs row rechecks: \
+         pairs_left_differ={events_differ} with_a_step5_def_drop={def_drops}"
+    );
+    assert_eq!(
+        events_differ, 0,
+        "{what}: step 5's sign events left other pairs than its row rechecks"
+    );
+    assert!(
+        def_drops > 0,
+        "{what}: step 5's Def-set tests dropped no pair"
     );
     assert_eq!(
         (differ, replay_bad, sh_bad, ren_bad),
@@ -961,13 +981,58 @@ fn ratios(build: &dyn Fn(usize) -> Prob, ls: [usize; 2]) -> ([u64; 2], [f64; 4])
     (k, r)
 }
 
-/// Exception 4 of A225 (COMPLEXITY.md, the A225 entry): on `wlgrow_g` the worklist grows 34
-/// times at 8 times the input, since each of the l signings of an x rechecks the r² pairs of
-/// the X and Y rows (design sec. 5.3: Boolean matrix multiplication reduces to this worklist,
-/// so no combinatorial method is known to bring it under 10.5). This test asserts the limit
-/// and fails until that is solved; it is not ignored (the standing rule).
+/// The worklist of step 5 on `wlgrow_g` is O(N log N), N = Θ(l²) the input size, with r = l
+/// (FAIL-factored-wlgrow-g-worklist, b30-pres4, 2026-11-28). Until then each of the l signings
+/// of an x rechecked the r² pairs of the X and Y rows: ratio 34.00 at 6.97 times the input,
+/// exception 4 of A225. The sign events of [`super::Joint::gain`] give 7.50 (worklist 10,960
+/// at l = 10 and 82,220 at l = 28; at l = 20 and 40, sizes 5,301 and 20,201, it is 40,088 and
+/// 166,032: 4.14 times at 3.81 times the input; local run, b30-pres4, 2026-11-28). They leave
+/// the same pairs as the row rechecks, which the test checks at l = 10.
+///
+/// *Proof of the bound.* Rows: X_i = Σ x + (±1) pv + e_i and Y_j = Σ y + d_j + (±1) g (i, j
+/// < r), one product of the X and the Y rows; K_t = −x_t + c_t − c_{t+1} with M_t = m_t, a
+/// product each (t < l). Row ids: X 0..r, Y r..2r, K_t 2r + 2t, M_t 2r + 2t + 1, so the trie
+/// height over rows is hh = O(log l), and th = O(log l) over the variables.
+/// 1. Signs. pv and g have both signs in rows that never die (no pair of X × Y drops: every
+///    x, e_i is mentioned with every y and d_j, and pv, g never sign), so they never sign.
+///    x_t is unsigned while K_t lives (−1 there, +1 in the X rows), and c_t (0 < t < l) while
+///    K_{t−1} and K_t both live. Pass 1 drops {K_{l−1}, M_{l−1}} (c_l signed, `c_l * m_{l−1}`
+///    free), K_{l−1} is killed at the start of step 5, and from there the chain goes down:
+///    c_t signs when K_t dies, enters Def(K_{t−1}), `c_t * m_{t−1}` is free, and
+///    {K_{t−1}, M_{t−1}} drops. So the sign events are those of x_t and c_t, at most three
+///    predicates each: O(l) events.
+/// 2. Holder sets. holders(x_t) = the X rows and K_t (t < l − 1; X alone for t = l − 1), and
+///    holders(c_t) ⊆ {K_{t−1}, K_t}. Their tries cost O((r + 1) hh) for each x_t and O(hh) for
+///    each c_t: O(l r log l) in all.
+/// 3. Partner lists ([`super::Joint::partners`]). A trie node of the holders of x_t whose row range
+///    misses K_t holds X rows only, the same node for every t, so it is built once; those
+///    nodes number at most 2r and list the Y rows, O(r²) in all. The other nodes are the at
+///    most hh + 1 on the path to K_t, each listing at most the Y rows and M_t: O((r + 1) hh)
+///    for each t. The nodes for c_t list at most M_{t−1} and M_t. In all O(r² + l r log l).
+/// 4. Tests. An event of x_t tests the r Y rows and M_t once each. Def(Y_j) ⊆ {y_0, …,
+///    y_{l−1}, d_j}, so the trie nodes of Def(Y_j) off the path to d_j are the same for all j,
+///    and [`super::Joint::within`] makes at most 2l memo entries on them for x_t and th + 1 on each
+///    path to a d_j: O(l + r log l) for each event. No test of an x fails (every y and d_j is
+///    mentioned with every x, and `m_t * x_t` is mentioned). An event of c_t tests at most two
+///    M rows, O(th), and a failure drops the one pair of M_{t−1}.
+/// 5. The rest of step 5 is the kills of the l K rows, each reading the holder lists of its
+///    three variables, O(r) each, and the X and Y rows, which never die.
+///
+/// Summed: O(l r log l + r²) = O(N log N). The general worklist stays superlinear: Boolean
+/// matrix multiplication reduces to it (design sec. 5.3), so this bound is for this family.
 #[test]
 fn the_worklist_of_wlgrow_g_scales() {
+    let p = build_wlgrow(10, 10, true);
+    let rows = Opts {
+        row_rechecks: true,
+        ..Opts::default()
+    };
+    let (new, old) = (solve(&p, Opts::default()), solve(&p, rows));
+    println!(
+        "l=10 worklist: sign events {}, row rechecks {}",
+        new.worklist, old.worklist
+    );
+    assert_eq!(new.left, old.left, "the sign events left other pairs");
     let (k, r) = ratios(&|l| build_wlgrow(l, l, true), [10, 28]);
     // The size grows as l²: 28/10 gives 6.97, the nearest to 8 the prototype's sizes reach.
     assert!(
@@ -976,7 +1041,7 @@ fn the_worklist_of_wlgrow_g_scales() {
     );
     assert!(
         r[2] < crate::scaling::LIMIT,
-        "the worklist grew {:.2} times at 8x the input on wlgrow_g (exception 4 of A225)",
+        "the worklist grew {:.2} times at 8x the input on wlgrow_g",
         r[2]
     );
 }

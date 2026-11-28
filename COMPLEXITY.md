@@ -1697,8 +1697,8 @@ the benches):
 | star: k rows `x + u_i`, k rows `y + w_j`, only `x*y` mentioned (`no_pair_of_the_star_is_listed_and_the_work_scales`) | k 1,000 to 8,000 | work 8.00 | none listed; control, every pair listed: 64.00 |
 | bench `bench_factored_star` (`kept_pairs`) | k 2,000 to 16,000 | 8.28 | instructions |
 | bench `bench_entails_on_the_star` (`entails` on the star) | k 1,000 to 8,000 | 8.77 | instructions; origin/main 35de293df: 430.99 at k 100 to 800 (5.1e8 to 2.2e11 instructions), and k = 1,000 ran past 60 s |
-| wlgrow (`the_pass1_and_worklist_of_wlgrow_scale`) | size 7.00 | pass 1 9.18, worklist 7.31 | the peel 47.20: exception 3, the test's control |
-| wlgrow_g (`the_worklist_of_wlgrow_g_scales`) | size 6.97 | pass 1 9.09, worklist 34.00 | fails 10.5: exception 4; the peel 43.12 |
+| wlgrow (`the_pass1_and_worklist_of_wlgrow_scale`) | size 7.00 | pass 1 9.18, worklist 6.75 | the peel 47.20: exception 3, the test's control |
+| wlgrow_g (`the_worklist_of_wlgrow_g_scales`) | size 6.97 | pass 1 9.09, worklist 7.50 | O(N log N) on this family, proved at the test; was 34.00 (exception 4); the peel 43.12 |
 | bench `bench_factored_peel_on_wlgrow` (the whole solver, peel included) | l 10 to 17: k + W_R 14,641 to 102,715 (7.02) | 6.00 | instructions (20,909,117 to 125,512,119); no pair dropped at l = 10, 17, 28; control l 10 to 28 (input 7.00): 31.56 times the processor time |
 | closed_rL written size (`the_written_size_of_closed_rl_scales`) | r = L 6 to 17 (input 8.03) | shared 20.64, direct 62.92 | output (exception 2): shared E_R 504 to 10,404, direct 1,332 to 83,810 |
 
@@ -1727,23 +1727,34 @@ results, both at the code (factored.rs module doc, "The exact peel and its lower
   of the bound.
 
 So exception 3 stands, with this reason: the peel is O(k + W_R + W_drop), W_R is output, and
-W_drop is OV-hard. The failing wlgrow_g test is row FAIL-factored-wlgrow-g-worklist.
-Its step 5, the joint fixpoint over the open listed pairs, keeps the best method
-found: delta rechecks memoized per pair of exact set ids (a hash-consed trie), which test only
-the incidences new since a pair's last test. Its cost is O(k log k + W_listed'), where
-W_listed' counts the incidences of the open listed pairs, which is not O(k log k) in general.
-Measured in the single-file prototype (counted steps, not instructions; sizes n = 10 to 28, k
-the input terms):
+W_drop is OV-hard.
+
+Step 5, the joint fixpoint over the open listed pairs, works by sign events
+(FAIL-factored-wlgrow-g-worklist, b30-pres4, 2026-11-28; `Joint::gain` in factored.rs): each
+(variable, kind) gain is processed once, its holders form a trie over row ids whose nodes list
+their partner rows once and are shared between variables, and each partner row's Def set is
+tested once per event by a memoized subset test on the hash-consed trie. On wlgrow_g this is
+O(N log N), proved step by step at `the_worklist_of_wlgrow_g_scales`: worklist 7.50 at 6.97
+times the input (10,960 to 82,220; 4.14 times from l = 20 to 40 at 3.81 times the input). The
+pairs left equal those of the old row rechecks (`Opts::row_rechecks`, compared at l = 10). The
+general worklist is still not O(k log k): the BMM reduction below holds for the general case.
+The prototype's method before that, kept here for its measurements, was delta rechecks
+memoized per pair of exact set ids, which test only the incidences new since a pair's last
+test, at cost O(k log k + W_listed'), where W_listed' counts the incidences of the open listed
+pairs. Measured in the single-file prototype (counted steps, not instructions; sizes n = 10 to
+28, k the input terms):
 
 | Family | k, n to 8n | Worklist ratio | Note |
 |---|---|---|---|
 | wlgrow (Def sets grow late) | 1,441 to 10,081 (7.00) | 8.14 | total 28.32: the peel, exception 3 |
-| wlgrow_g (wlgrow, an unsigned variable in every Y row) | 1,451 to 10,109 (6.97) | 34.00 | fails 10.5; W_listed' 14,400 to 705,600 |
+| wlgrow_g (wlgrow, an unsigned variable in every Y row) | 1,451 to 10,109 (6.97) | 34.00 | failed 10.5; W_listed' 14,400 to 705,600; the crate's sign events: 7.50 |
 | Gemini's 3B at an 8x step in k | | 8.10 | |
 | Codex's chain | | 9.70 | |
 
-On wlgrow_g the worklist stays within its stated order (worklist / W_listed' 1.72 to 1.19), so
-the excess is W_listed' itself. Why no method within O(n log n) is known: the pairs that die are
+On wlgrow_g the delta rechecks stayed within their stated order (worklist / W_listed' 1.72 to
+1.19), so the excess was W_listed' itself; the sign events avoid it by never listing the pairs
+of an event, only the partner rows. Why no method within O(n log n) is known for the general
+worklist: the pairs that die are
 the answers of the path query Q(A,C) = R(A,B), S(B,C) kept under insertions into the Def sets,
 and this query is not free-connex. Kara, Nikolic, Olteanu and Zhang, LMCS 2023 (DOI
 10.46298/lmcs-19(3:11)2023): no constant delay after linear preprocessing under the BDG07
@@ -1758,10 +1769,10 @@ no better than W_listed'. A literature search of 2026-11-24 (allpapers: papercli
 search, which timed out on three of four queries, and Gemini grounded search) for an insert-only
 method within O(n log n) found none.
 
-Exception 4 of QUESTIONS A225 (decided by the orchestrator, 2026-11-24, A and D): the test
+Exception 4 of QUESTIONS A225 (decided by the orchestrator, 2026-11-24, A and D) was the test
 `wlgrowg` (in the crate `presburger::factored::tests::the_worklist_of_wlgrow_g_scales`, 34.00
-times) is in the tests, is not ignored, asserts 10.5 and fails, until a method for its family
-is found. Reduction (row PRES-factored-O8-reduction, design sec. 5.3, every step there): Boolean
+times), which asserted 10.5 and failed until a method for its family was found; the sign
+events above are that method (7.50, 2026-11-28), so the test passes. Reduction (row PRES-factored-O8-reduction, design sec. 5.3, every step there): Boolean
 matrix multiplication of n×n matrices A and F reduces to the worklist, with k = Θ(n²) and the
 pairs left exactly the zero entries of AF (prototype part `bmm`, 16 cases). So a worklist in
 O(k log k) would multiply Boolean matrices in O(n² log n), faster than any known algorithm; a
@@ -1771,7 +1782,7 @@ multiplication gives about k^{1.19}, ratio 11.8 at 8× k. Family `bmm_free3_g`: 
 k ratio 7.00. The route from OMv fails: OMv is online ("It has to output the resulting column
 vector before it can proceed to the next round", introduction.tex line 5) and the worklist gets
 its whole input at once, where OMv is one matrix product. The reduction covers the general
-worklist, not wlgrow_g's own family, which stays open.
+worklist; wlgrow_g's own family is O(N log N) by the sign events.
 
 ## Kept
 
