@@ -230,7 +230,11 @@ fn zedc_run_and_build_check_a_unit_once() {
     let dir = zed_tests::scratch::scratch_dir("m0_12_checked_once");
     let units = [
         ("guarded.zed", bench::guard_functions(2), true),
-        ("rejected.zed", "f(x: int) = x + \"a\";\nmain() {\n}\n".to_string(), false),
+        (
+            "rejected.zed",
+            "f(x: int) = x + \"a\";\nmain() {\n}\n".to_string(),
+            false,
+        ),
     ];
     let checks = |f: &dyn Fn() -> bool| {
         let (ok, report) = work::with(Box::new(Work::default), f);
