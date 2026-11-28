@@ -200,15 +200,22 @@ fn the_limit_is_10_5_times_8_to_the_power_less_one() {
 }
 
 /// [`exponents`] gives one exponent a step, whatever the step: work linear in the size measures
-/// near 1 at steps of 2 and of 3, and work of order n² near 2. The bounds are wide enough for
-/// processor time under load.
+/// 1 at steps of 2 and of 3, and work of order n² measures 2. The work is counted exactly
+/// ([`exponents_by`] on [`meter_of_passes`]): on processor time, the least of 15 runs of linear
+/// work read 1.74 from 2,000 to 4,000 on hm4 at load 14, against bounds of 0.7 to 1.3
+/// (FAIL-scaling-exponents-least-of-short-runs).
 #[test]
 fn exponents_are_one_a_step_against_the_size_before() {
-    let linear = exponents("linear", &[2_000, 4_000, 12_000], |n| work(n, 1, 2_000));
+    static PASSES: AtomicU64 = AtomicU64::new(0);
+    let meter = &mut meter_of_passes(&PASSES);
+    let passes = |count: usize| _ = PASSES.fetch_add(count as u64, Relaxed);
+    let linear = exponents_by(meter, "linear", &[2_000, 4_000, 12_000], |n| {
+        passes(n * 2_000)
+    });
     assert_eq!(linear.len(), 2);
-    assert!(linear.iter().all(|e| (0.7..1.3).contains(e)), "{linear:?}");
-    let square = exponents("square", &[200, 600], |n| work(n, 2, 20));
-    assert!((1.6..2.4).contains(&square[0]), "{square:?}");
+    assert!(linear.iter().all(|e| (e - 1.0).abs() < 1e-9), "{linear:?}");
+    let square = exponents_by(meter, "square", &[200, 600], |n| passes(n * n * 20));
+    assert!((square[0] - 2.0).abs() < 1e-9, "{square:?}");
 }
 
 /// [`n_log_n_ratio`] is `8 ln(8n) / ln(n)`, and [`check_n_log_n_by`] holds work to it. Work of

@@ -1503,7 +1503,19 @@ pub fn load() -> Option<[String; 3]> {
 /// whatever the sizes' steps. Returns the exponents, one fewer than the sizes. A printer: it
 /// holds nothing to a limit, so it may run outside a `bench::` path.
 pub fn exponents(what: &str, sizes: &[usize], run: impl Fn(usize)) -> Vec<f64> {
-    let mut meter = Meter::new();
+    exponents_by(&mut Meter::new(), what, sizes, run)
+}
+
+/// [`exponents`] with the meter given, for the harness's own tests: they hold the exponents to
+/// an exact counter, since processor time under load can read a short run low (the least of
+/// its runs finds a quiet moment more often than a long run's; FAIL-scaling-exponents-least-of-
+/// short-runs, 1.74 for linear work at 2,000 to 4,000 on hm4 at load 14).
+pub fn exponents_by(
+    meter: &mut Meter,
+    what: &str,
+    sizes: &[usize],
+    run: impl Fn(usize),
+) -> Vec<f64> {
     let mut last: Option<(usize, u64)> = None;
     let mut out = Vec::new();
     for &k in sizes {
