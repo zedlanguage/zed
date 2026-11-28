@@ -3628,9 +3628,12 @@ fn sizes(p: &Part<Row>) -> (u64, u64, u64) {
 /// So the rounds plus the last, which finds no pin, cost at most the sum of their bounds.
 /// Before cross-review XR-lazy-and-kernel-batch-1 round 4 this checked the work against the
 /// rounds plus one times the first round, measured, not proved; Codex's
-/// [`normalizing_a_choice_complement_can_make_the_last_round_cost_more`] breaks it: a rebuild
-/// leaves no more nodes, but expressions the constants make equal merge into one id (ids are
-/// structural digests), so the shared expressions, and a round's trials, can grow.
+/// [`normalizing_a_choice_complement_can_make_the_last_round_cost_more`] breaks it, and so
+/// does Gemini's [`a_removed_gate_can_make_the_last_round_cost_more`]: a rebuild leaves no more
+/// nodes, but it can normalize a raw `Not` into other nodes (Codex's), or, with the nodes and
+/// the shared expressions no more, fold away a gate that stopped the trials (Gemini's). Two
+/// equal expressions built apart are not merged by a rebuild: an expression's id is unique in
+/// the process (`Expr::id`); only parts made one diagram share an id.
 fn settled_by(p: &Part<Row>, how: Pins) -> (Part<Row>, u64, Vec<usize>) {
     SETTLE_WORK.with(|w| w.set(0));
     let (mut q, mut rounds) = (p.clone(), Vec::new());
@@ -3877,10 +3880,9 @@ fn gated_by_the_one_before_takes_a_round_a_pin() {
 /// and 3.24, rising toward 4, so `Θ(n^2)` a round, the `Θ(S · N)` of `Part::settle` with `S` and
 /// `N` both `Θ(n)`; all rounds cost 1984, 7632, 26515 and 178679 over 6, 10, 13 and 26 rounds,
 /// no round costing more than the first here (the ratio of the whole to rounds times the first
-/// is 0.77, 0.67, 0.62 and 0.64), measured, NOT PROVED: a rebuild leaves no more nodes, but
-/// expressions the constants make equal merge into one id (ids are structural digests), so the
-/// shared expressions, and a round's trials, can grow
-/// ([`normalizing_a_choice_complement_can_make_the_last_round_cost_more`]). The test asserts
+/// is 0.77, 0.67, 0.62 and 0.64), measured, NOT PROVED: a later round can cost more than the
+/// first ([`normalizing_a_choice_complement_can_make_the_last_round_cost_more`],
+/// [`a_removed_gate_can_make_the_last_round_cost_more`]; the reasons at [`settled_by`]). The test asserts
 /// the first round within `7 · n^2`, measured, and [`settled_by`] each round within the bound
 /// it proves in that round's sizes, `1 + N + 3E + 3S(N + E)`.
 #[test]
@@ -3953,6 +3955,67 @@ fn normalizing_a_choice_complement_can_make_the_last_round_cost_more() {
             assert!(settled.pins_by(how).is_empty());
             let last = SETTLE_WORK.with(|w| w.get());
             eprintln!("choice complement {how:?} n = {n}: first {first}, last {last}");
+            assert!(last > first, "{how:?}, {n}: {last} <= {first}");
+            let (_, work, rounds) = settled_by(&root, how);
+            assert_eq!(rounds, vec![1], "{how:?}, {n}");
+            assert_eq!(work, first + last, "{how:?}, {n}");
+        }
+    }
+}
+
+/// Gemini's B2a (cross-review XR-lazy-and-kernel-batch-1, round 4, B-1), on the parts of this
+/// module: `root = ((p | (s_0 & … & s_(n-1))) & u_1 & … & u_n | z) & !p`, the `s_i` in a
+/// balanced tree of `And`s, `z = x | s_0 | … | s_(n-1) | y` (so each `s_i` is shared), and `p`,
+/// `s_i`, `u_j` [`opaque`]. The walk finds the `s_i` shared before `p` (whose second use is in
+/// `!p`). In the first round each trial `s_i = false` stops at `p | …`, `p` unknown; then
+/// `p = false` is pinned (the trial `p = true` makes `!p`, so the root, `false`). The rebuild
+/// folds `false | …` away, so in the last round, which finds no pin, each trial `s_i = false`
+/// is carried through the `n` `u_j`: the shared expressions and the nodes do not grow, but a
+/// constant removed the gate that stopped the trials. With one pin round the work exceeds the
+/// rounds plus one times the first (Gemini, on a model of the code: 1,624 then 5,698 cut at
+/// n = 64); [`settled_by`] checks each round against the bound it proves.
+#[test]
+fn a_removed_gate_can_make_the_last_round_cost_more() {
+    let lit = |i| Part::literal(atom(i));
+    let and = |a, b| Part::connect(Op::And, a, b);
+    let or = |a, b| Part::connect(Op::Or, a, b);
+    for n in [16u64, 64] {
+        let p = opaque(210_000);
+        let ss: Vec<Part<Row>> = (0..n).map(|i| opaque(211_000 + 4 * i)).collect();
+        let mut layer = ss.clone();
+        while layer.len() > 1 {
+            layer = layer
+                .chunks(2)
+                .map(|c| match c {
+                    [a, b] => and(a.clone(), b.clone()),
+                    [a] => a.clone(),
+                    _ => unreachable!("chunks of 2"),
+                })
+                .collect();
+        }
+        let gate = or(p.clone(), layer.pop().expect("n is at least 1"));
+        let spine = (0..n).fold(gate, |r, j| and(r, opaque(212_000 + 4 * j)));
+        let z = ss.iter().cloned().fold(lit(210_008), or);
+        let z = or(z, lit(210_009));
+        let root = and(or(spine, z), Part::not_expr(p.clone()));
+        for how in [Pins::Cut, Pins::Carried] {
+            SETTLE_WORK.with(|w| w.set(0));
+            let pins = root.pins_by(how);
+            let first = SETTLE_WORK.with(|w| w.replace(0));
+            assert_eq!(pins.len(), 1, "{how:?}, {n}: {pins:?}");
+            assert_eq!(pins.get(&p.id()), Some(&false));
+            let settled = root.substitute_all(&pins);
+            let (sizes_before, sizes_after) = (sizes(&root), sizes(&settled));
+            assert!(
+                sizes_after.0 <= sizes_before.0 && sizes_after.2 <= sizes_before.2,
+                "{how:?}, {n}: {sizes_before:?} to {sizes_after:?}"
+            );
+            assert!(settled.pins_by(how).is_empty());
+            let last = SETTLE_WORK.with(|w| w.get());
+            eprintln!(
+                "removed gate {how:?} n = {n}: first {first}, last {last}; (N, E, S) \
+                 {sizes_before:?} to {sizes_after:?}"
+            );
             assert!(last > first, "{how:?}, {n}: {last} <= {first}");
             let (_, work, rounds) = settled_by(&root, how);
             assert_eq!(rounds, vec![1], "{how:?}, {n}");

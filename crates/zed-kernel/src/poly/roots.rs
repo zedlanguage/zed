@@ -852,6 +852,13 @@ pub(super) fn positive_roots_by(
                     h = hi.clone();
                 }
             }
+            // The tests' units count against the budget: one they pass ends in the chain at
+            // the head of the loop, which the interval kept here brings back to (test
+            // `the_units_of_the_bound_from_above_count_against_the_budget`).
+            if spent > budget {
+                open.push((l, h));
+                continue;
+            }
         }
         if l > h {
             continue;
@@ -912,9 +919,10 @@ pub(super) fn positive_roots_by(
 /// (`slope`, `x p'(x)`, has one sign there), if it has one; `steps` counts the units spent,
 /// and `budget` bounds the units the scale of a Newton ratio may raise them to (the scale
 /// loop below). With the signs of `p` at the ends
-/// ([`sign_at`]) opposite, each step is a step of Sagraloff's NEWREFINE ([`refine`]): a
-/// boundary test, then the secant zeros of `p / p'` through the quarter points, each tested on
-/// a grid of `N` cells, `N` squared on a success and its square root on a bisection. A step
+/// ([`sign_at`]) opposite, each step is a step of Sagraloff's NEWREFINE ([`refine`]): the
+/// Newton test (the secant zeros of `p / p'` through the quarter points), then the boundary
+/// test, then the bisection, each on a grid of `4N` cells, `N` squared on a success and its
+/// square root on a bisection. A step
 /// leaves at most half the bracket, so a search takes at most `bits(hi - lo) + 2` steps (the
 /// proof at [`refine`]); no smaller bound is proved for this step on integers (plan row
 /// PROOF-newrefine-integer-step). Near a cluster of roots, where the earlier step, Newton's
@@ -965,7 +973,8 @@ fn search(
     #[cfg(test)]
     let mut wide = false;
     while &hi - &lo > BigInt::one() {
-        *steps += 1;
+        // Saturating, here and below: [`horner_bound`] may have saturated the count.
+        *steps = steps.saturating_add(1);
         if &lo * 4 < hi {
             let x = BigInt::one() << ((lo.bits() + hi.bits()) / 2);
             if lo < x && x < hi {
@@ -1000,7 +1009,7 @@ fn search(
                     })
                 })
                 .flatten();
-            *steps += calls;
+            *steps = steps.saturating_add(calls);
             if let Some((e, y)) = guess {
                 // The guess of [`doubling`] is a Newton step at full precision: the one below
                 // is not taken again.
@@ -1055,11 +1064,13 @@ fn search(
         // bits, or no certified sign): Newton's step from the end where `|p|` is less, and the
         // integers beside its guess, 1 unit, the step before plan row
         // ROOTS-fallback-worst-case. Where the guess lands within 1 of a simple root near an
-        // end, this closes the bracket, where NEWREFINE, starting from `N = 4`, takes `O(log
-        // log w)` steps of 4 units: on the far roots of
-        // `the_count_of_units_on_far_roots_is_proved` (`w` about `2^37`) [`positive_roots`]
-        // spent 23 units at `tau = 3` without it, against the 14 proved there (measured
-        // 2026-11-27, local). It adds one step to NEWREFINE's bound.
+        // end, this closes the bracket, where NEWREFINE, starting from `N = 4`, took more steps
+        // of 4 units: on the far roots of `the_count_of_units_on_far_roots_is_proved` (`w`
+        // about `2^37`) [`positive_roots`] spent 23 units at `tau = 3` without it, against the
+        // 14 proved there for that fixture (measured 2026-11-27, local). No `O(log log w)`
+        // bound on NEWREFINE's steps is proved here (plan row PROOF-newrefine-integer-step);
+        // the bound `bits(hi - lo) + 2` of [`refine`] counts the steps after this one, which
+        // leaves the bracket no wider.
         if !newton {
             newton = true;
             #[cfg(test)]
@@ -1091,7 +1102,7 @@ fn search(
         // and 3 ratios of two [`scaled`] each, 39 passes, under 4 units of 12 (the loop's head
         // charged one). `v = p / p'` is `x Phi / Psi`, `Phi` and `Psi` [`scaled`] at a scale of
         // at least `s`.
-        *steps += 3;
+        *steps = steps.saturating_add(3);
         let mut side = |x: &BigInt| {
             #[cfg(test)]
             full_eval(wide);
@@ -1239,7 +1250,8 @@ enum Side {
 /// - The values are exact here (or rounded by `ratio`), so `\tilde{\lambda}_{i,j}` is `lambda`
 ///   itself and `ell` its exact floor.
 ///
-/// The one change: the bracket's ends are integers, as `side` and `ratio` take integers (an
+/// The change of substance, besides the rounded `ratio`, the reading of (3.3) and (3.4) above
+/// and the cut of `4N` below: the bracket's ends are integers, as `side` and `ratio` take integers (an
 /// exact sign at a rational point of a sparse polynomial of degree `D` costs numbers of `D`
 /// times the point's bits, and `D` goes to `2^62` here, test
 /// `search_on_a_sparse_high_degree_polynomial_does_not_overflow_the_scale_cap`). So each point
@@ -1250,7 +1262,10 @@ enum Side {
 /// the source's by less than 1. The bisection is at `xi_2 = g(2N)`, the source's `m^*`. With
 /// it, `4N` is cut to `2^max(4, bits(w))`, at most `2 w` where `w >= 8`: the grid's cells are
 /// then at least `1/2` wide, so `I_ij`, 3 cells, has two distinct integer ends, where on a
-/// grid of cells far under 1 the points fall on the same integers and the test fails.
+/// grid of cells far under 1 the points fall on the same integers and the test fails. For `w`
+/// in `5..=7`, `4N = 16` and the cells are under `1/2`, so near `a` ends can fall together
+/// (`g(0) = g(2) = a`); that is harmless: such an interval holds no integer inside, the step
+/// goes on to the boundary test and the bisection, and bound (2) still holds.
 /// Measured 2026-11-27, local, the most steps on the tests named below (n = 256 to 8,192 on
 /// Codex's family of `a_cluster_at_an_end_of_a_chain_stretch_takes_bounded_steps`, 2^8 to
 /// 2^15 on the two families of `newrefine_steps_on_a_cluster_are_bounded`):
@@ -2905,6 +2920,24 @@ mod tests {
         assert_eq!(spent, 0);
     }
 
+    /// The units of [`horner_bound`] count against the budget (cross-review
+    /// XR-lazy-and-kernel-batch-1 round 4, Codex B3.1, Gemini B-2): on `x^40 + 2^40 x + 2^40`
+    /// (`t = 3`, budget `chain_ends(3) = 6`, no positive root) the test at 2 passes and charges
+    /// 274 units, the bound cuts the one interval to nothing, and the loop ended there, returning
+    /// 275 units, past the bound proved at [`positive_roots`]; a later interval would have met
+    /// the check at the head of the loop. Now a budget passed by those units ends in
+    /// [`chain_roots`] at once, as one passed at the head of the loop does.
+    #[test]
+    fn the_units_of_the_bound_from_above_count_against_the_budget() {
+        let c = BigInt::one() << 40u32;
+        let p = big(&[(0, c.clone()), (1, c), (40, BigInt::one())]);
+        let p = p.terms();
+        assert_eq!(horner_units(40, 3), 274);
+        let (roots, spent) = positive_roots_by(p, BigInt::from(2), None, Horner::AtStart);
+        assert_eq!(roots, Vec::<BigInt>::new());
+        assert_eq!(spent, chain_ends(3));
+    }
+
     /// The sparse inputs stay as they were: on `(x^n + 1)(x - 4)` (`t = 4`, `D = n + 1`) for
     /// `n` to 8,192, the trigger `spent t >= HORNER_COST D^2` is not reached and no test of
     /// [`positive_from`] runs (the units of the far roots of
@@ -3389,6 +3422,20 @@ mod tests {
     /// at this degree, so NEWREFINE's `ratio` runs (red before the fix, 2026-11-27, local:
     /// "attempt to multiply with overflow" at the cap). Then the same without its constant
     /// term, whose root 3072 is found with and without a budget for a raised scale.
+    #[test]
+    fn search_adds_its_steps_with_saturation() {
+        // Cross-review XR-lazy-and-kernel-batch-1 round 4 (Codex B3.1, Gemini B-2): `steps`
+        // may come in saturated from [`horner_bound`], and each of `search`'s charges saturates.
+        // `x - 1000` on `[2, 4096]` takes a cut (`2 * 4 < 4096`), then the steps after it.
+        let p = vec![(0, BigInt::from(-1000)), (1, BigInt::one())];
+        let times_x = vec![(1, BigInt::one())];
+        let mut steps = u64::MAX;
+        let (lo, hi) = (BigInt::from(2), BigInt::from(4096));
+        let found = search(&p, &times_x, None, lo, hi, &mut steps, u64::MAX);
+        assert_eq!(found, Some(BigInt::from(1000)));
+        assert_eq!(steps, u64::MAX);
+    }
+
     #[test]
     fn search_on_a_sparse_high_degree_polynomial_does_not_overflow_the_scale_cap() {
         let d = 1u64 << 62;
