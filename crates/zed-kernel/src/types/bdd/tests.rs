@@ -3577,33 +3577,83 @@ fn opaque(at: u64) -> Part<Row> {
     Part::connect(Op::Or, Part::Bdd(meet(at, 2)), Part::Bdd(meet(at + 2, 2)))
 }
 
+/// The sizes [`Part::pins_by`] works on, read as its walk reads them: `N` the expressions,
+/// `E` the arcs from an expression to an operand that is an expression (each operand counted,
+/// so `s | s` has two), and `S` the expressions used more than once.
+fn sizes(p: &Part<Row>) -> (u64, u64, u64) {
+    let mut uses: DigestMap<u64, u64> = DigestMap::default();
+    let (mut n, mut e) = (0, 0);
+    let mut stack = vec![p.clone()];
+    while let Some(q) = stack.pop() {
+        let Part::Expr(x) = q else { continue };
+        let u = uses.entry(x.id).or_insert(0);
+        *u += 1;
+        if *u > 1 {
+            continue;
+        }
+        n += 1;
+        let operands = match x.form() {
+            Form::Not(a) => vec![a.clone()],
+            Form::Or(a, b) | Form::And(a, b) => vec![a.clone(), b.clone()],
+        };
+        for o in operands {
+            e += u64::from(matches!(o, Part::Expr(_)));
+            stack.push(o);
+        }
+    }
+    (n, e, uses.values().filter(|&&u| u >= 2).count() as u64)
+}
+
 /// [`Part::settle_by`] round by round: the part settled, the steps of [`Part::pins_by`] in all
 /// (`SETTLE_WORK`) and the pins of each round. For [`Pins::Cut`] and [`Pins::Carried`] it
-/// checks that no round costs more than the first, as a round rebuilds the part with constants
-/// put in, which leaves no more expressions: the work is at most the rounds, plus the last
-/// round that finds no pin, times the first round's.
+/// checks each round against the bound proved here in that round's `N`, `E` and `S`
+/// ([`sizes`]): `1 + N + 3E + 3S(N + E)`. A round costs at most:
+///
+/// 1. the walk, `1 + E`: the root, then each expression operand of each expression expanded
+///    once;
+/// 2. Kahn's order, `N`, one step per expression;
+/// 3. the pass of `need`, `E`, one step per operand of each expression;
+/// 4. the cuts, `E` for the round: a node's operands are read when it is fixed while on a path
+///    of `And`s, or when its last use on such a path is lost, and either happens once, since a
+///    node off the path is not cut when fixed and a fixed node is not pushed when it leaves the
+///    path;
+/// 5. each carry, `N + E`. Carried from an unknown expression, on a stack, each node changes at
+///    most once (from unknown, every operator monotone) and only a changed node reads its
+///    parents, so at most `E`. Carried from a known one, from a heap, each node is queued once
+///    and taken once, and reads its parents when first reached and when it changes, once
+///    each, so at most `N + E`;
+/// 6. per shared expression, at most two trials and one pin, three carries: `3S(N + E)`.
+///
+/// So the rounds plus the last, which finds no pin, cost at most the sum of their bounds.
+/// Before cross-review XR-lazy-and-kernel-batch-1 round 4 this checked the work against the
+/// rounds plus one times the first round, measured, not proved; Codex's
+/// [`normalizing_a_choice_complement_can_make_the_last_round_cost_more`] breaks it: a rebuild
+/// leaves no more nodes, but expressions the constants make equal merge into one id (ids are
+/// structural digests), so the shared expressions, and a round's trials, can grow.
 fn settled_by(p: &Part<Row>, how: Pins) -> (Part<Row>, u64, Vec<usize>) {
     SETTLE_WORK.with(|w| w.set(0));
-    let (mut q, mut rounds, mut first) = (p.clone(), Vec::new(), None);
+    let (mut q, mut rounds) = (p.clone(), Vec::new());
     loop {
+        let before = SETTLE_WORK.with(|w| w.get());
         let pins = q.pins_by(how);
-        first.get_or_insert_with(|| SETTLE_WORK.with(|w| w.get()));
+        let work = SETTLE_WORK.with(|w| w.get()) - before;
+        let (n, e, s) = sizes(&q);
+        let bound = 1 + n + 3 * e + 3 * s * (n + e);
+        if how != Pins::Required {
+            assert!(
+                work <= bound,
+                "{how:?}, round {}: work {work} over 1 + N + 3E + 3S(N + E) = {bound} \
+                 (N {n}, E {e}, S {s})",
+                rounds.len()
+            );
+        }
         if pins.is_empty() {
             break;
         }
         rounds.push(pins.len());
         q = q.substitute_all(&pins);
     }
-    let work = SETTLE_WORK.with(|w| w.get());
-    let first = first.expect("one round at least");
-    if how != Pins::Required {
-        assert!(
-            work <= (rounds.len() as u64 + 1) * first,
-            "{how:?}: work {work} over {} rounds of {first}",
-            rounds.len() + 1
-        );
-    }
-    (q, work, rounds)
+    (q, SETTLE_WORK.with(|w| w.get()), rounds)
 }
 
 /// [`settled_by`] with [`Pins::Cut`], checked against [`Pins::Carried`] (the same part and
@@ -3825,12 +3875,13 @@ fn gated_by_the_one_before_takes_a_round_a_pin() {
 /// and 64: the first round costs 432, 1136, 3312 and 10736, a ratio per doubling of 2.63, 2.92
 /// and 3.24, rising toward 4, so `Θ(n^2)` a round, the `Θ(S · N)` of `Part::settle` with `S` and
 /// `N` both `Θ(n)`; all rounds cost 1984, 7632, 26515 and 178679 over 6, 10, 13 and 26 rounds,
-/// each round at most the first (the ratio of the whole to rounds times the first is 0.77, 0.67,
-/// 0.62 and 0.64). The test asserts both: the first round within `7 · n^2`, and the whole within
-/// the rounds plus one times the first, the bound [`settled_by`] proves: the last round, which
-/// finds no pin, costs work too. The rounds times the first is no bound: the short-addresses
-/// build (`address::short64`, 8-bit digests) settles `n = 8` in 2 rounds `[1, 7]` with work
-/// 1004 against a first round of 432, over `2 · 432` and within `3 · 432`.
+/// no round costing more than the first here (the ratio of the whole to rounds times the first
+/// is 0.77, 0.67, 0.62 and 0.64), measured, NOT PROVED: a rebuild leaves no more nodes, but
+/// expressions the constants make equal merge into one id (ids are structural digests), so the
+/// shared expressions, and a round's trials, can grow
+/// ([`normalizing_a_choice_complement_can_make_the_last_round_cost_more`]). The test asserts
+/// the first round within `7 · n^2`, measured, and [`settled_by`] each round within the bound
+/// it proves in that round's sizes, `1 + N + 3E + 3S(N + E)`.
 #[test]
 fn cubic_for_a_worklist() {
     let family = |n: usize| {
@@ -3860,11 +3911,52 @@ fn cubic_for_a_worklist() {
             rounds.len()
         );
         assert!(first <= 7 * (n * n) as u64, "n = {n}: first round {first}");
-        assert!(
-            cut <= (rounds.len() as u64 + 1) * first,
-            "n = {n}: {cut} over {} rounds and the last, which finds no pin",
-            rounds.len()
+    }
+}
+
+/// Codex's candidate (cross-review XR-lazy-and-kernel-batch-1, round 4, B2.1): a choice chain
+/// `E` of `n` levels, `(c_i & t_i) | (!c_i & E_(i-1))`, a fresh atom at each level, under both
+/// `(E & a) | b` and `(!E & c) | d` (`!E` a raw `Not`), all below `p & p & …`, `p` an
+/// [`opaque`] expression. The first round pins `p = true`; its rebuild normalizes the raw
+/// `Not(E)`, and the round after it, which finds no pin, reads what that rebuild made. That
+/// last round costs more than the first (measured 2026-11-27, cut: 132 then 200 at n = 16, 228
+/// then 392 at 32), so with one pin round the work exceeds the rounds plus one times the first,
+/// the bound [`settled_by`] asserted until then. [`settled_by`] checks each round here against
+/// the bound it proves.
+#[test]
+fn normalizing_a_choice_complement_can_make_the_last_round_cost_more() {
+    let lit = |i| Part::literal(atom(i));
+    let and = |a, b| Part::connect(Op::And, a, b);
+    let or = |a, b| Part::connect(Op::Or, a, b);
+    for n in [16u64, 32] {
+        let e = (0..n).fold(lit(200_000), |tail, i| {
+            let c = lit(200_001 + 2 * i);
+            let t = lit(200_002 + 2 * i);
+            let yes = c.zip(&t, Op::And);
+            let no = c.not().zip(&tail, Op::And);
+            or(yes, no)
+        });
+        let g = and(
+            or(and(e.clone(), lit(201_001)), lit(201_002)),
+            or(and(Part::not_expr(e), lit(201_003)), lit(201_004)),
         );
+        let p = opaque(201_010);
+        let root = and(p.clone(), and(p.clone(), g));
+        for how in [Pins::Cut, Pins::Carried] {
+            SETTLE_WORK.with(|w| w.set(0));
+            let pins = root.pins_by(how);
+            let first = SETTLE_WORK.with(|w| w.replace(0));
+            assert_eq!(pins.len(), 1, "{how:?}, {n}: {pins:?}");
+            assert_eq!(pins.get(&p.id()), Some(&true));
+            let settled = root.substitute_all(&pins);
+            assert!(settled.pins_by(how).is_empty());
+            let last = SETTLE_WORK.with(|w| w.get());
+            eprintln!("choice complement {how:?} n = {n}: first {first}, last {last}");
+            assert!(last > first, "{how:?}, {n}: {last} <= {first}");
+            let (_, work, rounds) = settled_by(&root, how);
+            assert_eq!(rounds, vec![1], "{how:?}, {n}");
+            assert_eq!(work, first + last, "{how:?}, {n}");
+        }
     }
 }
 
