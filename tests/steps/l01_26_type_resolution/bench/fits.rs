@@ -83,10 +83,10 @@ fn n_bounded_shapes_fit_themselves_renamed_scales() {
 /// bounded to several carriers: the shapes agree at their one component, a pair each, and
 /// differ only inside it, at the atom, so each member fits only the shape of its own atom.
 /// The shapes are filed by the components inside a tuple too (TYPES-bucket-members-share-shape,
-/// `Place` in ty.rs), so each member's bucket holds its one shape and the whole is n log n.
-/// Before, the shapes were one bucket, and the second member, failing the first shape, was
-/// refused. Besides its ratio: the function fits at each size. Small instance: l01_22 kinds
-/// `members_that_each_fit_only_the_shape_of_their_own_atom_are_accepted`.
+/// `TuplePlace` in ty.rs), so each member's bucket holds its one shape and the whole is n log
+/// n. Before, the shapes were one bucket, and a member failing the first shape was refused.
+/// Besides its ratio: the function fits at each size. Small instance:
+/// `fits::shapes_told_apart_inside_their_one_tuple_fit_themselves_renamed`.
 #[test]
 fn n_shapes_told_apart_inside_a_tuple_fit_themselves_renamed_scales() {
     let what = "n shapes told apart by an atom inside their one tuple, against themselves renamed";

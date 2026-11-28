@@ -9674,7 +9674,7 @@ fn meet(ms: impl IntoIterator<Item = Member>) -> Member {
 /// the rows it has filed, by [`Row::node`]): a row shared at two paths is filed at the first,
 /// which files less finely but holds by (4) all the same; a shape with rows shared at many paths
 /// (a type written with names for its parts) is then filed in its number of rows, not paths.
-/// Test: l01_22 kinds `members_that_each_fit_only_the_shape_of_their_own_atom_are_accepted`,
+/// Test: l01_26 fits `shapes_told_apart_inside_their_one_tuple_fit_themselves_renamed`,
 /// refused before.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct TuplePlace {
@@ -13381,8 +13381,8 @@ impl<'m, 's> Comparing<'m, 's> {
     /// tests after `a_union_of_three_shapes_of_variables_fits_itself_renamed`; COMPLEXITY.md
     /// F124. Members told apart only inside a component that is one tuple in each shape, at any
     /// depth, are in buckets of their own: the shapes are filed by that tuple's components too
-    /// ([`TuplePlace`], TYPES-bucket-members-share-shape; test l01_22 kinds
-    /// `members_that_each_fit_only_the_shape_of_their_own_atom_are_accepted`, benchmark
+    /// ([`TuplePlace`], TYPES-bucket-members-share-shape; test l01_26 fits
+    /// `shapes_told_apart_inside_their_one_tuple_fit_themselves_renamed`, benchmark
     /// `n_shapes_told_apart_inside_a_tuple_fit_themselves_renamed_scales`). A complete solution
     /// would search a bucket once for all its members, by keys of the components that are not
     /// one value and not one tuple too (tuples of several rows, a payload), as the kernel files
