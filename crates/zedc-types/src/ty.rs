@@ -9683,9 +9683,9 @@ struct TuplePlace {
 }
 
 /// The shapes of a group of [`Choices`] whose components have a class ([`class`]) at the same
-/// places ([`TuplePlace`]), and are one value at the same places of those, filed by their components
-/// there: by value where they are one value, else by class. A shape filed under another key
-/// than a member's holds no component of the member's there ([`member`], [`meet`]).
+/// places ([`TuplePlace`]), and are one value at the same places of those, filed by their
+/// components there: by value where they are one value, else by class. A shape filed under
+/// another key than a member's holds no component of the member's there ([`member`], [`meet`]).
 struct Group {
     /// The places filed, each with whether it is filed by value; a place comes after the place
     /// it is inside.
@@ -9712,9 +9712,9 @@ impl Group {
     ///
     /// Where a place is inside another, the member's components at each place are kept, one for
     /// each tuple at the place around it, each tuple once (by [`Row::node`]); none where a
-    /// component around it holds a variable, which may be any tuples ([`TuplePlace`]). Each tuple of
-    /// the member at a place is read once for each place inside it, so a lookup is linear in the
-    /// member's rows at the places filed, times their components filed.
+    /// component around it holds a variable, which may be any tuples ([`TuplePlace`]). Each
+    /// tuple of the member at a place is read once for each place inside it, so a lookup is
+    /// linear in the member's rows at the places filed, times their components filed.
     fn lookup(&self, xs: &[&Ty], rigid: &BTreeMap<Arc<str>, u8>) -> Option<Bucket> {
         let mut key = Vec::with_capacity(self.places.len());
         let mut anywhere = false;
