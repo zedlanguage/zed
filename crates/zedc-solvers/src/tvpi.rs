@@ -595,7 +595,8 @@ mod tests {
     /// Random TVPI rows over at most 4 variables, each boxed in `-r..=r`, checked against the
     /// points of the box (sound: never `true` with a point), under a reversal of the rows (the
     /// same answer always, module doc "One order") and under a renaming and a reversal (the
-    /// same answer where neither search stopped at its bound, module doc "Proof"). Returns how many were shown empty, and how many searches stopped.
+    /// same answer where neither search stopped at its bound, module doc "Proof"). Returns how
+    /// many were shown empty, and how many searches stopped.
     fn random_rows_agree(rng: &mut Rng, cases: usize) -> (usize, usize) {
         let r = 3;
         let mut shown = (0, 0);
