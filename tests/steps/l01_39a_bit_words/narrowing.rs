@@ -172,20 +172,17 @@ fn a_test_on_a_call_the_operand_repeats_narrows_it_where_the_callee_has_a_summar
     };
     assert!(accepted(&at(0)), "{}", at(0));
     rejected(&at(-1));
-    // A callee with no summary (`n * n` is no affine piece) leaves each call a value of its
-    // own (arms.rs, C26), so the test on one says nothing of the other; a name for the value
-    // carries the test to its read.
-    let out = rejected(
-        "g(positional n: int) = n * n - 3;\n\
-         f(positional n: int) = if g(n) >= 0 { popCount(g(n)) } else { 0 };\n",
-    );
-    assert!(
-        out.contains(
-            "`popCount` takes `x` in int[0..]: `popCount(g(n) : int)`. Try \
-             `x = g(n); if x >= 0 { popCount(x) } else { … }` instead.\n"
-        ),
-        "{out}"
-    );
+    // A callee with no summary (`n * n` is no affine piece) is kept as one name for both
+    // calls too (CHECK-implicit-call-limits, `Reading::Test` in walk.rs), so the test on one
+    // narrows the other, with the same boundary; a name for the value does the same.
+    let square = |c: i32| {
+        format!(
+            "g(positional n: int) = n * n - 3;\n\
+             f(positional n: int) = if g(n) >= {c} {{ popCount(g(n)) }} else {{ 0 }};\n"
+        )
+    };
+    assert!(accepted(&square(0)), "{}", square(0));
+    rejected(&square(-1));
     assert!(rows_pass(
         "g(positional n: int) = n * n - 3;\n\
          f(positional n: int) = { m = g(n); if m >= 0 { popCount(m) } else { 0 } }\n\
