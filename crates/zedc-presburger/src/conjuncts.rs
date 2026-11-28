@@ -4934,66 +4934,113 @@ mod tests {
         assert!(!f.atoms().contains(&Atom::Sym(a.clone())), "{f:?}");
         assert!(!holds_at(&f, &[("n", 0), ("m", 1)]), "{f:?}");
         assert!(holds_at(&f, &[("n", 5), ("m", 6)]), "{f:?}");
-        let x: Arc<str> = "x".into();
-        // `y` and `z` in -R..=R; the bounds on `x` hold `-W <= x <= W`, so `∃x` is a search of
-        // -W..=W: no other row puts `x` past 2·2·R + 3 = 15, nor an equality outside W.
-        const R: i64 = 3;
-        const W: i64 = 40;
         let mut rng = zed_hash::SplitMix64::new(20261128);
         for case in 0..400 {
             let exact = case % 2 == 0;
-            let xs: &[i64] = if exact { &[1, -1] } else { &[1, -1, 2, -3] };
-            let mut c = Conjuncts::default();
-            for n in ["y", "z"] {
-                c.and(con(&[(n, 1)], R, Rel::Ge));
-                c.and(con(&[(n, -1)], R, Rel::Ge));
-            }
-            let mut bounds = vec![con(&[("x", 1)], W, Rel::Ge), con(&[("x", -1)], W, Rel::Ge)];
-            for _ in 0..rng.below(4) {
-                bounds.push(random_row(&mut rng, xs, if exact { 4 } else { 3 }));
-            }
-            for g in &bounds {
-                c.and(g.clone());
-            }
-            for _ in 0..if exact { 1 } else { 2 } {
-                let arms = (0..1 + rng.below(3))
-                    .map(|_| {
-                        let parts = (0..1 + rng.below(3)).map(|_| match rng.below(4) {
-                            0 => random_row(&mut rng, &[0], 0),
-                            1 => Formula::negate(random_row(&mut rng, xs, 0)),
-                            _ => random_row(&mut rng, xs, if exact { 4 } else { 3 }),
-                        });
-                        Formula::and(parts.collect())
-                    })
-                    .collect();
-                c.and(Formula::or(arms));
-            }
-            let before = c.formula();
-            // The bounds `C` as the conjunction keeps them: a disjunction of one arm, or one
-            // an earlier conjunct decides, is among them, and its rows too are in `Π_C`.
-            let gs = match &before {
-                Formula::And(gs) => gs.to_vec(),
-                g => vec![g.clone()],
-            };
-            let gs = gs.into_iter().filter(|g| !matches!(g, Formula::Or(_)));
-            let bounds = Formula::and(gs.collect());
-            c.forget(&x);
-            let after = c.formula();
-            assert!(!after.atoms().contains(&Atom::Sym(x.clone())), "{after:?}");
-            for y in -R..=R {
-                for z in -R..=R {
-                    let some = |f: &Formula| {
-                        (-W..=W).any(|v| holds_at(f, &[("x", v), ("y", y), ("z", z)]))
-                    };
-                    let projected = some(&before);
-                    let result = holds_at(&after, &[("y", y), ("z", z)]);
-                    let at = format!("case {case}, y = {y}, z = {z}: {before:?} to {after:?}");
-                    assert!(!projected || result, "a point lost, {at}");
-                    if exact {
-                        assert_eq!(projected, result && some(&bounds), "not exact, {at}");
-                    }
+            forget_x_in_a_box(&mut rng, case, if exact { 1 } else { 2 }, exact);
+        }
+    }
+
+    /// One random case of the forget tests: a conjunction over `x`, `y` and `z` with
+    /// `disjunctions` disjunctions of up to three arms, each arm up to three rows, forgets `x`,
+    /// and the result is checked at every point of a box: every point of the conjunction is
+    /// one of the result (soundness), and with `exact`, where `x` has the coefficients 1 and
+    /// -1 alone, `∃x` of the conjunction is the result with the bounds on `x` met. `y` and `z`
+    /// lie in -R..=R; the bounds on `x` hold `-W <= x <= W`, so `∃x` is a search of -W..=W: no
+    /// other row puts `x` past 2·2·R + 3 = 15, nor an equality outside W.
+    fn forget_x_in_a_box(
+        rng: &mut zed_hash::SplitMix64,
+        case: usize,
+        disjunctions: usize,
+        exact: bool,
+    ) {
+        const R: i64 = 3;
+        const W: i64 = 40;
+        let x: Arc<str> = "x".into();
+        let xs: &[i64] = if exact { &[1, -1] } else { &[1, -1, 2, -3] };
+        let mut c = Conjuncts::default();
+        for n in ["y", "z"] {
+            c.and(con(&[(n, 1)], R, Rel::Ge));
+            c.and(con(&[(n, -1)], R, Rel::Ge));
+        }
+        let mut bounds = vec![con(&[("x", 1)], W, Rel::Ge), con(&[("x", -1)], W, Rel::Ge)];
+        for _ in 0..rng.below(4) {
+            bounds.push(random_row(rng, xs, if exact { 4 } else { 3 }));
+        }
+        for g in &bounds {
+            c.and(g.clone());
+        }
+        for _ in 0..disjunctions {
+            let arms = (0..1 + rng.below(3))
+                .map(|_| {
+                    let parts = (0..1 + rng.below(3)).map(|_| match rng.below(4) {
+                        0 => random_row(rng, &[0], 0),
+                        1 => Formula::negate(random_row(rng, xs, 0)),
+                        _ => random_row(rng, xs, if exact { 4 } else { 3 }),
+                    });
+                    Formula::and(parts.collect())
+                })
+                .collect();
+            c.and(Formula::or(arms));
+        }
+        let before = c.formula();
+        // The bounds `C` as the conjunction keeps them: a disjunction of one arm, or one
+        // an earlier conjunct decides, is among them, and its rows too are in `Π_C`.
+        let gs = match &before {
+            Formula::And(gs) => gs.to_vec(),
+            g => vec![g.clone()],
+        };
+        let gs = gs.into_iter().filter(|g| !matches!(g, Formula::Or(_)));
+        let bounds = Formula::and(gs.collect());
+        c.forget(&x);
+        let after = c.formula();
+        assert!(!after.atoms().contains(&Atom::Sym(x.clone())), "{after:?}");
+        for y in -R..=R {
+            for z in -R..=R {
+                let some =
+                    |f: &Formula| (-W..=W).any(|v| holds_at(f, &[("x", v), ("y", y), ("z", z)]));
+                let projected = some(&before);
+                let result = holds_at(&after, &[("y", y), ("z", z)]);
+                let at = format!("case {case}, y = {y}, z = {z}: {before:?} to {after:?}");
+                assert!(!projected || result, "a point lost, {at}");
+                if exact {
+                    assert_eq!(projected, result && some(&bounds), "not exact, {at}");
                 }
             }
+        }
+    }
+
+    /// `Conjuncts::forget` is exact under two or more disjunctions on the name
+    /// (PRECISION-forget-disjunctions-exact), where `∃x` does not go into each disjunction
+    /// alone. First by hand: `(x >= p || x >= q) && (x <= r || x <= s)` without `x` is
+    /// `p <= r || p <= s || q <= r || q <= s`, false at `p = q = 5`, `r = s = 0`, where
+    /// projecting each disjunction alone gives `true`, as each arm bounds `x` on one side.
+    /// Then random conjunctions with two or three disjunctions on `x` and coefficients 1 and
+    /// -1 on it, checked at every point of a box as in
+    /// `forgetting_a_name_projects_each_arm_under_its_bounds`.
+    #[test]
+    fn forgetting_a_name_under_several_disjunctions_is_exact() {
+        let x: Arc<str> = "x".into();
+        let mut c = Conjuncts::default();
+        c.and(Formula::or(vec![
+            con(&[("x", 1), ("p", -1)], 0, Rel::Ge),
+            con(&[("x", 1), ("q", -1)], 0, Rel::Ge),
+        ]));
+        c.and(Formula::or(vec![
+            con(&[("x", -1), ("r", 1)], 0, Rel::Ge),
+            con(&[("x", -1), ("s", 1)], 0, Rel::Ge),
+        ]));
+        c.forget(&x);
+        let f = c.formula();
+        assert!(!f.atoms().contains(&Atom::Sym(x.clone())), "{f:?}");
+        let at = |p, q, r, s| holds_at(&f, &[("p", p), ("q", q), ("r", r), ("s", s)]);
+        assert!(!at(5, 5, 0, 0), "{f:?}");
+        assert!(at(5, 0, 0, 0), "{f:?}");
+        assert!(at(5, 5, 0, 5), "{f:?}");
+        let mut rng = zed_hash::SplitMix64::new(20261129);
+        for case in 0..300 {
+            let disjunctions = 2 + rng.below(2);
+            forget_x_in_a_box(&mut rng, case, disjunctions, true);
         }
     }
 
