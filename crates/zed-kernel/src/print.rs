@@ -36,7 +36,7 @@ use std::sync::Arc;
 
 use crate::term::walk::{Binds, Built, Kid, kids, rebuild};
 use crate::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Term, Witness};
-use crate::text::ident::numbered;
+use crate::text::ident::{PRELUDE_TYPES, numbered};
 use crate::types::defs;
 use crate::value::Value;
 
@@ -121,7 +121,7 @@ pub fn written(t: &Term, name: fn(&str) -> &str, resolves: Resolves<'_>) -> Stri
     let local = defs::local();
     let (t, labels) = form(t, Some(resolves), Some(name));
     debug_assert!(labels.is_empty(), "a scoped term has no label");
-    let (freed, fresh) = respelled(&t, name);
+    let (freed, fresh) = respelled(&t, name, resolves);
     let t = freed.map_or(t, Cow::Owned);
     let names = Names {
         written: Some(name),
@@ -172,6 +172,13 @@ pub fn written(t: &Term, name: fn(&str) -> &str, resolves: Resolves<'_>) -> Stri
 /// form is the printer's, which no program writes and the resolver does not read, but a binder
 /// respelled `p` would read to a person as the port's argument (round 3: Claude C-2).
 ///
+/// A new spelling is also none of three names outside the bound ones (round 4: Gemini C-1):
+/// the name of a primitive `t` calls, `utf8(utf)`, which a binder `utf8` would take; a name
+/// `resolves` accepts, which the binder would hide in its scope; and a prelude type's name
+/// ([`PRELUDE_TYPES`]), which the resolver refuses as a binder: `(f3@1, f3@2) -> f3@2` is
+/// `(f3, f33) -> f33`, not `(f3, f32) -> f32`. Each is one more set lookup a node or a
+/// candidate, so the cost stays O(text).
+///
 /// What this cannot tell apart: two names `t` does not bind with one spelling, `x@1` and
 /// `x@2` both free, are one name in the text; elaboration binds every name it renames, so a
 /// whole program's term has none.
@@ -180,7 +187,11 @@ pub fn written(t: &Term, name: fn(&str) -> &str, resolves: Resolves<'_>) -> Stri
 // off once, so the walk is O(text) with O(1) expected hash work a node, as the text itself.
 // The second walk, giving free reads their own names, is O(text) too and is taken only where
 // a free read's kernel name is respelled, which no whole program's term has.
-fn respelled(t: &Term, name: fn(&str) -> &str) -> (Option<Term>, HashMap<String, String>) {
+fn respelled(
+    t: &Term,
+    name: fn(&str) -> &str,
+    resolves: Resolves<'_>,
+) -> (Option<Term>, HashMap<String, String>) {
     enum Step<'t> {
         Term(&'t Term),
         Bind(&'t str, usize),
@@ -203,6 +214,11 @@ fn respelled(t: &Term, name: fn(&str) -> &str) -> (Option<Term>, HashMap<String,
             Step::Term(u) => {
                 if let Term::Read(p) | Term::Push(p, _) = u {
                     taken.insert(p);
+                }
+                // A primitive is written by its name, `utf8(s)`: a binder given that name would
+                // take the call (Gemini C-1 of round 4).
+                if let Term::Prim(p, _) | Term::PrimFn(p) = u {
+                    taken.insert(self::name(*p));
                 }
                 if let Term::Var(k) = u {
                     let k: &str = k;
@@ -280,7 +296,13 @@ fn respelled(t: &Term, name: fn(&str) -> &str) -> (Option<Term>, HashMap<String,
     for k in order {
         let base = name(k);
         let from = next.get(base).copied().unwrap_or(2);
-        let (n, s) = numbered(base, from, |s| !taken.contains(s) && !given.contains(s));
+        // Not a name `resolves` accepts, which the new binder would hide from the reads of it
+        // in its scope, nor a prelude type's, which the resolver refuses as a binder (`(f3, f32)
+        // -> f32`, Gemini C-1 of round 4).
+        let unused = |s: &str| {
+            !taken.contains(s) && !given.contains(s) && !resolves(s) && !PRELUDE_TYPES.contains(&s)
+        };
+        let (n, s) = numbered(base, from, unused);
         next.insert(base, n + 1);
         given.insert(s.clone());
         out.insert(k.to_string(), s);

@@ -84,10 +84,27 @@ pub fn fresh(base: &str, free: impl Fn(&str) -> bool) -> String {
     numbered(base, 2, free).1
 }
 
+/// The type names of the prelude at L1; a unit declares no type before L2. A binder may not
+/// have one of these names: the resolver refuses it (`zedc_resolve::resolve::TYPES`, which is
+/// this list), so a printer choosing a new name for a binder skips them.
+pub const PRELUDE_TYPES: &[&str] = &[
+    "int",
+    "rat",
+    "f64",
+    "f32",
+    "bool",
+    "String",
+    "Lines",
+    "Files",
+    "CommandLine",
+    "Never",
+];
+
 /// The least `k` from `from` up whose name `{base}{k}` `free` takes, and that name. A caller
 /// that gives several names of one base passes the `k` after the last one it got, so each
 /// suffix is tried once: k names then cost O(k + u) lookups for the u taken names of the form
-/// `{base}` and a number, not the O(k²) of trying from 1 each time.
+/// `base` without its final primes, a number, then those primes, not the O(k²) of trying from 1
+/// each time.
 ///
 /// A `'` may only end a name, so where `base` ends with primes the number goes before them:
 /// `x'` gives `x2'`, not `x'2`, which is no name (Gemini C-2 of round 3 of

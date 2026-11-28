@@ -880,19 +880,10 @@ fn is_off(a: &Annot) -> bool {
         && matches!(&a.positional[..], [Expr { kind: ExprKind::Atom(x), .. }] if x == "off")
 }
 
-/// The type names of the prelude at L1; a unit declares no type before L2.
-pub const TYPES: &[&str] = &[
-    "int",
-    "rat",
-    "f64",
-    "f32",
-    "bool",
-    "String",
-    "Lines",
-    "Files",
-    "CommandLine",
-    "Never",
-];
+/// The type names of the prelude at L1; a unit declares no type before L2. The list is the
+/// kernel's, whose printer gives no binder one of these names (a binder naming one is refused
+/// here, by `Resolver::names_type`).
+pub use zed_kernel::text::ident::PRELUDE_TYPES as TYPES;
 
 /// The type names of the prelude's later layers, each with its layer (DESIGN.md, "Defined words
 /// by layer"). A use below its layer is an error naming the layer, as for a value word. The

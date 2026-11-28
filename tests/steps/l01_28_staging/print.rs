@@ -511,8 +511,8 @@ fn a_free_read_of_a_name_respelled_at_its_binders_keeps_its_written_name() {
     // `x@1 -> x@2 + { x@2 = 5; x@1 + x@2 }`: the free read is under the binder of `x@1`, so
     // that binder is respelled and the free read is written `x`; the inner binder keeps `x`,
     // as no read of another `x` is under it once `x@1` is `x2`. The block is on the right: on
-    // the left of `+` at the start of a body the printer writes it bare, and the parser ends
-    // the body at its `}`.
+    // the left of `+` at the start of a body the printer writes it in parentheses (8842b14b1),
+    // a text other than the one this test pins.
     let b = lam(
         &["x@1"],
         add(
@@ -541,6 +541,60 @@ fn a_free_read_of_a_name_respelled_at_its_binders_keeps_its_written_name() {
 fn a_primed_binder_takes_a_new_name_with_the_number_before_the_prime() {
     let t = lam(&["x'@1"], let_("x'@2", lit(5i64), var("x'@1")));
     assert_eq!(message(&t), "x' -> { x2' = 5; x' }");
+}
+
+// Round 4 of XR-lazy-and-kernel-batch-1, part C.
+
+/// Gemini C-1: a new spelling is never a prelude type's name, which the resolver refuses as a
+/// binder. Before the fix `(f3@1, f3@2) -> f3@2` was written `(f3, f32) -> f32`, refused on
+/// read-back as a binder naming the type `f32`; the second case also calls the cast `f32`.
+#[test]
+fn a_new_spelling_is_never_a_prelude_type_name() {
+    let cast = |a: Term| prim(Prim::CastF32, vec![a]);
+    let cases = [
+        (
+            lam(&["f3@1", "f3@2"], var("f3@2")),
+            "(f3, f33) -> f33",
+            pairs(),
+        ),
+        (
+            lam(&["f3@1"], let_("f3@2", lit(5i64), cast(var("f3@1")))),
+            "f3 -> { f33 = 5; f32(f3) }",
+            vec![vec![Value::Int(9)], vec![Value::Int(-2)]],
+        ),
+    ];
+    for (t, want, inputs) in &cases {
+        assert_eq!(message(t), *want);
+        reads_back_the_same(t, want, inputs);
+    }
+}
+
+/// Gemini C-1: a new spelling is never the name of a primitive the term calls, which the binder
+/// would take. With `utf2` to `utf7` bound, `utf@2` was written `utf8`, and the body's
+/// `utf8(utf)` called the integer 5 when read back.
+#[test]
+fn a_new_spelling_is_never_the_name_of_a_primitive_the_term_calls() {
+    let mut xs = vec!["utf@1".to_string()];
+    xs.extend((2..=7).map(|i| format!("utf{i}")));
+    let body = let_("utf@2", lit(5i64), prim(Prim::Utf8, vec![var("utf@1")]));
+    let t = Term::Lam(xs.into_iter().map(Into::into).collect(), Shared::new(body));
+    let want = "(utf, utf2, utf3, utf4, utf5, utf6, utf7) -> { utf9 = 5; utf8(utf) }";
+    assert_eq!(message(&t), want);
+    let mut args = vec![Value::str("zed")];
+    args.extend((2..=7).map(Value::Int));
+    reads_back_the_same(&t, want, &[args]);
+}
+
+/// Gemini C-1: a new spelling is never a name `resolves` accepts, which the binder would hide.
+/// The text is not read back: `x2` is a name of the program around it, which this test has not.
+#[test]
+fn a_new_spelling_is_never_a_name_that_resolves() {
+    let t = lam(&["x@1"], let_("x@2", lit(5i64), var("x@1")));
+    assert_eq!(
+        written(&t, written_name, &|x| x == "x2"),
+        "x -> { x3 = 5; x }"
+    );
+    assert_eq!(message(&t), "x -> { x2 = 5; x }");
 }
 
 /// PRINT-block-left-operand-in-lambda-body: a lambda body or a match arm whose text starts with
