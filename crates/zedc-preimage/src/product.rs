@@ -29747,6 +29747,7 @@ mod tests {
                 .reduce(|a, b| prim(Prim::Add, vec![a, b]))
                 .unwrap_or(lit(0))
         };
+        #[allow(clippy::type_complexity)]
         fn test(
             rng: &mut zed_testkit::seed::Rng,
             depth: usize,

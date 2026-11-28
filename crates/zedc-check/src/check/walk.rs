@@ -37031,7 +37031,7 @@ mod tests {
         assert_eq!(largest_fitting(6, fits), Some((5, 50)));
         assert_eq!(largest_fitting(4, fits), Some((1, 10)));
         assert_eq!(largest_fitting(6, |_| None::<u32>), None);
-        assert_eq!(largest_fitting(0, |j| Some(j)), None);
+        assert_eq!(largest_fitting(0, Some), None);
     }
 
     /// Row PROOF-payload-call-paths-checked: the calls of the checks of a bounded variable
