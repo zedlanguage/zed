@@ -13,7 +13,7 @@ use zed_tests::instances::Rng;
 use zedc::store::cell::Premises;
 use zedc::store::conjuncts::names as mentioned;
 use zedc::store::interval::IntervalSet;
-use zedc::store::product::Scope;
+use zedc::store::product::{Product, Scope};
 
 use super::ints;
 use super::linked::stars_by_definition;
@@ -91,9 +91,75 @@ fn same(eager: &Scope, lazy: &Scope, all: &[Arc<str>], trace: &[String]) -> usiz
     for x in all {
         let settled = lazy.settled(x);
         assert_eq!(eager.get(x), settled, "{x} after\n{}", trace.join("\n"));
-        stale += usize::from(lazy.get(x) != settled);
+        stale += usize::from(lazy.held_product(x) != settled);
     }
     stale
+}
+
+/// Panics again with `panic`'s message and then `context`, which starts with the seed that
+/// failed, unless the message holds `context`'s first line already (a failed comparison names
+/// its seed and steps itself). A panic in the scope's own code (a `debug_assert`) names no
+/// seed, and the seed [`Rng::fresh`] prints on standard error is not in a merge_check log:
+/// b22-scale1's merge_check of wt/b22-scale1-b30d failed at "settling a leaf emptied a
+/// scope" in the two-hubs `random_seeds` with no seed to repeat it (FAIL-lazy-hubs-seed
+/// family, 2026-11-27).
+fn rethrow(panic: Box<dyn std::any::Any + Send>, context: &str) -> ! {
+    let text = (panic.downcast_ref::<String>().map(String::as_str))
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("a panic with no message");
+    if text.contains(context.lines().next().unwrap_or(context)) {
+        std::panic::resume_unwind(panic);
+    }
+    panic!("{text}\n{context}")
+}
+
+/// Runs `f`, the checks of one seed, so that a panic in it names `seed` ([`rethrow`]).
+fn naming<T>(seed: u64, f: impl FnOnce() -> T) -> T {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+        .unwrap_or_else(|e| rethrow(e, &format!("seed {seed}")))
+}
+
+/// One random step of [`run`], taken on both scopes and written to `trace`: a test, a join of
+/// the two outcomes of a test, or a binding. Returns what [`same`] returns after it.
+fn step(
+    rng: &mut Rng,
+    eager: &mut Scope,
+    lazy: &mut Scope,
+    trace: &mut Vec<String>,
+    all: &[Arc<str>],
+    test: fn(&mut Rng, usize) -> Term,
+    p: &Premises,
+) -> usize {
+    match rng.below(8) {
+        0..6 => {
+            let (t, outcome) = (test(rng, 2), rng.below(4) != 0);
+            trace.push(format!("assume {t:?} is {outcome}"));
+            *eager = eager.assume(&t, outcome, p);
+            *lazy = lazy.assume(&t, outcome, p);
+        }
+        6 => {
+            // The two outcomes of a test, each narrowed further, then joined.
+            let (t, u, v) = (test(rng, 1), test(rng, 1), test(rng, 1));
+            trace.push(format!("join {t:?} and {u:?} with not it and {v:?}"));
+            let arms = |s: &Scope| {
+                let yes = s.assume(&t, true, p).assume(&u, true, p);
+                let no = s.assume(&t, false, p).assume(&v, true, p);
+                yes.join(&no)
+            };
+            (*eager, *lazy) = (arms(eager), arms(lazy));
+        }
+        _ => {
+            // A name bound again, to what another name holds: a hub rebound drops its
+            // spokes.
+            let (x, y) = (rng.pick(all), rng.pick(all));
+            trace.push(format!("bind {x} to the product of {y}"));
+            let e = Shared::new(Term::Var(y.clone()));
+            let (pe, pl) = (eager.get(&y), lazy.settled(&y));
+            eager.bind(&x, pe, &e);
+            lazy.bind(&x, pl, &e);
+        }
+    }
+    same(eager, lazy, all, trace)
 }
 
 /// Runs, for each seed of `seeds`, a random sequence of tests drawn by `test`, joins and
@@ -114,36 +180,14 @@ fn run(
         let (mut eager, mut lazy) = (start.clone(), start.clone().lazy());
         let mut trace = vec![format!("seed {seed}")];
         for _ in 0..12 {
-            match rng.below(8) {
-                0..6 => {
-                    let (t, outcome) = (test(&mut rng, 2), rng.below(4) != 0);
-                    trace.push(format!("assume {t:?} is {outcome}"));
-                    eager = eager.assume(&t, outcome, &p);
-                    lazy = lazy.assume(&t, outcome, &p);
-                }
-                6 => {
-                    // The two outcomes of a test, each narrowed further, then joined.
-                    let (t, u, v) = (test(&mut rng, 1), test(&mut rng, 1), test(&mut rng, 1));
-                    trace.push(format!("join {t:?} and {u:?} with not it and {v:?}"));
-                    let arms = |s: &Scope| {
-                        let yes = s.assume(&t, true, &p).assume(&u, true, &p);
-                        let no = s.assume(&t, false, &p).assume(&v, true, &p);
-                        yes.join(&no)
-                    };
-                    (eager, lazy) = (arms(&eager), arms(&lazy));
-                }
-                _ => {
-                    // A name bound again, to what another name holds: a hub rebound drops
-                    // its spokes.
-                    let (x, y) = (rng.pick(&all), rng.pick(&all));
-                    trace.push(format!("bind {x} to the product of {y}"));
-                    let e = Shared::new(Term::Var(y.clone()));
-                    let (pe, pl) = (eager.get(&y), lazy.settled(&y));
-                    eager.bind(&x, pe, &e);
-                    lazy.bind(&x, pl, &e);
-                }
-            }
-            stale += same(&eager, &lazy, &all, &trace);
+            // A panic in the scope's own code (a `debug_assert`) names the seed and the steps
+            // too, as a failed comparison does: the seed is otherwise printed only on standard
+            // error, which a merge_check log does not keep (FAIL-lazy-hubs-seed family,
+            // b22-scale1's merge_check of wt/b22-scale1-b30d).
+            let step = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                step(&mut rng, &mut eager, &mut lazy, &mut trace, &all, test, &p)
+            }));
+            stale += step.unwrap_or_else(|e| rethrow(e, &trace.join("\n")));
             let multi = stars_by_definition(&lazy.relation).values().any(|gs| {
                 gs.iter()
                     .flat_map(|g| mentioned(g))
@@ -183,8 +227,10 @@ fn fresh_seeds(what: &str, count: u64) -> std::ops::Range<u64> {
     first..first + count
 }
 
-/// Random seeds of [`test`]; seed 19 leaves names unsettled, so that the comparison is not of
-/// two eager scopes (in 6 of seeds 0 to 199).
+/// Random seeds of [`test`]. Seed 19 left names unsettled before option 1' of
+/// XR-lazy-and-kernel-batch-1; under 1' none of seeds 0 to 399 does (the drawn disjunctions keep
+/// tests on nearly every leaf), so a lazy leaf is tested by hand in
+/// [`a_leaf_with_no_term_reader_or_kept_test_stays_lazy_and_a_bound_one_does_not`].
 mod a_lazy_scope_settles_each_name_to_the_eager_product {
     use super::*;
 
@@ -219,10 +265,271 @@ mod a_lazy_scope_settles_each_name_to_the_eager_product {
     }
 
     #[test]
-    fn seed_19_leaves_a_name_unsettled() {
-        let (stale, _, _, _) = run(&start(), [19], test);
-        assert!(stale > 0, "the lazy scope settled every name at once");
+    fn seed_17023501841456606916() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-scope-seed-17023501841456606908, run seed
+        // 17023501841456606908): `a4` bound to `a0`, then `a4 >= n + 3`; eager `a0` in
+        // [-16, 19], lazy settled [-15, 19], narrower by one more read-back round
+        // (xr-requests/dry-affine2-lazy-seed-17023.md). `a0` and `a4` now take the eager steps
+        // (option 1' of XR-lazy-and-kernel-batch-1).
+        run(&start(), [17023501841456606916], test);
     }
+
+    #[test]
+    fn seeds_from_13729612544510092180() {
+        // FAIL-lazy-scope-seed-13729612544510092180 (b30-check, a local suite run): "a1 after"
+        // at `assume (a3 - n) >= 3`; whether the number is the run seed or the first of the
+        // test's ten is not recorded, so all ten from it.
+        run(&start(), 13729612544510092180..13729612544510092190, test);
+    }
+
+    #[test]
+    fn seeds_from_2048554611750619743() {
+        // FAIL-lazy-scope-seed-2048554611750619743 (b30-front2, a PEG merge_check; reproduced on
+        // 50b2198dd and 06ed591d0): "settling a leaf emptied a scope", which does not name the
+        // seed, so all ten of the run from it. Fixed by option 1' of XR-lazy-and-kernel-batch-1.
+        run(&start(), 2048554611750619743..2048554611750619753, test);
+    }
+
+    #[test]
+    fn seed_1863776162842511285() {
+        // A fresh seed of `random_seeds` (run seed 1863776162842511281, merge_check of
+        // wt/dry-affine2-eqslack2 on origin/main d420c701d): `m` settled apart, lazy.rs "m after".
+        run(&start(), [1863776162842511285], test);
+    }
+
+    #[test]
+    fn seed_12181213027077511184() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-scope-seed-12181213027077511176, run seed
+        // 12181213027077511176, filed by b31-kernel): a name settled apart on origin/main
+        // 0bf095dab.
+        run(&start(), [12181213027077511184], test);
+    }
+
+    #[test]
+    fn seed_2090299356942025264() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-scope-seed-2090299356942025264, the merge
+        // check of dry-affine2-hullc on 6ec21561f, 2026-11-27): `a1` differs after the join on
+        // `a1 >= -11` of its eleventh step, `a0` bound to `a1`'s product at the first.
+        run(&start(), [2090299356942025264], test);
+    }
+
+    #[test]
+    fn seeds_from_10397413280677257963() {
+        // FAIL-lazy-eager-seed-10397413280677257963 (pith-rows' merge_check; failing on
+        // 90c9c60c4 too): lazy.rs:93, a name settled apart from the eager product, at run seed
+        // 10397413280677257963. Which of the run's ten failed is not recorded, so all ten.
+        run(&start(), 10397413280677257963..10397413280677257973, test);
+    }
+
+    #[test]
+    fn seeds_from_3912401004097402564() {
+        // The second run seed of FAIL-lazy-eager-seed-10397413280677257963, the same assert.
+        run(&start(), 3912401004097402564..3912401004097402574, test);
+    }
+
+    #[test]
+    fn seeds_from_1974326044368952918() {
+        // A run seed of `random_seeds` (dry-coll; FAIL-lazy-satellites-wider-interval, dry-hash):
+        // "n after", eager [-6, 11], lazy [-7, 11], red on origin/main ac8c4cfda and green on
+        // part A of XR-lazy-and-kernel-batch-1. Which of the run's ten failed is not recorded,
+        // so all ten.
+        run(&start(), 1974326044368952918..1974326044368952928, test);
+    }
+
+    #[test]
+    fn seeds_from_8119798284051346689_and_12120025628507516352() {
+        // FAIL-lazy-scope-seed-8119798284051346689 and FAIL-lazy-scope-seed-12120025628507516352:
+        // run seeds of `random_seeds` red on origin/main per their filers and green on part A
+        // a262708d4 of XR-lazy-and-kernel-batch-1 (local job s811, 2026-11-28). Which of each
+        // run's ten failed is not recorded, so all ten of each.
+        for first in [8119798284051346689, 12120025628507516352] {
+            run(&start(), first..first + 10, test);
+        }
+    }
+
+    #[test]
+    fn seeds_1539050261199919524_and_15005546321011322977() {
+        // Case seeds of `random_seeds`: FAIL-lazy-scope-seed-1539050261199919519 (b30-check's
+        // merge_check, run seed 1539050261199919519: lazy.rs:93, lazy -11..19 against eager
+        // -11..20) and FAIL-lazy-scope-seed-15005546321011322968 (b30-pres4's merge_check, run
+        // seed 15005546321011322968: "a1 after", lazy -20..11 against eager -20..8).
+        run(&start(), [1539050261199919524, 15005546321011322977], test);
+    }
+
+    #[test]
+    fn seeds_13676171914239005553_and_15784569534319398251() {
+        // Case seeds of `random_seeds`: FAIL-lazy-scope-seed-13676171914239005552 (b31-kernel's
+        // merge_check: "m after", lazy -20..0 against eager -20..-1) and
+        // FAIL-lazy-scope-seed-15784569534319398245 (b30-front2's merge_check: "a0 after", lazy
+        // -19..-10 against eager -17..-10). Both red on origin/main f79759f83, green on part A
+        // (local jobs m2 and l5, 2026-11-28).
+        run(&start(), [13676171914239005553, 15784569534319398251], test);
+    }
+}
+
+/// A satellite `n <= s <= m - 1` of the hubs of `b` stars `xi >= n + m + (i mod 3)`, all lazy
+/// but `x0`, bound to the term `y`, so that the lazy scope's order holds it alone; `s` then
+/// moves `k` times (`s >= j`), each a move of a satellite that changes every star at the hubs
+/// ([`Conjuncts::around`]). The lazy scope reads only the leaf its order holds at each move
+/// (`counts::around_reads`, `k` for `k` moves at every `b`), not the `b` leaves of the class
+/// (XR round 2, Codex A4: Ω(k·b) before), and every name settles to the eager product, `xi`
+/// from `k + 1 + (i mod 3)`. Mutation control: with `Scope::due` reading `around` and dropping
+/// the lazy leaves, as before, the reads are `k·b` and the test is red.
+///
+/// [`Conjuncts::around`]: zedc_presburger::conjuncts::Conjuncts::around
+#[test]
+fn a_moving_satellite_beside_lazy_leaves_reads_no_lazy_leaf() {
+    satellite_reads(|i| (i % 3) as i64);
+}
+
+/// [`a_moving_satellite_beside_lazy_leaves_reads_no_lazy_leaf`] with the offsets `i`, so that
+/// the `b` stars are `b` classes, one family at the two hubs (XR-lazy-and-kernel-batch-1
+/// round 3, Codex A4.2): the leaves read and the settled products are as with three classes.
+/// `Scope::due` listed every class at the hubs at each move, Omega(k·b) class visits, which
+/// `counts::around_reads` does not count; the benchmark
+/// `bench::a_moving_satellite_beside_lazy_leaves_of_distinct_classes_scales` times it.
+#[test]
+fn a_moving_satellite_beside_lazy_leaves_of_distinct_classes_reads_no_lazy_leaf() {
+    satellite_reads(|i| i as i64);
+}
+
+/// The scopes, eager and lazy, of `b` stars `xi >= n + m + offset(i)` beside a satellite
+/// `n <= s <= m - 1` of their hubs, `n` and `m` in [0, 100000] (room for the benchmark's 2048
+/// moves of `s`), with `x0` bound to the term `y` so that the lazy scope's order holds it
+/// alone; and their names.
+fn satellite_stars(b: usize, offset: fn(usize) -> i64) -> ([Scope; 2], Vec<Arc<str>>) {
+    let p = Premises::new();
+    let xs: Vec<String> = (0..b).map(|i| format!("x{i}")).collect();
+    let mut ns = vec!["n", "m", "s", "y"];
+    ns.extend(xs.iter().map(String::as_str));
+    let all = names(&ns);
+    let start = ints(&all).assume(
+        &and(
+            and(
+                prim(Prim::Ge, var("n"), int(0)),
+                prim(Prim::Le, var("n"), int(100_000)),
+            ),
+            and(
+                prim(Prim::Ge, var("m"), int(0)),
+                prim(Prim::Le, var("m"), int(100_000)),
+            ),
+        ),
+        true,
+        &p,
+    );
+    let mut scopes = [start.clone(), start.lazy()];
+    for (lazy, s) in scopes.iter_mut().enumerate() {
+        let (x0, y): (Arc<str>, Arc<str>) = ("x0".into(), "y".into());
+        let py = if lazy == 1 { s.settled(&y) } else { s.get(&y) };
+        s.bind(&x0, py, &Shared::new(var("y")));
+        *s = s.assume(&diff_ge("s", "n", 0), true, &p);
+        *s = s.assume(&diff_ge("m", "s", 1), true, &p);
+        for (i, x) in xs.iter().enumerate() {
+            *s = s.assume(&sum3(x, "n", "m", offset(i), false), true, &p);
+        }
+    }
+    (scopes, all)
+}
+
+/// `s` of [`satellite_stars`] moved `k` times, `s >= j` for `j` in 1..=k.
+fn satellite_moves(s: &Scope, k: usize) -> Scope {
+    let p = Premises::new();
+    (1..=k as i64).fold(s.clone(), |s, j| {
+        s.assume(&prim(Prim::Ge, var("s"), int(j)), true, &p)
+    })
+}
+
+/// The checks of [`a_moving_satellite_beside_lazy_leaves_reads_no_lazy_leaf`], at the offsets
+/// `offset`.
+fn satellite_reads(offset: fn(usize) -> i64) {
+    let k = 6;
+    let mut read = Vec::new();
+    for b in [4usize, 32] {
+        let ([eager, lazy], all) = satellite_stars(b, offset);
+        let xs = &all[4..];
+        assert!(
+            lazy.relation.class_of("x1").is_some(),
+            "x1 is no leaf of a star of two hubs"
+        );
+        assert!(
+            !lazy.relation.around("s").is_empty(),
+            "s is no satellite of the stars' hubs"
+        );
+        let eager = satellite_moves(&eager, k);
+        let before = zedc::store::preimage::counts::around_reads();
+        let lazy = satellite_moves(&lazy, k);
+        let reads = zedc::store::preimage::counts::around_reads() - before;
+        // The satellite and the hubs its moves move, each read once a move at most.
+        assert!(
+            reads <= 3 * k as u64,
+            "b = {b}: {reads} leaves read at {k} moves of the satellite, past the one placed"
+        );
+        read.push(reads);
+        for x in all.iter() {
+            assert_eq!(eager.get(x), lazy.settled(x), "{x} at b = {b}");
+        }
+        for (i, x) in xs.iter().enumerate() {
+            let lo = k as i64 + 1 + offset(i);
+            let px = eager.get(x);
+            let got = px.ints();
+            assert!(
+                got.contains(lo) && !got.contains(lo - 1),
+                "{x} is {got:?}, not from {lo}"
+            );
+        }
+    }
+    assert_eq!(
+        read[0], read[1],
+        "the leaves read grew with the lazy leaves"
+    );
+}
+
+/// Option 1' by hand (XR-lazy-and-kernel-batch-1, META1 Request 1): a leaf with no binding to a
+/// term, no reader (`read_by`), no kept test that names it and no join that reads it stays lazy,
+/// its star `a0 >= n` not projected at the hub move `n >= 5`, and settles to the eager [5, inf)
+/// when read. Negative control: the same steps after `a0` is bound to `a1`'s product (a term),
+/// where `a0` takes the eager steps and the scope holds it settled with no read.
+#[test]
+fn a_leaf_with_no_term_reader_or_kept_test_stays_lazy_and_a_bound_one_does_not() {
+    let p = Premises::new();
+    let (a0, a1): (Arc<str>, Arc<str>) = ("a0".into(), "a1".into());
+    let star = || diff_ge("a0", "n", 0);
+    let hub = || prim(Prim::Ge, var("n"), int(5));
+    let moves = |s: Scope| s.assume(&star(), true, &p).assume(&hub(), true, &p);
+    let from_5 = |x: &Product| x.ints().contains(5) && !x.ints().contains(4);
+
+    let free = moves(bounded_hubs().lazy());
+    assert_ne!(
+        free.held_product(&a0),
+        free.settled(&a0),
+        "the unbound leaf a0 was not lazy"
+    );
+    assert!(
+        from_5(&free.settled(&a0)),
+        "a0 settled to {:?}",
+        free.settled(&a0).ints()
+    );
+
+    let mut bound = bounded_hubs().lazy();
+    let pa1 = bound.settled(&a1);
+    bound.bind(&a0, pa1, &Shared::new(Term::Var(a1.clone())));
+    let bound = moves(bound);
+    assert_eq!(
+        bound.held_product(&a0),
+        bound.settled(&a0),
+        "the bound leaf a0 was lazy"
+    );
+    assert!(
+        from_5(&bound.held_product(&a0)),
+        "a0 is {:?}",
+        bound.held_product(&a0).ints()
+    );
+
+    // Both against the eager scope, name by name, at each step.
+    let steps = [Step::Assume(star(), true), Step::Assume(hub(), true)];
+    assert!(replay(&bounded_hubs(), &steps) > 0, "no name was unsettled");
+    let [s1, s2] = steps;
+    replay(&bounded_hubs(), &[Step::Bind("a0", "a1"), s1, s2]);
 }
 
 /// Every name unbounded but the two hubs, each within [-20, 20].
@@ -266,6 +573,102 @@ mod a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product {
         // 8994332253420488853): `a3` bound to `a0`'s product; `a0` in [-6, inf) eager and
         // [-9, inf) lazy.
         run(&bounded_hubs(), [8994332253420488859], wide);
+    }
+
+    #[test]
+    fn seed_5574242637160979656() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-hubs-seed-5574242637160979656, run seed
+        // 5574242637160979655): `a0` bound to `a3`, then the negated atom `!(a3 - m >= -3)`,
+        // a conjunct `m - a3 >= 4` and no kept test, then stars on `a0`; eager `m` in [5, 20],
+        // lazy settled [3, 20]. Settling `a0` read it back into `a3`, and that conjunct moved
+        // `m`, a path outside `a0`'s star; `a0` now takes the eager steps, as a leaf a bound
+        // term reads (option 1' of XR-lazy-and-kernel-batch-1; XR round 2, Codex A3).
+        run(&bounded_hubs(), [5574242637160979656], wide);
+    }
+
+    #[test]
+    fn seed_892430831927573369() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-hubs-seed-892430831927573367, run seed
+        // 892430831927573367 in merge_check of wt/xr-hole-2 762bc2898). On b74db57be the two
+        // scopes settled `a0` apart; with the read-back through bindings they settled the hub
+        // `m` apart, [-18, 4] eager and [-18, 9] lazy.
+        run(&bounded_hubs(), [892430831927573369], wide);
+    }
+
+    #[test]
+    fn seed_17568303369781510396() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-hubs-seed-17568303369781510396, run seed
+        // 17568303369781510395, found by dry-hash). At the last join the eager scope is empty
+        // and the lazy one was not: with `n` bound to `m` and `a0` to `a3`, the arm
+        // `a0 - m >= -3`, `n + m - a3 >= -2` needs `m >= -5` against `m <= -10`, which the
+        // lazy scope found only on settling `a0`.
+        run(&bounded_hubs(), [17568303369781510396], wide);
+    }
+
+    #[test]
+    fn seed_1119513696159792176() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-hubs-seed-1119513696159792176, merge_check
+        // of wt/dry-affine2-farmdoc on fffd2df52): `n` bound to `a4`, then `n - m >= 2` and
+        // `m >= 15`; eager `a4` in [17, inf), lazy [-18, inf).
+        run(&bounded_hubs(), [1119513696159792176], wide);
+    }
+
+    #[test]
+    fn seed_4827059857829881458() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-hubs-seed-4827059857829881458, run seed
+        // 4827059857829881452, filed by dry-coll): on origin/main 52fe142bd eager `m` in
+        // [7, inf), lazy settled [5, inf), the form of seed 5574242637160979656.
+        run(&bounded_hubs(), [4827059857829881458], wide);
+    }
+
+    #[test]
+    fn seed_16087263621314180760() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-stars-seed-16087263621314180758, run seed
+        // 16087263621314180758, filed by b31-kernel): on origin/main 0bf095dab one scope is
+        // empty and the other is not (lazy.rs, the `bottom` check of `same`).
+        run(&bounded_hubs(), [16087263621314180760], wide);
+    }
+
+    #[test]
+    fn seed_6783121585670467195() {
+        // A fresh seed of `random_seeds` (FAIL-lazy-hubs-seed-6783121585670467191, run seed
+        // 6783121585670467195, merge_check of wt/dry-coll-ma): `a3` bound to `a0`'s product;
+        // `a0` in (-inf, 19] eager and (-inf, -8] lazy.
+        run(&bounded_hubs(), [6783121585670467195], wide);
+    }
+
+    #[test]
+    fn seeds_where_settling_a_leaf_emptied_the_scope() {
+        // FAIL-lazy-hubs-seed-10000730: on 06ed591d0 each of these run seeds stopped at the
+        // `debug_assert` of `Scope::settle_blocks` ("settling a leaf emptied a scope"): a lazy
+        // read narrowed the lazy scope to empty where the eager one is not empty (found by a
+        // search of about 40,000 seeds; b22-scale1's merge_check of wt/b22-scale1-b30d saw it
+        // with no seed printed).
+        for seed in [10000730, 13000547, 13001335, 15000329] {
+            run(&bounded_hubs(), [seed], wide);
+        }
+    }
+
+    #[test]
+    fn seeds_29000547_and_30000100() {
+        // FAIL-lazy-hubs-seed-29000547 and FAIL-lazy-hubs-seed-30000100 (the f07 search on
+        // 06ed591d0; still failing on option 1', d2cc775a4): `a4` in (-inf, -3] eager and
+        // (-inf, -1] lazy, and `a3` in (-inf, -4] eager and (-inf, 22] lazy. Their steps that
+        // matter: `a_forced_conjunction_keeps_what_its_cases_prune_for_a_lazy_star`.
+        for seed in [29000547, 30000100] {
+            run(&bounded_hubs(), [seed], wide);
+        }
+    }
+
+    #[test]
+    fn seeds_13220432411721724916_and_17() {
+        // Two seeds of `random_seeds` at which lazy differs from eager on origin/main
+        // 454af9f18 (run seeds 13220432411721724913 and 17, 2026-11-28): `a2` settled lazily
+        // is not the eager `a2` at the first, `a3` at the second. Both are equal on round 3's
+        // part A of XR-lazy-and-kernel-batch-1, which these tests keep so.
+        for seed in [13220432411721724916, 17] {
+            run(&bounded_hubs(), [seed], wide);
+        }
     }
 
     #[test]
@@ -415,6 +818,836 @@ fn wide_seed_13834_settles_a_hub_bounded_through_a_bound_leaf() {
     _ = run(&bounded_hubs(), [13834], wide);
 }
 
+/// Gemini's finding A.1 of XR-lazy-and-kernel-batch-1 round 2, the steps of seeds 29000547 and
+/// 30000100 of [`wide`] that matter: a test the value forces to a conjunction, one of whose
+/// sides is a disjunction that the narrowing of its cases prunes to one arm. The eager scope
+/// projects the star of an unbound leaf in each case, so it keeps the bound the surviving arm
+/// gives; the lazy scope leaves the star stale and settles it later against the relation the
+/// narrowing left, which must hold the pruned arm, not the whole disjunction.
+#[test]
+fn a_forced_conjunction_keeps_what_its_cases_prune_for_a_lazy_star() {
+    let nm = || prim(Prim::Add, var("n"), var("m"));
+    // Seed 29000547: `n <= -9`, `m` bound to `a2 <= 9`, the star `a4 <= n + m - 3`, then
+    // `(n + m >= 3 && n + m >= 1) || a0 <= -3` false, so `n + m <= 0`: the arm `n + m <= 2`
+    // of `n + m <= 0 || n + m <= 2` dies against `n + a2 <= 0` within the case. Eager `a4` is
+    // (-inf, -3]; lazy, from `n + m <= 2`, (-inf, -1].
+    let steps = [
+        Step::Assume(prim(Prim::Le, var("n"), int(-9)), true),
+        Step::Bind("m", "a2"),
+        Step::Assume(prim(Prim::Le, var("a2"), int(9)), true),
+        Step::Assume(sum3("a4", "n", "m", 3, true), true),
+        Step::Assume(
+            or(
+                and(prim(Prim::Ge, nm(), int(3)), prim(Prim::Ge, nm(), int(1))),
+                prim(Prim::Le, var("a0"), int(-3)),
+            ),
+            false,
+        ),
+    ];
+    let a4: Arc<str> = "a4".into();
+    let eager = {
+        let p = Premises::new();
+        let mut s = bounded_hubs();
+        for step in &steps {
+            match step {
+                Step::Assume(t, o) => s = s.assume(t, *o, &p),
+                Step::Bind(x, y) => {
+                    let (x, y): (Arc<str>, Arc<str>) = ((*x).into(), (*y).into());
+                    let py = s.get(&y);
+                    s.bind(&x, py, &Shared::new(Term::Var(y)));
+                }
+            }
+        }
+        s
+    };
+    let held = eager.get(&a4);
+    assert!(
+        held.ints().contains(-3) && !held.ints().contains(-2),
+        "the eager scope no longer bounds a4 by -3, so the test checks nothing: {:?}",
+        held.ints()
+    );
+    replay(&bounded_hubs(), &steps);
+    // Seed 30000100: the star `a3 <= n + m - 2`, `m >= -6`, `a4` bound to `n`, then
+    // `(a4 - n >= -3 && n + m >= -1) || a4 - n - m >= 2` false: with `a4 = n` the arm `a4 - n
+    // <= -4` of `a4 - n <= -4 || n + m <= -2` dies, so `n + m <= -2` and eager `a3` is
+    // (-inf, -4]; lazy, from the boxes `n <= 4` and `m <= 20`, (-inf, 22].
+    let steps = [
+        Step::Assume(sum3("a3", "n", "m", -1, false), false),
+        Step::Assume(prim(Prim::Le, var("m"), int(-7)), false),
+        Step::Bind("a4", "n"),
+        Step::Assume(
+            or(
+                and(diff_ge("a4", "n", -3), prim(Prim::Ge, nm(), int(-1))),
+                sum3("a4", "n", "m", 2, false),
+            ),
+            false,
+        ),
+    ];
+    replay(&bounded_hubs(), &steps);
+}
+
+/// The steps of seed 29000547 in
+/// [`a_forced_conjunction_keeps_what_its_cases_prune_for_a_lazy_star`] before its forced
+/// test: `n <= -9`, `m` bound to `a2 <= 9`, the star `a4 <= n + m - 3`.
+fn forced_start() -> [Step; 4] {
+    [
+        Step::Assume(prim(Prim::Le, var("n"), int(-9)), true),
+        Step::Bind("m", "a2"),
+        Step::Assume(prim(Prim::Le, var("a2"), int(9)), true),
+        Step::Assume(sum3("a4", "n", "m", 3, true), true),
+    ]
+}
+
+/// The forced test of seed 29000547 with `k - 1` more sides and `extra`, to be assumed false:
+/// `(n + m >= 3 && n + m >= 1) || (n <= 10 && n + m >= 2) || ... || (n <= 8 + k && n + m >=
+/// k) || extra... || a0 <= -3`. False, side i >= 1 splits into the arms `n >= 10 + i`, dead
+/// as `n <= -9`, and `n + m <= i`, live and implied by the `n + m <= 0` of side 0; so the eager
+/// scope keeps `a4 <= -3` at every k, and the lazy scope does only from the relation of the
+/// test with each side's dead arm left out (the forced arm of `Scope::narrow_linear`,
+/// COMPLEXITY.md C42).
+fn forced_sides(k: usize, extra: &[Term]) -> Term {
+    let nm = || prim(Prim::Add, var("n"), var("m"));
+    let sides = (1..k as i64).map(|i| {
+        and(
+            prim(Prim::Le, var("n"), int(9 + i)),
+            prim(Prim::Ge, nm(), int(1 + i)),
+        )
+    });
+    let first = and(prim(Prim::Ge, nm(), int(3)), prim(Prim::Ge, nm(), int(1)));
+    std::iter::once(first)
+        .chain(sides)
+        .chain(extra.iter().cloned())
+        .chain([prim(Prim::Le, var("a0"), int(-3))])
+        .reduce(or)
+        .expect("one side at least")
+}
+
+/// [`forced_sides`] at k = 1, 2 and 5 settles each name as the eager scope does, `a4` to
+/// `(-inf, -3]` (the assert of the benchmark `a_forced_test_with_dead_arms_scales`). Corners:
+/// a side both of whose arms are live (`n <= -13 || m <= -13`, kept whole, beside sides that
+/// are pruned; eager `a4` stays `(-inf, -3]`), and a side both of whose arms are dead
+/// (`n >= 51 || n <= -31`), which makes the scope bottom, eager and lazy.
+#[test]
+fn a_forced_test_with_dead_arms_in_many_sides_settles_as_the_eager_scope() {
+    let a4: Arc<str> = "a4".into();
+    let both_live = and(
+        prim(Prim::Ge, var("n"), int(-12)),
+        prim(Prim::Ge, var("m"), int(-12)),
+    );
+    // On `n` alone, in [-20, -9]: `m`, bound to the product of `a2`, has no box of its own.
+    let both_dead = and(
+        prim(Prim::Le, var("n"), int(50)),
+        prim(Prim::Ge, var("n"), int(-30)),
+    );
+    for k in [1, 2, 5] {
+        for (extra, bottom) in [(vec![], false), (vec![both_live.clone()], false)] {
+            let mut steps = Vec::from(forced_start());
+            steps.push(Step::Assume(forced_sides(k, &extra), false));
+            let eager = eager_after(&bounded_hubs(), &steps);
+            assert_eq!(eager.bottom, bottom, "k {k}");
+            // With the side `n <= -13 || m <= -13` too the cases give `n + m <= -4`, but the
+            // eager scope still keeps `a4 <= -3` (measured), so -3 is pinned for both.
+            let held = eager.get(&a4);
+            assert!(
+                held.ints().contains(-3) && !held.ints().contains(-2),
+                "k {k}, {} extra: the eager scope no longer bounds a4 by -3: {:?}",
+                extra.len(),
+                held.ints()
+            );
+            replay(&bounded_hubs(), &steps);
+        }
+        let mut steps = Vec::from(forced_start());
+        steps.push(Step::Assume(forced_sides(k, &[both_dead.clone()]), false));
+        assert!(eager_after(&bounded_hubs(), &steps).bottom, "k {k}");
+        replay(&bounded_hubs(), &steps);
+    }
+}
+
+/// `n` in [0, 20], `m` in [-10, 10], every leaf unbounded.
+fn hubs_for_a_product() -> Scope {
+    let all = names(&["n", "m", "a0", "a1", "a2", "a3", "a4"]);
+    let hubs = [("n", 0, 20), ("m", -10, 10)]
+        .into_iter()
+        .map(|(h, lo, hi)| {
+            and(
+                prim(Prim::Ge, var(h), int(lo)),
+                prim(Prim::Le, var(h), int(hi)),
+            )
+        })
+        .reduce(and)
+        .expect("two hubs");
+    ints(&all).assume(&hubs, true, &Premises::new())
+}
+
+/// Gemini's case of XR-lazy-and-kernel-batch-1 round 2 (A3): `a1` bound to the leaf `a0` of
+/// the star `a0 >= n`, the hub moves to `n >= 1`, then `a1 * m >= 0`, which has no relation.
+/// The finding said the eager scope reads `a1 >= 1` and narrows `m` to [0, 10], so that a
+/// lazy scope reading `a0` stale would differ. It does not reproduce: the binding holds `a0`'s
+/// product at the bind, [0, inf), and the eager steps do not carry `a0`'s later move into
+/// `a1`, so the eager scope keeps `m` in [-10, 10] too (on d2cc775a4 and after the fixes of
+/// round 3). The test is an equality check of the case, not a red test of option 1'; the
+/// first assertion pins the eager result, so that an eager scope that comes to narrow `m`
+/// here makes this a red test again and its text is checked.
+#[test]
+fn a_product_test_on_a_name_bound_to_a_leaf_reads_the_leaf_after_its_hub_moved() {
+    let steps = [
+        Step::Assume(diff_ge("a0", "n", 0), true),
+        Step::Bind("a1", "a0"),
+        Step::Assume(prim(Prim::Ge, var("n"), int(1)), true),
+        Step::Assume(
+            prim(Prim::Ge, prim(Prim::Mul, var("a1"), var("m")), int(0)),
+            true,
+        ),
+    ];
+    let eager = eager_after(&hubs_for_a_product(), &steps);
+    assert_eq!(
+        eager.get("m").ints(),
+        &IntervalSet::of(-10, 10),
+        "the eager scope now narrows m: the case can tell a stale `a0` apart; update the text"
+    );
+    replay(&hubs_for_a_product(), &steps);
+}
+
+/// Codex's case of XR-lazy-and-kernel-batch-1 round 2 (A3): the leaf `a0` of the star
+/// `a0 >= n` read only through two bindings, `a1` bound to `a0` and `a2` to `a1`; the hub moves
+/// to `n >= 1`, then `a2 * m >= 0`, a test of `a2` alone. As in
+/// [`a_product_test_on_a_name_bound_to_a_leaf_reads_the_leaf_after_its_hub_moved`], the eager
+/// scope does not carry `a0`'s move into `a1` or `a2` and keeps `m` in [-10, 10], so the case
+/// does not tell a stale `a0` apart: an equality check, with the eager result pinned. The
+/// closure itself, that a test of `a2` settles `a0` through the two terms, is checked by the
+/// test of the same name in zedc-preimage `product.rs`, which reads [`Scope::test_closure`].
+#[test]
+fn a_leaf_read_only_through_two_bindings_is_in_the_test_closure() {
+    let steps = [
+        Step::Assume(diff_ge("a0", "n", 0), true),
+        Step::Bind("a1", "a0"),
+        Step::Bind("a2", "a1"),
+        Step::Assume(prim(Prim::Ge, var("n"), int(1)), true),
+        Step::Assume(
+            prim(Prim::Ge, prim(Prim::Mul, var("a2"), var("m")), int(0)),
+            true,
+        ),
+    ];
+    let eager = eager_after(&hubs_for_a_product(), &steps);
+    assert_eq!(
+        eager.get("m").ints(),
+        &IntervalSet::of(-10, 10),
+        "the eager scope now narrows m: the case can tell a stale `a0` apart; update the text"
+    );
+    replay(&hubs_for_a_product(), &steps);
+}
+
+/// Codex's finding A1 of XR-lazy-and-kernel-batch-1 round 2: a join of an eager scope and a lazy
+/// one is lazy, and took the eager side's bindings and `read_by`, where a binding made eagerly
+/// records no names its term reads. So the leaf `a0` that `a1 = a0` reads was lazy after the
+/// join, though both sides bind `a1` to it, and the steps of
+/// [`a_product_test_on_a_name_bound_to_a_leaf_reads_the_leaf_after_its_hub_moved`] read it
+/// stale. Each order of the two sides is checked against the eager scope; with the lazy side
+/// on the left the metadata was right already (the control).
+#[test]
+fn a_join_of_an_eager_and_a_lazy_scope_keeps_a_leaf_a_binding_reads_eager() {
+    let p = Premises::new();
+    let all = names(&["n", "m", "a0", "a1", "a2", "a3", "a4"]);
+    let (a0, a1): (Arc<str>, Arc<str>) = ("a0".into(), "a1".into());
+    let prep = |s: Scope| {
+        let mut s = s.assume(&diff_ge("a0", "n", 0), true, &p);
+        let pa0 = s.settled(&a0);
+        s.bind(&a1, pa0, &Shared::new(Term::Var(a0.clone())));
+        s
+    };
+    let tail = |s: Scope| {
+        s.assume(&prim(Prim::Ge, var("n"), int(1)), true, &p)
+            .assume(
+                &prim(Prim::Ge, prim(Prim::Mul, var("a1"), var("m")), int(0)),
+                true,
+                &p,
+            )
+    };
+    let eager = tail(prep(hubs_for_a_product()));
+    let (e, l) = (
+        prep(hubs_for_a_product()),
+        prep(hubs_for_a_product().lazy()),
+    );
+    for (order, joined) in [("eager left", e.join(&l)), ("lazy left", l.join(&e))] {
+        let joined = tail(joined);
+        assert_eq!(eager.bottom, joined.bottom, "{order}");
+        for x in &all {
+            assert_eq!(eager.get(x), joined.settled(x), "{order}: {x}");
+        }
+    }
+}
+
+/// Gemini's finding A.2 of XR-lazy-and-kernel-batch-1 round 2: [`Scope::bind_summarized`] meets
+/// the bound product with the summary's values over its inputs' products, which a lazy scope
+/// held stale. `a0` is the lazy leaf of `a0 >= n` after the move `n >= 5`; `y` bound to the
+/// summary of `a0 + 1` lies in [6, inf) in the eager scope, and lay in all the integers in the
+/// lazy one, read from `a0`'s stale product.
+#[test]
+fn a_summarized_binding_reads_its_inputs_settled() {
+    use zedc::store::preimage::{Domains, Lets, let_summary};
+    let p = Premises::new();
+    let (a0, a1, y): (Arc<str>, Arc<str>, Arc<str>) = ("a0".into(), "a1".into(), "y".into());
+    let prep = |s: Scope| {
+        s.assume(&diff_ge("a0", "n", 0), true, &p).assume(
+            &prim(Prim::Ge, var("n"), int(5)),
+            true,
+            &p,
+        )
+    };
+    let (mut eager, mut lazy) = (prep(bounded_hubs()), prep(bounded_hubs().lazy()));
+    assert_ne!(lazy.held_product(&a0), lazy.settled(&a0), "a0 is not lazy");
+    let sum = prim(Prim::Add, var("a0"), int(1));
+    let doms: Domains = [(a0.clone(), IntervalSet::top())].into_iter().collect();
+    let s = let_summary(&sum, &doms, Lets::new()).expect("a summary of a0 + 1");
+    let e = Shared::new(sum);
+    let top = eager.get(&a1);
+    eager.bind_summarized(&y, top.clone(), &e, &s, &doms);
+    lazy.bind_summarized(&y, top, &e, &s, &doms);
+    let held = eager.get(&y);
+    assert!(
+        held.ints().contains(6) && !held.ints().contains(5),
+        "the eager scope no longer bounds y from 6, so the test checks nothing: {:?}",
+        held.ints()
+    );
+    assert_eq!(held, lazy.settled(&y));
+}
+
+/// Codex's finding A3.1 of XR-lazy-and-kernel-batch-1 round 3: [`forward`] reads products as
+/// held, and read the stale product of a lazy leaf. `a0` is the lazy leaf of `a0 >= n` after
+/// the move `n >= 5`, as in [`a_summarized_binding_reads_its_inputs_settled`]; its forward
+/// value is [5, inf) eager, and is so lazy, with the caller's scope still lazy after. The
+/// arms of `let y = a0 in if y <= 4 then 1 else 0` ([`arms`]) are reached as in the eager
+/// scope: the first is not.
+///
+/// [`forward`]: zedc::store::product::forward
+/// [`arms`]: zedc::store::product::arms
+#[test]
+fn forwarding_a_variable_of_a_lazy_scope_reads_its_settled_product() {
+    use zedc::store::product::{arms, forward};
+    let p = Premises::new();
+    let a0: Arc<str> = "a0".into();
+    let prep = |s: Scope| {
+        s.assume(&diff_ge("a0", "n", 0), true, &p).assume(
+            &prim(Prim::Ge, var("n"), int(5)),
+            true,
+            &p,
+        )
+    };
+    let (mut eager, mut lazy) = (prep(bounded_hubs()), prep(bounded_hubs().lazy()));
+    assert_ne!(lazy.held_product(&a0), lazy.settled(&a0), "a0 is not lazy");
+    let e = var("a0");
+    let held = forward(&e, &mut eager);
+    assert!(
+        held.ints().contains(5) && !held.ints().contains(4),
+        "the eager scope no longer bounds a0 from 5, so the test checks nothing: {:?}",
+        held.ints()
+    );
+    assert_eq!(forward(&e, &mut lazy), held, "forward of a0");
+    assert_ne!(
+        lazy.held_product(&a0),
+        lazy.settled(&a0),
+        "forward settled the caller's scope"
+    );
+    let t = Term::Let(
+        "y".into(),
+        Shared::new(var("a0")),
+        Shared::new(Term::If(
+            Shared::new(prim(Prim::Le, var("y"), int(4))),
+            Shared::new(int(1)),
+            Shared::new(int(0)),
+        )),
+    );
+    let reached = |s: &Scope| {
+        arms(&t, s)
+            .iter()
+            .map(|a| a.reachable())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(reached(&eager), [false, true], "the eager arms");
+    assert_eq!(
+        reached(&lazy),
+        reached(&eager),
+        "the arms of the lazy scope"
+    );
+}
+
+/// [`Scope::statics`] and [`Scope::contains`] read products as held, and read the stale
+/// product of a lazy leaf (the author's rule of 2026-11-28: lazy and eager give the same
+/// result in every case). `a0` is a leaf of `a0 >= n` with `a0 <= 5`, then the move `n >= 5`
+/// makes it `[5, 5]` eagerly, a static value, while the lazy scope holds it stale. Both
+/// scopes must give `a0 = 5` as a static, refuse the state `a0 = 4` and hold `a0 = 5`; the
+/// caller's lazy scope stays lazy. Corner cases: a state naming `n` too (the relation is
+/// checked), and the eager scope, read as held.
+#[test]
+fn statics_and_contains_of_a_lazy_scope_read_its_settled_products() {
+    use std::collections::BTreeMap;
+    let p = Premises::new();
+    let a0: Arc<str> = "a0".into();
+    let prep = |s: Scope| {
+        [
+            diff_ge("a0", "n", 0),
+            prim(Prim::Le, var("a0"), int(5)),
+            prim(Prim::Ge, var("n"), int(5)),
+        ]
+        .iter()
+        .fold(s, |s, t| s.assume(t, true, &p))
+    };
+    let (eager, lazy) = (prep(bounded_hubs()), prep(bounded_hubs().lazy()));
+    assert_ne!(lazy.held_product(&a0), lazy.settled(&a0), "a0 is not lazy");
+    assert_eq!(eager.get(&a0).ints().to_string(), "[5..=5]", "eager a0");
+    let statics = eager.statics();
+    assert_eq!(statics.get(&a0), Some(&Value::Int(5)), "eager statics");
+    assert_eq!(lazy.statics(), statics, "lazy statics");
+    let state = |vs: &[(&str, i64)]| -> BTreeMap<Arc<str>, Value> {
+        vs.iter()
+            .map(|(n, v)| (Arc::from(*n), Value::Int(*v)))
+            .collect()
+    };
+    for env in [
+        state(&[("a0", 4)]),
+        state(&[("a0", 5)]),
+        state(&[("a0", 4), ("n", 5)]),
+        state(&[("a0", 5), ("n", 5)]),
+    ] {
+        assert_eq!(lazy.contains(&env), eager.contains(&env), "{env:?}");
+    }
+    assert!(!eager.contains(&state(&[("a0", 4)])), "eager holds a0 = 4");
+    assert!(eager.contains(&state(&[("a0", 5)])), "eager refuses a0 = 5");
+    assert_ne!(
+        lazy.held_product(&a0),
+        lazy.settled(&a0),
+        "a read settled the caller's scope"
+    );
+}
+
+/// The scope of [`statics_and_contains_of_a_lazy_scope_read_its_settled_products`], eager
+/// and lazy: `a0 >= n`, `a0 <= 5`, then the move `n >= 5`, so that `a0` is `[5, 5]` eagerly
+/// and a stale leaf of `n` lazily.
+fn stale_a0() -> (Scope, Scope) {
+    let p = Premises::new();
+    let prep = |s: Scope| {
+        [
+            diff_ge("a0", "n", 0),
+            prim(Prim::Le, var("a0"), int(5)),
+            prim(Prim::Ge, var("n"), int(5)),
+        ]
+        .iter()
+        .fold(s, |s, t| s.assume(t, true, &p))
+    };
+    (prep(bounded_hubs()), prep(bounded_hubs().lazy()))
+}
+
+/// The lines [`Scope`]'s `Display` gives under `name`: its product.
+fn shown(s: &Scope, name: &str) -> String {
+    let (mut out, mut on) = (String::new(), false);
+    for line in s.to_string().lines() {
+        if !line.starts_with(char::is_whitespace) {
+            on = line == format!("{name}:");
+        } else if on {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The public reads of a product of a lazy scope, [`Scope::get`] and `Display`, give what
+/// the eager scope gives, and leave the held product as it was (XR-lazy-and-kernel-batch-1
+/// round 4, Codex A4.1 and Claude A4.1; the author's rule of 2026-11-28: lazy and eager give
+/// the same result in every case). `a0` of [`stale_a0`] is `[5, 5]` eagerly and held stale
+/// lazily. Negative control: the held product (`Scope::held_product`) differs from the eager
+/// one before and after the reads.
+#[test]
+fn a_public_product_read_agrees_with_eager_without_mutating_storage() {
+    let (eager, lazy) = stale_a0();
+    let a0: Arc<str> = "a0".into();
+    let held = lazy.held_product(&a0);
+    assert_ne!(
+        held,
+        eager.get(&a0),
+        "a0 is not stale, so the test checks nothing"
+    );
+    assert_eq!(lazy.get(&a0), eager.get(&a0), "get");
+    assert_eq!(shown(&lazy, "a0"), shown(&eager, "a0"), "Display");
+    assert_eq!(
+        lazy.held_product(&a0),
+        held,
+        "a read settled the scope it read"
+    );
+}
+
+/// [`Scope::eager_on`] of a term that reads no stale leaf leaves every read of the scope as
+/// the eager scope gives it (XR-lazy-and-kernel-batch-1 round 4, Codex A4.2): it made the
+/// scope eager without settling `a0` of [`stale_a0`], so that `statics` and `get` read the
+/// stale product as held. Corner cases: a constant (no name read), and the arms of `if n <=
+/// 100 then 1 else 0`, which reads the hub `n` but not its leaf `a0` ([`arms`] walks a copy
+/// made eager on the term), the live arm's `a0`. Control: the statics agree before.
+///
+/// [`arms`]: zedc::store::product::arms
+#[test]
+fn eager_on_of_a_constant_preserves_unrelated_observations() {
+    use zedc::store::product::arms;
+    let (eager, mut lazy) = stale_a0();
+    let a0: Arc<str> = "a0".into();
+    assert_ne!(lazy.held_product(&a0), eager.get(&a0), "a0 is not stale");
+    assert_eq!(lazy.statics(), eager.statics(), "statics before eager_on");
+    let t = Term::If(
+        Shared::new(prim(Prim::Le, var("n"), int(100))),
+        Shared::new(int(1)),
+        Shared::new(int(0)),
+    );
+    let live_a0 = |s: &Scope| {
+        let arms = arms(&t, s);
+        assert!(
+            arms[0].reachable() && !arms[1].reachable(),
+            "the arms of {s}"
+        );
+        arms[0].scope.get(&a0)
+    };
+    assert_eq!(live_a0(&lazy), live_a0(&eager), "a0 in the live arm");
+    lazy.eager_on(&int(0));
+    assert_eq!(lazy.statics(), eager.statics(), "statics after eager_on");
+    assert_eq!(lazy.get(&a0), eager.get(&a0), "get after eager_on");
+    assert_eq!(lazy.settled(&a0), eager.get(&a0), "settled after eager_on");
+}
+
+/// The scope of Gemini's witnesses A3 of XR-lazy-and-kernel-batch-1 round 3: `n`, `m` and `w`
+/// in [0, 20], `x` and `t` unbounded, and `y` too when `shadow`, so that the binding of `y`
+/// below takes the path of a name the scope has.
+fn witness_scope(shadow: bool) -> Scope {
+    let mut ns = vec!["n", "m", "w", "x", "t"];
+    if shadow {
+        ns.push("y");
+    }
+    let box20 = ["n", "m", "w"]
+        .iter()
+        .map(|h| {
+            and(
+                prim(Prim::Ge, var(h), int(0)),
+                prim(Prim::Le, var(h), int(20)),
+            )
+        })
+        .reduce(and)
+        .expect("three names");
+    ints(&names(&ns)).assume(&box20, true, &Premises::new())
+}
+
+/// `x >= n`, then `y` bound to `x + w` with no bound of its own (the product of `t`), then
+/// `y <= m`: Gemini's witness A3 before the moves of the hubs.
+fn witness_bound(s: Scope) -> Scope {
+    let p = Premises::new();
+    let mut s = s.assume(&diff_ge("x", "n", 0), true, &p);
+    let (y, t): (Arc<str>, Arc<str>) = ("y".into(), "t".into());
+    let top = s.get(&t);
+    s.bind(&y, top, &Shared::new(prim(Prim::Add, var("x"), var("w"))));
+    s.assume(&diff_ge("m", "y", 0), true, &p)
+}
+
+/// The moves of the hubs of Gemini's witness A3: `n >= 10`, then `m <= 15`.
+fn witness_moves(s: Scope) -> Scope {
+    let p = Premises::new();
+    s.assume(&prim(Prim::Ge, var("n"), int(10)), true, &p)
+        .assume(&prim(Prim::Le, var("m"), int(15)), true, &p)
+}
+
+/// `w` of a witness scope, settled, and the check that the eager one is [0, 5]: `y = x + w <=
+/// m <= 15` with `x >= n >= 10`.
+fn witness_w(eager: &Scope, lazy: &Scope, what: &str) {
+    let w: Arc<str> = "w".into();
+    let held = eager.get(&w);
+    assert_eq!(held.ints().to_string(), "[0..=5]", "{what}: the eager w");
+    assert_eq!(lazy.settled(&w), held, "{what}: w");
+}
+
+/// Gemini's witness A3 (1) and (2) of XR-lazy-and-kernel-batch-1 round 3, against the claim
+/// that the `read_by` clause of `Placing::holds` and the two calls of `Scope::promote` in
+/// `Scope::bind` are equivalent mutants: the leaf `x` of `x >= n` is read by the term of `y`,
+/// bound to `x + w`, and `y <= m`; after `n >= 10` and `m <= 15` the eager scope reads `y`
+/// back to `w` in [0, 5]. A lazy `x` would be read back stale, `[0, inf)`, and `w` left in
+/// [0, 15]. Once on a fresh `y` (the first call of `promote`) and once on a `y` the scope has
+/// (the second).
+#[test]
+fn a_leaf_a_bound_term_reads_is_read_back_settled() {
+    for shadow in [false, true] {
+        let what = if shadow {
+            "a y the scope has"
+        } else {
+            "a fresh y"
+        };
+        let s = witness_scope(shadow);
+        let eager = witness_moves(witness_bound(s.clone()));
+        let lazy = witness_moves(witness_bound(s.lazy()));
+        witness_w(&eager, &lazy, what);
+    }
+}
+
+/// Gemini's witness A3 (4) of XR-lazy-and-kernel-batch-1 round 3, against the claim that the
+/// step of `Scope::join` that makes an eager side lazy is an equivalent mutant: the scope of
+/// [`a_leaf_a_bound_term_reads_is_read_back_settled`], eager, joined with the same steps taken
+/// lazily, either way round, before the moves of the hubs. The eager side's binding records
+/// no names its term reads; without the step the join reads `x` lazily, and `w` is left in
+/// [0, 15].
+#[test]
+fn a_leaf_a_bound_term_reads_on_the_eager_side_of_a_join_is_read_back_settled() {
+    let s = witness_scope(false);
+    let (e, l) = (witness_bound(s.clone()), witness_bound(s.lazy()));
+    let eager = witness_moves(e.join(&e));
+    witness_w(&eager, &witness_moves(e.join(&l)), "eager joined with lazy");
+    witness_w(&eager, &witness_moves(l.join(&e)), "lazy joined with eager");
+}
+
+/// Gemini's witness A3 (3) of XR-lazy-and-kernel-batch-1 round 3, against the claim that the
+/// call of `Scope::promote` in `Scope::join_kept` is an equivalent mutant: with `n` and `m`
+/// in [0, 20], `x >= n` and `x >= 0`, the test `m * m == 0 || (x <= 5 && m >= 10)` is kept,
+/// its cases joined with `x` in [0, inf) as before, and it fires when `x` passes 5: after
+/// `n >= 6` the eager `m` is [0, 0]. A lazy `x` would take no eager step at the move, the
+/// trigger would not fire, and `m` would be `{0} ∪ [10, 20]`.
+#[test]
+fn a_leaf_a_kept_test_names_fires_it_at_a_move_of_its_hub() {
+    let p = Premises::new();
+    let start = ints(&names(&["n", "m", "x"])).assume(
+        &and(
+            and(
+                prim(Prim::Ge, var("n"), int(0)),
+                prim(Prim::Le, var("n"), int(20)),
+            ),
+            and(
+                prim(Prim::Ge, var("m"), int(0)),
+                prim(Prim::Le, var("m"), int(20)),
+            ),
+        ),
+        true,
+        &p,
+    );
+    let kept = or(
+        prim(Prim::Eq, prim(Prim::Mul, var("m"), var("m")), int(0)),
+        and(
+            prim(Prim::Le, var("x"), int(5)),
+            prim(Prim::Ge, var("m"), int(10)),
+        ),
+    );
+    let steps = [
+        diff_ge("x", "n", 0),
+        prim(Prim::Ge, var("x"), int(0)),
+        kept,
+        prim(Prim::Ge, var("n"), int(6)),
+    ];
+    let run = |s: Scope| steps.iter().fold(s, |s, t| s.assume(t, true, &p));
+    let (eager, lazy) = (run(start.clone()), run(start.lazy()));
+    let m: Arc<str> = "m".into();
+    assert_eq!(eager.get(&m).ints().to_string(), "[0..=0]", "the eager m");
+    assert_eq!(lazy.settled(&m), eager.get(&m), "m");
+}
+
+/// Codex's case A3.2 of XR-lazy-and-kernel-batch-1 round 3, for the call of `Scope::promote`
+/// in `Scope::join_kept`: a lazy star `a >= n + m` with `a >= 0`, `n` and `m` in [-20, 20],
+/// then the kept test `(a == 0 && y * y == 0) || (a >= 1 && y >= 10)`, whose join of the
+/// cases leaves `a` in [0, inf) as before; then `n + m >= 1`, a move of the hubs that takes
+/// `a` past 0 without naming it, so the first case is dead and `y` is in [10, inf) eagerly.
+#[test]
+fn a_kept_test_on_a_lazy_star_fires_at_a_move_of_its_hubs() {
+    let p = Premises::new();
+    let start = ints(&names(&["n", "m", "a", "y"])).assume(
+        &and(
+            and(
+                prim(Prim::Ge, var("n"), int(-20)),
+                prim(Prim::Le, var("n"), int(20)),
+            ),
+            and(
+                prim(Prim::Ge, var("m"), int(-20)),
+                prim(Prim::Le, var("m"), int(20)),
+            ),
+        ),
+        true,
+        &p,
+    );
+    let kept = or(
+        and(
+            prim(Prim::Eq, var("a"), int(0)),
+            prim(Prim::Eq, prim(Prim::Mul, var("y"), var("y")), int(0)),
+        ),
+        and(
+            prim(Prim::Ge, var("a"), int(1)),
+            prim(Prim::Ge, var("y"), int(10)),
+        ),
+    );
+    let steps = [
+        sum3("a", "n", "m", 0, false),
+        prim(Prim::Ge, var("a"), int(0)),
+        kept,
+        prim(Prim::Ge, prim(Prim::Add, var("n"), var("m")), int(1)),
+    ];
+    let run = |s: Scope| steps.iter().fold(s, |s, t| s.assume(t, true, &p));
+    let (eager, lazy) = (run(start.clone()), run(start.lazy()));
+    let y: Arc<str> = "y".into();
+    assert_eq!(eager.get(&y).ints().to_string(), "[10..]", "the eager y");
+    assert_eq!(lazy.settled(&y), eager.get(&y), "y");
+}
+
+/// The scope of [`replay`] with `n` and `m` in [0, 20] and every leaf unbounded.
+fn hubs_from_zero() -> Scope {
+    let all = names(&["n", "m", "a0", "a1", "a2", "a3", "a4"]);
+    let hubs = HUBS
+        .iter()
+        .map(|h| {
+            and(
+                prim(Prim::Ge, var(h), int(0)),
+                prim(Prim::Le, var(h), int(20)),
+            )
+        })
+        .reduce(and)
+        .expect("two hubs");
+    ints(&all).assume(&hubs, true, &Premises::new())
+}
+
+/// The eager scope after `steps` from `start`, as [`replay`] takes them.
+fn eager_after(start: &Scope, steps: &[Step]) -> Scope {
+    let p = Premises::new();
+    steps.iter().fold(start.clone(), |mut s, step| match step {
+        Step::Assume(t, outcome) => s.assume(t, *outcome, &p),
+        Step::Bind(x, y) => {
+            let (x, y): (Arc<str>, Arc<str>) = ((*x).into(), (*y).into());
+            let py = s.get(&y);
+            s.bind(&x, py, &Shared::new(Term::Var(y)));
+            s
+        }
+    })
+}
+
+#[test]
+fn a_kept_test_on_an_unbound_leaf_fires_as_the_eager_scope_fires_it() {
+    // Gemini's case of XR-lazy-and-kernel-batch-1 round 1 (Q2, path 1): a kept test whose
+    // trigger is a leaf no term binds. `m * m == 0` has no relation, so the disjunction is kept
+    // with a trigger on `a0` above 5, and `m` is {0} and [10, 20]. Then `a0 >= n` makes `a0` a
+    // leaf of the star at `n`, and `n >= 6` moves the hub: the eager scope projects the star,
+    // `a0 >= 6` fires the trigger, the first case dies and `m` is [10, 20]. A lazy scope that
+    // leaves `a0` stale never fires it, and settles `m` to {0} and [10, 20]. Option 1': a leaf
+    // a kept test triggers on takes the eager steps (`Placing::holds`, `kept.by`).
+    let sq = prim(Prim::Mul, var("m"), var("m"));
+    let steps = [
+        Step::Assume(
+            or(
+                and(
+                    prim(Prim::Le, var("a0"), int(5)),
+                    prim(Prim::Eq, sq, int(0)),
+                ),
+                and(
+                    prim(Prim::Ge, var("a0"), int(6)),
+                    prim(Prim::Ge, var("m"), int(10)),
+                ),
+            ),
+            true,
+        ),
+        Step::Assume(diff_ge("n", "m", -20), true),
+        Step::Assume(
+            prim(Prim::Ge, prim(Prim::Add, var("n"), var("m")), int(0)),
+            true,
+        ),
+        Step::Assume(diff_ge("a0", "n", 0), true),
+        Step::Assume(prim(Prim::Ge, var("n"), int(6)), true),
+    ];
+    let eager = eager_after(&hubs_from_zero(), &steps);
+    let m: Arc<str> = "m".into();
+    assert_eq!(
+        eager.get(&m).ints(),
+        &IntervalSet::of(10, 20),
+        "the eager scope no longer fires the trigger, so the test checks nothing"
+    );
+    replay(&hubs_from_zero(), &steps);
+}
+
+#[test]
+fn a_test_on_a_name_bound_to_a_leaf_reads_the_leaf_settled() {
+    // Gemini's case of XR-lazy-and-kernel-batch-1 round 1 (Q2, path 2): `a1` bound to the
+    // leaf `a0` (`y = x`), the hub `n` moves, then a test of `a1` with two cases. The eager
+    // scope projected `a0`'s star at the move, and its test reads `a0 >= 5`; one that settles
+    // only the names the test mentions reads `a0`'s stale product. `settle_test` settles the
+    // names those names' terms read, to a fixed point (option 1'). An outcome check only: it
+    // passes on the base 06ed591d0 too, since the case `a1 <= 4` narrows `a0` through `a1`'s
+    // summary and the projection of `a0`'s own star kills that case (XR round 2, Gemini A.3,
+    // Codex A3). The two cases those findings gave in its place,
+    // `a_product_test_on_a_name_bound_to_a_leaf_reads_the_leaf_after_its_hub_moved` and
+    // `a_leaf_read_only_through_two_bindings_is_in_the_test_closure`, are outcome checks too
+    // (XR round 3: the eager scope does not carry the move into the binding).
+    let steps = [
+        Step::Assume(diff_ge("a0", "n", 0), true),
+        Step::Bind("a1", "a0"),
+        Step::Assume(prim(Prim::Ge, var("n"), int(5)), true),
+        Step::Assume(
+            or(
+                prim(Prim::Le, var("a1"), int(4)),
+                prim(Prim::Ge, var("m"), int(10)),
+            ),
+            true,
+        ),
+        Step::Assume(prim(Prim::Le, var("a0"), int(4)), false),
+    ];
+    replay(&bounded_hubs(), &steps);
+}
+
+#[test]
+fn a_bound_leaf_of_a_star_of_two_hubs_follows_its_class_as_the_eager_scope_does() {
+    // A leaf bound to a term (`a0` to `a3`) is the leaf of a star of both hubs, and tests among
+    // the hubs change the conjuncts the star's class is keyed by (`due`, `relation.classed`):
+    // the eager scope projects the star again at each, reads `a0`'s narrowing back into `a3`,
+    // and `!(a3 - m >= -3)` carries it to `m`. A lazy scope that projects only the classes'
+    // stars of eager leaves must count `a0` as one (option 1', `Placing::holds`).
+    let steps = [
+        Step::Bind("a0", "a3"),
+        Step::Assume(sum3("a0", "n", "m", 1, false), true),
+        Step::Assume(diff_ge("a3", "m", -3), false),
+        Step::Assume(diff_ge("n", "m", 3), true),
+        Step::Assume(prim(Prim::Ge, var("m"), int(2)), true),
+        Step::Assume(sum3("a2", "n", "m", 0, true), true),
+        Step::Assume(
+            prim(Prim::Ge, prim(Prim::Add, var("n"), var("m")), int(9)),
+            true,
+        ),
+        Step::Assume(prim(Prim::Ge, var("n"), int(8)), true),
+    ];
+    replay(&bounded_hubs(), &steps);
+}
+
+/// As [`wide`], and now and then a kept test whose trigger is a leaf: one case bounds the leaf
+/// below `c` beside `h * h == 0` (no relation, so the disjunction is kept), the other bounds it
+/// from `c + 1` beside a bound on a hub, as in
+/// `a_kept_test_on_an_unbound_leaf_fires_as_the_eager_scope_fires_it` (item F1.3 of
+/// XR-lazy-and-kernel-batch-1 round 1). With [`step`]'s bindings of a leaf to another name,
+/// which give terms that read leaves, it draws both paths by which a leaf that is not lazy
+/// reaches a hub.
+fn triggers(rng: &mut Rng, depth: usize) -> Term {
+    if rng.below(4) == 0 {
+        let (leaf, hub, c) = (rng.pick(&LEAVES), rng.pick(&HUBS), rng.int(-5, 5));
+        let sq = prim(Prim::Mul, var(rng.pick(&HUBS)), var(rng.pick(&HUBS)));
+        or(
+            and(
+                prim(Prim::Le, var(leaf), int(c)),
+                prim(Prim::Eq, sq, int(0)),
+            ),
+            and(
+                prim(Prim::Ge, var(leaf), int(c + 1)),
+                prim(Prim::Ge, var(hub), int(rng.int(-10, 10))),
+            ),
+        )
+    } else {
+        wide(rng, depth)
+    }
+}
+
+/// Random seeds of [`triggers`].
+mod a_lazy_scope_with_kept_tests_on_leaves_settles_each_name_to_the_eager_product {
+    use super::*;
+
+    #[test]
+    fn random_seeds() {
+        run(
+            &bounded_hubs(),
+            fresh_seeds("lazy scope with kept tests on leaves", 10),
+            triggers,
+        );
+    }
+}
+
 /// Whether a star of two hubs or more stands beside a satellite of its hubs: a conjunct of a
 /// hub of the star and one other name, neither a leaf of a star nor a hub of that one.
 fn satellite_kept(s: &Scope) -> bool {
@@ -476,6 +1709,117 @@ mod a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_prod
     #[test]
     fn seed_132839571965928555_reads_a_narrowed_binder_back_to_the_name_it_reads() {
         run(&bounded_hubs(), [132839571965928555], satellites);
+    }
+
+    // The next three are dry-hash's (566683ede on wt/dry-hash-sat-3), taken here with the
+    // change they test (option 1' of XR-lazy-and-kernel-batch-1).
+
+    /// Seed 4211133997374228451 of [`satellites`] (FAIL-lazy-satellites-wider-interval, a fresh
+    /// seed of `random_seeds` on 2026-11-26): the lazy scope settled `a0` to (-inf, -3] where
+    /// the eager scope holds (-inf, -5]. A regression of the join, the shadow and the star,
+    /// not a test of option 1': its binding `a3 = a0` narrows `a0` through the readers'
+    /// read-back, fixed on the base 06ed591d0 (FAIL-lazy-hubs-seed-3066150143192435835; XR round
+    /// 2, Gemini A.3, Codex A3).
+    #[test]
+    fn seed_4211133997374228451_settles_a0_at_most_minus_5() {
+        run(&bounded_hubs(), [4211133997374228451], satellites);
+    }
+
+    /// Seed 16004534807616651151 of [`satellites`] (FAIL-lazy-satellites-wider-interval): `a1`
+    /// is bound to `a3`'s product and narrowed through the hub `m`; the eager scope projects
+    /// `a1`'s star, reads it back to `a3` and holds `m` in [15, 18], where the lazy scope held
+    /// [13, 18].
+    #[test]
+    fn seed_16004534807616651151_settles_m_from_15() {
+        run(&bounded_hubs(), [16004534807616651151], satellites);
+    }
+
+    /// Seed 12944458854883377711 of [`satellites`] (FAIL-lazy-satellites-wider-interval): the
+    /// same family through the hub `n`, which the eager scope holds in [-18, 19] and the lazy
+    /// scope held in [-19, 19].
+    #[test]
+    fn seed_12944458854883377711_settles_n_from_minus_18() {
+        run(&bounded_hubs(), [12944458854883377711], satellites);
+    }
+
+    /// Seed 4415653652323528176 of [`satellites`] (FAIL-lazy-satellites-seed-4415653652323528176,
+    /// filed by b31-kernel): `a4` bound to `a0`'s product, then `a0 >= n + m - 3`,
+    /// `m - a4 >= -1` and the join's `a3 >= n + m + 2`; at the end the eager scope holds `a0` in
+    /// [-14, 16] and the lazy scope settled it to [-14, 11] on origin/main 6ebd79c8d. It passes
+    /// on 77dd97d2a, before round 3's part A, so option 1' fixes it, not the settle before
+    /// `read_image` (2026-11-27).
+    #[test]
+    fn seed_4415653652323528176_settles_a0_to_16() {
+        run(&bounded_hubs(), [4415653652323528176], satellites);
+    }
+
+    /// The 8 seeds `random_seeds` runs from 10735748659401783843 (FAIL-lazy-satellites-seed-
+    /// 10735748659401783843, filed by b30-pres4): on origin/main d420c701d settling a leaf
+    /// emptied the lazy scope (the debug assertion after the two `reduce_with(false)` of the
+    /// settle), and the panic names no seed of the 8; the first alone passes there. They pass on
+    /// this branch (2026-11-27).
+    #[test]
+    fn seeds_from_10735748659401783843_settle_a_leaf_without_emptying_the_scope() {
+        run(
+            &bounded_hubs(),
+            10735748659401783843..10735748659401783851,
+            satellites,
+        );
+    }
+
+    /// Seed 172996873852937618 of [`satellites`] (FAIL-lazy-satellites-seed-172996873852937616,
+    /// run seed 172996873852937616, filed by b31-kernel): `m` settled apart on origin/main
+    /// 0bf095dab (lazy.rs "m after").
+    #[test]
+    fn seed_172996873852937618() {
+        run(&bounded_hubs(), [172996873852937618], satellites);
+    }
+
+    /// Run seeds 18057453501005508156 (FAIL-lazy-satellites-seed-18057453501005508156, b30-pres4:
+    /// "n after", eager [-8, 16], lazy [-12, 16]) and 3901955888460722549 (dry-coll: "m after" at
+    /// case seed 3901955888460722551, eager [-17, -2], lazy [-17, 0]) of `random_seeds`, red on
+    /// origin/main ac8c4cfda and green on part A (dry-hash, 2026-11-28). The case seed of the
+    /// first is not recorded, so all eight of each run.
+    #[test]
+    fn seeds_from_18057453501005508156_and_3901955888460722549() {
+        for first in [18057453501005508156, 3901955888460722549] {
+            run(&bounded_hubs(), first..first + 8, satellites);
+        }
+    }
+
+    /// Run seed 13561823126443913154 of `random_seeds` (FAIL-lazy-satellites-seed-13561823126443913154,
+    /// filed by b30-pres4: "m after", eager [-12, 20], lazy [-13, 20]), red on origin/main ce063f500
+    /// and green on part A a262708d4 (dry-hash, 2026-11-28). The case seed is not recorded, so all
+    /// eight run.
+    #[test]
+    fn seeds_from_13561823126443913154() {
+        run(
+            &bounded_hubs(),
+            13561823126443913154..13561823126443913162,
+            satellites,
+        );
+    }
+
+    /// Run seeds 11284093382845542960 (FAIL-lazy-satellites-seed-11284093382845542960, found by
+    /// dry-hash's merge_check of wt/dry-hash-fmt2: "m after", eager [-6, 13], lazy [-13, 13];
+    /// red on origin/main f12358c9b, green on part A a262708d4) and 13646106697067029505
+    /// (FAIL-lazy-satellites-seed-13646106697067029505, b30-check's merge_check: "settling a
+    /// leaf emptied a scope" on origin/main 2790b0cf8, green on 0214af9a9) of `random_seeds`
+    /// (dry-hash, 2026-11-28). The case seeds are not recorded, so all eight of each run.
+    #[test]
+    fn seeds_from_11284093382845542960_and_13646106697067029505() {
+        for first in [11284093382845542960, 13646106697067029505] {
+            run(&bounded_hubs(), first..first + 8, satellites);
+        }
+    }
+
+    /// Run seed 7716123424606244342 of `random_seeds` (FAIL-lazy-scope-seed-7716123424606244342,
+    /// b30-front2's merge_check of wt/b30-front2-w: "settling a leaf emptied a scope", red on
+    /// origin/main f79759f83, green on part A). The case seeds are not recorded, so all eight.
+    #[test]
+    fn seeds_from_7716123424606244342() {
+        let first = 7716123424606244342;
+        run(&bounded_hubs(), first..first + 8, satellites);
     }
 }
 
@@ -605,81 +1949,83 @@ mod leaves_of_one_class_settled_together_get_what_each_gets_alone {
         let p = Premises::new();
         let (mut reused, mut runs) = (0, 0);
         for seed in seeds {
-            let mut rng = Rng::new(seed);
-            let form = rng.below(3);
-            let c = rng.int(-3, 3);
-            let star = |x: &str| -> Vec<Term> {
-                match form {
-                    0 => vec![sum3(x, "n", "m", c, false)],
-                    1 => vec![prim(
-                        Prim::Ge,
-                        prim(
-                            Prim::Sub,
-                            prim(Prim::Add, var(x), var(x)),
-                            prim(Prim::Add, var("n"), var("m")),
-                        ),
-                        int(c),
-                    )],
-                    _ => vec![diff_ge(x, "n", c), diff_ge(x, "m", -c)],
+            naming(seed, || {
+                let mut rng = Rng::new(seed);
+                let form = rng.below(3);
+                let c = rng.int(-3, 3);
+                let star = |x: &str| -> Vec<Term> {
+                    match form {
+                        0 => vec![sum3(x, "n", "m", c, false)],
+                        1 => vec![prim(
+                            Prim::Ge,
+                            prim(
+                                Prim::Sub,
+                                prim(Prim::Add, var(x), var(x)),
+                                prim(Prim::Add, var("n"), var("m")),
+                            ),
+                            int(c),
+                        )],
+                        _ => vec![diff_ge(x, "n", c), diff_ge(x, "m", -c)],
+                    }
+                };
+                let mut t: Vec<Term> = Vec::new();
+                for h in ["n", "m"] {
+                    t.push(prim(Prim::Ge, var(h), int(rng.int(-12, -2))));
+                    t.push(prim(Prim::Le, var(h), int(rng.int(2, 12))));
+                    t.push(prim(Prim::Ne, var(h), int(rng.int(-3, 3))));
                 }
-            };
-            let mut t: Vec<Term> = Vec::new();
-            for h in ["n", "m"] {
-                t.push(prim(Prim::Ge, var(h), int(rng.int(-12, -2))));
-                t.push(prim(Prim::Le, var(h), int(rng.int(2, 12))));
-                t.push(prim(Prim::Ne, var(h), int(rng.int(-3, 3))));
-            }
-            if rng.below(2) == 0 {
-                // `n` even.
-                t.push(prim(Prim::Eq, prim(Prim::Mod, var("n"), int(2)), int(0)));
-            }
-            let lows = [rng.int(-20, 0), rng.int(-20, 0)];
-            let holes = [rng.int(-3, 6), rng.int(-3, 6)];
-            for x in LEAVES {
-                t.extend(star(x));
-                t.push(prim(Prim::Ge, var(x), int(rng.pick(&lows))));
-                t.push(prim(Prim::Ne, var(x), int(rng.pick(&holes))));
-            }
-            let (mut eager, mut lazy) = (ints(&all), ints(&all).lazy());
-            for t in &t {
-                eager = eager.assume(t, true, &p);
-                lazy = lazy.assume(t, true, &p);
-            }
-            let hub = prim(Prim::Ge, var("n"), int(rng.int(-4, 4)));
-            eager = eager.assume(&hub, true, &p);
-            lazy = lazy.assume(&hub, true, &p);
-            if eager.bottom {
-                assert!(
-                    lazy.bottom,
-                    "seed {seed}: the eager scope is empty, the lazy one not"
-                );
-                continue;
-            }
-            let classes: BTreeSet<_> = leaves
-                .iter()
-                .filter_map(|x| lazy.relation.class_of(x))
-                .collect();
-            let stars = leaves
-                .iter()
-                .filter(|x| lazy.relation.star(x).is_some())
-                .count();
-            let mut together = lazy.clone();
-            together.settle(&leaves);
-            for x in &leaves {
-                let mut alone = lazy.clone();
-                alone.settle([x]);
-                assert_eq!(together.get(x), alone.get(x), "seed {seed}: {x} with {t:?}");
-                assert_eq!(
-                    together.get(x),
-                    eager.get(x),
-                    "seed {seed}: {x} eagerly, with {t:?}"
-                );
-            }
-            for h in names(&["m", "n"]) {
-                assert_eq!(together.get(&h), eager.get(&h), "seed {seed}: {h}");
-            }
-            runs += 1;
-            reused += usize::from(stars >= 2 && classes.len() == 1);
+                if rng.below(2) == 0 {
+                    // `n` even.
+                    t.push(prim(Prim::Eq, prim(Prim::Mod, var("n"), int(2)), int(0)));
+                }
+                let lows = [rng.int(-20, 0), rng.int(-20, 0)];
+                let holes = [rng.int(-3, 6), rng.int(-3, 6)];
+                for x in LEAVES {
+                    t.extend(star(x));
+                    t.push(prim(Prim::Ge, var(x), int(rng.pick(&lows))));
+                    t.push(prim(Prim::Ne, var(x), int(rng.pick(&holes))));
+                }
+                let (mut eager, mut lazy) = (ints(&all), ints(&all).lazy());
+                for t in &t {
+                    eager = eager.assume(t, true, &p);
+                    lazy = lazy.assume(t, true, &p);
+                }
+                let hub = prim(Prim::Ge, var("n"), int(rng.int(-4, 4)));
+                eager = eager.assume(&hub, true, &p);
+                lazy = lazy.assume(&hub, true, &p);
+                if eager.bottom {
+                    assert!(
+                        lazy.bottom,
+                        "seed {seed}: the eager scope is empty, the lazy one not"
+                    );
+                    return;
+                }
+                let classes: BTreeSet<_> = leaves
+                    .iter()
+                    .filter_map(|x| lazy.relation.class_of(x))
+                    .collect();
+                let stars = leaves
+                    .iter()
+                    .filter(|x| lazy.relation.star(x).is_some())
+                    .count();
+                let mut together = lazy.clone();
+                together.settle(&leaves);
+                for x in &leaves {
+                    let mut alone = lazy.clone();
+                    alone.settle([x]);
+                    assert_eq!(together.get(x), alone.get(x), "seed {seed}: {x} with {t:?}");
+                    assert_eq!(
+                        together.get(x),
+                        eager.get(x),
+                        "seed {seed}: {x} eagerly, with {t:?}"
+                    );
+                }
+                for h in names(&["m", "n"]) {
+                    assert_eq!(together.get(&h), eager.get(&h), "seed {seed}: {h}");
+                }
+                runs += 1;
+                reused += usize::from(stars >= 2 && classes.len() == 1);
+            })
         }
         println!("{runs} runs, {reused} with two stars or more, all of one class");
         (runs, reused)
@@ -731,71 +2077,74 @@ mod a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does {
         let p = Premises::new();
         let (mut runs, mut kept) = (0, 0);
         for seed in seeds {
-            let mut rng = Rng::new(seed);
-            let (form, c) = (rng.below(2), rng.int(-3, 3));
-            let mut t: Vec<Term> = Vec::new();
-            for h in HUBS {
-                t.push(prim(Prim::Ge, var(h), int(rng.int(-20, -2))));
-                t.push(prim(Prim::Le, var(h), int(rng.int(2, 20))));
-                t.push(prim(Prim::Ne, var(h), int(rng.int(-3, 3))));
-            }
-            let lows = [rng.int(-30, 0), rng.int(-30, 0)];
-            for x in LEAVES {
-                if form == 0 {
-                    t.push(diff_ge(x, "n", c));
-                    t.push(diff_ge(x, "m", c));
-                } else {
-                    let d = prim(Prim::Sub, var(x), var("n"));
-                    t.push(prim(Prim::Ge, prim(Prim::Add, d, var("m")), int(c)));
+            naming(seed, || {
+                let mut rng = Rng::new(seed);
+                let (form, c) = (rng.below(2), rng.int(-3, 3));
+                let mut t: Vec<Term> = Vec::new();
+                for h in HUBS {
+                    t.push(prim(Prim::Ge, var(h), int(rng.int(-20, -2))));
+                    t.push(prim(Prim::Le, var(h), int(rng.int(2, 20))));
+                    t.push(prim(Prim::Ne, var(h), int(rng.int(-3, 3))));
                 }
-                t.push(prim(Prim::Ge, var(x), int(rng.pick(&lows))));
-                t.push(prim(Prim::Ne, var(x), int(rng.int(-3, 6))));
-            }
-            t.push(prim(
-                rng.pick(&[Prim::Ge, Prim::Le]),
-                var(rng.pick(&HUBS)),
-                int(rng.int(-6, 6)),
-            ));
-            let (mut eager, mut lazy) = (ints(&all), ints(&all).lazy());
-            for t in &t {
-                eager = eager.assume(t, true, &p);
-                lazy = lazy.assume(t, true, &p);
-            }
-            let mut trace = vec![format!("seed {seed}: {t:?}")];
-            for _ in 0..2 {
-                if eager.bottom {
-                    break;
-                }
-                let (t, u, v) = (
-                    branch(&mut rng, 1),
-                    branch(&mut rng, 0),
-                    branch(&mut rng, 0),
-                );
-                trace.push(format!("join {t:?} and {u:?} with not it and {v:?}"));
-                let arms = |s: &Scope| {
-                    let yes = s.assume(&t, true, &p).assume(&u, true, &p);
-                    let no = s.assume(&t, false, &p).assume(&v, true, &p);
-                    (yes, no)
-                };
-                let (ey, en) = arms(&eager);
-                let (ly, ln) = arms(&lazy);
-                let (mut sy, mut sn) = (ly.clone(), ln.clone());
-                sy.settle(&all);
-                sn.settle(&all);
-                let (every, joined) = (sy.join(&sn), ly.join(&ln));
-                eager = ey.join(&en);
-                assert_eq!(eager.bottom, joined.bottom, "{}", trace.join("\n"));
-                if !eager.bottom {
-                    for x in &all {
-                        let s = joined.settled(x);
-                        assert_eq!(s, every.settled(x), "{x} after\n{}", trace.join("\n"));
-                        assert_eq!(s, eager.get(x), "{x} eagerly after\n{}", trace.join("\n"));
-                        kept += usize::from(LEAVES.contains(&&**x) && joined.get(x) != s);
+                let lows = [rng.int(-30, 0), rng.int(-30, 0)];
+                for x in LEAVES {
+                    if form == 0 {
+                        t.push(diff_ge(x, "n", c));
+                        t.push(diff_ge(x, "m", c));
+                    } else {
+                        let d = prim(Prim::Sub, var(x), var("n"));
+                        t.push(prim(Prim::Ge, prim(Prim::Add, d, var("m")), int(c)));
                     }
+                    t.push(prim(Prim::Ge, var(x), int(rng.pick(&lows))));
+                    t.push(prim(Prim::Ne, var(x), int(rng.int(-3, 6))));
                 }
-                lazy = joined;
-                runs += 1;
-            }
+                t.push(prim(
+                    rng.pick(&[Prim::Ge, Prim::Le]),
+                    var(rng.pick(&HUBS)),
+                    int(rng.int(-6, 6)),
+                ));
+                let (mut eager, mut lazy) = (ints(&all), ints(&all).lazy());
+                for t in &t {
+                    eager = eager.assume(t, true, &p);
+                    lazy = lazy.assume(t, true, &p);
+                }
+                let mut trace = vec![format!("seed {seed}: {t:?}")];
+                for _ in 0..2 {
+                    if eager.bottom {
+                        break;
+                    }
+                    let (t, u, v) = (
+                        branch(&mut rng, 1),
+                        branch(&mut rng, 0),
+                        branch(&mut rng, 0),
+                    );
+                    trace.push(format!("join {t:?} and {u:?} with not it and {v:?}"));
+                    let arms = |s: &Scope| {
+                        let yes = s.assume(&t, true, &p).assume(&u, true, &p);
+                        let no = s.assume(&t, false, &p).assume(&v, true, &p);
+                        (yes, no)
+                    };
+                    let (ey, en) = arms(&eager);
+                    let (ly, ln) = arms(&lazy);
+                    let (mut sy, mut sn) = (ly.clone(), ln.clone());
+                    sy.settle(&all);
+                    sn.settle(&all);
+                    let (every, joined) = (sy.join(&sn), ly.join(&ln));
+                    eager = ey.join(&en);
+                    assert_eq!(eager.bottom, joined.bottom, "{}", trace.join("\n"));
+                    if !eager.bottom {
+                        for x in &all {
+                            let s = joined.settled(x);
+                            assert_eq!(s, every.settled(x), "{x} after\n{}", trace.join("\n"));
+                            assert_eq!(s, eager.get(x), "{x} eagerly after\n{}", trace.join("\n"));
+                            kept +=
+                                usize::from(LEAVES.contains(&&**x) && joined.held_product(x) != s);
+                        }
+                    }
+                    lazy = joined;
+                    runs += 1;
+                }
+            })
         }
         println!("{runs} joins, {kept} leaves left stale by a join");
         kept
@@ -1139,7 +2488,9 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
                         ints.contains(least) && !ints.contains(least - 1),
                         "{x} is {ints}, least {least}, after {trace}"
                     );
-                    stale += usize::from(ly.get(x) != ly.settled(x) || ln.get(x) != ln.settled(x));
+                    stale += usize::from(
+                        ly.held_product(x) != ly.settled(x) || ln.held_product(x) != ln.settled(x),
+                    );
                 }
             }
             stale
@@ -1187,15 +2538,7 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
     /// difference from cc9b8f5b on, and are kept here as checks.
     #[test]
     fn the_eager_join_is_as_tight_as_the_lazy_one_at_these_seeds() {
-        for seed in [116, 237, 272, 2_220, 22_490, 22_671] {
-            let case = Case::of(seed);
-            let trace = case.trace(seed);
-            if case.keeps() {
-                case.run(&trace);
-            } else {
-                case.eager_join(&trace);
-            }
-        }
+        part([116, 237, 272, 2_220, 22_490, 22_671]);
     }
 
     /// Seeds reported with a lazy join's hub coarser than the enumeration (item
@@ -1210,15 +2553,7 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
     /// `[-10..=-9] ∪ [-5..=4]`), which is left open.
     #[test]
     fn the_lazy_join_has_the_enumeration_s_ends_at_these_seeds() {
-        for seed in [397, 550, 781, 1_515, 1_820] {
-            let case = Case::of(seed);
-            let trace = case.trace(seed);
-            if case.keeps() {
-                case.run(&trace);
-            } else {
-                case.eager_join(&trace);
-            }
-        }
+        part([397, 550, 781, 1_515, 1_820]);
     }
 
     /// Random cases of both kinds. Each case's eager join is checked against the enumeration;
@@ -1227,14 +2562,16 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
     fn part(seeds: impl IntoIterator<Item = u64>) -> (usize, usize) {
         let (mut joins, mut kept) = (0, 0);
         for seed in seeds {
-            let case = Case::of(seed);
-            let trace = case.trace(seed);
-            if !case.keeps() {
-                case.eager_join(&trace);
-                continue;
-            }
-            kept += case.run(&trace);
-            joins += 1;
+            naming(seed, || {
+                let case = Case::of(seed);
+                let trace = case.trace(seed);
+                if !case.keeps() {
+                    case.eager_join(&trace);
+                    return;
+                }
+                kept += case.run(&trace);
+                joins += 1;
+            })
         }
         println!("{joins} joins, {kept} leaves stale before a join");
         (joins, kept)
@@ -1244,6 +2581,66 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
     #[test]
     fn random_seeds() {
         part(fresh_seeds("a join settles a star it drops", 8));
+    }
+
+    /// Each step of `seed`'s case, eager and lazy, before any join: the tests before the arms,
+    /// then each arm's tests one by one; after each, every name of the eager scope equals the
+    /// lazy one settled.
+    fn steps_alike(seed: u64) {
+        let case = Case::of(seed);
+        let trace = case.trace(seed);
+        let p = Premises::new();
+        let all = names(&["n", "m", "z", "a0", "a1", "a2"]);
+        let s = ints(&all);
+        let mut tests = case.before();
+        let arm = |z: Term, ts: &[HubTest]| -> Vec<Term> {
+            [z].into_iter().chain(ts.iter().map(|t| t.term())).collect()
+        };
+        let arms = [
+            arm(prim(Prim::Ge, var("z"), int(0)), &case.yes),
+            arm(prim(Prim::Lt, var("z"), int(0)), &case.no),
+        ];
+        let at = tests.len();
+        let (mut e, mut l) = (s.clone(), s.lazy());
+        for (arm, more) in arms.into_iter().enumerate() {
+            tests.truncate(at);
+            tests.extend(more);
+            if arm == 1 {
+                (e, l) = (ints(&all), ints(&all).lazy());
+            }
+            for (i, t) in tests.iter().enumerate() {
+                (e, l) = (e.assume(t, true, &p), l.assume(t, true, &p));
+                for x in &all {
+                    assert_eq!(
+                        l.settled(x),
+                        e.get(x),
+                        "{x} at arm {arm} step {i} of {trace}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The seeds at which the eager join was coarser than the lazy one
+    /// (`the_eager_join_is_as_tight_as_the_lazy_one_at_these_seeds`), step by step, with no
+    /// join: an eager part projected before a constraint on another term of its names kept
+    /// the coarser product, where the lazy leaf, settled, has the finer one (seed 22671: `m <=
+    /// n + 5` under `m + n <= -7 || m + n >= 2` gave `a0 >= -2` eagerly, `-1` lazily).
+    #[test]
+    fn each_step_of_an_arm_is_alike_eager_and_lazy_at_these_seeds() {
+        for seed in [
+            116, 237, 272, 397, 550, 781, 1_515, 1_820, 2_220, 22_490, 22_671,
+        ] {
+            naming(seed, || steps_alike(seed));
+        }
+    }
+
+    /// Random cases, step by step.
+    #[test]
+    fn each_step_of_an_arm_is_alike_eager_and_lazy_at_random_seeds() {
+        for seed in fresh_seeds("each step of an arm", 16) {
+            naming(seed, || steps_alike(seed));
+        }
     }
 
     /// A leaf stale before a join that keeps the hubs (72 of seeds 0 to 199).
@@ -1571,22 +2968,25 @@ fn linear(terms: &[(&str, i64)], k: i64) -> Term {
     prim(Prim::Ge, sum, int(0))
 }
 
-/// The lazy scope can be coarser than the eager one at a leaf that is not stale, once a
-/// projection of the leaf's block is refused (row PROOF-product-lazy-a1-a4; the narrowed
-/// claim is at [`Scope::lazy`]). `a - n - m >= 0` and `n + 2m >= 0` make `a` a leaf of the
-/// two hubs `n` and `m`. At `n >= -10` the eager scope projects the star exactly: the least
-/// `a` is the least `n + m` with `m >= -n/2`, which is at least `n/2 >= -5`, so `a >= -5`;
-/// the lazy scope leaves `a` stale. At `n <= 10` the eager scope projects again, and `m >=
-/// -5` comes from `n + 2m >= 0` alone. Then a system of four constraints among `n`, `m`,
-/// `y`, `z` joins the block; the solver refuses its projection, since removing any of the
-/// four names would leave more constraints than there are (the warning says "the work could
-/// grow without end"). Both scopes now project `a`'s block,
-/// both are refused and warn, and both keep what single constraints give: `a >= n + m >=
-/// -10 + -5 = -15`. The eager scope keeps `-5`, met in at `n >= -10`; the lazy scope never
-/// made that projection, so it holds `[-15, ∞)`, and `a` is not stale (`get` equals
-/// `settled`). Both are sound. The ordering is a construction, not a draw.
+/// A refused projection of a lazy leaf's block leaves the leaf as the eager scope has it
+/// (the author's rule of 2026-11-28: lazy and eager give the same result in every case; only
+/// the cost may differ). `a - n - m >= 0` and `n + 2m >= 0` make `a` a leaf of the two hubs
+/// `n` and `m`. At `n >= -10` the eager scope projects the star exactly: the least `a` is
+/// the least `n + m` with `m >= -n/2`, which is at least `n/2 >= -5`, so `a >= -5`; the lazy
+/// scope leaves `a` stale. At `n <= 10` the eager scope projects again, and `m >= -5` comes
+/// from `n + 2m >= 0` alone. Then a system of four constraints among `n`, `m`, `y`, `z`
+/// joins the block; the solver refuses its projection, since removing any of the four names
+/// would leave more constraints than there are (the warning says "the work could grow
+/// without end"). Both scopes project `a`'s block, both are refused and warn, and both keep
+/// what single constraints give, `a >= n + m >= -10 + -5 = -15`, met with what each held
+/// before. The eager scope held `-5`, met in at `n >= -10`; before the lazy scope settles
+/// the stale leaves of a block whose projection a test makes refused (`Scope::assume`), it
+/// held `[-15, ∞)` there (XR-lazy-and-kernel-batch-1 round 3, Gemini A-4, Codex A4). The
+/// ordering is a construction, not a draw. Corner cases: the leaf read before the refused
+/// test (settled then, so nothing is stale at the refusal), the refused test assumed twice,
+/// and the four constraints assumed one at a time, the last of them the refused step.
 #[test]
-fn a_refused_projection_can_leave_the_lazy_leaf_coarser() {
+fn a_refused_projection_leaves_the_lazy_leaf_as_the_eager_one() {
     let p = Premises::new();
     let ge = |x: &str, v: i64| prim(Prim::Ge, var(x), int(v));
     let refused = |x: &str, w: &str, y: &str, z: &str| {
@@ -1610,26 +3010,51 @@ fn a_refused_projection_can_leave_the_lazy_leaf_coarser() {
         ge("z", -100),
     ];
     let a = Arc::<str>::from("a");
-    let s = ints(&names(&["a", "n", "m", "y", "z"]));
+    let all = names(&["a", "n", "m", "y", "z"]);
+    let s = ints(&all);
     let run = |s: Scope, ts: &[Term]| ts.iter().fold(s, |s, t| s.assume(t, true, &p));
     let (e, l) = (run(s.clone(), &before), run(s.clone().lazy(), &before));
-    // Before the refusal the two agree once settled, as the narrowed claim says.
     assert_eq!(e.get("a").ints().to_string(), "[-5..]");
     assert_eq!(l.settled(&a), e.get("a"));
+    // `a` is stale in `l` here; its public read is the eager one (round 4, Claude A4.1).
+    assert_ne!(l.held_product("a"), e.get("a"), "a is not stale here");
+    assert_eq!(l.get("a"), e.get("a"), "get of a stale leaf");
     assert!(e.warnings().is_empty() && l.warnings().is_empty());
-    let last = [refused("n", "m", "y", "z")];
-    let (e, l) = (run(e, &last), run(l, &last));
-    for s in [&e, &l] {
-        let ws: Vec<String> = s.warnings().iter().map(|w| w.to_string()).collect();
+    let mut read = l.clone();
+    read.settle(&all);
+    let whole = [refused("n", "m", "y", "z")];
+    let one_by_one: Vec<Term> = vec![
+        linear(&[("n", 4), ("m", -12), ("y", -10), ("z", -12)], 11),
+        linear(&[("m", 4), ("n", 10), ("y", -10), ("z", -11)], -28),
+        linear(&[("m", 11), ("n", 4), ("y", -1), ("z", 12)], -28),
+        linear(&[("m", -8), ("n", -5), ("y", 12), ("z", -1)], 31),
+    ];
+    let twice = [whole[0].clone(), whole[0].clone()];
+    let cases: [(&str, &Scope, &[Term]); 4] = [
+        ("at once", &l, &whole),
+        ("read before", &read, &whole),
+        ("twice", &l, &twice),
+        ("one at a time", &l, &one_by_one),
+    ];
+    let warned =
+        |s: &Scope| -> Vec<String> { s.warnings().iter().map(|w| w.to_string()).collect() };
+    for (how, l, ts) in cases {
+        let (mut e, mut l) = (e.clone(), l.clone());
+        for (i, t) in ts.iter().enumerate() {
+            (e, l) = (e.assume(t, true, &p), l.assume(t, true, &p));
+            for x in &all {
+                assert_eq!(l.settled(x), e.get(x), "{x} {how}, after step {i}");
+            }
+        }
+        let ws = warned(&e);
         assert!(
             ws.iter()
                 .any(|w| w.contains("the work could grow without end")),
-            "{ws:?}"
+            "{how}: {ws:?}"
         );
+        assert_eq!(warned(&l), ws, "{how}");
+        assert_eq!(e.get("a").ints().to_string(), "[-5..]", "{how}");
     }
-    assert_eq!(e.get("a").ints().to_string(), "[-5..]");
-    assert_eq!(l.get("a"), l.settled(&a), "the lazy leaf is not stale");
-    assert_eq!(l.get("a").ints().to_string(), "[-15..]");
 }
 
 /// Three cases beside a conjunct both sides keep, `x == 3·w + v` (row
@@ -1727,3 +3152,412 @@ fn a_test_of_a_name_reads_its_term_after_a_reduction_narrowed_it() {
 }
 
 mod bench;
+
+/// The four constraints among `n`, `m`, `y`, `z` whose projection the solver refuses
+/// ([`a_refused_projection_leaves_the_lazy_leaf_as_the_eager_one`]).
+fn refused_four() -> Term {
+    and(
+        and(
+            linear(&[("n", 4), ("m", -12), ("y", -10), ("z", -12)], 11),
+            linear(&[("m", 4), ("n", 10), ("y", -10), ("z", -11)], -28),
+        ),
+        and(
+            linear(&[("m", 11), ("n", 4), ("y", -1), ("z", 12)], -28),
+            linear(&[("m", -8), ("n", -5), ("y", 12), ("z", -1)], 31),
+        ),
+    )
+}
+
+/// The warnings and the refusals, each with its kept sets, of a lazy scope and the eager one
+/// (the author's rule of 2026-11-28; the contract at `Scope::lazy`). XR-lazy-and-kernel-batch-1
+/// round 4, Claude A4.2, conjectured a difference: eager projects a leaf's star at every hub
+/// move and records a refusal of that projection there, lazy later or in a discarded copy. The
+/// witness built here: the leaf `a >= n + m` with `n + 2m >= 0` and bounds on the hubs, the
+/// refused four constraints joining its block, then moves of `n`, `m`, `y`, `z` by tests that
+/// refuse nothing, and a second leaf `b >= y + z` before or after the refused step. At every
+/// step both scopes report the same warnings and hold the same refusal map (kept sets
+/// included). Found so on head a262708d4 as well (2026-11-28), so it was never red: the
+/// difference is not reached here, and why the eager hub move adds no refusal the lazy scope
+/// lacks is not traced. The warnings now read the settled view
+/// ([`warnings_of_a_lazy_scope_read_its_settled_view`]).
+#[test]
+fn a_refusal_only_the_eager_projection_raises_is_warned_alike() {
+    let p = Premises::new();
+    let ge = |x: &str, v: i64| prim(Prim::Ge, var(x), int(v));
+    let le = |x: &str, v: i64| prim(Prim::Le, var(x), int(v));
+    let all = names(&["a", "b", "n", "m", "y", "z"]);
+    let base = [
+        sum3("a", "n", "m", 0, false),
+        linear(&[("n", 1), ("m", 2)], 0),
+        ge("n", -10),
+        le("n", 10),
+        ge("y", -100),
+        ge("z", -100),
+    ];
+    let b = || sum3("b", "y", "z", 0, false);
+    let tails: Vec<(&str, Vec<Term>)> = vec![
+        ("n moved", vec![refused_four(), ge("n", 0)]),
+        (
+            "n moved twice",
+            vec![refused_four(), ge("n", 0), le("n", 5)],
+        ),
+        ("m moved", vec![refused_four(), ge("m", 0)]),
+        ("y moved", vec![refused_four(), ge("y", 0)]),
+        ("z moved", vec![refused_four(), le("z", 50)]),
+        ("b before", vec![b(), refused_four(), ge("y", 0)]),
+        ("b after", vec![refused_four(), b(), ge("y", 0), ge("z", 0)]),
+        (
+            "every hub",
+            vec![
+                refused_four(),
+                ge("n", 0),
+                ge("m", 0),
+                ge("y", 0),
+                ge("z", 0),
+            ],
+        ),
+    ];
+    let s = ints(&all);
+    let run = |s: Scope, ts: &[Term]| ts.iter().fold(s, |s, t| s.assume(t, true, &p));
+    let warned =
+        |s: &Scope| -> Vec<String> { s.warnings().iter().map(|w| w.to_string()).collect() };
+    for (what, tail) in &tails {
+        let (mut e, mut l) = (run(s.clone(), &base), run(s.clone().lazy(), &base));
+        for (i, t) in tail.iter().enumerate() {
+            e = e.assume(t, true, &p);
+            l = l.assume(t, true, &p);
+            assert_eq!(warned(&l), warned(&e), "{what}, step {i}: warnings");
+            assert_eq!(l.refusals, e.refusals, "{what}, step {i}: refusals");
+            for x in &all {
+                assert_eq!(l.get(x), e.get(x), "{what}, step {i}: {x}");
+            }
+        }
+        // Negative control: the refused step warns, so the comparison has a warning to compare.
+        assert!(!warned(&e).is_empty(), "{what}: nothing refused");
+    }
+}
+
+/// Seeded sweep of the warnings (XR-lazy-and-kernel-batch-1 round 4, Claude A4.2): random
+/// sequences of up to eight steps among the leaf `a >= n + m`, the refused four constraints,
+/// random systems of four constraints among `n`, `m`, `y`, `z` with factors in `-12..=12`
+/// (which the solver often refuses), bounds on the hubs, `n + 2m >= 0` and a second leaf
+/// `b >= m + y`; after every step the warnings, the refusal maps and every product of the lazy
+/// scope equal the eager scope's. Negative control: some steps warn. Not reached: a step
+/// that warns while a leaf of the lazy scope is stale (its held product is not the eager
+/// one); 624 steps warned and none had a stale leaf (2026-11-28), so this sweep cannot show
+/// a refusal the lazy scope skipped, and that count is printed, not asserted. The case is
+/// [`warnings_of_a_lazy_scope_read_its_settled_view`]. 150 seeds (300 ran on head a262708d4 without a difference,
+/// 1278 steps with warnings, 2026-11-28).
+#[test]
+fn a_lazy_scope_warns_as_the_eager_one_at_every_step_of_random_refusing_systems() {
+    let p = Premises::new();
+    let vs = ["n", "m", "y", "z"];
+    let all = names(&["a", "b", "n", "m", "y", "z"]);
+    let s0 = ints(&all);
+    let warned =
+        |s: &Scope| -> Vec<String> { s.warnings().iter().map(|w| w.to_string()).collect() };
+    let (mut warn_steps, mut stale_warn_steps) = (0, 0);
+    for seed in 0..150u64 {
+        let mut r = Rng::new(seed);
+        let c = |lo: i64, hi: i64, r: &mut Rng| lo + r.below((hi - lo + 1) as usize) as i64;
+        let mut steps = vec![sum3("a", "n", "m", 0, false)];
+        for _ in 0..7 {
+            steps.push(match r.below(6) {
+                0 => refused_four(),
+                1 => {
+                    let mut cons = Vec::new();
+                    for _ in 0..4 {
+                        let ts: Vec<(&str, i64)> =
+                            vs.iter().map(|v| (*v, c(-12, 12, &mut r))).collect();
+                        cons.push(linear(&ts, c(-30, 30, &mut r)));
+                    }
+                    and(
+                        and(cons[0].clone(), cons[1].clone()),
+                        and(cons[2].clone(), cons[3].clone()),
+                    )
+                }
+                2 | 3 => {
+                    let (v, k) = (vs[r.below(4)], c(-15, 15, &mut r));
+                    match r.below(2) {
+                        0 => prim(Prim::Ge, var(v), int(k)),
+                        _ => prim(Prim::Le, var(v), int(k)),
+                    }
+                }
+                4 => linear(&[("n", 1), ("m", 2)], 0),
+                _ => sum3("b", "m", "y", 0, false),
+            });
+        }
+        let (mut e, mut l) = (s0.clone(), s0.clone().lazy());
+        for (i, t) in steps.iter().enumerate() {
+            e = e.assume(t, true, &p);
+            l = l.assume(t, true, &p);
+            let we = warned(&e);
+            assert_eq!(warned(&l), we, "seed {seed}, step {i} ({t}): warnings");
+            assert_eq!(
+                l.refusals, e.refusals,
+                "seed {seed}, step {i} ({t}): refusals"
+            );
+            let mut stale = false;
+            for x in &all {
+                let want = e.get(x);
+                assert_eq!(l.get(x), want, "seed {seed}, step {i} ({t}): {x}");
+                stale |= l.held_product(x) != want;
+            }
+            if !we.is_empty() {
+                warn_steps += 1;
+                stale_warn_steps += usize::from(stale);
+            }
+        }
+    }
+    eprintln!(
+        "warnings sweep: {warn_steps} steps with warnings, {stale_warn_steps} of them with a stale leaf"
+    );
+    assert!(warn_steps > 0, "no step warned");
+}
+
+/// The steps before the refused test of
+/// [`a_refused_projection_leaves_the_lazy_leaf_as_the_eager_one`], eager and lazy: `a >= n +
+/// m`, `n + 2m >= 0`, `n` in [-10, 10], `y` and `z` at least -100. `a` is stale in the lazy
+/// scope.
+fn refusal_fixture() -> (Scope, Scope) {
+    let p = Premises::new();
+    let ge = |x: &str, v: i64| prim(Prim::Ge, var(x), int(v));
+    let before = [
+        sum3("a", "n", "m", 0, false),
+        linear(&[("n", 1), ("m", 2)], 0),
+        ge("n", -10),
+        prim(Prim::Le, var("n"), int(10)),
+        ge("y", -100),
+        ge("z", -100),
+    ];
+    let s = ints(&names(&["a", "n", "m", "y", "z"]));
+    let run = |s: Scope| before.iter().fold(s, |s, t| s.assume(t, true, &p));
+    (run(s.clone()), run(s.lazy()))
+}
+
+/// XR-lazy-and-kernel-batch-1 round 4, A4.1: the public product read of a lazy scope is the
+/// eager product, at a stale leaf too, and leaves the scope as it was (still stale).
+#[test]
+fn get_of_a_lazy_scope_is_the_eager_product() {
+    let (e, l) = refusal_fixture();
+    assert_ne!(l.held_product("a"), e.get("a"), "a is not stale");
+    for x in ["a", "n", "m", "y", "z", "q"] {
+        assert_eq!(l.get(x), e.get(x), "{x}");
+    }
+    assert_ne!(
+        l.held_product("a"),
+        e.get("a"),
+        "get settled the scope in place"
+    );
+}
+
+/// XR-lazy-and-kernel-batch-1 round 4, Gemini A-2: `Scope::reaches` of a test the solver
+/// refuses, on a lazy scope with a stale leaf in the refused block, gives the eager answer
+/// and refusals, kept sets included: the eager scope kept `a` in `[-5, ∞)` at the refusal,
+/// the lazy one, unless asked again with the leaf settled (`Scope::settled_before_refusal`),
+/// `[-15, ∞)`. The refused four constraints, and the four with `a <= 100`, each with the
+/// outcome true (no split) and false (a split into cases).
+#[test]
+fn reaches_of_a_lazy_scope_gives_the_eager_refusals() {
+    let p = Premises::new();
+    let (e, l) = refusal_fixture();
+    let mut tests = vec![refused_four()];
+    tests.push(and(refused_four(), prim(Prim::Le, var("a"), int(100))));
+    let mut refused_once = 0;
+    for t in &tests {
+        for outcome in [true, false] {
+            let (want, got) = (e.reaches(t, outcome, &p), l.reaches(t, outcome, &p));
+            assert_eq!(got, want, "{t} {outcome}");
+            refused_once += usize::from(!want.1.is_empty());
+        }
+    }
+    // Negative control: the comparison has refusals to compare.
+    assert!(refused_once > 0, "nothing refused");
+}
+
+/// XR-lazy-and-kernel-batch-1 round 4, A4.2 and Gemini A-3: the warnings, the looped tests
+/// and the refusals found by name of a lazy scope are those of the eager scope, read through
+/// its settled view: a star `a >= n + m + y + z` over hubs whose four constraints the solver
+/// refuses, then moves of each hub by a test that refuses nothing. The eager scope projects
+/// `a`'s star at each move and may record a refusal of that projection there; the lazy one
+/// leaves `a` stale. Also the two-hub star `a >= n + m` of
+/// [`a_refused_projection_leaves_the_lazy_leaf_as_the_eager_one`]. Each step compares
+/// `warnings`, `looped`, `refused_on` of every name and of `a` alone, and the products.
+#[test]
+fn warnings_of_a_lazy_scope_read_its_settled_view() {
+    let p = Premises::new();
+    let ge = |x: &str, v: i64| prim(Prim::Ge, var(x), int(v));
+    let le = |x: &str, v: i64| prim(Prim::Le, var(x), int(v));
+    let all = ["a", "n", "m", "y", "z"];
+    let stars = [
+        (
+            "four hubs",
+            linear(&[("a", 1), ("n", -1), ("m", -1), ("y", -1), ("z", -1)], 0),
+        ),
+        ("two hubs", sum3("a", "n", "m", 0, false)),
+    ];
+    let hubs = [
+        ge("n", -10),
+        le("n", 10),
+        ge("m", -10),
+        le("m", 10),
+        ge("y", -100),
+        ge("z", -100),
+    ];
+    let moves = [ge("n", 0), ge("m", 0), ge("y", 0), le("z", 50), le("n", 5)];
+    let s = ints(&names(&all));
+    let warned =
+        |s: &Scope| -> Vec<String> { s.warnings().iter().map(|w| w.to_string()).collect() };
+    let looped = |s: &Scope| -> Vec<String> { s.looped().iter().map(|w| w.to_string()).collect() };
+    let mut stale_warned = 0;
+    for (what, star) in &stars {
+        for refused_first in [false, true] {
+            let mut steps: Vec<Term> = hubs.to_vec();
+            if refused_first {
+                steps.extend([refused_four(), star.clone()]);
+            } else {
+                steps.extend([star.clone(), refused_four()]);
+            }
+            steps.extend(moves.iter().cloned());
+            let (mut e, mut l) = (s.clone(), s.clone().lazy());
+            for (i, t) in steps.iter().enumerate() {
+                (e, l) = (e.assume(t, true, &p), l.assume(t, true, &p));
+                let at = format!("{what}, refused first {refused_first}, step {i} ({t})");
+                assert_eq!(warned(&l), warned(&e), "{at}: warnings");
+                assert_eq!(looped(&l), looped(&e), "{at}: looped");
+                assert_eq!(l.refused_on(all), e.refused_on(all), "{at}: refused_on");
+                assert_eq!(
+                    l.refused_on(["a"]),
+                    e.refused_on(["a"]),
+                    "{at}: refused_on a"
+                );
+                let mut stale = false;
+                for x in all {
+                    let (pl, pe) = (l.get(x), e.get(x));
+                    assert!(
+                        pl == pe,
+                        "{x}: lazy {:?}, eager {:?}; {at}",
+                        pl.ints(),
+                        pe.ints()
+                    );
+                    stale |= l.held_product(x) != e.get(x);
+                }
+                stale_warned += usize::from(stale && !warned(&e).is_empty());
+            }
+            assert!(!warned(&e).is_empty(), "{what}: nothing refused");
+        }
+    }
+    eprintln!("warnings of the settled view: {stale_warned} steps warned with a stale leaf");
+}
+
+/// Gemini's killing test A3 (1) of XR-lazy-and-kernel-batch-1 round 4, for the two calls of
+/// `Scope::promote` in `Scope::bind`: `n`, `m`, `k`, `w` in [0, 20], `x >= n + m` (a star the
+/// solver projects, not a path, so `x` is recorded unplaced before the binding), `y` bound to
+/// `x + w`, `y <= k`, then `n >= 10` and `k <= 15`. The read back of `y` at the last step
+/// reads `x`; the eager `w` is [0, 5], and a stale `x` in [0, ∞) leaves it [0, 15]. Once on a
+/// fresh `y` (the first call) and once on a `y` the scope has (the second). Round 5: green
+/// with either call or both taken out, so both were taken out (META4); the test stays as a
+/// check that lazy equals eager here.
+#[test]
+fn a_leaf_a_bound_term_reads_takes_the_eager_steps_from_the_binding() {
+    let p = Premises::new();
+    for shadow in [false, true] {
+        let mut ns = vec!["n", "m", "k", "w", "x", "t"];
+        if shadow {
+            ns.push("y");
+        }
+        let box20 = ["n", "m", "k", "w"]
+            .iter()
+            .map(|h| {
+                and(
+                    prim(Prim::Ge, var(h), int(0)),
+                    prim(Prim::Le, var(h), int(20)),
+                )
+            })
+            .reduce(and)
+            .expect("four names");
+        let start = ints(&names(&ns)).assume(&box20, true, &p);
+        let run = |s: Scope| {
+            let mut s = s.assume(&sum3("x", "n", "m", 0, false), true, &p);
+            let (y, t): (Arc<str>, Arc<str>) = ("y".into(), "t".into());
+            let top = s.get(&t);
+            s.bind(&y, top, &Shared::new(prim(Prim::Add, var("x"), var("w"))));
+            s.assume(&diff_ge("k", "y", 0), true, &p)
+                .assume(&prim(Prim::Ge, var("n"), int(10)), true, &p)
+                .assume(&prim(Prim::Le, var("k"), int(15)), true, &p)
+        };
+        let what = if shadow {
+            "a y the scope has"
+        } else {
+            "a fresh y"
+        };
+        witness_w(&run(start.clone()), &run(start.lazy()), what);
+    }
+}
+
+/// Gemini's killing test A3 (2) of XR-lazy-and-kernel-batch-1 round 4, for the step of
+/// `Scope::join` that makes an eager side lazy: `y` bound to `x + w` on an eager copy of
+/// [`witness_scope`] (whose binding records no names its term reads) and on a lazy one,
+/// joined either way round, then `x >= n + m`, `n >= 10` and `y <= 15`. The eager reference
+/// is the eager side joined with itself; its `w` is [0, 5], and the join read with the eager
+/// side's empty reads leaves `x` stale and `w` in [0, 15].
+#[test]
+fn a_leaf_the_eager_side_of_a_join_binds_takes_the_eager_steps() {
+    let p = Premises::new();
+    let s = witness_scope(false);
+    let bound = |mut s: Scope| {
+        let (y, t): (Arc<str>, Arc<str>) = ("y".into(), "t".into());
+        let top = s.get(&t);
+        s.bind(&y, top, &Shared::new(prim(Prim::Add, var("x"), var("w"))));
+        s
+    };
+    let after = |s: Scope| {
+        s.assume(&sum3("x", "n", "m", 0, false), true, &p)
+            .assume(&prim(Prim::Ge, var("n"), int(10)), true, &p)
+            .assume(&prim(Prim::Le, var("y"), int(15)), true, &p)
+    };
+    let (e, l) = (bound(s.clone()), bound(s.lazy()));
+    let eager = after(e.join(&e));
+    witness_w(&eager, &after(e.join(&l)), "eager joined with lazy");
+    witness_w(&eager, &after(l.join(&e)), "lazy joined with eager");
+}
+
+/// Gemini's killing test A3 (3) of XR-lazy-and-kernel-batch-1 round 4, for the call of
+/// `Scope::promote` in `Scope::join_kept`: `n`, `m`, `k` in [0, 20], `x >= n + k`, then the
+/// kept test `(x <= 5 && m >= 10) || m * m == 0`, arms in that order, so that the case the
+/// join starts from leaves `x` as the scope held it, then `n >= 6`, which takes `x` past 5:
+/// the eager `m` is [0, 0]; a lazy `x` takes no eager step at the move, the trigger does not
+/// fire, and `m` is `{0} ∪ [10, 20]`. Round 5: green with the call taken out, so it was taken
+/// out (META4); the test stays as a check that lazy equals eager here.
+#[test]
+fn a_leaf_a_kept_test_names_takes_the_eager_steps_from_the_join_of_its_cases() {
+    let p = Premises::new();
+    let box20 = ["n", "m", "k"]
+        .iter()
+        .map(|h| {
+            and(
+                prim(Prim::Ge, var(h), int(0)),
+                prim(Prim::Le, var(h), int(20)),
+            )
+        })
+        .reduce(and)
+        .expect("three names");
+    let start = ints(&names(&["n", "m", "k", "x"])).assume(&box20, true, &p);
+    let kept = or(
+        and(
+            prim(Prim::Le, var("x"), int(5)),
+            prim(Prim::Ge, var("m"), int(10)),
+        ),
+        prim(Prim::Eq, prim(Prim::Mul, var("m"), var("m")), int(0)),
+    );
+    let steps = [
+        sum3("x", "n", "k", 0, false),
+        kept,
+        prim(Prim::Ge, var("n"), int(6)),
+    ];
+    let run = |s: Scope| steps.iter().fold(s, |s, t| s.assume(t, true, &p));
+    let (eager, lazy) = (run(start.clone()), run(start.lazy()));
+    let m: Arc<str> = "m".into();
+    assert_eq!(eager.get(&m).ints().to_string(), "[0..=0]", "the eager m");
+    assert_eq!(lazy.settled(&m), eager.get(&m), "m");
+}

@@ -1008,7 +1008,7 @@ enum Step {
 fn held_in(s: &Scope, x: &Arc<str>) -> Held {
     if s.bottom {
         Held::Bottom
-    } else if s.names.contains_key(x) {
+    } else if s.in_scope(x) {
         Held::Is(Box::new(s.settled(x)))
     } else {
         Held::Absent

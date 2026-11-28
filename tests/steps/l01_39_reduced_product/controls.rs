@@ -82,7 +82,8 @@ fn enumeration_keeps_the_members_a_written_constraint_holds_at() {
 fn enumeration_reads_the_other_names_when_they_are_static() {
     // `m` is 3, so `n mod m == 1` among `0..=10`, listed, keeps 1, 4, 7, 10.
     let mut s = among(&(0..=10).collect::<Vec<_>>());
-    s.names.insert("m".into(), Product::literal(&Value::Int(3)));
+    s.names_mut()
+        .insert("m".into(), Product::literal(&Value::Int(3)));
     let t = prim(
         Prim::Eq,
         vec![prim(Prim::Mod, vec![var("n"), var("m")]), lit(1)],
@@ -95,7 +96,8 @@ fn enumeration_reads_the_other_names_when_they_are_static() {
     // With `m` known only at run time, the constraint has two open names and is not
     // enumerated.
     let mut s = within(0, 10);
-    s.names.insert("m".into(), Product::of_type(Type::int()));
+    s.names_mut()
+        .insert("m".into(), Product::of_type(Type::int()));
     let s = written(s, t);
     assert_eq!(s.get("n").ints().to_string(), "[0..=10]");
 }
@@ -130,7 +132,7 @@ fn a_constraint_left_waiting_is_enumerated_when_its_name_lists_members() {
     );
     let mut s = written(within(1, 6), t);
     assert_eq!(s.get("n").ints().to_string(), "[1..=6]");
-    s.names
+    s.names_mut()
         .insert("n".into(), among(&[1, 2, 3, 4, 5, 6]).get("n"));
     s.reduce();
     assert_eq!(s.get("n").ints().to_string(), "[1..=2, 5..=6]");
@@ -140,10 +142,12 @@ fn a_constraint_left_waiting_is_enumerated_when_its_name_lists_members() {
         vec![prim(Prim::Mod, vec![var("n"), var("m")]), lit(1)],
     );
     let mut s = among(&(0..=10).collect::<Vec<_>>());
-    s.names.insert("m".into(), Product::of_type(Type::int()));
+    s.names_mut()
+        .insert("m".into(), Product::of_type(Type::int()));
     let mut s = written(s, t);
     assert_eq!(s.get("n").ints().to_string(), "[0..=10]");
-    s.names.insert("m".into(), Product::literal(&Value::Int(3)));
+    s.names_mut()
+        .insert("m".into(), Product::literal(&Value::Int(3)));
     s.reduce();
     assert_eq!(
         s.get("n").ints().to_string(),

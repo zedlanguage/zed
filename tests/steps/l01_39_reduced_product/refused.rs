@@ -289,10 +289,11 @@ fn two_refused_arms_joined() {
     let g2 = growth_test(["a", "b", "c", "d"]);
     let either = texts(&arm_scope(&format!("({g1}) || ({g2})"), true));
     assert_eq!(either.len(), 3, "{either:#?}");
-    assert!(
-        either[0].contains("so it set that case aside"),
-        "{either:#?}"
+    let aside = format!(
+        "so it set that case aside: {GROWTH}. The checker stopped there, with no values found \
+         and none ruled out\n"
     );
+    assert!(either[0].contains(&aside), "{either:#?}");
     assert_eq!(either[1..], joined[..]);
     assert_eq!(
         either,
@@ -572,22 +573,26 @@ fn a_refused_projection_names_the_bounds_it_kept() {
 /// `a + c >= z0 - 12` and its bounds) and without `c <= 8`, which change none of these
 /// warnings and take 0.63 of the 0.85 s the whole case takes (TEST-slow-l0139-refused-sums;
 /// the whole case is checked by `pendants`): the projection onto `b`, `z1` and `z2` is
-/// refused, and each warning names the bounds the box stage kept for its variable; a case of
-/// an alternative set aside keeps no bounds, since the box stage does not read it, and still
+/// refused, and each warning names the bounds the box stage kept for its variable, and none
 /// says that its search found no values and ruled none out. `b` is refused only in the case
 /// with no alternative left, where `z2 <= 4` and so `b <= 13`; in the cases with an
-/// alternative its values are found exactly (PRES-project-each-cost). Of the two alternatives,
-/// only `2 * a + b >= 7 || z2 <= 8` is set aside: the box makes `b >= c - 11` true (`b >= -4`,
-/// `c <= 6`), so `b >= c - 11 || z2 <= 4` is left out of the question before the solver
-/// (BENCH-hole-end-pad-timeout), and none of its cases is refused.
+/// alternative its values are found exactly (PRES-project-each-cost). Neither alternative is
+/// set aside: the box makes `b >= c - 11` true (`b >= -4`, `c <= 6`), so `b >= c - 11 || z2 <=
+/// 4` is left out of the question before the solver (BENCH-hole-end-pad-timeout), and none of
+/// its cases is refused; and the test's `z2 <= 6` leaves no case to `2 * a + b >= 7` once `z2
+/// <= 8` is excluded, so the relation of the forced test keeps `z2 <= 8` alone in place of
+/// `2 * a + b >= 7 || z2 <= 8` (the dead arms of a forced nest, product.rs `narrow_linear`,
+/// XR-lazy-and-kernel-batch-1 round 3). Until then that alternative was set aside, one warning
+/// that found no values and ruled none out;
+/// [`a_set_aside_alternative_leaves_the_bounds_of_each_side_named`] keeps that case.
 #[test]
-fn a_refused_projection_onto_one_name_names_its_bounds() {
+fn a_refused_projection_onto_one_name_names_its_bounds_and_sets_no_alternative_aside() {
     solver_alone(refused_onto_one_name);
 }
 
-/// [`a_refused_projection_onto_one_name_names_its_bounds`] with the solver alone, which sets
-/// the refused cases of the alternatives aside; the exact cover asks of each name's values
-/// whole and sets no case aside.
+/// [`a_refused_projection_onto_one_name_names_its_bounds_and_sets_no_alternative_aside`] with the
+/// solver alone, which sets the refused cases of the alternatives aside; the exact cover asks of
+/// each name's values whole and sets no case aside.
 fn refused_onto_one_name() {
     let case = "a + 2 * c >= -4 && (2 * a + b >= 7 || z2 <= 8) && a + 2 * b + c + z1 >= 4 \
                 && a >= b + z1 - 6 && (b >= c - 11 || z2 <= 4) && a + b + c >= z1 + 2 \
@@ -603,20 +608,47 @@ fn refused_onto_one_name() {
         );
         assert!(got.iter().any(|w| w.contains(&want)), "{n}: {got:#?}");
     }
+    assert!(
+        got.iter().all(|w| !w.contains("none ruled out")),
+        "{got:#?}"
+    );
+}
+
+/// An alternative whose case is refused, and not dead, is still set aside, and the bounds of
+/// each side are still named: of the two refused growth tests joined by `||`, the one inside
+/// the box `x >= 0 && x <= 9 && y >= -5 && z <= 20` names the bounds the box stage kept for
+/// each of its variables, the other says its bounds rule out no value, and the warning on the
+/// whole test says that it set one case aside, with no values found and none ruled out. This
+/// is what [`a_refused_projection_onto_one_name_names_its_bounds_and_sets_no_alternative_aside`]
+/// checked before its dead arm was pruned (XR-lazy-and-kernel-batch-1 round 3); here neither
+/// side is empty, so pruning leaves both.
+#[test]
+fn a_set_aside_alternative_leaves_the_bounds_of_each_side_named() {
+    solver_alone(set_aside_with_bounds);
+}
+
+/// [`a_set_aside_alternative_leaves_the_bounds_of_each_side_named`] with the solver alone,
+/// which sets the refused case of an alternative aside.
+fn set_aside_with_bounds() {
+    let g1 = growth_test(["x", "y", "z", "w"]);
+    let g2 = growth_test(["a", "b", "c", "d"]);
+    let got = texts(&arm_scope(
+        &format!("(x >= 0 && x <= 9 && y >= -5 && z <= 20 && {g1}) || ({g2})"),
+        true,
+    ));
+    assert_eq!(got.len(), 3, "{got:#?}");
     let aside = format!(
         "so it set that case aside: {GROWTH}. The checker stopped there, with no values found \
          and none ruled out\n"
     );
-    assert_eq!(
-        got.iter().filter(|w| w.contains(&aside)).count(),
-        1,
-        "{got:#?}"
+    assert!(got[0].contains(&aside), "{got:#?}");
+    let kept = format!(
+        "{GROWTH}. The checker stopped there, with {EACH}: `w: int[-23..]`, `x: int[0..=9]`, \
+         `y: int[-5..]` and `z: int[..=20]`\n"
     );
-    assert!(
-        got.iter()
-            .all(|w| w.contains(&aside) || !w.contains("none ruled out")),
-        "{got:#?}"
-    );
+    assert!(got[1].contains(&kept), "{got:#?}");
+    let none = none_ruled_out(EACH, "`a`, `b`, `c` and `d`");
+    assert!(got[2].contains(&format!("{none}\n")), "{got:#?}");
 }
 
 /// The sets a refusal keeps do not depend on the order the questions were met in: the same

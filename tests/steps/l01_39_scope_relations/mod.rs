@@ -16,6 +16,7 @@ mod disjoint;
 mod families;
 mod holes;
 mod lazy;
+mod lazy_check;
 mod linked;
 mod nests;
 mod path_check;

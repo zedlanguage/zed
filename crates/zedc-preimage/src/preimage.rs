@@ -14585,6 +14585,42 @@ impl LetPa {
 #[cfg(feature = "counts")]
 pub mod counts {
     use std::cell::Cell;
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// The stale blocks the lazy scopes of this process settled (`Scope::settle`), whatever the
+    /// thread: the work a lazy scope put off and did later (XR-lazy-and-kernel-batch-1 round
+    /// 4, Claude A2.4). 0 means the lazy mode put off nothing.
+    static STALE_BLOCKS: AtomicU64 = AtomicU64::new(0);
+
+    /// Adds `n` to the stale blocks settled. With the variable `ZED_STALE_LOG` set to a file
+    /// name, each time the count passes a power of two a line `<command line> <pid> <count>` is
+    /// appended to that file, so a run of many test processes shows which put work off and
+    /// about how much (the last line of a process is within a factor 2 of its count). O(1)
+    /// a call; one write per doubling.
+    pub(crate) fn note_stale_blocks(n: usize) {
+        static LOG: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+        let Some(path) = LOG.get_or_init(|| std::env::var_os("ZED_STALE_LOG").map(Into::into))
+        else {
+            return;
+        };
+        if n == 0 {
+            return;
+        }
+        let before = STALE_BLOCKS.fetch_add(n as u64, Ordering::Relaxed);
+        let after = before + n as u64;
+        if before == 0 || before.ilog2() != after.ilog2() {
+            use std::io::Write;
+            let program = std::env::args().collect::<Vec<_>>().join(" ");
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let _ = writeln!(f, "{program} {} {after}", std::process::id());
+            }
+        }
+    }
 
     thread_local! {
         pub(crate) static SUM_NODES: Cell<u64> = const { Cell::new(0) };
@@ -14595,6 +14631,8 @@ pub mod counts {
         pub(crate) static EVALUATIONS: Cell<u64> = const { Cell::new(0) };
         pub(crate) static DUE: Cell<u64> = const { Cell::new(0) };
         pub(crate) static PARTS_PROJECTED: Cell<u64> = const { Cell::new(0) };
+        pub(crate) static MOVED_BLOCKS: Cell<[u64; 4]> = const { Cell::new([0; 4]) };
+        pub(crate) static AROUND_READS: Cell<u64> = const { Cell::new(0) };
         pub(crate) static PUT_IN_SIDE: Cell<Option<bool>> = const { Cell::new(None) };
         pub(crate) static ZERO_CYCLES_TIED: Cell<u64> = const { Cell::new(0) };
         pub(crate) static NEGATIVE_CYCLES: Cell<[u64; 2]> = const { Cell::new([0, 0]) };
@@ -14748,6 +14786,42 @@ pub mod counts {
     /// place, projects none (PERF-refused-site-constant).
     pub fn parts_projected() -> u64 {
         PARTS_PROJECTED.get()
+    }
+
+    /// The blocks a move of a name made due (`Scope::moved_blocks`) on this thread since it
+    /// started: a lazy leaf's star is not among them until the leaf is read
+    /// (PERF-lazy-eager-bound-leaves).
+    pub fn moved_blocks() -> u64 {
+        MOVED_BLOCKS.get().iter().sum()
+    }
+
+    /// [`moved_blocks`] by the site that asked for them, in the order of [`MOVED_AT`].
+    pub fn moved_blocks_at() -> [u64; 4] {
+        MOVED_BLOCKS.get()
+    }
+
+    /// The sites of [`moved_blocks_at`]: `Scope::due` for the names moved since the last
+    /// projection; in `Scope::project`, the names a block's projection by its holes moved, those
+    /// its shortest paths moved, and those a projection moved as it narrowed them.
+    pub const MOVED_AT: [&str; 4] = [
+        "due",
+        "project: holes",
+        "project: shortest",
+        "project: moved",
+    ];
+
+    /// The leaves `Scope::due` of a lazy scope read, at a move of a satellite, for the stars
+    /// near it ([`Conjuncts::around`]): only those its order holds, so a lazy leaf adds none
+    /// (XR round 2, Codex A4). On this thread since it started.
+    ///
+    /// [`Conjuncts::around`]: zedc_presburger::conjuncts::Conjuncts::around
+    pub fn around_reads() -> u64 {
+        AROUND_READS.get()
+    }
+
+    /// Adds `n` to [`around_reads`].
+    pub(crate) fn bump_around_read(n: usize) {
+        AROUND_READS.set(AROUND_READS.get() + n as u64);
     }
 }
 

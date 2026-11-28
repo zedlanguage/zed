@@ -37,10 +37,7 @@ fn run(src: &str, x: i64) -> Value {
 fn reached_in_chain(src: &str, param: &Arc<str>, arms: &[Arm], results: &[&str]) -> Vec<usize> {
     assert_eq!(arms.len(), 2 * (results.len() - 1), "{src}");
     // A name not in a scope is not checked, so the parameter must be in each.
-    assert!(
-        arms.iter().all(|a| a.scope.names.contains_key(param)),
-        "{src}"
-    );
+    assert!(arms.iter().all(|a| a.scope.in_scope(param)), "{src}");
     let mut reached = std::collections::BTreeSet::new();
     for x in -30..=30 {
         let v = run(src, x);

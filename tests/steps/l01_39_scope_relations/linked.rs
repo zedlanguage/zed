@@ -83,7 +83,8 @@ fn a_chain_from_a_bounded_name_bounds_each_name_of_the_chain() {
     let p = Premises::new();
     let s = ts.iter().fold(s, |s, t| s.assume(t, true, &p));
     assert!(!s.bottom, "{s}");
-    let x20 = s.names.get("x20").expect("x20");
+    assert!(s.in_scope("x20"), "x20");
+    let x20 = s.get("x20");
     assert_eq!(
         x20.ints().to_string(),
         "[..=999999980]",
@@ -1153,7 +1154,7 @@ fn if_statements_joined_on_a_chain_keep_the_chain() {
         j
     });
     assert!(!s.bottom, "{s}");
-    assert_eq!(s.names["x20"].ints().to_string(), "[..=999999980]", "{s}");
+    assert_eq!(s.get("x20").ints().to_string(), "[..=999999980]", "{s}");
 }
 
 /// The constraint `a - b - c >= 0` as a formula.
@@ -3043,8 +3044,7 @@ fn a_chain_put_in_against_the_order_keeps_its_bounds_and_its_cycles() {
         let s = tests.iter().fold(s, |s, t| s.assume(t, true, &p));
         let last = format!("x{}", k - 1);
         let bound = |s: &Scope| {
-            s.names
-                .get(last.as_str())
+            (s.in_scope(&last).then(|| s.get(&last)))
                 .expect("the last name")
                 .ints()
                 .to_string()

@@ -57,6 +57,11 @@ printed-types = ["zedc-types/printed-types"]
 # TEST-random-sweep-off): the specific fixes off, the end-of-walk check off. Off in a release
 # build; zedc's feature `obligation-test-modes` turns it on for the step tests.
 obligation-test-modes = []
+# The comparison of each image `Ck::with_bound_read` reads from a lazy scope with the image read
+# from a copy settled at every name (`product::lazy_check`, the author's rule of 2026-11-28 that
+# lazy and eager give the same result). Off in a release build; zedc's feature `preimage-ref`
+# turns it on for the step tests.
+preimage-ref = ["zedc-preimage/preimage-ref"]
 # A panic in the arm (a2) of `Ck::push_vars` (check/walk.rs), for a sweep of the tests that looks
 # for a push reaching it (PROOF-push-vars-a2-complete). Off in every build; a sweep removes the
 # `#[cfg]` line before the panic in a copy of the checkout, so that every build of that copy has it.
@@ -72,4 +77,4 @@ generic-operand-sweep = []
 # `printed-types` through zedc), and does not overwrite the copies the step tests link to.
 [dev-dependencies.zedc-check]
 path = "."
-features = ["printed-types", "obligation-test-modes"]
+features = ["printed-types", "obligation-test-modes", "preimage-ref"]

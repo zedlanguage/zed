@@ -211,7 +211,7 @@ fn the_arms_of_tests_in_the_class_hold_every_value_that_reaches_them() {
                 .collect();
             assert_eq!(arm.reachable(), !points.is_empty(), "{test} {outcome}");
             for (name, at) in [("x", 0), ("y", 1)] {
-                let ints = arm.scope.names.get(name).map(|p| p.ints().clone());
+                let ints = (arm.scope.in_scope(name)).then(|| arm.scope.get(name).ints().clone());
                 for p in &points {
                     let v = if at == 0 { p.0 } else { p.1 };
                     assert!(

@@ -57,8 +57,9 @@ obligation-test-modes = ["zedc-check/obligation-test-modes"]
 # nodes `LetPa::sum` enters in `store::preimage` (PA-let-narrow). Off in a release build.
 counts = ["zedc-solvers/counts", "zedc-preimage/counts"]
 # Builds `store::preimage_ref`, the backward transfer before S22a, which the tests of step L1.25
-# compare `store::preimage` with (PREIMAGE-ref-tests). Off in a release build.
-preimage-ref = ["zedc-preimage/preimage-ref"]
+# compare `store::preimage` with (PREIMAGE-ref-tests), and the checker's comparison of lazy and
+# eager reads (zedc-check's `preimage-ref`). Off in a release build.
+preimage-ref = ["zedc-preimage/preimage-ref", "zedc-check/preimage-ref"]
 # Truncates content addresses so that they collide (step L1.37a); see zed-kernel src/address.rs.
 short-addresses = ["zed-kernel/short-addresses"]
 

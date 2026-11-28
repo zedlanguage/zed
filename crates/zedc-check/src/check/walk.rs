@@ -14872,14 +14872,17 @@ impl<'a> Ck<'_, 'a> {
             return Vec::new();
         }
         let (_, s) = self.read_in_scope(e);
-        if s.refusals.is_empty() {
+        // A lazy scope with no refusal kept may still find one: the projection of a stale star
+        // near the names that the eager scope made and the solver refused
+        // ([`Scope::refused_on`]), so only an eager scope stops here.
+        if s.refusals.is_empty() && !s.is_lazy() {
             return Vec::new();
         }
         let names = self.read_names(e);
         let mut notes = Vec::new();
         for (r, kept) in s.refused_on(names.iter().map(|(n, _)| &**n)) {
-            let span = self.asked_at(r, e.span);
-            notes.extend((r.derivation(kept).into_iter()).map(|text| Note {
+            let span = self.asked_at(&r, e.span);
+            notes.extend((r.derivation(&kept).into_iter()).map(|text| Note {
                 span,
                 text: text.into(),
             }));
@@ -15111,7 +15114,7 @@ impl<'a> Ck<'_, 'a> {
             let (Some(p), Some(name)) = (self.arms.bound.get(&b), self.arms.names.get(&b)) else {
                 continue;
             };
-            if s.names.contains_key(name) {
+            if s.in_scope(name) {
                 continue;
             }
             let (p, name) = (p.clone(), name.clone());
@@ -15128,7 +15131,7 @@ impl<'a> Ck<'_, 'a> {
                 .iter()
                 .filter_map(|v| Some((v, sum.inputs.get(v)?)))
             {
-                if !s.names.contains_key(v) {
+                if !s.in_scope(v) {
                     s.bind(v, q.clone(), &Shared::new(Term::Var(v.clone())));
                 }
                 doms.insert(v.clone(), q.ints().clone());
@@ -15152,7 +15155,7 @@ impl<'a> Ck<'_, 'a> {
             let (Some(p), Some(name)) = (self.arms.bound.get(&b), self.arms.names.get(&b)) else {
                 continue;
             };
-            if s.names.contains_key(name) {
+            if s.in_scope(name) {
                 continue;
             }
             let (p, name) = (p.clone(), name.clone());
@@ -15161,7 +15164,38 @@ impl<'a> Ck<'_, 'a> {
                 s.bind(&name, p, &e);
                 continue;
             };
-            let (image, premises) = self.read_image(b, &sum, &s.names);
+            // The image reads the products of the summary's inputs, which a lazy scope may
+            // hold stale (a leaf of a star whose hub moved): they are settled first, as
+            // `Scope::bind_summarized` settles them (XR-lazy-and-kernel-batch-1 round 3,
+            // Gemini A-1). O(k) names for the summary's `k` inputs, beside the stars they
+            // settle; nothing in an eager scope. Required (XR-lazy-and-kernel-batch-1 round
+            // 4, Gemini A2): under `x >= n + m`, a star the solver projects and not a path,
+            // `x` is a stale leaf after `n >= 5` and `m >= 5`, and the image of `y = x + 1`
+            // read here without the settle is `[-39, ∞)` where the eager one is `[11, ∞)`.
+            // Test, red without this settle: the crate test
+            // `with_bound_read_settles_a_stale_summary_input`. Gemini's two whole programs
+            // (`l01_39_scope_relations::lazy_check`) do not show it through the checker: the
+            // first passes without the settle (the tests on its path settle `x` first), the
+            // second is rejected both ways (a tuple part is read as `int`). The same step in `bind_with`
+            // is tested by `l01_39_scope_relations::lazy::a_summarized_binding_reads_its_inputs_settled`.
+            let names = s.settled_names(sum.summary.vars());
+            let (image, premises) = self.read_image(b, &sum, names);
+            // With `preimage-ref`, under a test: the same read from a copy settled at every
+            // name, which holds the eager products, must give the same image (the author's
+            // rule of 2026-11-28). The lazy read's entry in the cache of reads is taken out
+            // first, so that the copy is read from no cached base at `b`, and put back after,
+            // so that the copy's read changes no later one (`read_image` writes only `b`).
+            #[cfg(feature = "preimage-ref")]
+            if product::lazy_check::on() {
+                let kept = self.reads.remove(&b);
+                let eager = s.products();
+                let (want, _) = self.read_image(b, &sum, &eager);
+                match kept {
+                    Some(r) => self.reads.insert(b, r),
+                    None => self.reads.remove(&b),
+                };
+                product::lazy_check::compare(&format!("the image of {name}"), &image, &want);
+            }
             match image {
                 Some(image) => s.bind_within(&name, p, &e, image, &premises),
                 None => s.bind(&name, p, &e),
@@ -15188,13 +15222,13 @@ impl<'a> Ck<'_, 'a> {
                 continue;
             };
             if after {
-                if !s.names.contains_key(&f.name) {
+                if !s.in_scope(&f.name) {
                     let p = product::forward(&f.lambda, s);
                     s.bind(&f.name, p, &f.lambda);
                 }
                 continue;
             }
-            if !seen.insert(c) || s.names.contains_key(&f.name) {
+            if !seen.insert(c) || s.in_scope(&f.name) {
                 continue;
             }
             todo.push((c, true));
@@ -15751,7 +15785,7 @@ impl<'a> Ck<'_, 'a> {
                         let Some(ty) = self.param_type(b, *id).and_then(plain) else {
                             continue;
                         };
-                        match s.names.contains_key(x) {
+                        match s.in_scope(x) {
                             false => {
                                 s.bind(
                                     x,
@@ -15807,7 +15841,7 @@ impl<'a> Ck<'_, 'a> {
                     true => &self.param_product(*id, KType::int()),
                     false => q,
                 };
-                match p.names.contains_key(x) {
+                match p.in_scope(x) {
                     false => {
                         p.bind(x, q.clone(), &Shared::new(Term::Var(x.clone())));
                     }
@@ -36969,6 +37003,78 @@ mod tests {
         ] {
             assert_eq!(unparen(s), want, "{s}");
         }
+    }
+
+    /// [`Ck::with_bound_read`] reads a summarized binder's image from its inputs settled
+    /// (XR-lazy-and-kernel-batch-1 round 4, Codex's direct test of A2): `a0` is a leaf of the
+    /// hub `n` (`a0 - n >= 0`) and `n` then moves to `n >= 5`, so the lazy scope holds `a0`
+    /// stale, admitting 4, which the eager scope excludes. The binder `y = a0 + 1` read from
+    /// the lazy scope gives the eager image, from 6. Red with the settle in `with_bound_read`
+    /// removed. No checker program found reaches this case (the comment at that settle); the
+    /// call here is direct.
+    #[test]
+    fn with_bound_read_settles_a_stale_summary_input() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let tables = Tables::new(&[], &res);
+        let a0: Arc<str> = "a0".into();
+        let y: Arc<str> = "y".into();
+        let any_int = Product::of_type(KType::int());
+        let v = |x: &str| Term::Var(x.into());
+        let i = |x| Term::Lit(Value::Int(x));
+        let app = |op, a, b| Term::Prim(op, vec![a, b]);
+        let n_bounds = app(
+            Prim::And,
+            app(Prim::Ge, v("n"), i(-20)),
+            app(Prim::Le, v("n"), i(20)),
+        );
+        let m_bounds = app(
+            Prim::And,
+            app(Prim::Ge, v("m"), i(-20)),
+            app(Prim::Le, v("m"), i(20)),
+        );
+        let p = Premises::new();
+        let base = Scope::new(
+            ["n", "m", "a0", "a1", "a2", "a3", "a4"].map(|n| (Arc::from(n), any_int.clone())),
+        )
+        .assume(&app(Prim::And, n_bounds, m_bounds), true, &p);
+        let prep = |s: Scope| {
+            s.assume(
+                &app(Prim::Ge, app(Prim::Sub, v("a0"), v("n")), i(0)),
+                true,
+                &p,
+            )
+            .assume(&app(Prim::Ge, v("n"), i(5)), true, &p)
+        };
+        let (eager, lazy) = (prep(base.clone()), prep(base.lazy()));
+        assert!(lazy.held_product(&a0).ints().contains(4), "a0 is not stale");
+        assert!(!eager.get(&a0).ints().contains(4));
+        let term = app(Prim::Add, v("a0"), i(1));
+        let doms: Domains = [(a0.clone(), IntervalSet::top())].into_iter().collect();
+        let summary = let_summary(&term, &doms, Lets::new()).expect("affine summary");
+        // Formed over its inputs' integers, as `Ck::summarize_value` forms each summary:
+        // an unformed one has no total, so its image is `None` and `y` stays `int`.
+        let any_ints = any_int.ints().clone();
+        summary.form(|x| (x == &a0).then_some(&any_ints));
+        let read = |s: Scope| {
+            let mut ck = Ck::new(&tables, |_, _, _| {}, |_, _, _| {});
+            ck.arms.names.insert(0, y.clone());
+            ck.arms.bound.insert(0, any_int.clone());
+            ck.arms.summaries.insert(
+                0,
+                Some(Rc::new(Summarized {
+                    summary: summary.clone(),
+                    inputs: [(a0.clone(), any_int.clone())].into_iter().collect(),
+                    widest: None,
+                })),
+            );
+            // The product held, not the settled read (`Scope::get` would settle `y`'s star,
+            // which leaves an image read from a stale input as it is, but reads less directly).
+            ck.with_bound_read(s, &[0], &[]).held_product(&y)
+        };
+        let expected = read(eager);
+        assert!(expected.ints().contains(6));
+        assert!(!expected.ints().contains(5));
+        assert_eq!(read(lazy).ints(), expected.ints());
     }
 
     /// Row FAIL-join-narrowed-root-order: a chain of tests k0 → k1 → k2 → k3, only k3 a

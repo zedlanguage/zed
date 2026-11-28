@@ -205,14 +205,19 @@ fn difference((a, p): &(Vec<Arm>, Product), (b, q): &(Vec<Arm>, Product)) -> Opt
             ));
         }
         if x.scope.bottom != y.scope.bottom
-            || x.scope.names != y.scope.names
+            || x.scope.products() != y.scope.products()
             || x.scope.to_string() != y.scope.to_string()
             || x.scope.written.keys().collect::<Vec<_>>()
                 != y.scope.written.keys().collect::<Vec<_>>()
         {
             return Some(format!(
                 "arm {i} (`{}` is {}): scope\n{}against\n{}{:#?}\nagainst\n{:#?}",
-                x.guard, x.outcome, x.scope, y.scope, x.scope.names, y.scope.names
+                x.guard,
+                x.outcome,
+                x.scope,
+                y.scope,
+                x.scope.products(),
+                y.scope.products()
             ));
         }
     }

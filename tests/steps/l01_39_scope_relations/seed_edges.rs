@@ -253,7 +253,10 @@ fn a_star_that_goes_puts_its_conjuncts_edges_into_the_tree() {
     assert_eq!(ends(&eager, "a"), Some((Some(4), None)));
     // The leaf is stale before the write.
     assert_eq!(
-        lazy.get("a").ints().bounds().map(|(lo, _)| lo.clone()),
+        lazy.held_product("a")
+            .ints()
+            .bounds()
+            .map(|(lo, _)| lo.clone()),
         Some(End::NegInf)
     );
     let write = |s: &Scope| {

@@ -37,4 +37,4 @@ zedc-preimage = { workspace = true, features = ["counts", "preimage-ref"] }
 # overwrite the copies the step tests link to.
 [dev-dependencies.zedc-check]
 workspace = true
-features = ["printed-types", "obligation-test-modes"]
+features = ["printed-types", "obligation-test-modes", "preimage-ref"]

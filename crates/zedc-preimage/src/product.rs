@@ -2098,9 +2098,13 @@ fn path_con(t: &Term, outcome: bool) -> Option<Con> {
 #[derive(Clone, PartialEq, Debug)]
 pub struct Scope {
     /// Exact products. Plain scopes use a persistent map; admitted difference paths keep
-    /// translated bounds, with an exact map view on dereference. `get` reads one product.
+    /// translated bounds, with an exact map view on dereference. `held` reads one product.
     /// Mutation materializes first, so ordinary map readers and writers remain exact.
-    pub names: NameProducts,
+    /// Crate-private: a lazy scope holds stale leaves here ([`Scope::lazy`]), so a reader
+    /// outside the crate reads through [`Scope::get`], [`Scope::products`] or
+    /// [`Scope::settled_names`], which give the eager products, and tests membership with
+    /// [`Scope::in_scope`] (XR-lazy-and-kernel-batch-1 round 4, A4.1).
+    pub(crate) names: NameProducts,
     /// The relation the integer names meet, with no auxiliary variable.
     pub relation: Relation,
     /// The written constraints that hold, a test and its negations by content address (each
@@ -2505,12 +2509,12 @@ impl KeptTests {
 fn case_triggers(cases: &[Scope], free: &[Arc<str>], joined: &Scope) -> Vec<(Arc<str>, Trigger)> {
     let mut out = Vec::new();
     for x in free {
-        let p = joined.get(x);
+        let p = joined.held(x);
         let Some((lo, hi)) = p.ints().bounds() else {
             continue;
         };
         for c in cases {
-            let b = c.get(x);
+            let b = c.held(x);
             if free.len() > 1
                 && let Some((l, h)) = b.ints().bounds()
             {
@@ -2589,8 +2593,8 @@ fn case_points(
             check.extend(pathed.iter().cloned());
         }
         for n in check {
-            match c.get(&n).value() {
-                Some(v) if joined.get(&n).value().is_none() => {
+            match c.held(&n).value() {
+                Some(v) if joined.held(&n).value().is_none() => {
                     fixed.insert(n, v.clone());
                 }
                 _ => {
@@ -3578,7 +3582,8 @@ struct LeafBound {
     bound: IntervalSet,
 }
 
-/// The leaves of the stars of an eager scope ([`Conjuncts::star`]), each family's
+/// The leaves of the stars of an eager scope ([`Conjuncts::star`]), and of a lazy scope those
+/// that are not lazy ([`Placing`]), each family's
 /// ([`conjuncts::family`]) ordered by the ends of its leaves' products, so that a move of a
 /// hub projects only the stars whose leaf the family's bound now cuts ([`Scope::moved_blocks`]).
 /// A star of one hub has no class in the relation; here its conjuncts with the leaf written
@@ -3605,6 +3610,86 @@ struct Order {
     projected: imbl::OrdMap<Arc<str>, imbl::OrdSet<Arc<Formula>>>,
 }
 
+/// Which leaves an [`Order`] holds: every leaf of an eager scope, and of a lazy scope only the
+/// leaves that are not lazy ([`Placing::holds`]), so that a lazy leaf costs nothing at a
+/// move of its hubs. Made by `placing!` from the fields of a scope it reads, so that the
+/// order, another field, can be changed while it is held.
+struct Placing<'a> {
+    lazy: bool,
+    bindings: &'a imbl::OrdMap<Arc<str>, Binding>,
+    read_by: &'a imbl::OrdMap<Arc<str>, imbl::OrdSet<Arc<str>>>,
+    by: &'a Uses<Address>,
+}
+
+impl Placing<'_> {
+    /// Whether leaf `x` takes the eager steps: in an eager scope always; in a lazy one when a
+    /// binding of `x` has a term, a binding's term reads `x`, or a kept test names `x`
+    /// (FAIL-lazy-hubs-seed-5574242637160979656, option 1' of XR-lazy-and-kernel-batch-1).
+    /// O(log n).
+    ///
+    /// Mutants (XR-lazy-and-kernel-batch-1 round 3). Round 2 claimed four constructs round 1
+    /// asked for were equivalent mutants: the `read_by` clause here, the two
+    /// `Scope::promote` calls of [`Scope::bind`], the one of [`Scope::join_kept`], and the
+    /// eager-to-lazy step of [`Scope::join`]. Round 3 turned Gemini's witnesses A3 (1)-(4)
+    /// and Codex's case A3.2 into tests (`l01_39_scope_relations::lazy`), all green, and took
+    /// out each construct alone (2026-11-27, on 73aa90a1c):
+    /// - the `read_by` clause: NOT equivalent; taking it out fails
+    ///   `a_leaf_a_bound_term_reads_is_read_back_settled` and
+    ///   `a_leaf_a_bound_term_reads_on_the_eager_side_of_a_join_is_read_back_settled` (the
+    ///   lazy `w` is not the eager `[0..=5]`), so step (3) of the argument below is false;
+    /// - each of the other three: no test of round 3 failed; round 4 (Gemini A3) gave a
+    ///   test for each, under a star `x >= n + m` the solver projects rather than a path.
+    ///   Run in round 5 with each construct taken out alone: the test of the eager-to-lazy
+    ///   step of [`Scope::join`] fails, so that step stays (named at its site); the tests of
+    ///   the two promotes of [`Scope::bind`] and of the one of [`Scope::join_kept`] pass, so
+    ///   those calls were taken out (META4: a construct whose test is green without it goes).
+    ///   The tests stay as checks that lazy equals eager on those programs.
+    /// The premises the round 2 arguments used:
+    /// - (P1) Every read of a lazy leaf's product settles it first: [`Scope::settled`] for a
+    ///   name, [`Scope::settle_test`] over [`Scope::test_closure`] for a test (which follows
+    ///   a bound name to the names its term reads), and `bind_with`'s settling of a summary's
+    ///   inputs. Checked: these three paths, by their tests. Not checked: that no caller
+    ///   outside the tests reads a lazy scope's products raw ([`Scope::get`]).
+    /// - (P2) A binding's product is the `p` its caller passes, taken at the bind, and the
+    ///   eager scope does not carry a later move of a leaf the term reads into the binding.
+    ///   Checked: the product and two-binding tests of `l01_39_scope_relations::lazy`
+    ///   (outcome checks), whose eager guard shows the stale `a0` is not carried into `a1`.
+    /// - (P3) The eager step of a leaf, the projection of its star at a move of a hub, meets
+    ///   only that leaf's product with the projection, and settling meets it with the
+    ///   projection of the star the scope then holds. Argued from [`Scope::settle`] and
+    ///   `Scope::due`; not proved for a star that a join changed between the two. False as
+    ///   used in step (3) below: the tests named above show the two orders differ.
+    fn holds(&self, x: &str) -> bool {
+        // The `read_by` clause is needed: a leaf `x` a binding's term reads takes the eager
+        // steps, so a read back of the term after a move of `x`'s hubs narrows the moved `x`.
+        // Without it, in Gemini's witness A3 (`x >= n`, `y` bound to `x + w`, `y <= m`, then
+        // `n >= 10` and `m <= 15`), the read back narrows a stale `x` in [0, inf) and the
+        // settled `w` is not the eager [0, 5] ([0, 15] in Gemini's trace). Tests:
+        // `l01_39_scope_relations::lazy::a_leaf_a_bound_term_reads_is_read_back_settled`,
+        // `l01_39_scope_relations::lazy::a_leaf_a_bound_term_reads_on_the_eager_side_of_a_join_is_read_back_settled`.
+        // Round 2's argument that it was an equivalent mutant ended in step (3), "settling
+        // meets the read back with the star's projection in another order (P3)"; the order
+        // matters (the tests). Why, inferred and not traced: the read back of `y <= m` gives
+        // `w <= m - x`, which gives `w <= 5` only from the moved `x >= 10`.
+        !self.lazy
+            || self.bindings.get(x).is_some_and(|b| b.term.is_some())
+            || self.read_by.contains_key(x)
+            || self.by.count(x) > 0
+    }
+}
+
+/// The [`Placing`] of scope `$s`, borrowing only the fields it reads.
+macro_rules! placing {
+    ($s:expr) => {
+        Placing {
+            lazy: $s.lazy,
+            bindings: &$s.bindings,
+            read_by: &$s.read_by,
+            by: &$s.kept.by,
+        }
+    };
+}
+
 /// A leaf's place in [`Order`]: its family and the ends of its product less the shift of its
 /// class's bound from the family's.
 #[derive(Clone)]
@@ -3617,7 +3702,12 @@ struct Placed {
 impl Order {
     /// Places again each leaf whose star, class or product changed since the last call, in
     /// O(c log n) for `c` changes, the persistent maps' differences skipping what they share.
-    fn sync(&mut self, relation: &Conjuncts, names: &imbl::OrdMap<Arc<str>, Product>) {
+    fn sync(
+        &mut self,
+        relation: &Conjuncts,
+        names: &imbl::OrdMap<Arc<str>, Product>,
+        keep: &Placing,
+    ) {
         let mut touched: BTreeSet<Arc<str>> = BTreeSet::new();
         match &self.relation {
             None => touched.extend(relation.stars().keys().cloned()),
@@ -3647,7 +3737,7 @@ impl Order {
             touched.insert(x.clone());
         }
         for x in &touched {
-            self.place(relation, names, x);
+            self.place(relation, names, x, keep);
         }
         self.relation = Some(relation.clone());
         self.names = names.clone();
@@ -3673,11 +3763,11 @@ impl Order {
     /// `sync` then places the leaf of every star (its `None` arm). Test:
     /// `a_star_unmarked_by_a_join_is_projected_again_when_its_hub_moves`; it cannot catch a
     /// caller that changes `relation` or `names` without `sync`.
-    fn unmark(&mut self, x: &Arc<str>) {
+    fn unmark(&mut self, x: &Arc<str>, keep: &Placing) {
         self.projected.remove(x);
         if let Some(relation) = self.relation.take() {
             let names = std::mem::take(&mut self.names);
-            self.place(&relation, &names, x);
+            self.place(&relation, &names, x, keep);
             (self.relation, self.names) = (Some(relation), names);
         }
     }
@@ -3690,6 +3780,7 @@ impl Order {
         names: &imbl::OrdMap<Arc<str>, Product>,
         x: &Arc<str>,
         refused: bool,
+        keep: &Placing,
     ) {
         match relation.star(x) {
             Some(b) if !refused => {
@@ -3698,19 +3789,21 @@ impl Order {
             }
             _ => _ = self.projected.remove(x),
         }
-        self.place(relation, names, x);
+        self.place(relation, names, x, keep);
     }
 
     /// Puts `x` in its family's order as the relation and names have it, or takes it out
-    /// when it is no leaf. In O(log n), and O(s log s) for a star of one hub of `s` conjuncts.
+    /// when it is no leaf or a lazy leaf ([`Placing`]). In O(log n), and O(s log s) for a
+    /// star of one hub of `s` conjuncts.
     fn place(
         &mut self,
         relation: &Conjuncts,
         names: &imbl::OrdMap<Arc<str>, Product>,
         x: &Arc<str>,
+        keep: &Placing,
     ) {
         self.unplace(x);
-        let Some(b) = relation.star(x) else {
+        let Some(b) = relation.star(x).filter(|_| keep.holds(x)) else {
             self.projected.remove(x);
             return;
         };
@@ -3783,6 +3876,22 @@ impl Order {
             }
         }
     }
+}
+
+/// [`Conjuncts::classed`] of `g` in `relation` for a lazy scope: of the families at each name
+/// `g` is free at, those `order` holds a leaf of ([`Placing`]), which are the only ones
+/// `Scope::due` of a lazy scope projects, read by the order's families at the name and not by
+/// all of `relation`'s, so that a family of lazy leaves costs nothing (XR round 2, Codex A4).
+/// In O(log n) per name of `g` and per family the order holds there.
+fn placed_classed(relation: &Conjuncts, order: &Order, g: &Arc<Formula>) -> Vec<conjuncts::Class> {
+    let mut out = Vec::new();
+    for n in conjuncts::names(g) {
+        if relation.free_set(&n).is_some_and(|s| s.contains(g)) {
+            let held = |f: &&conjuncts::Class| relation.family_classes(f).next().is_some();
+            out.extend(order.at.of(&n).filter(held).cloned());
+        }
+    }
+    out
 }
 
 /// The names but the leaf that a class or family mentions: its hubs.
@@ -10332,48 +10441,115 @@ impl Scope {
     /// [`Scope::get`], [`Scope::statics`] and [`Scope::contains`] read names as held, so a
     /// caller of these settles first ([`Scope::eager_on`]).
     ///
+    /// Only lazy leaves are left stale (`Placing`): a leaf that no binding gives a term, that
+    /// no bound term reads (`Scope::read_by`) and that no kept test names
+    /// (`KeptTests::by`). A join reads a leaf's product only after settling it on both
+    /// sides where they may differ ([`Scope::join`], `Scope::refresh`), so no leaf is left
+    /// stale that a join reads. Every other leaf takes the eager steps at each site where a
+    /// lazy leaf is passed over: the order holds it, so a move of a hub cuts and projects its
+    /// star (`Scope::moved_blocks`, also in the reduction that ends [`Scope::settle`]);
+    /// `Scope::due` projects its star when the star is new, when a satellite at its hubs
+    /// moves and when a conjunct among its hubs changes; a projection marks it projected; a
+    /// join cuts it as on an eager side and refreshes it as an eager scope does. A leaf
+    /// that starts to take them, by a binding or a kept test, is placed by the next
+    /// `Order::sync` (the step that put it in the order at once, `Scope::promote`, was
+    /// taken out in round 5: Gemini's three tests of round 4 for it stayed green without it,
+    /// and META4 says such a construct goes). This is option 1' of XR-lazy-and-kernel-batch-1 round 1
+    /// (FAIL-lazy-hubs-seed-5574242637160979656): the claim this paragraph replaced, that no
+    /// leaf's product reaches another name but through its star, was false for a leaf a
+    /// bound term reads (read back by `Scope::read_back_terms`) and for a leaf a kept test
+    /// triggers on (`Scope::narrow_kept_again`).
+    ///
     /// The invariant: a lazy scope differs from the eager scope of the same tests only at
-    /// stale leaves, the leaves whose star was last projected at other intervals or classes
-    /// of its names or of the satellites its hubs admit than they now have, or with other
-    /// free conjuncts at its hubs ([`Conjuncts::core`]), and there settling the leaf,
+    /// stale lazy leaves, the lazy leaves whose star was last projected at other intervals or
+    /// classes of its names or of the satellites its hubs admit than they now have, or with
+    /// other free conjuncts at its hubs ([`Conjuncts::core`]), and there settling the leaf,
     /// projecting its star with those conjuncts and reducing as [`Scope::reduce`] does, gives
-    /// the eager product. No written constraint holds of a leaf, so its product reaches no
-    /// other name but through its star, whose projection onto its hubs is a bound on each
-    /// alone, through the leaf's greatest or least member, which a cut of the leaf by the
-    /// hubs' moves keeps, so no hub moves; and the cut is a half-line that holds that member,
-    /// so it empties no leaf, and the scope is bottom exactly when the eager one is. A star
-    /// that goes or changes makes its leaf's conjuncts due at the next projection, which
-    /// settles the leaf.
+    /// the eager product. A lazy leaf occurs nowhere but in its star: no written constraint
+    /// holds of a leaf ([`Conjuncts::pin`]), and no term, kept test or join reads it while it
+    /// is stale. So its product reaches no other name but through its star, whose projection
+    /// onto its hubs is a bound on each alone, through the leaf's greatest or least member,
+    /// which a cut of the leaf by the hubs' moves keeps, so no hub moves; and the cut is a
+    /// half-line that holds that member, so it empties no leaf, and the scope is bottom
+    /// exactly when the eager one is. A star that goes or changes makes its leaf's conjuncts
+    /// due at the next projection, which settles the leaf. Not proved: that the eager steps
+    /// the other leaves take here are all the eager scope takes on them; the sites were found
+    /// by reading every test of `lazy` in this file (November 2026), and the tests named at
+    /// `Placing` check the cases the round found.
     ///
-    /// Settling can give a finer product than the eager scope holds: an eager part projected
-    /// before a constraint on another term of its names is not due again, and keeps the
-    /// coarser product (`Scope::refresh`, seed 22671 of `l01_39_scope_relations::lazy`).
-    /// So "gives the eager product" above is to be read as "gives the eager product or one
-    /// below it": at a settled leaf the two are equal or the settled one is finer, and
-    /// coarser only after a refused projection of the leaf's block (next paragraph but one).
-    /// Both are sound, since settling only meets the leaf with the projection of a
-    /// star of conjuncts the scope holds and with [`Scope::reduce`]'s reductions, each a meet
-    /// with what the relation implies. The star's projection onto its hubs is
-    /// [`Conjuncts::star`] in zedc-presburger `conjuncts.rs`, argued there. Test:
+    /// The contract (the author's rule of 2026-11-28): a lazy scope and the eager scope of
+    /// the same tests, joins and bindings give the same result in every case. At every name
+    /// the settled lazy product equals the eager one, every read of a lazy scope reads what
+    /// the eager scope would give, and both report the same warnings; only the cost differs.
+    /// There is no exception: a difference is a fault, filed as a FAIL row and fixed.
+    /// The warnings (XR-lazy-and-kernel-batch-1 round 4, Claude A4.2, Gemini A-2 and A-3):
+    /// eager projects a leaf's star at every hub move and may record a refusal of that
+    /// projection there; lazy projects it when it settles the leaf. So [`Scope::warnings`],
+    /// [`Scope::looped`] and [`Scope::refused_on`] read a settled copy, which keeps the
+    /// refusals its settling raised, and [`Scope::reaches`], like [`Scope::assume`], asks a
+    /// test again with the stale leaves near a new refusal settled
+    /// (`Scope::settled_before_refusal`). Not proved: that the kept sets of a question met in
+    /// the eager order and in the lazy one come to the same (`Scope::refuse` keeps their
+    /// meet). Tests: `l01_39_scope_relations::lazy::warnings_of_a_lazy_scope_read_its_settled_view`,
+    /// `l01_39_scope_relations::lazy::reaches_of_a_lazy_scope_gives_the_eager_refusals`, the
+    /// witness `l01_39_scope_relations::lazy::a_refusal_only_the_eager_projection_raises_is_warned_alike`
+    /// and the sweep
+    /// `l01_39_scope_relations::lazy::a_lazy_scope_warns_as_the_eager_one_at_every_step_of_random_refusing_systems`,
+    /// which compare the warnings and the refusal maps at every step. The public product reads are
+    /// settled ([`Scope::get`], [`Scope::products`], `Display`, `Scope::statics`,
+    /// `Scope::contains`), the map of products is crate-private, and [`Scope::eager_on`]
+    /// settles every name before the scope turns eager (round 4, A4.1 and Codex A4.2). The
+    /// tests: `same` and the step-by-step comparisons in `l01_39_scope_relations::lazy`
+    /// (each step's products and warnings, the refusal test below), and
+    /// `l01_39_scope_relations::lazy_check`, which with the feature `preimage-ref` reads each
+    /// summarized binding the checker reads again from a copy settled at every name
+    /// (`lazy_check`). Soundness (`exact ⊆ settled lazy`) follows from the equality and the
+    /// eager scope's soundness.
+    ///
+    /// Cases the narrowing skips in both scopes alike, so that they are no exception:
+    /// `Scope::narrow_linear` skips `Kind::If` sides, disjunctions nested in arms and pruned
+    /// relations of fewer than two names. `Scope::decided_by_path` answers nothing in a lazy
+    /// scope (it returns `None`), so the lazy scope decides such a test by its products.
+    /// Readers of held products read a settled scope, and the caller's scope stays lazy:
+    /// [`Scope::get`] settles a copy at the name it reads, [`forward`] and [`arms`] settle a
+    /// copy of a lazy scope at every name first (`eager_on`), and
+    /// `Scope::statics` and `Scope::contains` read a copy settled at every name
+    /// (`Scope::read_settled`); the checker's `Ck::with_bound_read` settles a summary's inputs
+    /// before it reads the image.
+    ///
+    /// Two cases broke the equality before and are fixed (XR-lazy-and-kernel-batch-1 round 3,
+    /// Gemini A-4 and Codex A4, where they were listed as exceptions). (1) An eager part
+    /// projected before a constraint on another term of its names was not due again and kept
+    /// the coarser product, where settling projects it with the constraint; the eager join
+    /// now projects again the stars it refreshes (`Scope::refresh`; row EAGER-join-imprecise).
+    /// Tests:
     /// `l01_39_scope_relations::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction::the_eager_join_is_as_tight_as_the_lazy_one_at_these_seeds`
-    /// (seeds 116, 237, 272, 2220, 22490, 22671).
+    /// (seeds 116, 237, 272, 2220, 22490, 22671), and the step-by-step comparison at those
+    /// seeds, equal at each step. (2) A refused projection of a stale leaf's block left the
+    /// lazy leaf coarser (`a` lazily `[-15, ∞)`, eagerly `[-5, ∞)`); the leaves near a new
+    /// refusal are now settled and the test taken again (`Scope::settled_before_refusal`;
+    /// test `l01_39_scope_relations::lazy::a_refused_projection_leaves_the_lazy_leaf_as_the_eager_one`).
+    /// Settling is sound, since it only meets the leaf with the projection of a star of
+    /// conjuncts the scope holds and with [`Scope::reduce`]'s reductions, each a meet with
+    /// what the relation implies. The star's projection onto its hubs is [`Conjuncts::star`]
+    /// in zedc-presburger `conjuncts.rs`, argued there.
     ///
-    /// Never coarser at a leaf that is not stale, while no projection of the leaf's block has
-    /// been refused (rows PROOF-product-lazy-not-coarser and PROOF-product-lazy-a1-a4,
-    /// 2026-11-21). A refusal breaks it: the eager scope keeps what it met in from a
-    /// projection made before the refusal, which the lazy scope, its leaf stale then, never
-    /// made, and after the refusal both hold only what single constraints give (test
-    /// `l01_39_scope_relations::lazy::a_refused_projection_can_leave_the_lazy_leaf_coarser`:
-    /// `a` eagerly `[-5, ∞)`, lazily `[-15, ∞)` and not stale). Both are sound and both
-    /// warn, so the coarser answer is reported. Keeping it from happening would mean
-    /// projecting the leaf at each move of a hub, the `k²` cost the lazy scope exists to
-    /// avoid. At such a leaf [`Scope::settled`] returns [`Scope::get`] (it settles only
-    /// when `Scope::stale` names a block), so the claim is `lazy.get(a) ⊆ eager.get(a)`.
-    /// The argument, over a sequence of tests, joins and bindings applied to both scopes:
+    /// One half of the equality is argued here: at a leaf that is not stale, the lazy
+    /// product is no coarser than the eager one, `lazy.held(a) ⊆ eager.held(a)` (rows
+    /// PROOF-product-lazy-not-coarser and PROOF-product-lazy-a1-a4, 2026-11-21; `held` is the
+    /// raw read, [`Scope::get`] the settled one; at such a
+    /// leaf [`Scope::settled`] returns `Scope::held`, as it settles only when
+    /// `Scope::stale` names a block). The other half, no finer, is not proved; the tests
+    /// above check it. The argument needs that no projection of the leaf's block is refused
+    /// while the leaf is stale: the eager scope would keep what it met in from a projection
+    /// made before the refusal, which the lazy scope never made. `Scope::assume_with` keeps
+    /// that so by `Scope::settled_before_refusal`, which settles those leaves and takes
+    /// the test again. The argument, over a sequence of tests, joins and bindings applied to
+    /// both scopes:
     /// 1. Tests. The lazy scope's conjuncts and products imply each eager conjunct (A1',
-    ///    below; A1, the same conjuncts, is false), and every name that is not a
-    ///    leaf holds the same product in both, by the paragraph above (a leaf's projection
-    ///    moves no hub).
+    ///    below; A1, the same conjuncts, is false), and every name that is not a lazy
+    ///    leaf holds the same product in both, by the paragraph above (a lazy leaf's
+    ///    projection moves no hub).
     /// 2. A leaf `a` that is not stale. Its block has no due part, so each part's last
     ///    projection in the lazy scope read the present products of the part's names and its
     ///    present `with` ([`PartWith`]; `Scope::is_projected` compares both). Between two
@@ -10385,8 +10561,8 @@ impl Scope {
     ///    (A4: such a projection reads no conjunct the lazy one lacked). If a projection with
     ///    narrower products and more conjuncts is no wider (A2), each eager projection holds
     ///    the lazy one. Both scopes meet `a` with the same unary tests on `a`. So
-    ///    `lazy.get(a)`, at most the unary tests met with the last projection, is within
-    ///    `eager.get(a)`, the unary tests met with every projection the eager scope made.
+    ///    `lazy.held(a)`, at most the unary tests met with the last projection, is within
+    ///    `eager.held(a)`, the unary tests met with every projection the eager scope made.
     /// 3. A join. The lazy join settles the leaves its two sides may differ at
     ///    (`Scope::refresh`), and the eager join projects again the stars it refreshes, so by
     ///    steps 1 and 2 each side's lazy product is within the eager one at every name the
@@ -10402,8 +10578,9 @@ impl Scope {
     /// integer points that meet both. Narrower products and more conjuncts (`C' ⊇ C`, each
     /// product of `P'` within that of `P`) give a subset of those points, so `π_a(C' ∧ P') ⊆
     /// π_a(C ∧ P)`: the image of a subset is a subset. A meet of such projections is monotone
-    /// too, since a meet is monotone in each argument. The test above checks the claim right
-    /// up to the refusal (the settled lazy `a` equals the eager one there).
+    /// too, since a meet is monotone in each argument. The refusal test above checks the
+    /// claim at every step, the refused one included (the settled lazy `a` equals the eager
+    /// one at each).
     ///
     /// A1 as written, the same conjuncts in both scopes, is false, and the argument needs
     /// only a weaker form (row PROOF-product-lazy-a1-a4, b22-preimage5, 2026-11-22). Every
@@ -10485,7 +10662,7 @@ impl Scope {
     ///
     /// A4, reduced (b22-preimage6, 2026-11-22): a projection reads only the part's formula
     /// (its key), its `with`, and the intervals and classes of the part's names (the doc of
-    /// `projected`). Take a leaf `a` that is not stale, a value `v` in `lazy.get(a)`, and an
+    /// `projected`). Take a leaf `a` that is not stale, a value `v` in `lazy.held(a)`, and an
     /// eager projection of `a`'s part made after the lazy scope's last one, due by `a`'s own
     /// product alone. `v` lies in the lazy projection, so some integer point `x` with
     /// `x_a = v` meets the key, the lazy `with` and the lazy products then; the other names'
@@ -10532,6 +10709,12 @@ impl Scope {
                 self.bindings.insert(x.clone(), b);
                 self.index_reads(&x, true);
             }
+            // The order of a lazy scope holds only its leaves that are not lazy ([`Placing`]):
+            // it is made again from the relation at the next `Order::sync`, once, in
+            // O(n log n). Each leaf it holds is then cut by every bound until projected
+            // ([`Order::projected`]), which projects a star at its projection again and
+            // changes nothing.
+            self.seen.order = Order::default();
         }
         self.lazy = true;
         self
@@ -10717,6 +10900,8 @@ impl Scope {
             return;
         }
         let blocks = self.stale(names);
+        #[cfg(feature = "counts")]
+        super::preimage::counts::note_stale_blocks(blocks.len());
         self.settle_blocks(blocks, false);
     }
 
@@ -10748,9 +10933,17 @@ impl Scope {
     /// (the eager join against the enumeration) and
     /// `l01_39_reduced_product::scaling::an_eager_join_projects_again_the_stars_it_settles_and_scales`;
     /// COMPLEXITY.md row C45.
+    ///
+    /// In a lazy scope the lazy leaves among `names` are settled, and the others, which take
+    /// the eager steps ([`Placing`]), are refreshed as an eager scope refreshes them.
     fn refresh<'a>(&mut self, names: impl IntoIterator<Item = &'a Arc<str>>) {
+        let mut names: Vec<&Arc<str>> = names.into_iter().collect();
         if self.lazy {
-            return self.settle(names);
+            let keep = placing!(self);
+            let (eager, lazy): (Vec<&Arc<str>>, Vec<&Arc<str>>) =
+                names.into_iter().partition(|x| keep.holds(x));
+            self.settle(lazy);
+            names = eager;
         }
         if self.bottom {
             return;
@@ -10774,10 +10967,41 @@ impl Scope {
     // Cost: one diff of the names, O(c log n) for the `c` names changed, and the read-back of
     // those with a summary, as a test pays; the second reduction only when a read-back
     // narrowed a name.
-    fn settle_blocks(&mut self, blocks: Vec<BlockId>, fresh: bool) {
-        if blocks.is_empty() {
-            return;
+    ///
+    /// Without `fresh`, the blocks of the names settled are settled again while one of them
+    /// is stale: a block projected here can move a hub of a star projected before it in the
+    /// same pass, which makes that star due again, and the lazy reduction leaves a lazy leaf's
+    /// star unprojected, where the eager reduction projects again after each projection that
+    /// moves a bound, until none moves one ([`Scope::reduce_with`]). One pass left `a` in
+    /// `[-14, ∞)` where the eager scope has `[-13, ∞)`: its star projected with `z` held at
+    /// -11, then the refused block of the hubs narrowed `z` to -10
+    /// (FAIL-lazy-refused-block-history; test
+    /// `product::tests::settling_a_lazy_scope_leaves_no_star_stale`).
+    // Termination: each pass after the first projects only parts that are due, those whose
+    // names' intervals or classes changed since their last projection, which is what the
+    // eager reduction's loop projects again, so this stops where that loop stops, with the
+    // same projections. Cost: per pass, the look-up of the blocks of the names settled
+    // (`Scope::stale`, O(s log n) for their `s` names) and the due parts; a pass that finds no
+    // stale block, the usual case, adds only that look-up.
+    fn settle_blocks(&mut self, mut blocks: Vec<BlockId>, fresh: bool) {
+        let mut settled: BTreeSet<Arc<str>> = BTreeSet::new();
+        while !blocks.is_empty() {
+            self.settle_blocks_once(blocks, fresh, &mut settled);
+            if fresh || self.bottom {
+                break;
+            }
+            blocks = self.stale(&settled);
         }
+    }
+
+    /// One pass of [`Scope::settle_blocks`], adding the names of the blocks it projects to
+    /// `settled`.
+    fn settle_blocks_once(
+        &mut self,
+        blocks: Vec<BlockId>,
+        fresh: bool,
+        settled: &mut BTreeSet<Arc<str>>,
+    ) {
         let start = self.names.clone();
         // Per class, the other names and the leaf's interval and class before its last
         // projection, and the leaf's interval after.
@@ -10785,6 +11009,9 @@ impl Scope {
         let mut done: BTreeMap<conjuncts::Class, (Before, IntervalSet)> = BTreeMap::new();
         for id in blocks {
             let (mut b, mut due) = self.block(&self.relation, id);
+            if !fresh {
+                settled.extend(b.names());
+            }
             if fresh {
                 let mut free = b.parts.iter().filter(|(_, p)| p.of.is_some());
                 if let (Some((at, _)), None) = (free.next(), free.next())
@@ -10810,7 +11037,7 @@ impl Scope {
             };
             let others: Vec<Arc<str>> = b.names().into_iter().filter(|n| *n != leaf).collect();
             let own = |s: &Scope| {
-                let p = s.get(&leaf);
+                let p = s.held(&leaf);
                 (p.ints().clone(), framed_class(&p))
             };
             let before: Before = (self.snapshot(&others), own(self));
@@ -10835,10 +11062,10 @@ impl Scope {
             let refused = self.refusals.len();
             self.project_block(b, due);
             if self.refusals.len() == refused
-                && !self.get(&leaf).ints().is_empty()
+                && !self.held(&leaf).ints().is_empty()
                 && self.snapshot(&others) == before.0
             {
-                done.insert(class, (before, self.get(&leaf).ints().clone()));
+                done.insert(class, (before, self.held(&leaf).ints().clone()));
             }
         }
         self.reduce_with(false);
@@ -10848,7 +11075,7 @@ impl Scope {
         debug_assert!(fresh || !self.bottom, "settling a leaf emptied a scope");
     }
 
-    /// The product of `name` as the eager scope has it: [`Scope::get`] of the scope with the
+    /// The product of `name` as the eager scope has it: `Scope::held` of the scope with the
     /// name settled ([`Scope::lazy`]), on a copy, in O((k + 1) log n) for its `k` binders below
     /// and the projections of their stars and its own.
     ///
@@ -10868,27 +11095,49 @@ impl Scope {
     // Tradeoff: a lazy scope finds those names at every integer binding, also of a name no
     // test reads, where the summary is made only when read ([`Lazy`]); an eager scope finds
     // none.
+    ///
+    /// The stars that hang on `name` and on those binders (`Scope::leaves_near`) are settled
+    /// too: the eager projection of a leaf's block meets the block's other conjuncts, which
+    /// can narrow a hub, so a hub read through its own stars alone was wider than the eager
+    /// scope has it (round 5: `y`, a hub of the star `a >= n + m + y + z`, [-14, 31] lazy and
+    /// [-14, 23] eager after a test the solver refuses in part; settling every name gave
+    /// [-14, 23]). Test:
+    /// `l01_39_scope_relations::lazy::warnings_of_a_lazy_scope_read_its_settled_view`.
+    // Complexity tradeoff: naive version, every name settled at each read, O(n) projections
+    // looked up a read. Used: the name's binders and the stars that hang on them, O(s log n)
+    // for the `s` names of those stars, and nothing while every conjunct is on a path
+    // (`Scope::stale`). Tradeoff: a hub of `k` stars reads the `k` stars at each read.
     pub fn settled(&self, name: &Arc<str>) -> Product {
-        if self.lazy && !self.bottom {
-            let names = self.with_readers(name);
-            if !self.stale(&names).is_empty() {
+        if self.lazy && !self.bottom && !self.names.on_paths(&self.relation) {
+            let near = self.leaves_near(&self.with_readers(name).into_iter().collect());
+            let blocks = self.stale(&near);
+            if !blocks.is_empty() {
+                #[cfg(feature = "counts")]
+                super::preimage::counts::note_stale_blocks(blocks.len());
                 let mut s = self.clone();
-                s.settle(&names);
-                return s.get(name);
+                s.settle_blocks(blocks, false);
+                return s.held(name);
             }
         }
-        self.get(name)
+        self.held(name)
     }
 
-    /// Settles the names `term` reads and makes the scope eager from here, for a pass that
-    /// reads it through [`Scope::get`], as [`forward`] does: a later test that moves a hub
-    /// then projects its stars again, and a leaf no read settles is never read.
-    pub fn eager_on(&mut self, term: &Term) {
-        // With the binders of each name read, as `Scope::settled` settles them.
-        let names: BTreeSet<Arc<str>> = (stage::free(term).iter())
-            .flat_map(|x| self.with_readers(x))
-            .collect();
-        self.settle(&names);
+    /// Makes the scope eager from here, for a pass that reads it through the held products,
+    /// as [`forward`] does: a later test that moves a hub then projects its stars again. A
+    /// lazy scope is settled at every name first, not only at those `term` reads: the scope
+    /// is eager after, and an eager scope holds the eager product at every name, so a stale
+    /// leaf `term` does not read would otherwise be read as held by every later reader, its
+    /// `statics`, and the scopes of [`arms`] (R4 Codex A4.2: `eager_on` of a constant left
+    /// `a0` stale, so `statics` missed `a0 = 5`). Test:
+    /// `l01_39_scope_relations::lazy::eager_on_of_a_constant_preserves_unrelated_observations`.
+    // Complexity tradeoff: naive version, the names `term` reads settled (with their binders,
+    // as `Scope::settled` settles them), which is wrong as above. Used: every name settled
+    // ([`Scope::settle_all`]), a look-up of each of the `n` names' stars and the projections
+    // of the stale blocks, once per conversion; an eager scope pays nothing. `term` no
+    // longer chooses what is settled; it is kept for the callers, which convert the scope
+    // where they read `term`.
+    pub fn eager_on(&mut self, _term: &Term) {
+        self.settle_all();
         // The stars a lazy scope left unprojected are not known: each is cut by every bound
         // until it is projected ([`Order::projected`]).
         if self.lazy {
@@ -10903,11 +11152,36 @@ impl Scope {
         if !self.lazy || self.bottom {
             return;
         }
+        let names = self.test_closure(test);
+        self.settle(&names);
+    }
+
+    /// The names [`Scope::settle_test`] settles for `test`: those it reads, those of the
+    /// functions it calls among them, and the names the terms of bound names among them read,
+    /// and so on: a test on `y`, bound to `x`, reads `x`'s product through `y`'s summary
+    /// before any reduction (option 1' of XR-lazy-and-kernel-batch-1, Gemini's step 5). Each
+    /// name is read once (`names` is the visited set), O((r + e) log n) for the `r` names
+    /// reached and the `e` reads of their terms (XR round 2, Codex A1). Test:
+    /// `tests::a_leaf_read_only_through_two_bindings_is_in_the_test_closure`.
+    fn test_closure(&self, test: &Term) -> BTreeSet<Arc<str>> {
         let mut names = stage::free(test);
         if let Some(closed) = self.close(test, &names) {
             names.extend(stage::free(&closed));
         }
-        self.settle(&names);
+        let mut work: Vec<Arc<str>> = names.iter().cloned().collect();
+        while let Some(n) = work.pop() {
+            for r in self
+                .bindings
+                .get(&n)
+                .into_iter()
+                .flat_map(|b| b.reads.iter())
+            {
+                if names.insert(r.clone()) {
+                    work.push(r.clone());
+                }
+            }
+        }
+        names
     }
 
     /// The scope of a `let` body that binds `x` to `p`, in place. A name already in scope is
@@ -11111,6 +11385,13 @@ impl Scope {
             }
             _ => None,
         };
+        // The image reads the products of the summary's inputs, which a lazy scope may hold
+        // stale: they are settled first, as a test of them would settle them (XR round 2,
+        // Gemini A.2). O(k) names for k inputs, beside the stars they settle. Test:
+        // `l01_39_scope_relations::lazy::a_summarized_binding_reads_its_inputs_settled`.
+        if let Some(held) = &summary {
+            self.settle(held.summary.vars());
+        }
         if let Some(held) = &summary
             && self.holds(held)
             && let Some(image) = (held.summary).image(|v| self.names.get(v).map(Product::ints))
@@ -11419,14 +11700,14 @@ impl Scope {
         // takes `x` out (`unplace`). (3) `x` has no place already, unless the relation the
         // order recorded had a star of `x`; then the stars differ between that relation and
         // the one `sync` is given, and its stars' difference touches `x` anyway. If by that
-        // `sync` a conjunct on `x` has come, the conjuncts' difference touches `x`. A lazy scope
-        // keeps no order: each call of `sync` and `mark` is under `!self.lazy`, and
-        // `Scope::eager_on` sets a default order when a lazy scope turns eager; so skipping
-        // it there costs nothing and changes nothing. Test of the cost:
+        // `sync` a conjunct on `x` has come, the conjuncts' difference touches `x`. An order
+        // that recorded no relation yet (a default one, as `Scope::eager_on` and
+        // `Scope::lazy` set) is skipped: its next `sync` places the leaf of every star (its
+        // `None` arm), and its empty names would cost every name to rebase. Test of the cost:
         // `if_shortcut::bench::one_pass_and_transfer_scale_on_deep_nests` (16.7 times the work
         // at 8 times k without this rebase, 9.0 with it); no test checks the order's places
         // after the rebase apart from the answers of the other scope tests.
-        if !self.lazy {
+        if self.seen.order.relation.is_some() {
             rebase(&mut self.seen.order.names);
         }
         // Stating the bounds of `x`, a name of no conjunct, adds no conjunct, so the relation
@@ -11615,7 +11896,7 @@ impl Scope {
             let names: BTreeSet<Arc<str>> = self.names.changed(&since, &vars).cloned().collect();
             let mut due = BTreeSet::new();
             for n in names.iter().filter(|n| self.kept.triggers.contains_key(*n)) {
-                let p = self.get(n);
+                let p = self.held(n);
                 let q = since.product(n);
                 let class_moved = (q.as_ref())
                     .is_none_or(|q| q.cell.congruence.element != p.cell.congruence.element);
@@ -11904,20 +12185,85 @@ impl Scope {
         )
     }
 
-    /// The product of `name`; the top for a name not in scope, and the bottom for any name of
-    /// a scope no state reaches, whose names [`Scope::assume_case`] leaves as they were.
+    /// The product of `name` as the eager scope of the same steps has it; the top for a name
+    /// not in scope, and the bottom for any name of a scope no state reaches, whose names
+    /// [`Scope::assume_case`] leaves as they were. For a lazy scope, [`Scope::settled`]: a
+    /// stale leaf is settled on a copy, and this scope keeps it stale (the author's rule of
+    /// 2026-11-28: lazy and eager give the same result in every case;
+    /// XR-lazy-and-kernel-batch-1 round 4, A4.1). Test:
+    /// `l01_39_scope_relations::lazy::a_public_product_read_agrees_with_eager_without_mutating_storage`.
+    /// Cost: `Scope::held` for an eager scope; for a lazy one, that of [`Scope::settled`].
     pub fn get(&self, name: &str) -> Product {
+        if self.lazy && !self.bottom {
+            return self.settled(&Arc::from(name));
+        }
+        self.held(name)
+    }
+
+    /// Whether `name` is in scope; settling changes no name's presence. O(log n).
+    pub fn in_scope(&self, name: &str) -> bool {
+        self.names.contains_key(name)
+    }
+
+    /// The products of every name, as the eager scope of the same steps has them: the map
+    /// itself for an eager scope, and for a lazy one that of a copy settled at every name
+    /// (`Scope::read_settled`).
+    pub fn products(&self) -> Cow<'_, NameProducts> {
+        match self.read_settled() {
+            Cow::Borrowed(s) => Cow::Borrowed(&s.names),
+            Cow::Owned(s) => Cow::Owned(s.names),
+        }
+    }
+
+    /// Settles `names` in place ([`Scope::settle`]) and gives the map of products, for a
+    /// reader that reads only those names from it, as the checker's `Ck::read_image` reads a
+    /// summary's inputs: at those names the map holds the eager products; at others, a lazy
+    /// scope may hold stale leaves. The stars that hang on `names` are settled too, as
+    /// [`Scope::settled`] settles them.
+    pub fn settled_names<'a>(
+        &mut self,
+        names: impl IntoIterator<Item = &'a Arc<str>>,
+    ) -> &NameProducts {
+        if self.lazy && !self.bottom && !self.names.on_paths(&self.relation) {
+            let near = self.leaves_near(&names.into_iter().cloned().collect());
+            self.settle(&near);
+        }
+        &self.names
+    }
+
+    /// The map of products as held, to write to directly (feature `preimage-ref`, which only
+    /// the tests enable): for tests that build a scope name by name.
+    #[cfg(feature = "preimage-ref")]
+    pub fn names_mut(&mut self) -> &mut NameProducts {
+        &mut self.names
+    }
+
+    /// The product of `name` as this scope holds it, not settled: for a lazy scope, a stale
+    /// leaf's product before its star is projected ([`Scope::lazy`]). The top for a name not
+    /// in scope, and the bottom for any name of a scope no state reaches.
+    pub(crate) fn held(&self, name: &str) -> Product {
         if self.bottom {
             return Product::bottom();
         }
         self.names.product(name).unwrap_or_else(Product::top)
     }
 
+    /// `Scope::held`, for the tests that compare a lazy scope's held products with its
+    /// settled ones (feature `preimage-ref`, which only the tests enable).
+    #[cfg(feature = "preimage-ref")]
+    pub fn held_product(&self, name: &str) -> Product {
+        self.held(name)
+    }
+
     /// A warning for each question the integer solver left undecided while this scope was
     /// narrowed or projected, joined scopes included, in the order of [`Refused`]: by
     /// constraint, how it was asked, then cause, whatever order they were met in.
+    /// A lazy scope is read through a copy settled at every name (`Scope::read_settled`),
+    /// which keeps the questions its settling refused, as the eager scope's projections at
+    /// the hub moves did (XR-lazy-and-kernel-batch-1 round 4, A4.2).
     pub fn warnings(&self) -> Vec<Warning> {
-        (self.refusals.iter())
+        let s = self.read_settled();
+        (s.refusals.iter())
             .filter(|(r, _)| !matches!(r.cause, Cause::Looped(_)))
             .map(|(r, kept)| r.warning(kept))
             .collect()
@@ -11925,9 +12271,11 @@ impl Scope {
 
     /// The message of each test this scope was narrowed by whose `||` alternatives limit each
     /// other's ranges in a loop ([`Cause::Looped`]), which the checker rejects: its headline,
-    /// then its steps and its repair. In the order of [`Refused`].
+    /// then its steps and its repair. In the order of [`Refused`]. A lazy scope is read as
+    /// [`Scope::warnings`] reads it.
     pub fn looped(&self) -> Vec<Warning> {
-        (self.refusals.iter())
+        let s = self.read_settled();
+        (s.refusals.iter())
             .filter(|(r, _)| matches!(r.cause, Cause::Looped(_)))
             .map(|(r, kept)| r.warning(kept))
             .collect()
@@ -11971,36 +12319,88 @@ impl Scope {
     /// of both maps, name by name for `refused_by`, so the pair stays in step. Tests
     /// `l01_39_reduced_product::refused` (look-ups, and scaling at 4,096 and 32,768
     /// questions, each on few names, so they do not exercise a large t).
-    pub fn refused_on<'n>(
-        &self,
-        names: impl IntoIterator<Item = &'n str>,
-    ) -> Vec<(&Refused, &Kept)> {
+    /// A lazy scope is read through a copy with the leaves near `names` settled
+    /// (`Scope::leaves_near`), whose stars' projections the eager scope made at its hub moves
+    /// and which can ask a question of `names` (XR-lazy-and-kernel-batch-1 round 4, A4.2), so
+    /// the pairs are given owned: a copy of each question and its sets, O(q) more, and for a
+    /// lazy scope the projections of the stale stars near `names`.
+    pub fn refused_on<'n>(&self, names: impl IntoIterator<Item = &'n str>) -> Vec<(Refused, Kept)> {
+        let names: Vec<&str> = names.into_iter().collect();
+        let mut s = Cow::Borrowed(self);
+        if self.lazy && !self.bottom {
+            let near: BTreeSet<Arc<str>> = names.iter().map(|n| Arc::from(*n)).collect();
+            s.to_mut().settle(&self.leaves_near(&near));
+        }
         let mut found: Vec<&Refused> = (names.into_iter())
-            .filter_map(|n| self.refused_by.get(n))
+            .filter_map(|n| s.refused_by.get(n))
             .flatten()
             .collect();
         zed_collections::sorted::sort_dedup(&mut found);
         (found.into_iter())
-            .filter_map(|r| self.refusals.get_key_value(r))
+            .filter_map(|r| s.refusals.get_key_value(r))
+            .map(|(r, kept)| (r.clone(), kept.clone()))
             .collect()
     }
 
-    /// The names with one value each, and their values.
+    /// The names with one value each, and their values. A lazy scope is read through a copy
+    /// settled at every name (`Scope::read_settled`).
     pub fn statics(&self) -> BTreeMap<Arc<str>, Value> {
-        self.names
+        let s = self.read_settled();
+        s.names
             .iter()
             .filter_map(|(n, p)| p.value().map(|v| (n.clone(), v.clone())))
             .collect()
     }
 
+    /// This scope, or for a lazy scope a copy settled at every name, which holds the eager
+    /// products ([`Scope::lazy`]), for a reader of the products as held (the author's rule of
+    /// 2026-11-28: lazy and eager give the same result in every case; a stale leaf read as
+    /// held could hold a value the eager scope excludes). Cost: nothing for an eager scope;
+    /// for a lazy one, a copy (shared persistent maps) and the settling of its stale blocks,
+    /// the work the eager scope did at its tests. Test:
+    /// `l01_39_scope_relations::lazy::statics_and_contains_of_a_lazy_scope_read_its_settled_products`.
+    fn read_settled(&self) -> Cow<'_, Scope> {
+        if !self.lazy || self.bottom {
+            return Cow::Borrowed(self);
+        }
+        let mut s = self.clone();
+        s.settle_all();
+        Cow::Owned(s)
+    }
+
+    /// Whether this scope is lazy ([`Scope::lazy`]). O(1).
+    pub fn is_lazy(&self) -> bool {
+        self.lazy
+    }
+
+    /// Settles every name of a lazy scope ([`Scope::settle`]), so that it holds the eager
+    /// products ([`Scope::lazy`]); nothing for an eager or bottom scope. Cost: a look-up of
+    /// each of the `n` names' stars (`Scope::stale`) and the projections of the stale blocks.
+    fn settle_all(&mut self) {
+        if !self.lazy || self.bottom {
+            return;
+        }
+        let all: Vec<Arc<str>> = self.names.keys().cloned().collect();
+        self.settle(&all);
+    }
+
     /// Whether the state `env`, a value for each of some names, is in this scope: each value
     /// in its name's product and the integers meeting the relation. A name `env` does not
     /// give is not checked; the relation is checked only when `env` gives each of its names.
+    /// A lazy scope is read through a copy settled at every name (`Scope::read_settled`).
     pub fn contains(&self, env: &BTreeMap<Arc<str>, Value>) -> bool {
+        if self.lazy && !self.bottom {
+            return self.read_settled().contains_settled(env);
+        }
+        self.contains_settled(env)
+    }
+
+    /// [`Scope::contains`] on a scope whose products are read as held.
+    fn contains_settled(&self, env: &BTreeMap<Arc<str>, Value>) -> bool {
         if self.bottom {
             return false;
         }
-        if !env.iter().all(|(n, v)| self.get(n).contains(v)) {
+        if !env.iter().all(|(n, v)| self.held(n).contains(v)) {
             return false;
         }
         let relation = self.relation.formula();
@@ -12104,6 +12504,22 @@ impl Scope {
         if other.bottom {
             return self.clone();
         }
+        // The join of an eager scope and a lazy one is lazy, and takes this side's bindings and
+        // `read_by`: an eager side's bindings record no names their terms read, so a leaf a
+        // binding reads would be lazy in the join and read stale through it (XR round 2, Codex
+        // A1). The eager side is made lazy first ([`Scope::lazy`]), which records them, once,
+        // O(b log n) for its b bindings. Test:
+        // `l01_39_scope_relations::lazy::a_join_of_an_eager_and_a_lazy_scope_keeps_a_leaf_a_binding_reads_eager`.
+        // Test, red with this step taken out:
+        // `l01_39_scope_relations::lazy::a_leaf_the_eager_side_of_a_join_binds_takes_the_eager_steps`
+        // (the star made after the join; XR-lazy-and-kernel-batch-1 round 4, Gemini A3 (2)).
+        if self.lazy != other.lazy {
+            return if self.lazy {
+                self.join(&other.clone().lazy())
+            } else {
+                self.clone().lazy().join(other)
+            };
+        }
         let mut differ: BTreeSet<Arc<str>> = BTreeSet::new();
         // The names held differently or mentioned by a written constraint one side holds
         // alone, at which the core of every star ([`Conjuncts::core`]) may differ.
@@ -12144,17 +12560,18 @@ impl Scope {
         // refreshed (C45), O(k) for `k` stars per join and O(k²) over a nest of `k` `if`s on
         // the hubs. Used: the leaves the family bounds cut ([`Scope::cut_leaves`]), O(F·p +
         // (c + 1) log k) per hub for `F` families and `c` leaves cut. A join with a lazy side
-        // settles the leaves at a hub moved after the first join, below, as lazy stars are not
-        // kept at their projection. COMPLEXITY.md row C49.
+        // settles the lazy leaves at a hub moved after the first join, below, as lazy stars
+        // are not kept at their projection; its other leaves, which its order holds
+        // ([`Placing`]), are cut here as on an eager side. COMPLEXITY.md row C49.
         let eager = !self.lazy && !other.lazy;
         for side in [&mut a, &mut b] {
-            if eager {
-                side.seen.order.sync(&side.relation, &side.names);
-            }
+            side.seen
+                .order
+                .sync(&side.relation, &side.names, &placing!(side));
             for n in &moved {
                 // An eager side's stars at `n` are the cut's; `around` would add them all.
+                leaves.extend(side.cut_leaves(&side.relation, n));
                 if eager {
-                    leaves.extend(side.cut_leaves(&side.relation, n));
                     leaves.extend(side.relation.around_other_hubs(n));
                 } else {
                     leaves.extend(side.relation.around(n));
@@ -12214,13 +12631,17 @@ impl Scope {
         // O(log n + c) for c conjuncts that differ; a hub the join holds unlike both sides
         // costs its leaves as before. COMPLEXITY.md row C54; test
         // `l01_39a_bit_words::bench::scaling::a_hub_settles_its_scopes_in_time_linear_in_the_tests`.
+        // The leaves due here only because a side is lazy: each side settles those it leaves
+        // stale, its lazy leaves; its other leaves were cut above as an eager side's are
+        // ([`Placing`], option 1' of XR-lazy-and-kernel-batch-1).
+        let mut lazy_due: BTreeSet<Arc<str>> = BTreeSet::new();
         if !eager {
             for n in &moved {
                 if [self, other].iter().any(|s| as_side(s, n)) {
                     continue;
                 }
                 for side in [self, other] {
-                    due.extend(side.relation.hanging(n).flat_map(|g| conjuncts::names(g)));
+                    lazy_due.extend(side.relation.hanging(n).flat_map(|g| conjuncts::names(g)));
                 }
             }
         }
@@ -12263,19 +12684,25 @@ impl Scope {
         if eager {
             for n in &cored {
                 for side in [&mut a, &mut b] {
-                    side.seen.order.sync(&side.relation, &side.names);
+                    side.seen
+                        .order
+                        .sync(&side.relation, &side.names, &placing!(side));
                     let cut = side.cut_leaves(&side.relation, n);
                     due.extend(cut.into_iter().filter(|x| !leaves.contains(x)));
                 }
             }
         }
         let mut checked: BTreeSet<&conjuncts::Class> = BTreeSet::new();
-        let at: Vec<&Arc<str>> = if eager {
+        // A hub in `cored` makes its leaves due on both sides; one only moved, due only where
+        // a side leaves them stale (`lazy_due`).
+        let at: Vec<(&Arc<str>, bool)> = if eager {
             Vec::new()
         } else {
-            cored.iter().chain(&moved).collect()
+            (cored.iter().map(|n| (n, false)))
+                .chain(moved.iter().map(|n| (n, true)))
+                .collect()
         };
-        for n in at {
+        for (n, lazily) in at {
             for side in [self, other] {
                 for c in side.relation.classes_at(n) {
                     if !checked.insert(c) {
@@ -12289,17 +12716,25 @@ impl Scope {
                         .iter()
                         .any(|s| hubs.iter().all(|h| as_side(s, h)))
                     {
-                        due.extend(self.relation.class_leaves(c).cloned());
-                        due.extend(other.relation.class_leaves(c).cloned());
+                        let into = if lazily { &mut lazy_due } else { &mut due };
+                        into.extend(self.relation.class_leaves(c).cloned());
+                        into.extend(other.relation.class_leaves(c).cloned());
                     }
                 }
             }
         }
-        if due.is_empty() {
+        let side_due = |s: &Scope| {
+            let keep = placing!(s);
+            let mut out = due.clone();
+            out.extend(lazy_due.iter().filter(|x| !keep.holds(x)).cloned());
+            out
+        };
+        let (due_a, due_b) = (side_due(self), side_due(other));
+        if due_a.is_empty() && due_b.is_empty() {
             return joined;
         }
-        a.refresh(&due);
-        b.refresh(&due);
+        a.refresh(&due_a);
+        b.refresh(&due_b);
         Scope::join_refreshed(&a, &b)
     }
 
@@ -12510,22 +12945,24 @@ impl Scope {
             }
         }
         // A star projected on both sides as it is now is projected in the join: its projection
-        // onto its hubs holds of each side's hubs, so of their hull ([`Order::projected`]).
-        let unmarked: Vec<Arc<str>> = if self.lazy || other.lazy {
-            Vec::new()
-        } else {
-            (self.seen.order.projected)
-                .diff(&other.seen.order.projected)
-                .filter_map(|d| match d {
-                    DiffItem::Remove(x, _) | DiffItem::Update { old: (x, _), .. } => {
-                        Some(x.clone())
-                    }
-                    DiffItem::Add(..) => None,
-                })
-                .collect()
+        // onto its hubs holds of each side's hubs, so of their hull ([`Order::projected`]). A
+        // lazy side marks only its leaves that are not lazy ([`Placing`]), so a leaf marked on
+        // one side alone is unmarked here and cut at the next move of a hub.
+        let unmarked: Vec<Arc<str>> = (self.seen.order.projected)
+            .diff(&other.seen.order.projected)
+            .filter_map(|d| match d {
+                DiffItem::Remove(x, _) | DiffItem::Update { old: (x, _), .. } => Some(x.clone()),
+                DiffItem::Add(..) => None,
+            })
+            .collect();
+        let keep = Placing {
+            lazy: self.lazy || other.lazy,
+            bindings: &self.bindings,
+            read_by: &self.read_by,
+            by: &kept.by,
         };
         for x in &unmarked {
-            seen.order.unmark(x);
+            seen.order.unmark(x, &keep);
         }
         // This side's point, which goes with this side's last enumeration, kept below as the
         // join's: the constraints on a name the join changed are searched again, and the
@@ -12846,6 +13283,9 @@ impl Scope {
             }
         }
         s.narrow_kept_again(self, reduce);
+        if let Some(settled) = self.settled_before_refusal(&s) {
+            s.meet_settled(self, &settled, reduce);
+        }
         #[cfg(feature = "preimage-ref")]
         {
             let certified = |s: &Scope| s.seen.extension.clone().filter(|e| e.certified());
@@ -12861,6 +13301,126 @@ impl Scope {
             }
         }
         s
+    }
+
+    /// For a lazy scope `self` that a test made `after`, in which the solver refused a question
+    /// that `self` had not: `self` with the stale leaves near the refused question settled,
+    /// for the test to be taken again from there; `None` when there is no such leaf, or no
+    /// new refusal. The leaves are those of the stars whose hub is a name of a new or changed
+    /// question (`Scope::refused_by`, `Conjuncts::hanging`), those names themselves when
+    /// leaves, and the leaves
+    /// a move of them changes (`Conjuncts::around`).
+    ///
+    /// Why (the author's rule of 2026-11-28: lazy and eager give the same result in every
+    /// case; only the cost may differ): a projection the solver refuses keeps what single
+    /// constraints give, met with what each name held before it. The eager scope held the
+    /// meet of every projection of the leaf's star made before the refusal; a lazy leaf,
+    /// stale then, held only what no projection gave, so after the refusal it was coarser,
+    /// and settling it then could not help, as the projection is refused (test
+    /// `l01_39_scope_relations::lazy::a_refused_projection_leaves_the_lazy_leaf_as_the_eager_one`:
+    /// `a` lazily `[-15, ∞)`, eagerly `[-5, ∞)`). Settled first, the leaf holds the eager
+    /// product before the test ([`Scope::lazy`], the invariant), and the test then meets both
+    /// scopes alike. Termination: the test taken again starts from a scope in which these
+    /// leaves are not stale, so it can ask for this only for other leaves; each time settles
+    /// one stale block or more, of the finitely many.
+    // Complexity tradeoff: naive version, every stale leaf of the scope settled before each
+    // test, the `k²` cost over `k` moves of a hub the lazy scope exists to avoid. Used: O(1)
+    // when the test refused nothing new (the maps compared by pointer); otherwise the diff
+    // of the `refused_by` index (O(d log k) for `d` new or changed index entries among `k`;
+    // a changed `Kept` under an unchanged key changes no index entry and is not seen here),
+    // the leaves in the neighborhood of those names (a whole big star at most), the
+    // projections of their distinct stale blocks, and the test once more. Each retry pays
+    // that again for its own index diff; the number of retries is bounded by the stale
+    // blocks of the scope, not by a constant (see Termination above). A refusal leaves the
+    // scope wider than the solver could make it and is reported, so it is rare in the
+    // programs checked.
+    fn settled_before_refusal(&self, after: &Scope) -> Option<Scope> {
+        if !self.lazy || self.bottom || after.refusals.ptr_eq(&self.refusals) {
+            return None;
+        }
+        let mut near: BTreeSet<Arc<str>> = BTreeSet::new();
+        for d in self.refused_by.diff(&after.refused_by) {
+            match d {
+                DiffItem::Add(n, _) | DiffItem::Update { new: (n, _), .. } => {
+                    near.insert(n.clone());
+                }
+                DiffItem::Remove(..) => {}
+            }
+        }
+        let blocks = self.stale(&self.leaves_near(&near));
+        if blocks.is_empty() {
+            return None;
+        }
+        #[cfg(feature = "counts")]
+        super::preimage::counts::note_stale_blocks(blocks.len());
+        let mut s = self.clone();
+        s.settle_blocks(blocks, false);
+        Some(s)
+    }
+
+    /// For this scope, which a test made from the lazy scope `before`, and `settled`, `before`
+    /// with the leaves near a new refusal settled ([`Scope::settled_before_refusal`]): meets
+    /// each name `settled` narrowed with its product there, then reduces and narrows the kept
+    /// tests again, as the test does. This takes the refused projection again with the eager
+    /// history only: the refusal kept what single constraints give met with what each name held
+    /// before ([`Scope::project_part`]), so meeting its result with the settled product gives
+    /// what it gives from `settled`, and the reduction carries that on to the names it bounds.
+    /// The meet is sound: `settled` holds only what the relation before the test implies, and
+    /// the test only narrows it (FAIL-lazy-refusal-retake-two-disjunctions-bench, option c).
+    /// Not proved: that this gives the scope of the test taken again from `settled` in every
+    /// case, which needs the projections the reduction makes to be monotone in the products
+    /// they start from; a solver's refusal is not (a narrower start can be answered). Checked:
+    /// the lazy against the eager scope in `l01_39_scope_relations::lazy` and the crate test
+    /// `settling_a_lazy_scope_leaves_no_star_stale`.
+    // Complexity tradeoff: naive version, the test taken again from `settled` (round 3 of
+    // XR-lazy-and-kernel-batch-1), which asks the refused question a second time: 825 ms of
+    // a 2.8 s step at k = 1536 of `a_disjunction_of_live_sides_scales`, which took the
+    // lazy bench from 8.52 to 11.49 times the instructions at 8k. Used: a diff of the names
+    // of `before` and `settled`, O(c log n) for the `c` names settled, a meet of each, and
+    // one reduction from there, which projects only the parts those meets made due.
+    fn meet_settled(&mut self, before: &Scope, settled: &Scope, reduce: fn(&mut Scope)) {
+        let prior = self.clone();
+        let none = imbl::OrdSet::new();
+        let names: BTreeSet<Arc<str>> = settled
+            .names
+            .changed(&before.names, &none)
+            .cloned()
+            .collect();
+        let mut met = false;
+        for n in &names {
+            let p = settled.held(n);
+            let Some(prem) = self.names.get(n).map(Product::premises) else {
+                continue;
+            };
+            met |= self.meet_name(n, p.ints(), false, &prem);
+            met |= self.meet_class(n, &p.cell.congruence.element, &prem);
+        }
+        if !met {
+            return;
+        }
+        let start = self.names.clone();
+        reduce(self);
+        if self.read_back_terms(&start, None) {
+            reduce(self);
+        }
+        self.narrow_kept_again(&prior, reduce);
+    }
+
+    /// The names `near`, the names of the stars whose hub is one of them
+    /// (`Conjuncts::hanging`), and the leaves a move of one of them changes
+    /// (`Conjuncts::around`): the leaves whose stars' projections can ask a question of one
+    /// of `near` ([`Scope::settled_before_refusal`], [`Scope::refused_on`]). O(s log n) for
+    /// the `s` names of those stars.
+    fn leaves_near(&self, near: &BTreeSet<Arc<str>>) -> BTreeSet<Arc<str>> {
+        let mut leaves: BTreeSet<Arc<str>> = BTreeSet::new();
+        for y in near {
+            leaves.insert(y.clone());
+            for g in self.relation.hanging(y) {
+                leaves.extend(conjuncts::names(g));
+            }
+            leaves.extend(self.relation.around(y));
+        }
+        leaves
     }
 
     /// When `test` giving `outcome` is a difference of two names `x - y >= m` whose tree of
@@ -13571,19 +14131,26 @@ impl Scope {
             Kind::If(_) => true,
             _ => false,
         };
-        match split {
+        let (reached, after) = match split {
             // The first case some state may reach, with what it refused; with none, the
             // questions of the cases shown empty changed no answer.
             true => match s.cases(&tree, 0, value, premises, true, &mut Vec::new()) {
-                Some(case) => (true, case.refusals),
-                None => (false, s.refusals),
+                Some(case) => (true, case),
+                None => (false, s),
             },
             false => {
                 s.narrow_node(&tree, 0, value, premises);
                 s.reduce_case();
-                (!s.bottom, s.refusals)
+                (!s.bottom, s)
             }
+        };
+        // A lazy scope whose stale leaves a refusal of this test met is asked again with them
+        // settled, as `Scope::assume_with` does and for the same reason
+        // (`Scope::settled_before_refusal`; XR-lazy-and-kernel-batch-1 round 4, Gemini A-2).
+        if let Some(settled) = self.settled_before_refusal(&after) {
+            return settled.reaches(test, outcome, premises);
         }
+        (reached, after.refusals)
     }
 
     /// Whether some state may reach this scope where the integer `t` is 0, as
@@ -13896,7 +14463,7 @@ impl Scope {
             for a in l.terms.keys() {
                 let Atom::Sym(n) = a else { continue };
                 boxes.entry(n.clone()).or_insert_with(|| {
-                    let x = self.get(n).ints().clone();
+                    let x = self.held(n).ints().clone();
                     let end = |e: &End| e.to_i64().map(i128::from);
                     let (lo, hi) = x.bounds().map_or((None, None), |(l, h)| (end(l), end(h)));
                     (lo, hi, x.type_text())
@@ -14200,6 +14767,64 @@ impl Scope {
                 self.join_kept(cases, signed(tree.term_at(n), value), prem, Watch::Points);
                 body
             }
+            Kind::Nest(and, sides) => {
+                // A nest the value forces: narrowed side by side, as `narrow_node` does, and its
+                // relation is that of the test with the dead arms of each side that splits (a
+                // nest the value does not force) left out, as above one level down. So
+                // `(a4 - n <= -4 || n + m <= -2) && a4 - n - m <= 1` with `a4` bound to `n`
+                // keeps `n + m <= -2`, which the cases found, and a lazy star `a3 <= n + m - 2`
+                // settles to `a3 <= -4` as the eager scope projects it within the case; keeping
+                // the disjunction, it settled to `a3 <= 22` from the hubs' boxes (seeds 29000547
+                // and 30000100 of `wide`, Gemini's finding A.1 of XR-lazy-and-kernel-batch-1
+                // round 2). Soundness: an arm is dead when every case of it is bottom in the
+                // scope narrowed by the sides before it and by the arms before it excluded
+                // (`case_list`), so the test, the relation before and the products imply the
+                // side without that arm, and the relation taken is implied by what the
+                // narrowing used. Not pruned: a side that is an `if`, an arm that is itself a
+                // nest with dead arms within it, and a pruned test that has no relation of its
+                // own (fewer than two names), which keeps the whole test's.
+                // Complexity tradeoff: naive, the whole test's relation, O(1) more; used, one
+                // more `relation_of` when some arm is dead, of the pruned test: O(s) for a test
+                // of `s` nodes, no further case and no projection (COMPLEXITY.md C42).
+                let mut pruned = false;
+                let mut terms = Vec::with_capacity(sides.len());
+                for &(k, p) in sides {
+                    let v = value == p;
+                    let mut live = Vec::new();
+                    match &tree.nodes[k].kind {
+                        Kind::Nest(a, _) if *a != v && !self.bottom => {
+                            match self.cases(tree, k, v, prem, false, &mut live) {
+                                Some(mut s) => {
+                                    s.in_case = self.in_case;
+                                    *self = s;
+                                }
+                                None => self.bottom = true,
+                            }
+                        }
+                        _ => self.narrow_node(tree, k, v, prem),
+                    }
+                    let side = match &tree.nodes[k].kind {
+                        Kind::Nest(a, arms) if live.contains(&false) && live.contains(&true) => {
+                            pruned = true;
+                            let arms = arms
+                                .iter()
+                                .zip(&live)
+                                .filter(|(_, l)| **l)
+                                .map(|(&(j, q), _)| signed(tree.term_at(j), q))
+                                .collect();
+                            balanced(if *a { Prim::And } else { Prim::Or }, arms)
+                        }
+                        _ => tree.term_at(k),
+                    };
+                    terms.push(signed(side, p));
+                }
+                let p = if *and { Prim::And } else { Prim::Or };
+                if pruned && !self.bottom {
+                    self.relation_of(&balanced(p, terms), value).unwrap_or(body)
+                } else {
+                    body
+                }
+            }
             _ => {
                 self.narrow_kept(tree, n, value, prem, Watch::Points);
                 body
@@ -14341,7 +14966,7 @@ impl Scope {
         if !self.bottom && !(triggers.is_empty() && points.is_empty()) {
             self.kept.keep(KeptTest {
                 test,
-                free,
+                free: free.clone(),
                 premises: prem.clone(),
                 triggers,
                 points,
@@ -14494,7 +15119,7 @@ impl Scope {
             let mut updated_snap: Vec<(Arc<str>, IntervalSet, Congruence)> =
                 Vec::with_capacity(outer_snap.len());
             for (n, outer_ints, outer_cls) in outer_snap.iter() {
-                let p = s.get(n);
+                let p = s.held(n);
                 let cls = framed_class(&p);
                 if k.1.as_ref() == Some(n) {
                     // The leaf's end on the side its half-line runs to, which the hubs'
@@ -15039,7 +15664,7 @@ impl Scope {
             let doms: Domains = inputs
                 .iter()
                 .map(|n| {
-                    let p = self.get(n);
+                    let p = self.held(n);
                     if let Some(d) = p.ints_all_listed() {
                         listed_names.insert(n.clone());
                         return (n.clone(), d);
@@ -15339,7 +15964,7 @@ impl Scope {
                 .filter(|(_, l)| l.read.is_some())
                 .map(|(n, _)| n.clone())
                 .collect();
-            let demand = Demand::Ints(self.get(&z).ints().clone());
+            let demand = Demand::Ints(self.held(&z).ints().clone());
             #[cfg(feature = "counts")]
             super::preimage::counts::TERM_READS.set(super::preimage::counts::TERM_READS.get() + 1);
             let narrowed: Domains = match let_narrowing(&t, &over, lets, &demand) {
@@ -15861,9 +16486,11 @@ impl Scope {
     // names `reduce_with` found, O(changes). Test:
     // `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`.
     fn due(&mut self, whole: bool, force: bool, moved: &[Arc<str>]) -> Option<Due> {
-        if !self.lazy {
-            self.seen.order.sync(&self.relation, &self.names);
-        }
+        // In a lazy scope the order holds the leaves that are not lazy ([`Placing`]), each of
+        // which takes the eager steps at every site below.
+        self.seen
+            .order
+            .sync(&self.relation, &self.names, &placing!(self));
         if force || self.seen.projection.is_none() {
             return Some(Due::All);
         }
@@ -15872,7 +16499,7 @@ impl Scope {
         let relation = self.relation.clone();
         let mut out: BTreeSet<BlockId> = BTreeSet::new();
         for n in moved {
-            out.extend(self.moved_blocks(&relation, n));
+            out.extend(self.moved_blocks(&relation, n, 0));
         }
         let Some((_, old)) = &self.seen.projection else {
             return Some(Due::All);
@@ -15885,8 +16512,10 @@ impl Scope {
             seeds.names.insert(n.clone());
             seeds.changed.insert(n.clone());
             // A satellite moved changes the stars at the hubs it relates to, whose conjuncts do
-            // not mention it ([`Conjuncts::around`]); a lazy scope finds their leaves stale.
-            // The stars at `n` itself are those `moved_blocks` found by the cut above.
+            // not mention it ([`Conjuncts::around`]); a lazy scope finds its lazy leaves stale.
+            // An eager scope's stars at `n` itself are those `moved_blocks` found by the cut
+            // above.
+            let keep = placing!(self);
             if !self.lazy {
                 out.extend(
                     self.relation
@@ -15894,7 +16523,54 @@ impl Scope {
                         .iter()
                         .filter_map(|x| self.relation.star(x)),
                 );
+                continue;
             }
+            // A lazy scope reads the leaves its order holds ([`Placing`]), by the families at
+            // the hubs `n` is near, and not every leaf of their classes, so that a lazy leaf
+            // costs nothing at a move of a satellite (XR round 2, Codex A4).
+            // Complexity tradeoff: naive version, every leaf of the classes at those hubs read
+            // and the lazy ones dropped: O(k·b) for `b` lazy leaves in each of `k` classes at
+            // each move of a satellite. Used: the leaves of the families the order holds at
+            // each hub, O((h + p) log n) for `h` hubs and `p` leaves placed there. The order
+            // holds every leaf [`Placing::holds`] takes (`Order::sync`, and the promotions at a
+            // binding and a kept test); a leaf it holds that no longer takes the eager steps is
+            // dropped by `keep.holds`. Test:
+            // `l01_39_scope_relations::lazy::a_moving_satellite_beside_lazy_leaves_reads_no_lazy_leaf`.
+            //
+            // A leaf is kept when its class is at one of those hubs. Complexity tradeoff:
+            // naive version, the set of every class at every hub `n` is near, built first, and
+            // each leaf looked up in it: Omega(b) a move for `b` classes there, the lazy ones
+            // included, Omega(k·b) over `k` moves (XR round 3, Codex A4.2 and Gemini A-2,
+            // which counted 2,048, 8,192 and 131,072 class visits at b = k = 32, 64, 256).
+            // Used: the class of each placed leaf tested at the hub it was found at, and at
+            // the other hubs only when not there (`Conjuncts::is_class_at`, O(log n) each):
+            // the same leaves, in O(p log n) when each placed leaf's class is at the hub its
+            // family is at, which `Order::sync` keeps, and O(p·h log n) at most. Tradeoff:
+            // none; no class is listed. Tests:
+            // `l01_39_scope_relations::lazy::a_moving_satellite_beside_lazy_leaves_of_distinct_classes_reads_no_lazy_leaf`,
+            // `l01_39_scope_relations::lazy::bench::a_moving_satellite_beside_lazy_leaves_of_distinct_classes_scales`.
+            let hubs: Vec<&Arc<str>> = self.relation.around_hubs(n).collect();
+            let mut placed: BTreeMap<&Arc<str>, &Arc<str>> = BTreeMap::new();
+            for h in &hubs {
+                let leaves = (self.seen.order.at.of(h))
+                    .flat_map(|f| self.seen.order.low.get(f).into_iter().flatten());
+                for (_, x) in leaves {
+                    placed.entry(x).or_insert(h);
+                }
+            }
+            #[cfg(feature = "counts")]
+            super::preimage::counts::bump_around_read(placed.len());
+            let at = |x: &str, h: &str| {
+                self.relation.class_of(x).is_some_and(|c| {
+                    self.relation.is_class_at(h, c)
+                        || hubs.iter().any(|g| self.relation.is_class_at(g, c))
+                })
+            };
+            out.extend(
+                (placed.into_iter())
+                    .filter(|(x, h)| keep.holds(x) && at(x, h))
+                    .filter_map(|(x, _)| self.relation.star(x)),
+            );
         }
         // A leaf whose star went or changed may be stale ([`Scope::lazy`]) where nothing else
         // makes it due: its conjuncts' blocks now are.
@@ -15911,7 +16587,7 @@ impl Scope {
                         seeds.added.insert(g.clone());
                     }
                 }
-                DiffItem::Add(_, &b) if !self.lazy => {
+                DiffItem::Add(x, &b) if placing!(self).holds(x) => {
                     any = true;
                     out.insert(b);
                 }
@@ -15937,12 +16613,16 @@ impl Scope {
                     out.extend(blocks.of(g));
                     seeds.names.extend(conjuncts::names(g));
                     seeds.added.insert(g.clone());
-                    if !self.lazy {
+                    if self.lazy {
+                        families.extend(placed_classed(&self.relation, &self.seen.order, g));
+                    } else {
                         families.extend(self.relation.classed(g));
                     }
                 }
                 imbl::ordset::DiffItem::Remove(g) => {
-                    if !self.lazy {
+                    if self.lazy {
+                        families.extend(placed_classed(old, &self.seen.order, g));
+                    } else {
                         families.extend(old.classed(g));
                     }
                     // A conjunct gone from a tree of difference constraints and bounds leaves
@@ -15992,6 +16672,14 @@ impl Scope {
         // their own bound on the side the class bounds, in each scope, and projects only those
         // the class's new bound cuts.
         for f in &families {
+            // A lazy scope projects only the stars of the family whose leaves are not lazy, the
+            // ones its order holds ([`Placing`]); a family with none is passed over, so a lazy
+            // leaf costs nothing here. A record of the family's bound left from an earlier
+            // check is not trusted when a leaf of it is next placed: `Scope::added_among` takes
+            // it only when it was made against the free conjuncts `old` holds at the hubs.
+            if self.lazy && !self.seen.order.low.contains_key(f) {
+                continue;
+            }
             // A class of the family with stars before and now; one that had none before is new
             // and its stars are projected anyway.
             let class = self
@@ -16030,6 +16718,11 @@ impl Scope {
                 None => false,
             };
             if stays {
+                continue;
+            }
+            if self.lazy {
+                let placed = self.seen.order.low.get(f).into_iter().flatten();
+                out.extend(placed.filter_map(|(_, x)| self.relation.star(x)));
                 continue;
             }
             for c in self.relation.family_classes(f) {
@@ -16418,11 +17111,11 @@ impl Scope {
                 match self.by_holes(&relation, t, b) {
                     Ends::Done(Shortest::Moved(ns)) => {
                         solved.insert(t);
-                        if !self.lazy {
-                            self.seen.order.sync(&relation, &self.names);
-                        }
+                        self.seen
+                            .order
+                            .sync(&relation, &self.names, &placing!(self));
                         for n in &ns {
-                            for c in self.moved_blocks(&relation, n) {
+                            for c in self.moved_blocks(&relation, n, 1) {
                                 if blocks.tree(c) != t {
                                     cause.entry(c).or_default().insert(n.clone());
                                     work.push(c);
@@ -16466,11 +17159,11 @@ impl Scope {
                 };
                 match found {
                     Ok(Shortest::Moved(ns)) => {
-                        if !self.lazy {
-                            self.seen.order.sync(&relation, &self.names);
-                        }
+                        self.seen
+                            .order
+                            .sync(&relation, &self.names, &placing!(self));
                         for n in &ns {
-                            for c in self.moved_blocks(&relation, n) {
+                            for c in self.moved_blocks(&relation, n, 2) {
                                 if blocks.tree(c) != t {
                                     cause.entry(c).or_default().insert(n.clone());
                                     work.push(c);
@@ -16509,19 +17202,24 @@ impl Scope {
             // for a leaf, O(m) per projection of a block of `m` members, though only a star, a
             // block apart, can have one: 6 per cent of coordmix's instructions at 8n went to
             // walking blocks not apart. Used: only a block apart is read. COMPLEXITY.md row
-            // PERF-l139-star-leaf.
-            if !self.lazy {
+            // PERF-l139-star-leaf. A lazy scope marks only a leaf that is not lazy
+            // ([`Placing`]), the leaves its order holds.
+            {
+                let keep = placing!(self);
                 let leaf = (blocks.is_apart(b))
                     .then(|| blocks.members(b))
                     .into_iter()
                     .flatten()
                     .flat_map(|g| conjuncts::names(g))
-                    .find(|x| relation.star(x) == Some(b));
+                    .find(|x| relation.star(x) == Some(b))
+                    .filter(|x| keep.holds(x));
                 if let Some(x) = leaf {
                     let refused = !self.refusals.ptr_eq(&refusals);
-                    self.seen.order.mark(&relation, &self.names, &x, refused);
+                    self.seen
+                        .order
+                        .mark(&relation, &self.names, &x, refused, &keep);
                 }
-                self.seen.order.sync(&relation, &self.names);
+                self.seen.order.sync(&relation, &self.names, &keep);
             }
             let users = &self.seen.blocks[&b].users;
             let moved: Vec<Arc<str>> = start
@@ -16540,7 +17238,7 @@ impl Scope {
                 .collect();
             let mut echo = false;
             for n in &moved {
-                let p = self.get(n);
+                let p = self.held(n);
                 if p.ints().is_empty() {
                     self.relation = relation;
                     return;
@@ -16554,7 +17252,7 @@ impl Scope {
                 // passes nothing back and forth ([`Conjuncts::star`]): its move of the name
                 // that moved it is no echo.
                 echo |= from.contains(n) && !blocks.is_apart(b);
-                for c in self.moved_blocks(&relation, n) {
+                for c in self.moved_blocks(&relation, n, 3) {
                     if c != b {
                         cause.entry(c).or_default().insert(n.clone());
                         work.push(c);
@@ -17733,7 +18431,7 @@ impl Scope {
             core.sort();
             if let Some(shape) = &threshold::shape(&core) {
                 let shaped: Vec<Arc<str>> = shape.names.iter().chain(&shape.hub).cloned().collect();
-                let plain = |s: &Self| shaped.iter().all(|n| !classed(&s.get(n)));
+                let plain = |s: &Self| shaped.iter().all(|n| !classed(&s.held(n)));
                 let unclassed = plain(self);
                 if self.project_threshold(shape) {
                     let solved = self.snapshot(&shaped);
@@ -17949,14 +18647,14 @@ impl Scope {
             // the view, and one missed bump is a wrong skip. Test (negative control):
             // `pendants::a_part_whose_name_moved_since_its_projection_is_projected_again`.
             let unchanged = b.exact_at.get(&i).is_some_and(|(ver, at)| {
-                *ver == b.split.ver && at.iter().all(|(n, p)| self.get(n) == *p)
+                *ver == b.split.ver && at.iter().all(|(n, p)| self.held(n) == *p)
             });
             if !unchanged {
                 self.project_part(&projected_now);
                 if !self.bottom && self.refusals.ptr_eq(&refusals_before) {
                     let at: Arc<[(Arc<str>, Product)]> = (syms(&projected_now).into_iter())
                         .map(|n| {
-                            let p = self.get(&n);
+                            let p = self.held(&n);
                             (n, p)
                         })
                         .collect();
@@ -18069,7 +18767,7 @@ impl Scope {
             let before = part_before.unwrap_or_else(|| self.block_before(&b, &start_part));
             for old in before.iter() {
                 let n = &old.0;
-                let p = self.get(n);
+                let p = self.held(n);
                 if (p.ints(), &framed_class(&p)) == (&old.1, &old.2) {
                     continue;
                 }
@@ -18147,7 +18845,7 @@ impl Scope {
                             continue;
                         };
                         let ctx = puncture_ctx.entry(pk.1.clone()).or_insert_with(|| {
-                            PunctureContext::of(&b, &|m| self.get(m), &pk.1, false)
+                            PunctureContext::of(&b, &|m| self.held(m), &pk.1, false)
                         });
                         let uncert: Vec<PartAt> = match ctx {
                             Some(c) => map
@@ -18831,7 +19529,7 @@ impl Scope {
     /// (FAIL-preimage-threshold-hull-unrefused). The caller then projects the block's parts
     /// one by one, exact where it records no refusal (Lemma E at [`Scope::record`]).
     fn project_threshold(&mut self, shape: &threshold::Shape) -> bool {
-        let sys = shape.system(|n| self.get(n).ints().clone());
+        let sys = shape.system(|n| self.held(n).ints().clone());
         match threshold::solve(&sys) {
             threshold::Answer::MixedHub | threshold::Answer::Bounds { filled: false, .. } => false,
             threshold::Answer::Empty => {
@@ -18892,7 +19590,7 @@ impl Scope {
         names
             .iter()
             .map(|n| {
-                let p = self.get(n);
+                let p = self.held(n);
                 (n.clone(), p.ints().clone(), framed_class(&p))
             })
             .collect()
@@ -19010,7 +19708,7 @@ impl Scope {
         let leaf = Atom::Sym(Arc::from(conjuncts::LEAF));
         let (whole, syms) = self.framed(part);
         let one = |a: &Atom| match a {
-            Atom::Sym(n) => a == &leaf || self.get(n).ints().len() <= 1,
+            Atom::Sym(n) => a == &leaf || self.held(n).ints().len() <= 1,
             _ => true,
         };
         if !syms.iter().all(one) {
@@ -19050,14 +19748,17 @@ impl Scope {
     /// than one interval, projects all its stars, as before; the core is read whole at each
     /// move, O(f) for `f` conjuncts among the hubs. Test:
     /// `l01_39_reduced_product::scaling::bench::tests_on_the_hubs_of_many_stars_in_an_eager_scope_scale`.
-    /// COMPLEXITY.md row C49. Tests that the stars left out move nothing: a lazy scope returns
-    /// above before `cut_leaves` and settles each star when read, so the tests that compare it
+    /// COMPLEXITY.md row C49. Tests that the stars left out move nothing: a lazy scope's order
+    /// holds no lazy leaf ([`Placing`]), so `cut_leaves` finds none, and it settles each such
+    /// star when read; the tests that compare it
     /// with the eager one, `l01_39_reduced_product::scaling::
     /// a_lazy_scope_settles_the_stars_of_a_class_as_the_eager_one` and
     /// `an_eager_join_settles_the_stars_as_the_lazy_one`, check the cut against a path that does
     /// not use it. They build three stars each and cannot catch a family whose bound is right at
     /// these sizes only.
-    fn moved_blocks(&mut self, relation: &Conjuncts, n: &str) -> Vec<BlockId> {
+    ///
+    /// `site` is the caller's index in `counts::MOVED_AT`, for the count of the blocks found.
+    fn moved_blocks(&mut self, relation: &Conjuncts, n: &str, site: usize) -> Vec<BlockId> {
         let blocks = relation.blocks();
         let mut out: Vec<BlockId> = Vec::new();
         for b in blocks.moving_blocks(n) {
@@ -19074,14 +19775,20 @@ impl Scope {
                 }
             }
         }
-        if self.lazy {
-            return out;
-        }
+        // In a lazy scope the order holds only the leaves that are not lazy ([`Placing`]), so
+        // these alone are cut; the lazy ones are settled when read.
         out.extend((self.cut_leaves(relation, n).iter()).filter_map(|x| relation.star(x)));
+        #[cfg(feature = "counts")]
+        super::preimage::counts::MOVED_BLOCKS.set({
+            let mut c = super::preimage::counts::MOVED_BLOCKS.get();
+            c[site] += out.len() as u64;
+            c
+        });
         out
     }
 
-    /// The leaves of the stars at hub `n` of an eager scope whose projection can change them
+    /// The leaves of the stars at hub `n` that the order holds (every leaf of an eager scope,
+    /// the leaves of a lazy one that are not lazy, [`Placing`]) whose projection can change them
     /// ([`Scope::moved_blocks`]): those whose product the bound of their family cuts, and
     /// every leaf of a family whose bound is not one interval found exactly. In
     /// O(F·p + (c + 1) log k) for `F` families at `n`, `p` the cost of projecting a family's
@@ -19216,7 +19923,7 @@ impl Scope {
         let [x, y] = names[..] else {
             return None;
         };
-        let (px, py) = (self.get(x), self.get(y));
+        let (px, py) = (self.held(x), self.held(y));
         if [&px, &py].iter().any(|p| p.ints().is_empty() || classed(p)) {
             return None;
         }
@@ -19504,7 +20211,7 @@ impl Scope {
         let mut progressions: BTreeMap<&Atom, Congruence> = BTreeMap::new();
         for a in &mentioned {
             let Atom::Sym(n) = a else { continue };
-            let prod = self.get(n);
+            let prod = self.held(n);
             let set = prod.ints();
             // Complexity tradeoff: naive version, `presburger::member(a, set)` emits an m-arm `Or`
             // disjunction (2m constraints) for an m-piece finite arithmetic progression of
@@ -19549,11 +20256,12 @@ impl Scope {
         // row holds at every point the rest allows. O(log M) for the meet, M the moduli.
         for a in &mentioned {
             if let Atom::Sym(n) = a
-                && let Congruence::Class { modulus, residue } = &self.get(n).cell.congruence.element
+                && let Congruence::Class { modulus, residue } =
+                    &self.held(n).cell.congruence.element
                 && *modulus > Num::ONE
                 && !progressions
                     .get(a)
-                    .is_some_and(|p| p.meet(&self.get(n).cell.congruence.element) == *p)
+                    .is_some_and(|p| p.meet(&self.held(n).cell.congruence.element) == *p)
             {
                 let k = Lin::atom(Atom::Sym(format!("{n} mod").into()));
                 let rhs = k
@@ -19688,7 +20396,7 @@ impl Scope {
             disjunctions += one_disjunction(t)?;
         }
         for n in count.keys().filter(|n| !xs.contains(n)) {
-            let pieces = self.get(n).ints().len();
+            let pieces = self.held(n).ints().len();
             if pieces == 0 {
                 return None;
             }
@@ -19748,7 +20456,7 @@ impl Scope {
                 let w = Atom::Sym(format!("#w{i}").into());
                 (w, self.form_hull(&p.form), top())
             });
-            let (allowed, by) = p.allows(self.get(&p.x).ints());
+            let (allowed, by) = p.allows(self.held(&p.x).ints());
             *d = d.meet(&allowed);
             *class = class.meet(&by);
         }
@@ -19962,7 +20670,7 @@ impl Scope {
                 if count(n) != 1 {
                     continue;
                 }
-                let p = self.get(n);
+                let p = self.held(n);
                 if k.abs() != Int::ONE || classed(&p) {
                     return None;
                 }
@@ -19981,7 +20689,7 @@ impl Scope {
         // as the image of its pieces, `member(w, D)`, never as a hull (R1 of XR-st-eqs-rest:
         // Claude's control N3, the hull of `D`, gave 414 mismatches in 20000 seeds); a class
         // at `x` is left to the whole projection, since `allows` reads `x`'s ranges alone.
-        if c.lin.terms.len() < 3 || classed(&self.get(x)) {
+        if c.lin.terms.len() < 3 || classed(&self.held(x)) {
             return None;
         }
         let mut form: BTreeMap<Atom, Int> = c
@@ -20051,7 +20759,7 @@ impl Scope {
         let Some(pp) = &part.puncture else {
             return false;
         };
-        let get = |n: &str| self.get(n);
+        let get = |n: &str| self.held(n);
         let ctx = cache
             .entry(pp.pair.clone())
             .or_insert_with(|| PunctureContext::of(b, &get, &pp.pair, false));
@@ -20069,7 +20777,7 @@ impl Scope {
         part: &Part,
         cache: &mut BTreeMap<NamePair, Option<HalfLineContext>>,
     ) -> bool {
-        let get = |n: &str| self.get(n);
+        let get = |n: &str| self.held(n);
         if let (Some((u, v, _)), Some(g)) = (&part.pure_two_sym, &part.of) {
             let pair = (u.clone(), v.clone());
             let ctx = cache
@@ -20975,12 +21683,16 @@ impl Scope {
 
 impl fmt::Display for Scope {
     /// `unreachable`, or each name not at the top with its product's lines indented, then the
-    /// relation when there is one.
+    /// relation when there is one. A lazy scope is shown as a copy settled at every name
+    /// (`Scope::read_settled`), as the eager scope would be shown (XR-lazy-and-kernel-batch-1
+    /// round 4, A4.1).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.bottom {
             return writeln!(f, "unreachable");
         }
-        for (n, p) in &self.names {
+        let settled = self.read_settled();
+        let s: &Scope = &settled;
+        for (n, p) in &s.names {
             let s = p.to_string();
             if s.is_empty() {
                 continue;
@@ -20993,8 +21705,8 @@ impl fmt::Display for Scope {
         // The differences kept out of the relation ([`Scope::implied`]) are shown in it, in
         // the relation's order, as they were when they were kept in it: the relation with them
         // put back, in O((r + i) log r) for its `r` conjuncts and the `i` kept out.
-        let mut relation = self.relation.clone();
-        for g in self.implied.keys() {
+        let mut relation = s.relation.clone();
+        for g in s.implied.keys() {
             relation.and((**g).clone());
         }
         if !relation.is_top() {
@@ -21593,7 +22305,7 @@ fn plain_comparison(t: &Term, scope: &Scope) -> Option<Term> {
         return None;
     };
     scope
-        .get(x)
+        .held(x)
         .ty
         .element
         .subtype(&Type::int())
@@ -21728,7 +22440,19 @@ fn substituted<'a>(t: &'a Term, env: &BTreeMap<Arc<str>, Value>) -> Cow<'a, Term
 /// revision table's forward transfer over integers, or the join of an `if`'s reachable arms.
 /// `scope` is as it was on return. The walk keeps its `let`s, `if`s and primitives on frames
 /// on the heap (`Run`), so any depth of nesting runs on a small thread stack.
+///
+/// The walk reads products as held ([`Scope::get`]): a lazy scope is read through a copy
+/// made eager on `e` ([`Scope::eager_on`]), which settles the names `e` reads, and the
+/// caller's scope stays lazy (XR-lazy-and-kernel-batch-1 round 3, Codex A3.1). The copy
+/// shares the scope's persistent maps; the cost is that of settling. An eager scope is
+/// walked as it is. Test:
+/// `l01_39_scope_relations::lazy::forwarding_a_variable_of_a_lazy_scope_reads_its_settled_product`.
 pub fn forward(e: &Term, scope: &mut Scope) -> Product {
+    if scope.lazy {
+        let mut eager = scope.clone();
+        eager.eager_on(e);
+        return forward(e, &mut eager);
+    }
     let run = Run::new(scope);
     run.stack.run(run.forward(e))
 }
@@ -21824,7 +22548,7 @@ impl<'m> Run<'m> {
                             xs.push(if side == f.at {
                                 self.forward(f.own).await
                             } else {
-                                self.scope(|s| s.get(x))
+                                self.scope(|s| s.held(x))
                             });
                         }
                         forward_prim(f.op, xs)
@@ -21906,7 +22630,7 @@ impl<'m> Run<'m> {
                                 xs.push(if side == f.at {
                                     self.forward(f.own).await
                                 } else {
-                                    self.scope(|s| s.get(x))
+                                    self.scope(|s| s.held(x))
                                 });
                             }
                             forward_prim(f.op, xs)
@@ -22127,14 +22851,14 @@ fn leaf(e: &Term, scope: &Scope) -> Product {
     }
     match e {
         Term::Lit(v) => return Product::literal(v),
-        Term::Var(x) => return scope.get(x),
+        Term::Var(x) => return scope.held(x),
         _ => {}
     }
     // `forward` does not recurse below this node, so its free names are found once.
     let free = stage::free(e);
     let time = free
         .iter()
-        .map(|n| scope.get(n).time.element)
+        .map(|n| scope.held(n).time.element)
         .fold(Time::Build, |a, b| a.join(&b));
     let statics = scope.statics_of(&free);
     if !matches!(e, Term::Lam(..))
@@ -22289,9 +23013,13 @@ impl Arm {
 /// arms are written. The walk enters `let` bindings, `if` arms and primitive and call
 /// arguments; it does not enter a function body or a construct that binds names by pattern.
 /// The premise of each test is its position in the walk. The walk keeps its nesting on frames
-/// on the heap (`Run`), so a block of any depth runs on a small thread stack.
+/// on the heap (`Run`), so a block of any depth runs on a small thread stack. A lazy scope
+/// is walked made eager on `term` ([`Scope::eager_on`]), as [`forward`] walks it.
 pub fn arms(term: &Term, scope: &Scope) -> Vec<Arm> {
     let mut scope = scope.clone();
+    if scope.lazy {
+        scope.eager_on(term);
+    }
     let run = Run::new(&mut scope);
     run.stack.run(run.walk(term));
     run.out.take()
@@ -22305,6 +23033,9 @@ pub fn arms(term: &Term, scope: &Scope) -> Vec<Arm> {
 #[doc(hidden)]
 pub fn arms_and_value(term: &Term, scope: &Scope) -> (Vec<Arm>, Product) {
     let mut scope = scope.clone();
+    if scope.lazy {
+        scope.eager_on(term);
+    }
     let run = Run::new(&mut scope);
     let p = run.stack.run(run.walk_value(term));
     (run.out.take(), p)
@@ -22320,6 +23051,9 @@ pub fn arms_and_value(term: &Term, scope: &Scope) -> (Vec<Arm>, Product) {
 #[doc(hidden)]
 pub fn arms_and_value_by_transfer(term: &Term, scope: &Scope) -> (Vec<Arm>, Product) {
     let mut scope = scope.clone();
+    if scope.lazy {
+        scope.eager_on(term);
+    }
     let mut run = Run::new(&mut scope);
     run.shortcut = false;
     run.peel = false;
@@ -22517,7 +23251,7 @@ impl Stay {
             return false;
         }
         self.sides.iter().all(|(z, then, hull)| {
-            let p = s.get(z);
+            let p = s.held(z);
             let Some((lo, hi)) = p.ints().bounds() else {
                 return false;
             };
@@ -23094,7 +23828,7 @@ impl Scope {
         {
             return false;
         }
-        let (px, py) = (self.get(&pair.0), self.get(&pair.1));
+        let (px, py) = (self.held(&pair.0), self.held(&pair.1));
         if classed(&px) || classed(&py) {
             return false;
         }
@@ -27132,8 +27866,8 @@ impl Scope {
     fn cover_staircase(&mut self, b: &mut Block) -> Option<(Arc<str>, Arc<str>)> {
         let ((x, y), tree) = b.stair_pair()?;
         let (x, y, tree) = (&x.clone(), &y.clone(), &tree.clone());
-        let px = self.get(x);
-        let py = self.get(y);
+        let px = self.held(x);
+        let py = self.held(y);
         if classed(&px) || classed(&py) || px.ints().len() > 1 || py.ints().len() > 1 {
             return None;
         }
@@ -28424,7 +29158,7 @@ impl Scope {
         let (g, free_two_base) = if let Some(g) = part.of.as_deref() {
             (g, false)
         } else if let Some(leaf) = &b.leaf {
-            let p = self.get(leaf);
+            let p = self.held(leaf);
             if classed(&p) || !matches!(p.ints().only(), Some((_, End::PosInf))) {
                 return false;
             }
@@ -28453,7 +29187,7 @@ impl Scope {
                 return false;
             }
         }
-        let get = |m: &str| self.get(m);
+        let get = |m: &str| self.held(m);
         let (f, mut conjs) = (b.formula(part), vec![]);
         conjunctions(&f, true, &mut vec![], &get, &mut conjs);
         let names = syms(&f);
@@ -28532,7 +29266,7 @@ impl Scope {
             }
         }
         names.iter().all(|n| {
-            let p = self.get(n);
+            let p = self.held(n);
             !classed(&p) && covers_set(spans.remove(n).unwrap_or_default(), p.ints())
         })
     }
@@ -28836,7 +29570,7 @@ impl Scope {
         if p.c != Num::ONE
             || p.sigma != -1
             || p.eq
-            || !matches!(self.get(&p.x).ints().bounds()?.1, End::PosInf)
+            || !matches!(self.held(&p.x).ints().bounds()?.1, End::PosInf)
         {
             return None;
         }
@@ -28857,7 +29591,7 @@ impl Scope {
             if k.abs() != Int::ONE {
                 return None;
             }
-            let v = self.get(n);
+            let v = self.held(n);
             if classed(&v) || v.ints().only().is_none() {
                 return None;
             }
@@ -28878,7 +29612,7 @@ impl Scope {
             &Formula::and(rest.to_vec()),
             true,
             &mut vec![],
-            &|n| self.get(n),
+            &|n| self.held(n),
             &mut conjs,
         );
         let mut out: BTreeMap<Arc<str>, IntervalSet> = ns
@@ -28914,7 +29648,7 @@ impl Scope {
             }
             let r = wide.unwrap_or_else(|| (BTreeMap::new(), Num::ZERO));
             let get = |n: &str| {
-                let mut v = self.get(n);
+                let mut v = self.held(n);
                 let prem = v.premises();
                 v.meet_ints(dom[n].clone(), &prem);
                 v
@@ -28970,6 +29704,108 @@ mod tests {
     mod bench;
 
     use zedc_presburger::upper_hull::not_above;
+
+    /// FAIL-lazy-refused-block-history, the cause: settling a lazy scope can leave a star
+    /// stale. The star `a >= n + m + y + z`, then four constraints among the hubs that the
+    /// solver refuses, then moves of `n` and `m` (step 9 of
+    /// `l01_39_scope_relations::lazy::warnings_of_a_lazy_scope_read_its_settled_view`).
+    /// Settling projects `a`'s star with `z` held at -11, then the hubs' block narrows `z` to
+    /// -10, which makes `a`'s star due again: settled once, `a` was `[-14, ∞)` where the
+    /// eager scope, which projects again after each projection that moves a bound
+    /// ([`Scope::reduce_with`]), has `[-13, ∞)`. [`Scope::settle_blocks`] settles until no
+    /// block of the names it settled is stale; red with one pass.
+    #[test]
+    fn settling_a_lazy_scope_leaves_no_star_stale() {
+        let var = |x: &str| Term::Var(x.into());
+        let int = |v: i64| Term::Lit(Value::Int(v));
+        let ge = |x: &str, v: i64| Term::Prim(Prim::Ge, vec![var(x), int(v)]);
+        let le = |x: &str, v: i64| Term::Prim(Prim::Le, vec![var(x), int(v)]);
+        let linear = |terms: &[(&str, i64)], k: i64| {
+            let sum = terms.iter().fold(int(k), |t, (s, c)| {
+                let cs = Term::Prim(Prim::Mul, vec![int(*c), var(s)]);
+                Term::Prim(Prim::Add, vec![t, cs])
+            });
+            Term::Prim(Prim::Ge, vec![sum, int(0)])
+        };
+        let and = |a: Term, b: Term| Term::Prim(Prim::And, vec![a, b]);
+        let refused = and(
+            and(
+                linear(&[("n", 4), ("m", -12), ("y", -10), ("z", -12)], 11),
+                linear(&[("m", 4), ("n", 10), ("y", -10), ("z", -11)], -28),
+            ),
+            and(
+                linear(&[("m", 11), ("n", 4), ("y", -1), ("z", 12)], -28),
+                linear(&[("m", -8), ("n", -5), ("y", 12), ("z", -1)], 31),
+            ),
+        );
+        let star = linear(&[("a", 1), ("n", -1), ("m", -1), ("y", -1), ("z", -1)], 0);
+        let steps = [
+            ge("n", -10),
+            le("n", 10),
+            ge("m", -10),
+            le("m", 10),
+            ge("y", -100),
+            ge("z", -100),
+            star,
+            refused,
+            ge("n", 0),
+            ge("m", 0),
+        ];
+        let all: Vec<Arc<str>> = ["a", "n", "m", "y", "z"].map(Arc::from).to_vec();
+        let p = Premises::new();
+        let s = Scope::new(
+            all.iter()
+                .map(|x| (x.clone(), Product::of_type(Type::int()))),
+        );
+        let (mut e, mut l) = (s.clone(), s.lazy());
+        for t in &steps {
+            (e, l) = (e.assume(t, true, &p), l.assume(t, true, &p));
+        }
+        assert!(!l.refusals.is_empty(), "nothing refused");
+        let mut c = l.clone();
+        c.settle_all();
+        assert_eq!(c.stale(&all), Vec::<BlockId>::new(), "a star left stale");
+        for x in &all {
+            assert_eq!(c.held(x), e.held(x), "{x}");
+        }
+    }
+
+    /// Codex's case of XR-lazy-and-kernel-batch-1 round 2 (A3), the closure alone: `a0` the
+    /// leaf of the star `a0 >= n`, `a1` bound to `a0` and `a2` to `a1`, the hub moved, then a
+    /// test of `a2` alone. [`Scope::test_closure`] holds `a0`, read through two bindings, with
+    /// [`Placing`] left out: `read_by` is cleared, as if the eager placement were not made, and
+    /// the closure still reaches `a0` by the terms' reads. Red with the closure cut to the
+    /// test's own names or to their direct reads (mutation controls of the round 3 commit).
+    #[test]
+    fn a_leaf_read_only_through_two_bindings_is_in_the_test_closure() {
+        let var = |x: &str| Term::Var(x.into());
+        let int = |v: i64| Term::Lit(Value::Int(v));
+        let ge = |a: Term, v: i64| Term::Prim(Prim::Ge, vec![a, int(v)]);
+        let p = Premises::new();
+        let names =
+            ["n", "a0", "a1", "a2"].map(|x| (Arc::<str>::from(x), Product::of_type(Type::int())));
+        let mut s = Scope::new(names).lazy();
+        s = s.assume(
+            &ge(Term::Prim(Prim::Sub, vec![var("a0"), var("n")]), 0),
+            true,
+            &p,
+        );
+        for (x, y) in [("a1", "a0"), ("a2", "a1")] {
+            let (x, y): (Arc<str>, Arc<str>) = (x.into(), y.into());
+            let py = s.settled(&y);
+            s.bind(&x, py, &Shared::new(Term::Var(y)));
+        }
+        s = s.assume(&ge(var("n"), 1), true, &p);
+        s.read_by = imbl::OrdMap::new();
+        let test = ge(Term::Prim(Prim::Mul, vec![var("a2"), var("n")]), 0);
+        let closure = s.test_closure(&test);
+        for x in ["a2", "a1", "a0"] {
+            assert!(
+                closure.contains(x),
+                "`{x}` is not in the closure {closure:?}"
+            );
+        }
+    }
 
     /// [`Staircase::lower_x`], [`Staircase::upper_y`] and [`Staircase::upper_case`] match a
     /// scan of the rows, with repeated keys and up to 40 rows (trees of several levels), and
@@ -31612,6 +32448,53 @@ pub mod path_check {
         let old = old();
         if new != old {
             record(format!("{new:?} where the solver gives {old:?}"));
+        }
+    }
+}
+
+/// The comparison of the reads the checker makes of a lazy scope with the same reads of a copy
+/// settled at every name, which holds the eager products ([`Scope::lazy`]; the author's rule of
+/// 2026-11-28: lazy and eager give the same result in every case, and only the cost may
+/// differ): while it is on, on this thread, each read compared is counted, and each that
+/// differs is recorded. Built only with the feature `preimage-ref`; the tests of step L1.39
+/// turn it on around the checker (`l01_39_scope_relations::lazy_check`), whose
+/// `Ck::with_bound_read` compares the image of each summarized binding it reads.
+#[cfg(feature = "preimage-ref")]
+#[doc(hidden)]
+pub mod lazy_check {
+    use std::cell::{Cell, RefCell};
+
+    thread_local! {
+        static ON: Cell<bool> = const { Cell::new(false) };
+        static COMPARED: Cell<u64> = const { Cell::new(0) };
+        static DIFFERENCES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Starts comparing on this thread, with no read counted and no difference found.
+    pub fn start() {
+        ON.set(true);
+        COMPARED.set(0);
+        DIFFERENCES.take();
+    }
+
+    /// Stops comparing: the reads compared since [`start`] and the differences found.
+    pub fn stop() -> (u64, Vec<String>) {
+        ON.set(false);
+        (COMPARED.take(), DIFFERENCES.take())
+    }
+
+    /// Whether reads are being compared on this thread.
+    pub fn on() -> bool {
+        ON.get()
+    }
+
+    /// Counts the read `what`, and records it when `lazy`, its value read from the lazy
+    /// scope, is not `eager`, the value read from the copy settled at every name.
+    pub fn compare<T: PartialEq + std::fmt::Debug>(what: &str, lazy: T, eager: T) {
+        COMPARED.set(COMPARED.get() + 1);
+        if lazy != eager {
+            let d = format!("{what}: {lazy:?} lazily, {eager:?} eagerly");
+            DIFFERENCES.with_borrow_mut(|ds| ds.push(d));
         }
     }
 }

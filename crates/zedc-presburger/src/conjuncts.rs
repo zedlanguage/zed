@@ -1055,6 +1055,12 @@ impl Conjuncts {
         self.index.class_at.of(h)
     }
 
+    /// Whether class `c` is one of [`Conjuncts::classes_at`] `h`, in O(log n), without
+    /// listing them.
+    pub fn is_class_at(&self, h: &str, c: &Class) -> bool {
+        self.index.class_at.has(h, c)
+    }
+
     /// The class of each star of two hubs or more, by its leaf ([`Conjuncts::class_of`]), as
     /// the persistent map, which two relations of one scope compare by its difference.
     pub fn classes_of(&self) -> &OrdMap<Arc<str>, Class> {
@@ -1150,10 +1156,7 @@ impl Conjuncts {
     /// it that is no satellite only as a hub of the leaf. In time near the hubs `y` is near,
     /// the classes at them, and the leaves of those classes.
     pub fn around(&self, y: &str) -> BTreeSet<Arc<str>> {
-        if self.index.wide.get(y).is_some_and(|w| *w > 0) {
-            return BTreeSet::new();
-        }
-        let classes: BTreeSet<&Class> = (self.index.nearby.of(y))
+        let classes: BTreeSet<&Class> = (self.around_hubs(y))
             .flat_map(|h| self.index.class_at.of(h))
             .collect();
         classes
@@ -1187,6 +1190,15 @@ impl Conjuncts {
             .iter()
             .flat_map(|c| self.class_leaves(c).cloned())
             .collect()
+    }
+
+    /// The hubs whose stars of two hubs or more [`Conjuncts::around`] finds for `y`: those `y`
+    /// is near, none when `y` is no satellite. A caller that holds only some of the leaves of
+    /// those stars reads them by these hubs, in time near the hubs and not near the leaves.
+    /// In O(log n) and the hubs.
+    pub fn around_hubs(&self, y: &str) -> impl Iterator<Item = &Arc<str>> {
+        let wide = self.index.wide.get(y).is_some_and(|w| *w > 0);
+        self.index.nearby.of(y).filter(move |_| !wide)
     }
 
     /// The conjuncts that mention `name` but those of the stars whose hub it is: those a move
