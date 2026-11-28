@@ -456,21 +456,32 @@ fn pow_mod_pow2(x: &BigUint, e: u64, mask: &BigUint) -> BigUint {
 /// bits, O(M(n)) by squarings whose sizes double, and at most one power more. So O(M(n)) for a
 /// fixed `k` (bench `num::bench::kth_roots_scale`). Callers: zedc-int `Num::root_big` and
 /// `Atom::expand`, and `poly::roots::positive_roots` (item PERF-wide-odd-base-ratio-9).
-pub fn nth_root_rem_uint(a: &BigUint, k: u32) -> (BigUint, BigUint) {
+///
+/// The index is a `u64`, as a binomial's gap and a root's index may pass a `u32` while the
+/// value still has more bits (ledger FAIL-roots-binomial-u32-narrowing: `u32` indices
+/// panicked at `x^(2^32) - 2^(2^32)`). An index of at least the bits of `a` is answered at
+/// once: `1^k <= a < 2^a.bits() <= 2^k` for `a >= 1`, so the root is 1 (0 for `a = 0`). Every
+/// index `nth_root_near` sees is then below the bits of `a`.
+pub fn nth_root_rem_uint(a: &BigUint, k: u64) -> (BigUint, BigUint) {
     assert!(k >= 1, "a root of index 0");
     match k {
         1 => return (a.clone(), BigUint::ZERO),
         2 => return sqrt_rem_uint(a),
         _ => {}
     }
-    let k64 = u64::from(k);
+    if k >= a.bits() {
+        return match a.is_zero() {
+            true => (BigUint::ZERO, BigUint::ZERO),
+            false => (BigUint::one(), a - 1u32),
+        };
+    }
     let y = nth_root_near(a, k);
-    let t = pow_uint(&y, k64);
+    let t = pow_uint(&y, k);
     if t <= *a {
         return (y, a - t);
     }
     let r = y - 1u32;
-    let rem = a - pow_uint(&r, k64);
+    let rem = a - pow_uint(&r, k);
     (r, rem)
 }
 
@@ -519,13 +530,26 @@ pub fn nth_root_rem_uint(a: &BigUint, k: u32) -> (BigUint, BigUint) {
 /// 7. The recursion stops at `R <= b + 64` with `b` the bits of `k`; above it `R - c - 4 >=
 ///    61`, so `h >= 30` and `a >> kh` is shorter than `a`. There the root is found exactly, bit
 ///    by bit from the top, `R` turns that keep the greatest `t` with `t^k <= a` (each turn sets
-///    the next bit when the power stays at most `a`); a value within 64 bits takes the word root
-///    of num-integer instead.
+///    the next bit when the power stays at most `a`, by [`power_at_most`]); a value within 64
+///    bits takes the word root of num-integer instead.
+/// 8. The index: `k` is below the bits of `a` here, as [`nth_root_rem_uint`] answers every
+///    larger index itself, and the recursion keeps it so: it recurses only where `R > 64`, so
+///    `n > 64 k`, and `a >> kh` keeps `n - kh >= n - k R / 2 >= n - (n + k) / 2 = (n - k) / 2 >
+///    31 k` bits. So a value of one word has an index under 64, which fits num-integer's `u32`.
 ///
 /// Complexity tradeoff: a level is one power of `k - 1` of `s + 1`, about `n / 2` bits, O(M(n))
 /// by squarings whose sizes double, and one division of about `2R` bits by `R`, O(M(R)); the
-/// level below has `a >> kh`, about `n / 2` bits, so the sum is O(M(n)) above the leaf; the
-/// leaf is `b + 64` powers of at most `k (b + 64)` bits. Three versions before this one, all
+/// level below has `a >> kh`, about `n / 2` bits, so the sum is O(M(n)) above the leaf. The
+/// leaf takes `R <= b + 64` turns, each decided by [`power_at_most`] from bounds of `128` bits
+/// on the power, O(log k) products of 128-bit numbers, and by the power itself, of at most
+/// `k (b + 64)` bits, only where `a` lies between the bounds, which is only for the last few
+/// bits of the root: a truncation to 128 bits moves a number by a factor under `1 + 2^(-127)`,
+/// a square doubles the factor its operand carries, so the bounds are within a factor of
+/// about `1 + k 2^(-126)` of the power, `1 + 2^(-86)` for an index under `2^40`; and a turn at
+/// bit `i` of the root tries a `t` that differs from the root by about `2^i`, a factor `1 + k
+/// 2^(i - R)` or more on the power, past the bounds' for all but the last few `i`. Before (ledger FAIL-roots-binomial-u32-narrowing) every turn took the
+/// power: `R` powers of up to `n` bits, `O(log k M(n))`, and `3^(2^32)`, about 850 MB, for the
+/// root of `2^(2^32)` alone. Three versions before this one, all
 /// measured by `kth_roots_scale` from 2,048 to 8,192 words for `k` 3 and 64 (2026-11-20):
 /// `h = floor(R / 2)` and turns until `y >= x`, 2 or 3 turns a level, the last only to
 /// confirm, and `T(8n) / T(n)` from 8.9 to 12.8 as the turn count changed between sizes; one
@@ -534,17 +558,19 @@ pub fn nth_root_rem_uint(a: &BigUint, k: u32) -> (BigUint, BigUint) {
 /// top and powers of `s + 1`, half again, 9.3 to 11.6 with the exact quotient `q`, whose `R`
 /// bits by `n / 2` went to num-bigint's schoolbook division at `n` and to the reciprocal at
 /// `8n` for `k = 64` (27 times the work of that division alone at 2,048 words).
-fn nth_root_near(a: &BigUint, k: u32) -> BigUint {
-    let k64 = u64::from(k);
-    let wide = a.bits().div_ceil(k64);
+fn nth_root_near(a: &BigUint, k: u64) -> BigUint {
+    let wide = a.bits().div_ceil(k);
     if wide <= u64::from(k.bit_len()) + 64 {
-        // Step 7.
+        // Steps 7 and 8.
         return match a.to_u64() {
-            Some(w) => BigUint::from(num_integer::Roots::nth_root(&w, k)),
+            Some(w) => BigUint::from(num_integer::Roots::nth_root(
+                &w,
+                u32::try_from(k).expect("an index below the bits of a word, step 8"),
+            )),
             None => (0..wide).rev().fold(BigUint::ZERO, |r, i| {
                 let mut t = r.clone();
                 t.set_bit(i, true);
-                match pow_uint(&t, k64) <= *a {
+                match power_at_most(&t, k, a) {
                     true => t,
                     false => r,
                 }
@@ -555,10 +581,10 @@ fn nth_root_near(a: &BigUint, k: u32) -> BigUint {
     let c = u64::from((k - 1).bit_len());
     let h = (wide - c - 4) / 2;
     // Step 1.
-    let s = nth_root_near(&(a >> (k64 * h)), k) + 1u32;
+    let s = nth_root_near(&(a >> (k * h)), k) + 1u32;
     // Steps 2 and 3.
-    let big_a = a >> ((k64 - 1) * h);
-    let p = pow_uint(&s, k64 - 1);
+    let big_a = a >> ((k - 1) * h);
+    let p = pow_uint(&s, k - 1);
     let wq = (big_a.bits() + 1).saturating_sub(p.bits());
     let d = p.bits().saturating_sub(wq + 2);
     let (q, _) = fast::div_rem(&(big_a >> d), &(p >> d));
@@ -566,9 +592,142 @@ fn nth_root_near(a: &BigUint, k: u32) -> BigUint {
     ((s << h) * (k - 1) + q) / k
 }
 
+/// The bits [`power_at_most`] keeps of each bound on a power.
+const BOUND_BITS: u64 = 128;
+
+/// The number `m 2^e`, with `m >= 1` of at most `BOUND_BITS + 1` bits: a bound on a power.
+struct Scaled {
+    m: BigUint,
+    e: u64,
+}
+
+impl Scaled {
+    /// `x 2^e`, for `x >= 1`, cut to the top `BOUND_BITS` bits of `x`: rounded down, so at
+    /// most `x 2^e`, or up when `up`, so at least it (`floor(x / 2^d) + 1 > x / 2^d` where a
+    /// bit below `d` is set). `m >= 1` either way, as the top bit of `x` stays.
+    fn cut(x: BigUint, e: u64, up: bool) -> Scaled {
+        let d = x.bits().saturating_sub(BOUND_BITS);
+        if d == 0 {
+            return Scaled { m: x, e };
+        }
+        let inexact = x.trailing_zeros().is_some_and(|z| z < d);
+        Scaled {
+            m: (x >> d) + u32::from(up && inexact),
+            e: e + d,
+        }
+    }
+
+    /// The product, cut down or up: of two lower bounds of positive numbers a lower bound of
+    /// their product, and of two upper bounds an upper bound.
+    fn times(&self, other: &Scaled, up: bool) -> Scaled {
+        Scaled::cut(&self.m * &other.m, self.e + other.e, up)
+    }
+
+    /// Whether `m 2^e <= a`, by the bits alone unless they are equal. With `B = bits(m) + e`:
+    /// `m 2^e < 2^B`, which is at most `2^(bits(a) - 1) <= a` where `B < bits(a)`; `m 2^e >=
+    /// 2^(B - 1)`, as `m >= 1`, which is at least `2^bits(a) > a` where `B > bits(a)`; and
+    /// otherwise `m 2^e <= a` exactly when `m <= floor(a / 2^e)` (`m 2^e <= a` gives `m <= a /
+    /// 2^e`, so `m <=` its floor; and `m <= floor(a / 2^e)` gives `m 2^e <= floor(a / 2^e) 2^e
+    /// <= a`), where `a >> e` has the bits of `m`, so the comparison reads the top bits of `a`
+    /// only.
+    fn at_most(&self, a: &BigUint) -> bool {
+        match (self.m.bits() + self.e).cmp(&a.bits()) {
+            std::cmp::Ordering::Less => true,
+            std::cmp::Ordering::Greater => false,
+            std::cmp::Ordering::Equal => self.m <= a >> self.e,
+        }
+    }
+}
+
+/// Whether `t^k <= a`, for `t, k >= 1`: from bounds `L <= t^k <= U` of [`BOUND_BITS`] bits,
+/// false where `L > a`, true where `U <= a`, and by the power itself only where `L <= a < U`
+/// (ledger FAIL-roots-binomial-u32-narrowing, where the leaf of [`nth_root_near`] took
+/// `3^(2^32)`, about 850 MB, to learn that it is above `2^(2^32)`).
+///
+/// The bounds are the power by squaring from the top bit of `k` down, each square and product
+/// cut down for `L` and up for `U` ([`Scaled::cut`]), from `L = U = 1`: after the bits of `k`
+/// down to bit `i`, `L <= t^j <= U` for `j = k >> i`, as the square of a bound is a bound of the
+/// square and the product by a bound of `t` one of the product by `t` ([`Scaled::times`]), and
+/// a cut keeps a lower bound low and an upper bound high. The exponents are below twice the
+/// bits of `a`: `t < 2^R` with `R = ceil(bits(a) / k)`, so `t^k < 2^(kR) <= 2^(bits(a) + k)`,
+/// and `k < bits(a)` (step 8 of [`nth_root_near`]).
+///
+/// Complexity tradeoff: `2 log2 k` products of numbers of 128 bits for each bound and two
+/// comparisons of the top 129 bits of `a`, against one power of up to `bits(a) + k` bits,
+/// O(M(n)), which is now taken only where `a` is within the bounds' factor of `t^k` (see the
+/// leaf's tradeoff at [`nth_root_near`]). Test: `a_power_is_compared_by_its_bounds_as_by_
+/// itself` (every outcome of the bounds, against the power).
+fn power_at_most(t: &BigUint, k: u64, a: &BigUint) -> bool {
+    let one = || Scaled {
+        m: BigUint::one(),
+        e: 0,
+    };
+    let (t_lo, t_hi) = (
+        Scaled::cut(t.clone(), 0, false),
+        Scaled::cut(t.clone(), 0, true),
+    );
+    let (mut lo, mut hi) = (one(), one());
+    for i in (0..k.bit_len()).rev() {
+        lo = lo.times(&lo, false);
+        hi = hi.times(&hi, true);
+        if k >> i & 1 == 1 {
+            lo = lo.times(&t_lo, false);
+            hi = hi.times(&t_hi, true);
+        }
+    }
+    if !lo.at_most(a) {
+        return false;
+    }
+    if hi.at_most(a) {
+        return true;
+    }
+    pow_uint(t, k) <= *a
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`power_at_most`] against the power itself, at `t^k` and its neighbors one apart, which
+    /// lie between the bounds where `t^k` is wider than [`BOUND_BITS`] and `t` is no power of
+    /// 2, and at half and twice it, which the bounds decide: bases of 1 to 192 bits, powers of
+    /// 2 among them, whose bounds are exact, and indices from 1 to 1000.
+    #[test]
+    fn a_power_is_compared_by_its_bounds_as_by_itself() {
+        let (mut rng, _) =
+            crate::seed::Rng::fresh("a_power_is_compared_by_its_bounds_as_by_itself");
+        let mut bases: Vec<BigUint> = [1u32, 2, 3, 4, 5, 7, 255, 256]
+            .into_iter()
+            .map(BigUint::from)
+            .collect();
+        for bits in [31u64, 64, 65, 127, 128, 129, 192] {
+            let words: Vec<u64> = (0..bits.div_ceil(64)).map(|_| rng.next_u64()).collect();
+            let mut t = BigUint::from_slice(
+                &words
+                    .iter()
+                    .flat_map(|w| [*w as u32, (w >> 32) as u32])
+                    .collect::<Vec<_>>(),
+            ) >> (64 * bits.div_ceil(64) - bits);
+            t.set_bit(bits - 1, true);
+            bases.push(t);
+            bases.push(BigUint::one() << (bits - 1));
+        }
+        for t in &bases {
+            for k in [1u64, 2, 3, 5, 63, 64, 65, 1000] {
+                let p = pow_uint(t, k);
+                let near = [&p - 1u32, p.clone(), &p + 1u32, &p >> 1u32, &p << 1u32];
+                for a in &near {
+                    assert_eq!(
+                        power_at_most(t, k, a),
+                        p <= *a,
+                        "t of {} bits, k = {k}, a - t^k of sign {:?}",
+                        t.bits(),
+                        a.cmp(&p)
+                    );
+                }
+            }
+        }
+    }
 
     /// The least root by trying every index from the largest down, written out.
     fn least_root_by_trial(b: u64) -> (u64, u64) {

@@ -908,13 +908,16 @@ pub(super) fn positive_roots_by(
         // products of numbers of the bits of `c0`, against the O(t) of an interval. The root
         // and its remainder by the kernel's `nth_root_rem_uint`, O(M(n)) for a fixed `g`,
         // where num-bigint's `nth_root` is above it (item PERF-wide-odd-base-ratio-9); a zero
-        // remainder is an integer root. The quotient is the kernel's division of the
+        // remainder is an integer root. The gap is passed whole, as a `u64` (ledger
+        // FAIL-roots-binomial-u32-narrowing: a `u32` index panicked at `x^(2^32) - 2^(2^32)`;
+        // test `l01_39_reduced_product::roots::a_binomial_whose_gap_is_past_a_u32_has_its_
+        // roots`). The quotient is the kernel's division of the
         // magnitudes ([`div_rem_uint`], O(M(n)) past its crossover, where num-bigint's `/` and
         // `%` are Knuth's or Burnikel and Ziegler's; plan row ROOTS-binomial-div), and `-c0 /
         // c1` is above 0 only where `c0` and `c1` have opposite signs.
         let (q, r) = div_rem_uint(c0.magnitude(), c1.magnitude());
         let x = (r.is_zero() && c0.sign() != c1.sign() && q > BigUint::one() && *g < q.bits())
-            .then(|| nth_root_rem_uint(&q, u32::try_from(*g).expect("under the bits of q")))
+            .then(|| nth_root_rem_uint(&q, *g))
             .filter(|(_, rem)| rem.is_zero())
             .map(|(x, _)| BigInt::from(x))
             .filter(|x| &a <= x && x <= &hi);

@@ -2453,8 +2453,15 @@ fn rounded_div_pow2(x: &BigUint, e: u64) -> BigUint {
 // Complexity tradeoff (DRY-bignum-crate-2026-11-26, numeric.md group 6): this and zedc-int's
 // `expand_pow` (left to right) were the two copies; both are O(M(n)) for an `n`-word result,
 // with different constants, and give the same power; the order is a measured switchover at
-// `POW_LEFT_WORDS`.
+// `POW_LEFT_WORDS`. A base `o 2^s` with `o` odd and `s > 0` is `o^e 2^(s e)`: the power of the
+// odd part, then one shift, O(n), where the squarings of the factor 2 would cost O(M(n)); a
+// power of 2 is the shift alone (ledger FAIL-roots-binomial-u32-narrowing: `2^(2^32)`, 512
+// MiB, took 32 squarings, the last of 256 MiB). Test: `a_power_strips_the_factors_of_two`.
 pub fn pow(b: &BigUint, mut e: u64) -> BigUint {
+    if let Some(s) = b.trailing_zeros().filter(|&s| s > 0 && e > 0) {
+        let shift = s.checked_mul(e).expect("a power of fewer than 2^64 bits");
+        return pow(&(b >> s), e) << shift;
+    }
     if b.bits() <= 64 * POW_LEFT_WORDS {
         let mut r = BigUint::one();
         for i in (0..64 - e.leading_zeros()).rev() {
@@ -5708,6 +5715,30 @@ pub mod crossover {
 mod tests {
     use super::*;
     use num_traits::ToPrimitive;
+
+    /// [`pow`] of bases with factors of 2, which it takes as the power of the odd part and a
+    /// shift, against num-bigint's `pow`: 0, 1, powers of 2, odd multiples of them, and a base
+    /// past `POW_LEFT_WORDS` words, at the exponents 0 to 3, 17 and 64.
+    #[test]
+    fn a_power_strips_the_factors_of_two() {
+        let wide = (BigUint::one() << (64 * POW_LEFT_WORDS + 70)) - 3u32;
+        let mut bases: Vec<BigUint> = [0u32, 1, 2, 4, 6, 12, 1 << 31, 3 << 20]
+            .into_iter()
+            .map(BigUint::from)
+            .collect();
+        bases.push(&wide << 5u32);
+        bases.push(BigUint::one() << 200u32);
+        for b in &bases {
+            for e in [0u32, 1, 2, 3, 17, 64] {
+                assert_eq!(
+                    pow(b, u64::from(e)),
+                    b.pow(e),
+                    "b of {} bits, e = {e}",
+                    b.bits()
+                );
+            }
+        }
+    }
 
     /// `newton_floor` is a lower bound on `newton_cost` at every width pair up to 600 words of
     /// quotient and 256 of divisor, across each power of two, where `points` changes its count.

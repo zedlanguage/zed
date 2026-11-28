@@ -1050,7 +1050,7 @@ impl Atom {
             Atom::Root { rad, k, .. } => {
                 nth_root_rem_uint(
                     &rad.expand().into_parts().1,
-                    u32::try_from(k)
+                    u64::try_from(k)
                         .expect("a root of at least 2^127 of a radicand held in memory"),
                 )
                 .0
@@ -2634,8 +2634,11 @@ impl Num {
             // 0 and 1 are their own roots.
             return self.clone();
         }
-        // For v >= 2 and k at least its bits, 1 ^ k <= v < 2 ^ k.
-        let Some(k) = u32::try_from(k).ok().filter(|k| u64::from(*k) < v.bits()) else {
+        // For v >= 2 and k at least its bits, 1 ^ k <= v < 2 ^ k. An index below the bits is
+        // a `u64`, whatever its size against a `u32` (ledger FAIL-roots-binomial-u32-narrowing:
+        // every index past a `u32` took this answer, wrong for a value of more bits; test
+        // `a_root_whose_index_is_past_a_u32_of_a_value_wider_than_it`).
+        let Some(k) = u64::try_from(k).ok().filter(|k| *k < v.bits()) else {
             return Num::from(if up { 2 } else { 1 });
         };
         // O(M(n)) for a fixed `k` by the kernel's root, whose remainder also says whether the

@@ -218,6 +218,30 @@ fn a_binomial_root_scales_in_the_bits() {
     );
 }
 
+/// The integer roots of `x^n - 2^n`, -2 and 2, whose gap grows with the size (ledger
+/// FAIL-roots-binomial-u32-narrowing), at the sizes of [`TRANSFORM_BITS`]: the quotient by a
+/// leading coefficient of one word, O(n); the root of index `n` of `2^n`, whose leaf turns are
+/// decided by bounds of 128 bits (`zed_bignum::least_root::power_at_most`), O(log n) each; and
+/// the remainder's power `2^n`, one shift (`zed_bignum::fast::pow`). So O(n), where the leaf
+/// and the power took squarings of up to `n` bits before, O(M(n)) and `3^n` among them.
+/// Measured 0.29 ms and 1.04 ms, ratio 5.88 (2026-11-28, one local core, test profile; at
+/// these sizes the fixed costs still weigh).
+#[test]
+fn a_binomial_root_scales_in_its_gap() {
+    scaling::check_inputs(
+        "the integer roots of x^n - 2^n",
+        TRANSFORM_BITS,
+        |bits| {
+            let g = bits as u64;
+            Sparse::new([(0, -(BigInt::from(1u8) << g)), (g, BigInt::from(1))])
+        },
+        |f| {
+            let roots = vec![BigInt::from(-2), BigInt::from(2)];
+            assert_eq!(integer_roots(f, None, None), Roots::Listed(roots));
+        },
+    );
+}
+
 /// Prints, for the three benches above at 131,072, 262,144, 1,048,576 and 2,097,152 bits,
 /// each division's and product's method in `zed_kernel::num::fast` with its words (quotient
 /// and divisor; shorter and longer factor) and its calls: the table at [`TRANSFORM_BITS`]

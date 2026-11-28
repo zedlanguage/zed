@@ -360,13 +360,31 @@ fn a_sum_sharing_a_kept_power_scales_with_its_coefficients() {
 fn kth_roots_scale() {
     let n = 1 << 15;
     let numbers = crate::scaling::inputs(n, |m| bench_number(m, 13));
-    for k in [3u32, 64] {
+    for k in [3u64, 64] {
         let what = format!("the root of index {k} of a number of n words");
         crate::scaling::check_order(&what, n, 1, |m| {
             let (r, rem) = nth_root_rem_uint(&numbers[&m], k);
             assert!(!r.is_zero() && rem < numbers[&m]);
         });
     }
+}
+
+/// Ledger FAIL-roots-binomial-u32-narrowing: [`nth_root_rem_uint`] of a number of n words for
+/// the index `k = n`, whose root has 64 bits, all found by the leaf of `nth_root_near`, one
+/// turn a bit. Each turn is decided by bounds of 128 bits on `t^k`
+/// (`zed_bignum::least_root::power_at_most`), O(log k), and the power itself is taken only
+/// for the last few bits; then the remainder's power, O(M(n)). Before, every turn took the
+/// power: 64 powers of up to n words. Measured 7.8 ms and 59.5 ms from 32,768 to 262,144
+/// words, ratio 8.74, below the roots of index 3 and 64 above, 9.15 and 9.24 on the same run
+/// (2026-11-28, one local core, test profile).
+#[test]
+fn a_root_of_index_n_scales() {
+    let n = 1 << 15;
+    let numbers = crate::scaling::inputs(n, |m| bench_number(m, 13));
+    crate::scaling::check_order("the root of index n of a number of n words", n, 1, |m| {
+        let (r, rem) = nth_root_rem_uint(&numbers[&m], m as u64);
+        assert!(r.bits() == 64 && rem < numbers[&m]);
+    });
 }
 
 /// TEST-dry-shared-units: [`rem_uint`] and [`div_rem_uint`] of a number of n words by one odd

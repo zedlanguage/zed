@@ -4067,7 +4067,8 @@ mod tests {
     /// [`nth_root_rem_uint`] against num-bigint's `nth_root`: `k` from 1 to 9 at every width
     /// from 1 to 1,500 bits (for `k = 3`, the recursion starts past 210 bits and has three
     /// levels at 1,500), `k = 64` at widths to 24,000 bits (its recursion starts past 5,440),
-    /// `k = 1000` at 64,000 bits (only the bit-by-bit leaf), and at `r^k - 1`, `r^k` and
+    /// `k = 1000` at 64,000 bits (only the bit-by-bit leaf) and at 999 to 1,001 bits (an index
+    /// at least the bits, answered at once, and one below them), and at `r^k - 1`, `r^k` and
     /// `r^k + 1` for the root `r` of each random value.
     #[test]
     fn kth_roots_agree_with_num_bigint() {
@@ -4084,7 +4085,7 @@ mod tests {
             x
         };
         let check = |a: &BigUint, k: u32| {
-            let (r, rem) = nth_root_rem_uint(a, k);
+            let (r, rem) = nth_root_rem_uint(a, u64::from(k));
             assert_eq!(r, a.nth_root(k), "k = {k}, a of {} bits", a.bits());
             assert_eq!(
                 pow_uint(&r, u64::from(k)) + &rem,
@@ -4096,7 +4097,7 @@ mod tests {
         let widths = (1..=9u32)
             .flat_map(|k| (1..=1500u64).step_by(7).map(move |b| (k, b)))
             .chain((5000..=24_000u64).step_by(4111).map(|b| (64, b)))
-            .chain([(1000, 64_000)]);
+            .chain([(1000, 64_000), (1000, 999), (1000, 1000), (1000, 1001)]);
         for (k, bits) in widths {
             check(&BigUint::ZERO, k);
             let a = random(bits);
