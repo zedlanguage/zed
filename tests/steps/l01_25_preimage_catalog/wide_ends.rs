@@ -291,8 +291,12 @@ fn wide_domains_part(part: usize, want: (usize, usize, usize)) {
     // one, and they count as narrower (20 before the item, then 27). Since
     // PERF-ref-memo-quadratic, whose transfer before reads guarded chains by intervals of `i`,
     // more boxes before equal the new ones: 16 count as narrower (27 before it) and 247 as now
-    // exact (246 before it), and the interpreter refutes no box before. The counts here are of
-    // all nine domains; each part has its share.
+    // exact (246 before it), and the interpreter refutes no box before. Since
+    // PROOF-factor-demand-monotone-all-shapes, where `revision::backward` reads `+` and `-`
+    // with an operand of one piece exactly (`revision::sum_by_one_piece`), the transfer before
+    // finds the new box in all 16: 4 are equal and 12 count as now exact, so 0 count as
+    // narrower and 259 as now exact. The counts here are of all nine domains; each part has
+    // its share.
     assert!(
         refuted_before.is_empty(),
         "the boxes before that the interpreter refutes:\n{}",
@@ -325,12 +329,12 @@ fn chains_over_wide_domains_keep_their_preimages_0() {
 
 #[test]
 fn chains_over_wide_domains_keep_their_preimages_1() {
-    wide_domains_part(1, (1, 23, 0));
+    wide_domains_part(1, (0, 23, 0));
 }
 
 #[test]
 fn chains_over_wide_domains_keep_their_preimages_2() {
-    wide_domains_part(2, (15, 162, 0));
+    wide_domains_part(2, (0, 174, 0));
 }
 
 /// The probe over unbounded and wide domains, with the preimage written out: the infinite end

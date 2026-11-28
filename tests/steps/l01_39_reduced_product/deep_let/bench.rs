@@ -185,8 +185,8 @@ fn the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block() {
 }
 
 /// The walk of `fees(d, 1)`, a block of `d` bindings each with a test, goes to the allocator
-/// at most 310 times a binding at 4,000 and at 32,000 bindings (item
-/// PERF-walk-allocator-no-coalesce). Measured on this thread (`zed_alloc_count::allocations`,
+/// at most 250 times a binding at 4,000 and at 32,000 bindings (items
+/// PERF-walk-allocator-no-coalesce, then PERF-walk-allocs-by-stack below). Measured on this thread (`zed_alloc_count::allocations`,
 /// which counts each allocation and each reallocation), before and after the cuts in
 /// `zedc-preimage` product.rs that carry the item's name:
 ///
@@ -207,8 +207,26 @@ fn the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block() {
 /// of paths of the scope's persistent maps (`imbl`) at each binding and test, which the
 /// snapshots the walk keeps make necessary, and the making of each binding's summary, about
 /// ten allocations a summary. Red on the code before the cuts (327.6 and 338.9).
+///
+/// Then (item PERF-walk-allocs-by-stack) a heap profile of the walk grouped by call stack (one
+/// sample in 61 allocations, 500 bindings) found four sites to cut, each marked at the code
+/// with the item's name: a type compared with itself in `Type::subtype` (about 26 a binding),
+/// the copy of a conjunction's star index at each copy of the conjunction, now shared until
+/// changed (about 19, the most bytes), the node of `IntervalSet::top`, now made once (about
+/// 3), and the stack and sets of `Finiteness::order` for a type with no columns (about 9).
+/// Counted with the profile's counter (`probe_heap_profile`, not landed), medians of three:
+///
+/// | bindings | allocations a binding | bytes a binding   |
+/// |----------|-----------------------|-------------------|
+/// | 4,000    | 283.0 to 226.1        | 104.6 to 82.9 KB  |
+/// | 32,000   | 297.5 to 239.0        | 110.0 to 88.2 KB  |
+///
+/// What is left, by site: the nodes of the persistent treaps of piecewise-affine maps made by
+/// each binding's summary (`node_of`, about 24 a binding, from `add_treaps`), interval set
+/// nodes (about 17), hash tables (about 14) and the cursors of `OrdMap::diff` (about 12). The
+/// bound is 250, red on the code before the item (281 and 298 in this test's count).
 #[test]
-fn the_walk_of_a_deep_block_allocates_at_most_310_times_a_binding() {
+fn the_walk_of_a_deep_block_allocates_at_most_250_times_a_binding() {
     on_small_stack(|| {
         for d in [4_000, 32_000] {
             let t = fees(d, 1);
@@ -220,8 +238,8 @@ fn the_walk_of_a_deep_block_allocates_at_most_310_times_a_binding() {
             let per = (zed_alloc_count::allocations() - c0) as f64 / d as f64;
             eprintln!("{d} bindings: {per:.1} allocations a binding, {time:?}");
             assert!(
-                per <= 310.0,
-                "the walk of {d} bindings allocated {per:.1} times a binding, more than 310"
+                per <= 250.0,
+                "the walk of {d} bindings allocated {per:.1} times a binding, more than 250"
             );
         }
     });

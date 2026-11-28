@@ -974,8 +974,15 @@ impl IntervalSet {
     }
 
     /// Every integer.
+    // Complexity tradeoff (PERF-walk-allocs-by-stack): naive version, a new node each call; the
+    // walk of `fees(d, 1)` (l01_39 `deep_let`) made about 3 a binding so, in a heap profile
+    // grouped by call stack. Used: one node made once and shared, a reference count each
+    // call; the node's caches (`gap`, `members`, ...) depend on the node alone, so sharing it
+    // across threads changes no answer.
     pub fn top() -> Self {
-        IntervalSet::range(NegInf, PosInf)
+        static TOP: std::sync::LazyLock<IntervalSet> =
+            std::sync::LazyLock::new(|| IntervalSet::range(NegInf, PosInf));
+        TOP.clone()
     }
 
     /// The integers from `lo` to `hi`, both included; empty when `lo > hi`.

@@ -3460,6 +3460,23 @@ impl<'m> Finiteness<'m> {
         leaves: bool,
     ) -> Option<Vec<(Type, Vec<Row>)>> {
         let mut unions = HashMap::new();
+        // Complexity tradeoff (PERF-walk-allocs-by-stack): a root with no columns, such as an
+        // integer domain, was walked as any other, a stack and two sets made for one type:
+        // about 9 allocations a binding of the walk of `fees(d, 1)` (l01_39 `deep_let`) in a
+        // heap profile grouped by call stack. Used: such a root answered at once. It is the
+        // walk below with one type: a known leaf is skipped (an empty order); otherwise the
+        // root is seen and opened, has no column to be open or to push, and is closed into
+        // the order with its boxes.
+        if leaves && self.known.borrow().get(&root) == Some(&true) {
+            return Some(Vec::new());
+        }
+        let boxes = match merge {
+            true => merge_boxes(self.boxes(&root).await?, &mut unions),
+            false => self.boxes(&root).await?,
+        };
+        if boxes.iter().all(|r| r.is_empty()) {
+            return Some(vec![(root, boxes)]);
+        }
         let mut order = Vec::new();
         let mut seen: HashSet<Type> = HashSet::new();
         // The types whose walk is open: visited, and not yet in `order`. A box with an open
@@ -3478,7 +3495,20 @@ impl<'m> Finiteness<'m> {
         // finite type whose boxes form a cycle loses only precision. Cost: one insert and one
         // removal per type and one lookup per column, as the `seen` filter below already makes.
         let mut open: HashSet<Type> = HashSet::new();
-        let mut stack: Vec<(Type, Option<Vec<Row>>)> = vec![(root, None)];
+        // The root, its boxes made above, expanded as the loop expands a type: a column equal
+        // to the root is a cycle, and the others are pushed above it.
+        if boxes.iter().flat_map(|r| r.iter()).any(|c| *c == root) {
+            return None;
+        }
+        seen.insert(root.clone());
+        open.insert(root.clone());
+        let below: Vec<(Type, Option<Vec<Row>>)> = boxes
+            .iter()
+            .flat_map(|r| r.iter())
+            .map(|c| (c.clone(), None))
+            .collect();
+        let mut stack: Vec<(Type, Option<Vec<Row>>)> = vec![(root, Some(boxes))];
+        stack.extend(below);
         while let Some((t, done)) = stack.pop() {
             if let Some(boxes) = done {
                 open.remove(&t);

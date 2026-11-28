@@ -218,6 +218,50 @@ fn image_holds(draws: usize) {
     }
 }
 
+/// `+` and `-` with an operand of one piece give, through `revision::sum_by_one_piece`, the
+/// exact image, the join of the images of each pair of pieces, with no more pieces than the
+/// other operand, and a subset of an operand gives a subset of the image
+/// (PROOF-factor-demand-monotone-all-shapes; `revision::backward` reads `+` and `-` through
+/// it); the image of one piece by one piece is exact by
+/// `a_sum_or_difference_of_two_pieces_is_what_the_parts_give`. Through `revision::forward`,
+/// `-13..=-12 ∪ 1..=2` minus `0..=4` is capped to one negative piece, `-17..=-1`, which holds
+/// `-5`, no difference of members, while the larger `-13..=-12 ∪ 1..=4 ∪ 14..=14` keeps
+/// `-17..=-12` apart, so the image of the smaller set is not within that of the larger.
+#[test]
+fn a_sum_with_a_one_piece_operand_is_exact_and_monotone() {
+    let z1 = IntervalSet::from_pieces(vec![(End::of(-13), End::of(-12)), (End::of(1), End::of(2))]);
+    let y = IntervalSet::range(End::of(0), End::of(4));
+    assert_eq!(
+        revision::sum_by_one_piece(&Op::Sub, &z1, &y).to_string(),
+        "[-17..=-12, -3..=2]"
+    );
+    let (mut rng, seed) = Rng::fresh("sums with a one-piece operand");
+    let piece = |p: &(End, End)| IntervalSet::from_pieces(vec![p.clone()]);
+    for _ in 0..2000 {
+        let (a, wide) = (small(&mut rng), small(&mut rng));
+        let big = a.join(&wide);
+        let lo = rng.int(-40, 40);
+        let q = IntervalSet::range(End::of(lo), End::of(lo + rng.int(0, 9)));
+        for op in [Op::Add, Op::Sub] {
+            for (x, y, xb, yb) in [(&a, &q, &big, &q), (&q, &a, &q, &big)] {
+                let z = revision::sum_by_one_piece(&op, x, y);
+                let exact = x.pieces().fold(IntervalSet::empty(), |j, p| {
+                    y.pieces().fold(j, |j, r| {
+                        j.join(&revision::forward(&op, &piece(p), &piece(r)))
+                    })
+                });
+                assert_eq!(z, exact, "{op:?} {x} {y}, ZED_TEST_SEED={seed}");
+                assert!(z.len() <= x.len().max(y.len()), "{op:?} {x} {y} gives {z}");
+                let zb = revision::sum_by_one_piece(&op, xb, yb);
+                assert!(
+                    z.is_subset(&zb),
+                    "{op:?}: {x} {y} gives {z}, {xb} {yb} gives {zb}, ZED_TEST_SEED={seed}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region() {
     image_holds(60);

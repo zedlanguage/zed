@@ -309,7 +309,38 @@ pub struct Conjuncts {
     /// conjuncts as a block of its own outside it ([`Blocks::detach`]).
     blocks: Blocks,
     /// The stars and what keeps them current, apart so that a conjunction is small to move.
-    index: Box<StarIndex>,
+    // Complexity tradeoff (PERF-walk-allocs-by-stack): naive version, a `Box`, so each copy
+    // of a conjunction allocated a copy of the index, about 19 allocations a binding of the
+    // walk of `fees(d, 1)` (l01_39 `deep_let`) in a heap profile grouped by call stack, the
+    // most bytes of any site. Used: shared by the copies until one changes it ([`OnWrite`]),
+    // a reference count a copy and one allocation at the first change of a shared index, as
+    // the `Box` made at every copy.
+    index: OnWrite<StarIndex>,
+}
+
+/// A value shared by the copies of its holder until one changes it: a copy counts a
+/// reference, and a change through a shared one first copies the value (`Arc::make_mut`).
+#[derive(Clone, Default)]
+struct OnWrite<T: Clone>(Arc<T>);
+
+impl<T: Clone> std::ops::Deref for OnWrite<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T: Clone> std::ops::DerefMut for OnWrite<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+/// Prints the value alone, as the `Box` it replaced did.
+impl<T: Clone + fmt::Debug> fmt::Debug for OnWrite<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
 }
 
 /// Two names, in order.
@@ -1046,23 +1077,25 @@ impl Conjuncts {
             gs.iter().map(|g| Arc::new(renamed(g, x, &leaf))).collect();
         key.sort_unstable();
         let key: Class = key.into();
-        let leaves = self.index.classes.entry(key.clone()).or_default();
+        // One write borrow of the index, so that its fields borrow apart.
+        let index = &mut *self.index;
+        let leaves = index.classes.entry(key.clone()).or_default();
         let new = leaves.is_empty();
         leaves.insert(x.clone());
         if new {
             for h in hubs {
-                self.index.class_at.add(h, &key);
+                index.class_at.add(h, &key);
             }
             let f = family(&key);
-            let classes = self.index.families.entry(f.clone()).or_default();
+            let classes = index.families.entry(f.clone()).or_default();
             if classes.is_empty() {
                 for h in hubs {
-                    self.index.family_at.add(h, &f);
+                    index.family_at.add(h, &f);
                 }
             }
             classes.insert(key.clone());
         }
-        self.index.class_of.insert(x.clone(), key);
+        index.class_of.insert(x.clone(), key);
     }
 
     /// Forgets the class of the star of leaf `x`, if it has one ([`Conjuncts::enclass`]).

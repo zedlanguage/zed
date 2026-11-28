@@ -1750,6 +1750,15 @@ impl Type {
 
     /// Whether every value of `self` is in `other`: `self <: other`.
     pub fn subtype(&self, other: &Type) -> bool {
+        // Complexity tradeoff (PERF-walk-allocs-by-stack): a type is under itself, which the
+        // simulation finds with no comparison (its first pair is equal, so nothing is to
+        // compare and nothing fails), but only after allocating its map and its list of
+        // pairs: about 26 allocations a binding of the walk of `fees(d, 1)` (l01_39
+        // `deep_let`), the most of any one site, in a heap profile grouped by call stack.
+        // Used: the comparison first, which the simulation makes anyway (`Simulation::pair`).
+        if self == other {
+            return true;
+        }
         // Unions of one-tuples compare by their components ([`one_tuple_column`]), as in
         // `subtype_verdict`.
         if let Some((a, b)) = one_tuple_columns(self, other) {
@@ -1772,6 +1781,10 @@ impl Type {
     /// and `the_recorded_cases_are_decided_by_the_simulation` in `l01_23_subtyping::oracle`;
     /// COMPLEXITY.md K37).
     pub fn subtype_verdict(&self, other: &Type) -> Verdict {
+        // As in `subtype`: a type is under itself, which the simulation finds first.
+        if self == other {
+            return Verdict::Empty;
+        }
         if let Some((a, b)) = one_tuple_columns(self, other) {
             // `(a,) <: (b,)` exactly when `a <: b`: a one-tuple `(v,)` is in `(a,)` exactly when
             // `v` is in `a`, and a value `v` of `a` outside `b` gives `(v,)` of `self` outside

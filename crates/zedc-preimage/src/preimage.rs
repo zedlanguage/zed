@@ -9073,6 +9073,66 @@ impl<'m, 't> Walk<'m, 't> {
     /// The box of the inputs at which the term meets the demand `d`. An integer demand is read
     /// as its meet with the term's values, so that demands that differ only outside them are
     /// one.
+    ///
+    /// Monotone in the demand for the shapes below (PROOF-factor-demand-monotone-all-shapes):
+    /// within one run (one set of landmarks, one `fails_kept`), for integer demands `z1 ⊆ z2`
+    /// every input's set read under `z1` is within its set under `z2`; an empty box is within
+    /// every box. Write `M(t)` for this. [`Walk::back_product`] rests on it for its factors.
+    /// Proof by induction on the term, step by step through the code it takes.
+    /// 1. Here: `z` is met with `clip(t)`, which does not depend on `z`, so `z1 ∩ f ⊆ z2 ∩ f`;
+    ///    the memo is keyed by the demand, so a hit returns what the read would.
+    /// 2. [`Walk::back_in`], an empty demand: the empty box. A term that reads no input:
+    ///    `decided`, every input when its value is in the demand and none otherwise, and a
+    ///    value in `z1` is in `z2`. A literal: the same.
+    /// 3. An input: its domain met with `z`, which grows with `z`. A name bound in the term
+    ///    (`let`, a parameter read without a summary): the bound term under the same demand,
+    ///    by `M` of it. `let`: the body under the same demand. (A name bound outside the term
+    ///    with a summary, read by [`Tx::invert_let`], is not covered here.)
+    /// 4. A constant operand ([`Walk::back_arith`]): `shift`, `reflect`, `times_pre`,
+    ///    `div_pre` and `minmax_pre` are the exact sets `{x : g(x) in z}` of a function `g`
+    ///    (proofs at each), and `g(x)` in `z1` gives `g(x)` in `z2`; then `M` of the operand.
+    /// 5. `mod` by a constant `c`: in a class of remainders the answer is every point when the
+    ///    class is within `z`, none when it misses `z`, else as below; within `z1` gives within
+    ///    `z2`, and missing `z2` gives missing `z1`, so no case is larger under `z1`.
+    ///    [`mod_pre`] over the operand's fixed forward set `W`: the remainders `z ∩ [0, |c|)`
+    ///    grow with `z`; none gives the empty set, all of them `W`, which holds every answer;
+    ///    otherwise the first and last periods are those remainders shifted, and the piece
+    ///    between runs from the least remainder to the greatest, which fall and rise as they
+    ///    grow. Then `M` of the operand.
+    /// 6. `-`, `abs`, `^ k` ([`Walk::back_unary`]): `revision::backward` takes `z.neg()` or
+    ///    `z.lift1`, which maps each piece to the members of its preimage, and a piece of
+    ///    `z1` lies in a piece of `z2`; `^ 0` reads every integer when `z` holds 1, and `z1`
+    ///    holding 1 gives `z2` holding 1. Then `M` of the operand.
+    /// 7. `+` and `-` of two terms: the summary path is taken or not by the term and the
+    ///    domains alone ([`Walk::pa`], and [`Tx::invert_pa`] gives `None` only from the
+    ///    domain), and inverting a summary is the exact preimage of the function it is, met
+    ///    with the domain. The projection ([`Walk::project`]) gives operand `a` the demand
+    ///    `sum_by_one_piece(-, z, B)` over the other's forward set `B` (`revision::backward`),
+    ///    which is exact and grows with `z` when `B` is one piece (zedc-lattice
+    ///    `revision::sum_by_one_piece`, proof there), and `b`
+    ///    the demand over `A`, so both forward sets must be one piece; then `M` of each and
+    ///    the meet of two boxes, which grows with each.
+    /// 8. `if`: the summary paths ([`Tx::invert_pa`], [`Tx::invert_pa_line`],
+    ///    [`Walk::back_by_class`]) are taken or not by the term and the domains, and each is
+    ///    built from preimages of `z` shifted by sets fixed by the domains, which grow with
+    ///    `z` (for `invert_pa_line` the values `Y` of its first step grow with that step's
+    ///    set, inferred from [`pa_image`] taking the image of each piece over the set); the
+    ///    arms: `union(meet(gt, at), meet(gf, bf))`, the guard boxes fixed, `at` and `bf` by
+    ///    `M` of the arms, and [`Tx::union`], the per-input join (an empty side gives the
+    ///    other), grows with each side.
+    /// 9. A call of a lambda ([`Walk::call_back`]): the demand is snapped to the run's
+    ///    landmarks, and `snap` moves each end out to the nearest landmark, which is monotone
+    ///    in the end; the body by `M`; each argument under its parameter's set, by `M` of the
+    ///    body and of the argument; an argument skipped where its parameter's set holds the
+    ///    domain stands for every input, which holds any reading.
+    ///
+    /// Not monotone, each with a test at `demand_monotone`: `*` of two terms and the
+    /// projection of `div` and `mod` by a term (`revision::backward` caps the image of a
+    /// demand of many pieces to as many pieces as its operands have in a region, `map2`, so a
+    /// demand of more pieces can be cut more finely), `+` and `-` of two terms either of whose
+    /// forward sets has more than one piece (the same cap), and `min` and `max` of two terms
+    /// that are not both names, whose ray reading is taken or not by the demand and is finer
+    /// than the projection. Each answer still holds every point that meets its demand.
     async fn back(&'m self, t: Tid, env: Eid, d: Demand) -> Res {
         let d = match d {
             Demand::Ints(z) => match self.clip(t, env).await {
@@ -9753,7 +9813,10 @@ impl<'m, 't> Walk<'m, 't> {
     // that meet `z` with some value of the factor (`others_in` below), one more set quotient
     // per factor. Tradeoff: with two factors the result is within that of the operand-by-
     // operand reading (proof at
-    // `a_product_read_by_its_factors_is_within_its_reading_by_operand`); with three or more it
+    // `a_product_read_by_its_factors_is_within_its_reading_by_operand`, for factors of the
+    // shapes [`Walk::back`] proves read a smaller demand as a smaller set: names, terms plus
+    // or times a constant and the like, not products or quotients of terms
+    // (PROOF-factor-demand-monotone-all-shapes)); with three or more it
     // is not always, since that reading meets each partial product's own set, which this one
     // never makes (TEST-back-product-precision: 16 of 3,000 random products of two to five
     // factors read looser, 514 tighter). Test:
@@ -9850,7 +9913,21 @@ impl<'m, 't> Walk<'m, 't> {
         let fa = self.fwd(a, env).await.ints;
         let fb = self.fwd(b, env).await.ints;
         let za = revision::backward(&o, 0, fa.set(), fb.set(), z);
-        let zb = revision::backward(&o, 1, fa.set(), fb.set(), z);
+        let mut zb = revision::backward(&o, 1, fa.set(), fb.set(), z);
+        // A quotient or remainder by 0 fails (`zed_kernel::eval::int_binary`), so no value in
+        // `z` comes of a divisor 0, as [`Walk::where_defined`] reads it; not in a narrowing
+        // that keeps the points where a test fails, which `where_defined` leaves to this
+        // projection too. Before PROOF-factor-demand-monotone-all-shapes the projection kept
+        // the divisor 0, so a smaller demand could read a larger set: `x div x` in `{0}`
+        // with `x` in `[0, 2]` read `x` in `[0, 1]` here, and in `[-2, 3] ∪ [16, 19]`, which
+        // holds every value of the term, `[1, 2]` through `where_defined`. With the meet the
+        // projection's box is within `where_defined`'s for any demand: its operands' demands
+        // are within every integer and every integer but 0, and each operand's reading grows
+        // with its demand for the shapes proved at [`Walk::back`]. Test:
+        // `demand_monotone::a_quotient_by_a_term_drops_the_divisor_zero_under_every_demand`.
+        if matches!(p, Prim::IntDiv | Prim::Mod) && !self.with(|tx| tx.fails_kept) {
+            zb = zb.minus(&IntervalSet::of(0, 0));
+        }
         let ra = self.back(a, env, Demand::Ints(za)).await;
         let rb = self.back(b, env, Demand::Ints(zb)).await;
         let mut r = self.meet(ra, rb);
@@ -20093,7 +20170,10 @@ mod tests {
     /// `backward(*, 0, A, B, z)` (`B'` = `B` met with `backward(*, 1, A, B, z)`), which is
     /// within it; the same for `b`. Each factor is then read with a demand within the one the
     /// reading operand by operand gives it, and a factor here (a name, or a name plus a
-    /// constant) reads a smaller demand as a smaller set. The meet is needed: without it the
+    /// constant) reads a smaller demand as a smaller set (steps 1, 3 and 4 of the proof at
+    /// [`Walk::back`]; a factor that is a product or quotient of terms does not, test
+    /// `demand_monotone::a_product_of_two_names_can_read_a_smaller_demand_as_a_larger_set`,
+    /// so the claim is proved for these factors only). The meet is needed: without it the
     /// proof took `backward` to be smaller for a smaller `B'`, which is false, since `map2`
     /// caps the image to as many pieces as its operands have, and a `B'` of more pieces than
     /// `B` merged pieces the reading against `B` kept apart (seed 9220505866642457837: 2 of
@@ -20146,6 +20226,362 @@ mod tests {
             !control.is_empty(),
             "the negative control found no looser set"
         );
+    }
+
+    /// A smaller demand reads as a smaller set, shape by shape, as proved at [`Walk::back`]
+    /// (PROOF-factor-demand-monotone-all-shapes): for each shape the proof covers, over random
+    /// terms of that shape whose parts are of shapes it covers, random domains in `-7..=8`
+    /// and random demands `z1 ⊆ z2` in `-30..=35` read in one run with `z2`'s landmarks, each
+    /// input's set under `z1` is within its set under `z2`; and for each shape it leaves out,
+    /// a pair of demands, found by a random search of 5,000 terms of each shape, for which the
+    /// smaller reads a larger set.
+    mod demand_monotone {
+        use super::*;
+
+        /// A shape of term, over parts drawn again.
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        enum Shape {
+            /// A name.
+            Name,
+            /// `a + k`.
+            PlusK,
+            /// `k - a`.
+            KMinus,
+            /// `k * a`, `k` not 0.
+            TimesK,
+            /// `a div k`, `k` not 0.
+            DivK,
+            /// `a mod k`, `k` not 0.
+            ModK,
+            /// `min(a, k)` or `max(a, k)`.
+            MinMaxK,
+            /// `min(a, b)` or `max(a, b)`.
+            MinMax,
+            /// `a + b` or `a - b`.
+            AddSub,
+            /// `-a` or `abs(a)`.
+            NegAbs,
+            /// `a ^ 2` or `a ^ 3`.
+            Pow,
+            /// `if a < k then b else c`.
+            If,
+            /// `let v = a; b`, the body reading `v` or not.
+            Let,
+            /// `(p => b)(a)`, the body reading `p` or not.
+            App,
+        }
+        use self::Shape as S;
+
+        /// The shapes the proof covers as parts of any term it covers.
+        const PARTS: [Shape; 12] = [
+            S::Name,
+            S::PlusK,
+            S::KMinus,
+            S::TimesK,
+            S::DivK,
+            S::ModK,
+            S::MinMaxK,
+            S::NegAbs,
+            S::Pow,
+            S::If,
+            S::Let,
+            S::App,
+        ];
+
+        fn lit(k: i64) -> Term {
+            Term::Lit(Value::Int(k))
+        }
+
+        fn p2(p: Prim, a: Term, b: Term) -> Term {
+            Term::Prim(p, vec![a, b])
+        }
+
+        fn name(n: &str) -> Term {
+            Term::Var(n.into())
+        }
+
+        /// A term of shape `s` over `names`, its parts of the shapes `parts` and names at
+        /// depth 1, constants in `-3..=3`.
+        fn term(
+            rng: &mut Rng,
+            s: Shape,
+            parts: &[Shape],
+            depth: usize,
+            names: &[Arc<str>],
+        ) -> Term {
+            let part = |rng: &mut Rng, names: &[Arc<str>]| {
+                let s = if depth <= 1 {
+                    S::Name
+                } else {
+                    parts[rng.below(parts.len())]
+                };
+                term(rng, s, parts, depth - 1, names)
+            };
+            let k = rng.below(7) as i64 - 3;
+            let nz = if k == 0 { 2 } else { k };
+            let either = |rng: &mut Rng, a: Prim, b: Prim| if rng.below(2) == 0 { a } else { b };
+            match s {
+                S::Name => Term::Var(names[rng.below(names.len())].clone()),
+                S::PlusK => p2(Prim::Add, part(rng, names), lit(k)),
+                S::KMinus => p2(Prim::Sub, lit(k), part(rng, names)),
+                S::TimesK => p2(Prim::Mul, lit(nz), part(rng, names)),
+                S::DivK => p2(Prim::IntDiv, part(rng, names), lit(nz)),
+                S::ModK => p2(Prim::Mod, part(rng, names), lit(nz)),
+                S::MinMaxK => {
+                    let o = either(rng, Prim::Min, Prim::Max);
+                    p2(o, part(rng, names), lit(k))
+                }
+                S::MinMax | S::AddSub => {
+                    let o = match s {
+                        S::MinMax => either(rng, Prim::Min, Prim::Max),
+                        _ => either(rng, Prim::Add, Prim::Sub),
+                    };
+                    let a = part(rng, names);
+                    p2(o, a, part(rng, names))
+                }
+                S::NegAbs => {
+                    let o = either(rng, Prim::Neg, Prim::Abs);
+                    Term::Prim(o, vec![part(rng, names)])
+                }
+                S::Pow => p2(Prim::Pow, part(rng, names), lit(2 + rng.below(2) as i64)),
+                S::If => {
+                    let g = p2(Prim::Lt, part(rng, names), lit(k));
+                    let a = part(rng, names);
+                    Term::If(
+                        Shared::new(g),
+                        Shared::new(a),
+                        Shared::new(part(rng, names)),
+                    )
+                }
+                S::Let | S::App => {
+                    let v: Arc<str> = if s == S::Let { "v" } else { "p" }.into();
+                    let e = part(rng, names);
+                    let mut inner = names.to_vec();
+                    inner.push(v.clone());
+                    let body = Shared::new(part(rng, &inner));
+                    if s == S::Let {
+                        Term::Let(v, Shared::new(e), body)
+                    } else {
+                        Term::App(Shared::new(Term::Lam(vec![v], body)), vec![e])
+                    }
+                }
+            }
+        }
+
+        /// A random set of one to `pieces` pieces, each of width at most 5, starting in
+        /// `lo..lo + width`.
+        fn set(rng: &mut Rng, lo: i64, width: usize, pieces: usize) -> IntervalSet {
+            let mut out = Vec::new();
+            for _ in 0..1 + rng.below(pieces) {
+                let a = lo + rng.below(width) as i64;
+                out.push((End::of(a), End::of(a + rng.below(6) as i64)));
+            }
+            IntervalSet::from_pieces(out)
+        }
+
+        /// The set of the pieces `p`.
+        fn of(p: &[(i64, i64)]) -> IntervalSet {
+            IntervalSet::from_pieces(p.iter().map(|&(a, b)| (End::of(a), End::of(b))).collect())
+        }
+
+        /// Each input's set read under `z1` and under `z2`, in one run with `z2`'s landmarks.
+        fn readings(
+            t: &Term,
+            inputs: &Domains,
+            z1: &IntervalSet,
+            z2: &IntervalSet,
+        ) -> (Domains, Domains) {
+            let (d1, d2) = (Demand::Ints(z1.clone()), Demand::Ints(z2.clone()));
+            let mut tx = Tx::new();
+            let root = tx.terms.add(t);
+            let marks = tx.landmarks(inputs, &d2);
+            let begun = tx.begin(inputs);
+            tx.start_from(&begun, marks);
+            let r2 = tx.back(root, ROOT, &d2);
+            let r1 = tx.back(root, ROOT, &d1);
+            (tx.whole(&r1), tx.whole(&r2))
+        }
+
+        /// Over 3,000 terms of shape `s`, `depth` deep, with parts of the shapes `parts` and
+        /// domains of one to `pieces` pieces: each input's set under the smaller demand is
+        /// within its set under the larger, and in some case smaller, so that the test is not
+        /// met by a walk that reads every demand alike.
+        fn monotone(s: Shape, parts: &[Shape], depth: usize, pieces: usize) {
+            let (mut rng, _) = Rng::fresh(&format!("demand_monotone {s:?}"));
+            let names: Vec<Arc<str>> = ["x", "y", "w"].iter().map(|&n| n.into()).collect();
+            let mut smaller = 0;
+            for _ in 0..3000 {
+                let t = term(&mut rng, s, parts, depth, &names);
+                let inputs: Domains = (names.iter())
+                    .map(|n| (n.clone(), set(&mut rng, -7, 11, pieces)))
+                    .collect();
+                let z2 = set(&mut rng, -30, 61, 3);
+                let z1 = z2.meet(&set(&mut rng, -30, 61, 3).join(&set(&mut rng, -30, 61, 3)));
+                let (b1, b2) = readings(&t, &inputs, &z1, &z2);
+                for n in &names {
+                    assert!(
+                        b1[n].is_subset(&b2[n]),
+                        "{t:?} over {inputs:?}: {n} under {z1} is {}, under {z2} {}",
+                        b1[n],
+                        b2[n]
+                    );
+                }
+                smaller += usize::from(b1 != b2);
+            }
+            assert!(smaller > 0, "{s:?}: no smaller demand read a smaller set");
+        }
+
+        /// Under `z1 ⊆ z2`, some input of `t` is read as a set under `z1` that is not within
+        /// its set under `z2`: a shape the proof leaves out.
+        fn not_monotone(
+            t: Term,
+            inputs: &[(&str, &[(i64, i64)])],
+            z1: &[(i64, i64)],
+            z2: &[(i64, i64)],
+        ) {
+            let inputs: Domains = (inputs.iter()).map(|&(n, p)| (n.into(), of(p))).collect();
+            let (z1, z2) = (of(z1), of(z2));
+            assert!(z1.is_subset(&z2));
+            let (b1, b2) = readings(&t, &inputs, &z1, &z2);
+            assert!(
+                inputs.keys().any(|n| !b1[n].is_subset(&b2[n])),
+                "{t:?} now reads {z1} as {b1:?}, within {z2} as {b2:?}: move the shape to the \
+                 tests of the shapes covered, and its step into the proof at `Walk::back`"
+            );
+        }
+
+        #[test]
+        fn a_name_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::Name, &PARTS, 1, 3);
+        }
+
+        #[test]
+        fn a_term_plus_a_constant_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::PlusK, &PARTS, 2, 3);
+        }
+
+        #[test]
+        fn a_constant_minus_a_term_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::KMinus, &PARTS, 2, 3);
+        }
+
+        #[test]
+        fn a_constant_times_a_term_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::TimesK, &PARTS, 2, 3);
+        }
+
+        #[test]
+        fn a_term_div_a_constant_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::DivK, &PARTS, 2, 3);
+        }
+
+        #[test]
+        fn a_term_mod_a_constant_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::ModK, &PARTS, 2, 3);
+        }
+
+        #[test]
+        fn the_min_or_max_of_a_term_and_a_constant_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::MinMaxK, &PARTS, 2, 3);
+        }
+
+        #[test]
+        fn a_negation_or_absolute_value_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::NegAbs, &PARTS, 2, 3);
+        }
+
+        #[test]
+        fn a_power_by_a_constant_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::Pow, &PARTS, 2, 3);
+        }
+
+        #[test]
+        fn an_if_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::If, &PARTS, 2, 3);
+        }
+
+        #[test]
+        fn a_let_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::Let, &PARTS, 2, 3);
+        }
+
+        #[test]
+        fn a_call_of_a_lambda_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::App, &PARTS, 2, 3);
+        }
+
+        /// Step 7 of the proof: the other operand's forward set is one piece.
+        #[test]
+        fn a_sum_or_difference_of_names_of_one_piece_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::AddSub, &[], 1, 1);
+        }
+
+        /// Two names, the case `revision::backward` reads without the ray path's choice.
+        #[test]
+        fn the_min_or_max_of_two_names_reads_a_smaller_demand_as_a_smaller_set() {
+            monotone(S::MinMax, &[], 1, 3);
+        }
+
+        /// The first and second operands of `x * w` are read through `map2`'s cap.
+        #[test]
+        fn a_product_of_two_names_can_read_a_smaller_demand_as_a_larger_set() {
+            not_monotone(
+                p2(Prim::Mul, name("x"), name("w")),
+                &[("x", &[(-1, -1), (3, 4)]), ("w", &[(-5, -3), (3, 4)])],
+                &[(-3, -3), (24, 26)],
+                &[(-4, -3), (21, 21), (24, 26)],
+            );
+        }
+
+        /// `w + y` with `w` of two pieces and `y` of one: `y`'s demand `z - W` is capped, so
+        /// one operand of more than one piece is enough.
+        #[test]
+        fn a_sum_with_an_operand_of_two_pieces_can_read_a_smaller_demand_as_a_larger_set() {
+            not_monotone(
+                p2(Prim::Add, name("w"), name("y")),
+                &[("w", &[(-7, 0), (2, 3)]), ("y", &[(-7, -1)])],
+                &[(-3, -3), (21, 24)],
+                &[(-3, -3), (7, 12), (21, 24)],
+            );
+        }
+
+        /// The min of two maxes: the ray reading is taken under one demand and not the other.
+        #[test]
+        fn the_min_of_two_terms_not_names_can_read_a_smaller_demand_as_a_larger_set() {
+            let m = || p2(Prim::Max, name("w"), name("x"));
+            not_monotone(
+                p2(Prim::Min, m(), m()),
+                &[("w", &[(-5, -5)]), ("x", &[(-3, 2)])],
+                &[(-2, -2), (29, 29)],
+                &[(-7, -2), (29, 29)],
+            );
+        }
+
+        /// `y div y` with `y` of two pieces, the divisor 0 left out: the projection reads `y`
+        /// through `map2`'s cap, under the smaller demand as every value of `y`.
+        #[test]
+        fn a_quotient_by_a_term_can_read_a_smaller_demand_as_a_larger_set() {
+            not_monotone(
+                p2(Prim::IntDiv, name("y"), name("y")),
+                &[("y", &[(-6, -1), (1, 2)])],
+                &[(-1, -1), (15, 16)],
+                &[(-1, -1), (15, 16), (22, 22)],
+            );
+        }
+
+        /// `x div x` with `x` in `[0, 2]`: under `{0}` no input meets the demand, and under a
+        /// demand that holds every value of the term, `x` is read as `[1, 2]`, the divisor 0
+        /// dropped in both (the meet at [`Walk::project`]).
+        #[test]
+        fn a_quotient_by_a_term_drops_the_divisor_zero_under_every_demand() {
+            let t = p2(Prim::IntDiv, name("x"), name("x"));
+            let inputs: Domains = [("x".into(), of(&[(0, 2)]))].into_iter().collect();
+            let (z1, z2) = (of(&[(0, 0)]), of(&[(-2, 3), (16, 19)]));
+            let (b1, b2) = readings(&t, &inputs, &z1, &z2);
+            let x: Arc<str> = "x".into();
+            assert!(b1[&x].is_subset(&b2[&x]), "{b1:?} {b2:?}");
+            assert_eq!(b2[&x].to_string(), "[1..=2]");
+        }
     }
 
     /// A random set of one to three pieces in `-20..=29`, an end infinite one time in eight.
