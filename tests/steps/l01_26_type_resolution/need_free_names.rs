@@ -174,23 +174,32 @@ fn a_strings_need_reading_another_parameter_is_met_at_each_call() {
 
 #[test]
 fn a_fold_need_reading_another_parameter_is_met_at_each_call() {
-    // The wrong calls of a fold whose lambda calls `f` on the entry are refused, though with
-    // `(_)` in place of `("a")`, and its right calls are refused too (row
-    // FAIL-fold-lambda-calls-param-entry): neither stops zedc.
+    // A fold whose lambda calls `f` on the entry runs at a right call, and a wrong call names
+    // the entry `f` does not take (row FAIL-fold-lambda-calls-param-entry; before its fix the
+    // right calls were refused too, with `(_)`).
     let l = "g(positional m, positional f) = m.foldl(0, (a, x) -> a + f(x));";
+    runs("foldl_f_good", l, "g([1, 2], w -> w + 1)", "5");
+    runs("foldl_f_typed", l, "g([1, 2], (w: int) -> w + 1)", "5");
     refused(
         "foldl_f_bad",
         l,
         "g([\"a\"], w -> w + 1)",
-        "`f` does not take",
+        "`f` does not take (\"a\")",
     );
     let r = "g(positional m, positional f) = m.foldr((x, a) -> a + f(x), 0);";
+    runs("foldr_f_good", r, "g([1, 2], w -> w + 1)", "5");
     refused(
         "foldr_f_bad",
         r,
         "g([\"a\"], w -> w + 1)",
-        "`f` does not take",
+        "`f` does not take (\"a\")",
     );
+    // The accumulator and the entry in one operator, beside the call of `f`: the case that
+    // tying the entry slot of every lambda refused (the row's D0).
+    let mix = "g(positional m, positional f) = m.foldl(0, (a, x) -> a * 10 + x + f(x));";
+    runs("foldl_mix_good", mix, "g([1, 2], w -> w + 1)", "35");
+    let mixr = "g(positional m, positional f) = m.foldr((x, a) -> x * 10 + a + f(x), 0);";
+    runs("foldr_mix_good", mixr, "g([1, 2], w -> w + 1)", "35");
     let y = "g(positional m, positional y) = m.foldl(0, (a, x) -> a + x + y);";
     refused(
         "foldl_y_bad",

@@ -1120,6 +1120,26 @@ fn map_of_a_parameter_by_a_lambda_calling_a_parameter_runs_in_linear_time() {
     );
 }
 
+/// Row FAIL-fold-lambda-calls-param-entry: `foldl` of n entries of a parameter by a lambda
+/// calling a parameter on the entry, as `map` above: the lambda's entry slot is tied to the
+/// receiver's entries, met once at the call, and the kernel folds the n entries. Small
+/// instances: `l01_26_type_resolution::need_free_names::a_fold_need_reading_another_parameter_is_met_at_each_call`.
+#[test]
+fn foldl_of_a_parameter_by_a_lambda_calling_a_parameter_runs_in_linear_time() {
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "h(positional f, positional m) = m.foldl(0, (a, x) -> a + f(x));\na = h(x -> x + 1, {});\n",
+            list(n)
+        )
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), (n * (n + 1) / 2).to_string());
+    scaling::check(
+        "foldl of n entries of a parameter by a lambda calling a parameter, whole path",
+        N_ENTRIES,
+        run,
+    );
+}
+
 /// Row FAIL-any-lambda-calls-param: `any` of n entries of a parameter by a lambda calling a
 /// parameter, as `map` above. Small instances:
 /// `empty::the_quantifiers_by_a_lambda_calling_a_parameter_run`.
