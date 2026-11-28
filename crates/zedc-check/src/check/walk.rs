@@ -25049,16 +25049,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         // the program records for [`Self::outside_of`] ([`Self::indexed_at`]).
         let passed = self.passing(v, "a call", span, of);
         // The atoms of the key a family takes, and those it passes through
-        // ([`Info::atom_keys`]), where every piece of `v` but its atoms is a data family, its
-        // keys not one interval, and the key's atoms are known: the elaborator writes a read
-        // that takes an atom as `GetAtomKey`, so the kernel reads it as the check did.
+        // ([`Info::atom_keys`]), where some piece of `v` is a data family, its keys not one
+        // interval, every other piece but its atoms is a family or a function of one
+        // parameter, and the key's atoms are known: the elaborator writes a read that takes an
+        // atom as `GetAtomKey`, so the kernel reads it as the check did. Only the families'
+        // arms record: `GetAtomKey` applies a function to the key, an atom too, as `apply`
+        // checks a function's arm, so a function's arrows that take the atom and those that
+        // refuse it, which the function then gives back, both run as checked (DESIGN.md:1783,
+        // rule 6). Before (CHECK-atom-key-mixed-receiver), a family or a function was read as
+        // an application, which passed the atom by where the value was the family.
         let pieces = v.pieces();
         let keyed = !dense
             && !x.ty.dynamic
             && x.ty.vars.is_empty()
-            && (pieces.iter()).any(|p| matches!(p, Piece::Fn(_)))
+            && (pieces.iter()).any(|p| matches!(p, Piece::Fn(sig) if sig.data))
             && (pieces.iter()).all(|p| match p {
-                Piece::Fn(sig) => sig.data,
+                Piece::Fn(sig) => sig.data || sig.params.len() == 1,
                 p => p.is_atoms(),
             });
         let mut atom_keys = keyed.then(|| (KType::empty(), KType::empty()));
@@ -25155,7 +25161,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                             r.union(&x.ty.of_piece(&Piece::Set(by.clone())))
                         }),
                     };
-                    if let Some((taken, passed_by)) = &mut atom_keys {
+                    if let Some((taken, passed_by)) = &mut atom_keys
+                        && sig.data
+                    {
                         *taken = &*taken | &(&x.ty.atoms() - &by);
                         *passed_by = &*passed_by | &by;
                     }

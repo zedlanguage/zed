@@ -2675,6 +2675,15 @@ impl<'t> Machine<'_, 't> {
                 ),
             ));
         }
+        // `GetAtomKey` on a function applies it to the key, an atom too: the elaborator writes
+        // it for a read of a value that may be a family or a function of one parameter, and
+        // the checker checked the function's arm as that application
+        // (CHECK-atom-key-mixed-receiver).
+        if p == Prim::GetAtomKey && matches!(args[0], V::Closure(_) | V::Prim(_)) {
+            let mut args = args.into_iter();
+            let f = args.next().expect("`GetAtomKey` takes two arguments, checked above");
+            return self.apply(&f, args.collect());
+        }
         // A tuple, an atom or a family display made with a part that is no data, or a value
         // that holds a function given to any primitive (DESIGN.md step L1.17).
         if args.iter().any(|a| matches!(a, V::Held(_)))

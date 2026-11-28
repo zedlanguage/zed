@@ -3848,10 +3848,14 @@ impl<'a> Elab<'a> {
                 // A read of a family at a key that may be an atom the family takes reads it
                 // as a key (`Info::atom_keys`; plan row KERNEL-atom-key-read): `GetAtomKey`,
                 // which looks the atom up as data; where the key may also be an atom it passes
-                // through, the key is tested first, and such an atom is applied as before.
+                // through, the key is tested first, and such an atom is applied as before. A
+                // value that may be a family or a function of one parameter (a count of 1)
+                // reads so too: `GetAtomKey` applies a function (CHECK-atom-key-mixed-receiver).
                 let info = self.info;
                 let atom_keys = match (dense, count) {
-                    (false, None) => info.atom_keys.get(&span).filter(|(t, _)| !t.is_empty()),
+                    (false, None | Some(1)) => {
+                        info.atom_keys.get(&span).filter(|(t, _)| !t.is_empty())
+                    }
                     _ => None,
                 };
                 let t = all(m.got()).map(|ts| {
