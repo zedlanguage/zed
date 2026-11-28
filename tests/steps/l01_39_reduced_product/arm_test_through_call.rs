@@ -286,6 +286,55 @@ fn a_call_reading_a_name_bound_in_an_arm_narrows_at_each_value() {
     rejected(&[&arms(6)]);
 }
 
+/// A call of a callee with no summary over its parameters, here `g(n) = n * n - 3`, not affine
+/// on pieces, is one name shared by the test and the arm (CHECK-implicit-call-limits): the
+/// test keeps the call on its spine, read through `g`'s body, and also narrows the shared name
+/// the arm reads. So `popCount(g(n) - 1)` under `g(n) >= 1` is accepted, and `popCount(g(n) -
+/// 2)` is rejected, at `n = 2`, where `g(n)` is 1. Before, the arm read `g(n)` as a name of its
+/// own, any int, and both were rejected.
+#[test]
+fn a_call_with_no_summary_is_one_name_in_the_test_and_the_arm() {
+    let g = "g(positional n: int) = n * n - 3;\n";
+    let at = |c: i32, d: i32| {
+        format!(
+            "{g}f(positional n: int) = if g(n) >= {c} {{ popCount(g(n) - {d}) }} else {{ 0 }};\n"
+        )
+    };
+    // The row's example, and its boundary at 1.
+    accepted(&[&at(0, 0), &at(1, 1)]);
+    // `g(n)` is -2 at n = 1 and 1 at n = 2.
+    rejected(&[&at(-2, 0), &at(1, 2)]);
+    // Under `!` and in a sum on the spine, the test narrows the shared name too.
+    accepted(&[&format!(
+        "{g}f(positional n: int) = if !(g(n) + 1 < 2) {{ popCount(g(n) - 1) }} else {{ 0 }};\n"
+    )]);
+    // Where the test fails, the shared name is narrowed the other way: `g(n) < 1` leaves `g(n)`
+    // at most 0, so `-g(n)` is never negative there.
+    accepted(&[&format!(
+        "{g}f(positional n: int) = if g(n) >= 1 {{ 0 }} else {{ popCount(0 - g(n)) }};\n"
+    )]);
+    // Two calls at different arguments are two names: `g(n)` narrowed says nothing of `g(n + 1)`.
+    rejected(&[&format!(
+        "{g}f(positional n: int) = if g(n) >= 1 {{ popCount(g(n + 1) - 1) }} else {{ 0 }};\n"
+    )]);
+}
+
+/// A call of a callee with no summary whose argument is not affine, `h(x * x)`, is one name
+/// shared by the test and the arm (CHECK-implicit-call-limits): under `h(x * x) > 3` the name is
+/// at least 4, so `h(x * x) - 4` is never negative in the arm. The checker knows only that bound
+/// on the name, so `h(x * x) - 5` is rejected.
+#[test]
+fn a_call_at_a_non_affine_argument_is_one_name_in_the_test_and_the_arm() {
+    let h = "h(positional y: int) = y * y - 3;\n";
+    let at = |d: i32| {
+        format!(
+            "{h}f(positional x: int) = if h(x * x) > 3 {{ popCount(h(x * x) - {d}) }} else {{ 0 }};\n"
+        )
+    };
+    accepted(&[&at(4)]);
+    rejected(&[&at(5)]);
+}
+
 /// `d` names `r_i = if n > i { n } else { 0 }` and the test `r_0 + … + r_(d-1) == 1`, whose
 /// arm reads `popCount(n - 1 - past)`. The sum is 0 for `n <= 0` and `n · min(n, d)` for
 /// `n >= 1`, so it is 1 at `n = 1` alone, where the arm's operand is `-past`: not negative

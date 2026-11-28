@@ -182,3 +182,41 @@ fn a_test_of_a_sum_of_summarized_names_scales() {
         |src| _ = check(src),
     );
 }
+
+/// `k` tests `g(x + j) >= 1` on a callee with no summary, `g(n) = n * n - 3`, each at its own
+/// argument, whose arms read `popCount(g(x + j) - 1 - past)`: not negative exactly when `past`
+/// is 0, at `x + j = 2` where `g` is 1.
+fn unsummed_tests(k: usize, past: i64) -> String {
+    let tests: Vec<String> = (0..k)
+        .map(|j| {
+            format!(
+                "(if g(x + {j}) >= 1 {{ popCount(g(x + {j}) - {}) }} else {{ 0 }})",
+                1 + past
+            )
+        })
+        .collect();
+    format!(
+        "g(positional n: int) = n * n - 3;\nh(positional x: int) = {};\n",
+        tests.join(" + ")
+    )
+}
+
+/// `k` tests and arms that call a callee with no summary at `k` distinct arguments cost
+/// `O(k)`: each argument is one name shared by its test and its arm, its value read once at
+/// the root, and each test narrows twice, through the call and through the name
+/// (CHECK-implicit-call-limits, `Ck::shared_term`). The verdicts are checked at the smaller
+/// size, after the timing.
+#[test]
+fn tests_and_arms_calling_an_unsummed_callee_scale() {
+    let k = 128;
+    scaling::check_inputs(
+        "k tests and arms calling a callee with no summary at k arguments",
+        k,
+        |n| unsummed_tests(n, 0),
+        |src| _ = check(src),
+    );
+    let src = unsummed_tests(k, 0);
+    assert!(check(&src).is_none(), "rejected\n{src}");
+    let src = unsummed_tests(k, 1);
+    assert!(check(&src).is_some(), "accepted\n{src}");
+}

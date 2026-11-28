@@ -183,13 +183,18 @@ pub(super) enum Reading {
     /// `if` inside it, and a call of a definition whose body has a summary
     /// ([`Called::summed`]), are names bound to their values ([`Implicit`]), read through
     /// their summaries; another call is kept as a call where the test narrows through it, on
-    /// its spine, and is a name of its own, by its span, elsewhere.
+    /// its spine, and is the name of [`Reading::Shared`] elsewhere.
     Test,
+    /// The condition of an `if` read as [`Reading::Test`], but with each call kept there as a
+    /// call the name bound to its value ([`Implicit`]) that an operand reads it as
+    /// (CHECK-implicit-call-limits): an `Assume` narrows by both terms, the first narrowing the
+    /// call's arguments through its callee and this one the name the arm reads.
+    Shared,
     /// An operand read where the walk is, for its values. An `if` in it is kept in place as
-    /// in a test; one with an `if` inside it, and a call of a definition whose body has a
-    /// summary, are names bound to their values ([`Implicit`]),
-    /// so that its values and whether it may be 0 (`Scope::zero_reached`) are read through
-    /// them; another call is a name of its own, by its span: `forward` does not enter a call.
+    /// in a test; one with an `if` inside it, and a call of a definition it keeps
+    /// ([`Called`]), are names bound to their values ([`Implicit`]), so that its values and
+    /// whether it may be 0 (`Scope::zero_reached`) are read through them: `forward` does not
+    /// enter a call.
     Operand,
     /// The body of a definition whose calls are kept ([`Called`]), or the value of a binder
     /// read for the names it reads (`Ck::narrowed_at`): read once, where it is defined or
@@ -221,8 +226,9 @@ pub(super) struct Called {
     /// The definitions of this kind its body calls, by binder.
     pub(super) calls: Vec<usize>,
     /// Whether its body has a summary over its parameters, each any int
-    /// ([`zedc_preimage::preimage::let_summary`]): then a call of it read in a test or an
-    /// operand is a name of its own ([`Implicit`]).
+    /// ([`zedc_preimage::preimage::let_summary`]): then a call of it read in a test is a name
+    /// of its own ([`Implicit`]) on the test's spine too, as it is in an operand; a call of a
+    /// body with no summary is kept as a call on a test's spine ([`Reading::Shared`]).
     pub(super) summed: bool,
 }
 

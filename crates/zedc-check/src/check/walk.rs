@@ -15601,6 +15601,9 @@ impl<'a> Ck<'_, 'a> {
                     let t = self.term(test);
                     let mut out = vec![Item::Scope(parent)];
                     out.extend(t.binders.iter().map(|&b| Item::Bound(b)));
+                    if let Some(u) = self.shared_term(test) {
+                        out.extend(u.binders.iter().map(|&b| Item::Bound(b)));
+                    }
                     out
                 }
                 Node::Join(a, b) => vec![Item::Scope(a), Item::Scope(b)],
@@ -15756,6 +15759,15 @@ impl<'a> Ck<'_, 'a> {
                         // settles the cone of a read on demand (the design note of
                         // NARROW-hub-settle, revision of 2026-11-04).
                         let s = p.assume_case(&t.term, outcome, &Premises::new());
+                        // The test again with its kept calls as the names an arm reads them as
+                        // ([`Self::shared_term`]).
+                        let s = match self.shared_term(test) {
+                            Some(u) => {
+                                let s = self.with_bound(s, &u.binders, &u.calls);
+                                s.assume_case(&u.term, outcome, &Premises::new())
+                            }
+                            None => s,
+                        };
                         self.place_or_hold(item, test.span, &before, &s.refusals);
                         self.arms.before[n] = Some(p);
                         (self.arms.equal.entry(key).or_default()).push((fresh, t.term.clone(), n));
@@ -15864,6 +15876,43 @@ impl<'a> Ck<'_, 'a> {
         self.term_for(e, Reading::Test)
     }
 
+    /// The condition `e` read as [`Reading::Shared`], when its term as a test keeps a call:
+    /// each call kept there is the name bound at the root to its value that an operand reads
+    /// it as, keyed by callee, arguments and the binders they read (`implicit_calls`).
+    /// An `Assume` narrows by the test's term and then by this one (CHECK-implicit-call-limits).
+    ///
+    /// Proof that narrowing by both is sound and loses nothing either term gives alone. (1)
+    /// The two terms differ only where the first has `App(f, args)` and the second the name
+    /// `c` of `implicit_calls` for `f` at `args` ([`Self::term_for`], the call arm). (2) The
+    /// root binds `c` by the fact `c = f(args)`, with no value of any binder `args` read fixed,
+    /// and `f` is a function of its arguments (the checker never runs code; a kept body reads
+    /// its parameters and the definitions it keeps, nothing else, [`Self::callable`]); so at
+    /// every state of the scope, `c` and `f(args)` have one value, and the two terms one truth
+    /// value, whichever outcome. (3) So the states where the test has outcome `o` are those
+    /// where both terms do: narrowing the parent's scope by the first and the result by the
+    /// second keeps every such state (each `assume_case` keeps every state of its scope where
+    /// its term has outcome `o`), and so adds no error, and keeps what each narrowing gives,
+    /// since a narrowing only removes states. The first narrows the binders the arguments read
+    /// through the body ([`Ck::with_bound`] binds the lambdas), the second `c`, which the arm
+    /// reads by the same key. Where the test keeps no call the two terms are equal, and this
+    /// is `None`. Tests:
+    /// `l01_39_reduced_product::arm_test_through_call::a_call_with_no_summary_is_one_name_in_the_test_and_the_arm`.
+    ///
+    /// Complexity tradeoff: naive version, the arm's call read through the callee at the
+    /// arm, O(body) for each read. Used: each distinct callee and argument key is one name,
+    /// whose value is read once at the root (O(body)), and each `Assume` with a kept call
+    /// narrows twice, so a test costs at most twice what it did, and its arms' reads of the
+    /// call O(1) beyond the name's lookup. Bench:
+    /// `l01_39_reduced_product::arm_test_through_call::bench::tests_and_arms_calling_an_unsummed_callee_scale`.
+    fn shared_term(&mut self, e: &'a Expr) -> Option<Rc<Translated>> {
+        let t = self.term(e);
+        if t.calls.is_empty() {
+            return None;
+        }
+        let u = self.term_for(e, Reading::Shared);
+        (u.term != t.term).then_some(u)
+    }
+
     /// `e` as a kernel term ([`Translated`]) read for `reading`: its int and bool literals and
     /// the values its text shows ([`Ck::known`]), its `rat` literals ([`Ck::rat_literal`]), its
     /// names, its unary `-` and `!`, its integer operators, its comparisons, `&&` and `||`,
@@ -15876,9 +15925,13 @@ impl<'a> Ck<'_, 'a> {
     /// - a call of a definition whose body has a summary over its parameters
     ///   ([`Called::summed`]) is a name bound to the body under a `let` of each parameter to
     ///   its argument, one for each callee and equal arguments, wherever it is read;
-    /// - another call is kept, read as a test, on the test's spine: an operand of `!`, `&&`,
-    ///   `||`, a comparison, `+`, `-`, `*`, the left operand of `div` or `mod`, or an argument
-    ///   of a call kept, all the way from the root; elsewhere it is a name of its own.
+    /// - another call of a definition kept ([`Ck::callable`]) is kept, read as a test, on the
+    ///   test's spine: an operand of `!`, `&&`, `||`, a comparison, `+`, `-`, `*`, the left
+    ///   operand of `div` or `mod`, or an argument of a call kept, all the way from the root;
+    ///   elsewhere, and on the spine read as [`Reading::Shared`], it is a name bound to its
+    ///   value as a summed call is, so that a test and its arms share it
+    ///   (CHECK-implicit-call-limits, [`Ck::shared_term`]);
+    /// - any other call is a name of its own, by its span.
     ///
     /// Built children first on an explicit stack, once for `e` and `reading`.
     ///
@@ -15923,11 +15976,12 @@ impl<'a> Ck<'_, 'a> {
     /// of its arguments (affine on pieces), not a lattice transfer function); equal calls are
     /// found by
     /// hashing the callee and the
-    /// printed arguments, as hash-consing finds equal terms. Cost: a call is read through
-    /// its callee only where the body has a summary; with a body that calls another, or one
-    /// that is not affine on pieces (`n * n`), or arguments whose terms differ, each call is
-    /// read as before, and each distinct argument term costs the body once
-    /// (CHECK-implicit-call-limits). Tests:
+    /// printed arguments, as hash-consing finds equal terms. Cost: each distinct callee and
+    /// argument key costs the body once, read at the root; a body with no summary (one that
+    /// calls another, or is not affine on pieces, `n * n`) is a name too, so a test and its
+    /// arm share it, and its value is the body's forward image rather than a summary, so a
+    /// test of the name does not narrow the arguments through it: the call kept on the
+    /// test's spine does that (CHECK-implicit-call-limits, [`Ck::shared_term`]). Tests:
     /// `l01_38_presburger::bench::ladder::the_conditions_of_shared_divisors_scale`,
     /// `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale`,
     /// `l01_39_reduced_product::arm_test_through_call`.
@@ -16001,7 +16055,19 @@ impl<'a> Ck<'_, 'a> {
                             }
                             let_summary(&f.applied(args.clone()), &every, Lets::new()).is_some()
                         };
-                        match reading == Reading::Defined || !(f.summed || bound) {
+                        // A call of a body with no summary is kept as a call on a test's spine,
+                        // where the test narrows its arguments through the body, and is the
+                        // name every other read of it shares elsewhere, and in the test read as
+                        // [`Reading::Shared`] (CHECK-implicit-call-limits): so the arm of
+                        // `if g(n) >= 1 { popCount(g(n) - 1) }`, `g(n) = n * n - 3`, reads
+                        // the name the test narrowed.
+                        let kept = match reading {
+                            Reading::Defined => true,
+                            Reading::Bound => !(f.summed || bound),
+                            Reading::Test => spine && !f.summed,
+                            Reading::Shared | Reading::Operand => false,
+                        };
+                        match kept {
                             true => {
                                 parts.calls.push(id);
                                 Term::App(Shared::new(Term::Var(f.name.clone())), args)
@@ -16049,7 +16115,12 @@ impl<'a> Ck<'_, 'a> {
                                         b
                                     }
                                     None => {
-                                        let value = parts.since(m, f.applied(args.clone()));
+                                        let mut value = parts.since(m, f.applied(args.clone()));
+                                        // The body's own calls, so that a scope reading the
+                                        // value binds their lambdas ([`Ck::bind_called`]); a
+                                        // summed body has none.
+                                        value.calls.extend(f.calls.iter().copied());
+                                        zed_collections::sorted::sort_dedup(&mut value.calls);
                                         let (b, _) = self.implicit(x, value);
                                         let at = self.arms.implicit_calls.entry(key).or_default();
                                         at.push((args, read, b));
@@ -16176,7 +16247,9 @@ impl<'a> Ck<'_, 'a> {
                     curry: false,
                     ..
                 } if named.is_empty() => match self.callable(callee, positional.len()) {
-                    Some((_, f)) if defined || spine || f.summed => {
+                    // Every call of a definition it keeps is translated: kept as a call, or a
+                    // name bound to its value (the `ready` arm above).
+                    Some(_) => {
                         stack.push((x, true, spine, none));
                         stack.extend(positional.iter().rev().map(|a| (a, false, spine, none)));
                     }
