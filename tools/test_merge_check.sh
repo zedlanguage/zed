@@ -97,7 +97,7 @@ feat = { path = "../crates/feat" }\n\n[features]\nfull = []\nspec = []\n
 printf '#[cfg(test)]\n#[path = "../../../tests/src/seed.rs"]\nmod seed;\npub fn f() {}\n' >crates/a/src/lib.rs
 printf '//! b.\npub fn g() {\n    a::f()\n}\n' >crates/b/src/lib.rs
 echo '//! c.' >crates/c/src/lib.rs
-printf '//! t.\npub mod seed;\npub mod helper;\npub mod wrap;\nuse rootuse as _;\n' >tests/src/lib.rs
+printf '//! t.\npub mod helper;\npub mod seed;\npub mod wrap;\nuse rootuse as _;\n' >tests/src/lib.rs
 echo '//! The seed.' >tests/src/seed.rs
 printf '//! A step helper.\n// Not code: tool lnk feat.\nuse b as _;\n' >tests/src/helper.rs
 # A module imported as `_` is an unused import, which step 1a's clippy refuses.
@@ -426,6 +426,16 @@ check "a manifest that gives every package the workspace build's features passes
   "merge check: a manifest or Cargo.lock changed: every package, built alone, gets the features the workspace build gives it
 merge check: passed" \
   "$("$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a manifest|passed|FAILED)')"
+# Step 0d (FMT-main-eval-tag): a Rust file not as rustfmt writes it fails the check, which names
+# the file and runs no test; tools/check_fmt.sh's own control passed first.
+git checkout -q --detach base
+printf '//! c.\npub fn h()->i32{1}\n' >crates/c/src/lib.rs
+git commit -q -a -m "c: not formatted"
+check "a Rust file not as rustfmt writes it fails the check, named, before any test" \
+  "crates/c/src/lib.rs
+merge check: FAILED: tools/check_fmt.sh (above)
+1" "$(calls >/dev/null; "$check_script" --base base 2>&1 |
+  command grep -a -o -E 'crates/c/src/lib\.rs$|^merge check: FAILED.*'; echo "${PIPESTATUS[0]}"; calls)"
 git checkout -q --detach base
 echo "// changed" >>crates/c/src/lib.rs
 git commit -q -a -m "change c"
@@ -498,7 +508,7 @@ check "with no doc line changed, no doc check is sent, and the shares are told w
   "docs checked by: []
 docs checked by: [the merge check, which found no doc line changed and no linked name lost since origin/main]" \
   "$(STUB_DOCS_FAIL=1 docs_farm_run)"
-change_on_base crates/c/src/lib.rs 'pub fn n(v: &Vec<u8>) -> usize { v.len() }'
+change_on_base crates/c/src/lib.rs $'pub fn n(v: &Vec<u8>) -> usize {\n    v.len()\n}'
 check "a branch with a clippy warning is refused with exit 1, and its tests do not run" \
   "merge check: clippy -D warnings on: c
 #[allow(clippy::ptr_arg)]

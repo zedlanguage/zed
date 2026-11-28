@@ -40,6 +40,11 @@
 #     packages join a build, so if each package alone gets the workspace's features, so does any
 #     set of them. Cost: 27 runs of cargo tree, about 6 s (measured 2026-11-17). Skipped with
 #     --groups and --list;
+#  0d. runs tools/check_fmt.sh, `cargo fmt --all --check` after a control that must pass and
+#     fail, and fails if a Rust file is not as rustfmt writes it (FMT-main-eval-tag: with CI off,
+#     nothing ran the check, and two unformatted files reached main). On every check, here, before
+#     the VMs: rustfmt alone, no build, 11.3 s over the workspace. Not recorded. Skipped with
+#     --groups and --list;
 #  1. when a file under crates/<crate>/src changed: adds the group s_01f_import_graph to the
 #     tests below. It runs the import graph checker, `zed_tools::imports::run`, the function the
 #     binary `zed-tools --bin imports` calls, over the src of every crate with no KNOWN_CYCLES
@@ -70,7 +75,7 @@
 #     Steps 0b, 0, 0c and 1a run, in that order, in tools/merge_check_steps.sh, on one Colab VM
 #     through `tools/farm_run.sh --commands` (FARM-merge-check-clippy-selftests-remote), or here
 #     with MERGE_CHECK_FARM=local; this script decides which of them run. A change to that script
-#     runs step 0, as one to this script does;
+#     runs step 0, as one to this script or to tools/check_fmt.sh (step 0d) does;
 #  2. runs, with tools/run_tests.sh --only, every test group of every workspace package that
 #     depends on a changed package, directly or through others, and of the changed packages
 #     themselves. The packages and their dependencies come from `cargo metadata`; nothing is
@@ -249,6 +254,11 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   exit 1
 fi
 head=$(git rev-parse HEAD)
+# Step 0d (see the header). By this script's own directory, as merge_check_steps.sh is called, so
+# that the toy workspace of tools/test_merge_check.sh, which has no copy, runs it too.
+if [ -z "$groups_only$list" ]; then
+  "${BASH_SOURCE[0]%/*}/check_fmt.sh" || { echo "merge check: FAILED: tools/check_fmt.sh (above)" >&2; exit 1; }
+fi
 # The commit of the spec checkout the tests read, kept in the record (see "The record"); empty
 # when unknown. A toy checkout without tools/spec_groups.sh has none.
 spec_at=
@@ -260,7 +270,7 @@ echo "merge check: ${#changed[@]} files changed since $(git rev-parse --short "$
 [ ${#changed[@]} -gt 0 ] || exit 0
 selftest= rtself= farmself=
 for f in "${changed[@]}"; do
-  case $f in tools/merge_check.sh | tools/merge_check_steps.sh | tools/test_merge_check.sh | tools/run_tests.sh | tools/spec_groups.sh | tools/test_lib.sh) selftest=1 ;; esac
+  case $f in tools/merge_check.sh | tools/merge_check_steps.sh | tools/check_fmt.sh | tools/test_merge_check.sh | tools/run_tests.sh | tools/spec_groups.sh | tools/test_lib.sh) selftest=1 ;; esac
   # tools/lib.sh holds `warm`, which `tools/test_run_tests.sh warm` tests (FAIL-warm-step-drops-output).
   case $f in tools/run_tests.sh | tools/lib.sh | tools/test_run_tests.sh | tools/test_lib.sh) rtself=1 ;; esac
   case $f in tools/farm_run.sh | tools/test_farm_run.sh) farmself=1 ;; esac
