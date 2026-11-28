@@ -11499,18 +11499,24 @@ fn linked_to<'a>(rows: Vec<Con>, atoms: impl Iterator<Item = &'a Atom>) -> Vec<C
 }
 
 /// A row `a·x + rest >= 0` read as a bound on `x`: `a` above zero for a lower bound, below for an
-/// upper one.
-struct Side1 {
+/// upper one. Also read by `Conjuncts::forget` for the arms of a disjunction.
+pub(crate) struct Side1 {
     a: Int,
     rest: Lin,
     /// The row it comes from, so that the two sides of one equality are not combined.
-    row: usize,
+    pub(crate) row: usize,
 }
 
 impl Side1 {
     /// The bounds the row `c`, numbered `row`, puts on `x`, which it holds, pushed on `lows` and
     /// `highs`: one, or both for an equality.
-    fn push(c: &Con, x: &Atom, row: usize, lows: &mut Vec<Side1>, highs: &mut Vec<Side1>) {
+    pub(crate) fn push(
+        c: &Con,
+        x: &Atom,
+        row: usize,
+        lows: &mut Vec<Side1>,
+        highs: &mut Vec<Side1>,
+    ) {
         let a = c.lin.terms.get(x).expect("a row of the atom").clone();
         let mut rest = c.lin.clone();
         rest.terms.remove(x);
@@ -11542,7 +11548,7 @@ impl Side1 {
 
     /// The real shadow of the lower bound `self`, `a·x + r >= 0`, and the upper bound `hi`,
     /// `-b·x + s >= 0`: `b·r + a·s`, which is at least 0 where they have a real `x` between them.
-    fn combine(&self, hi: &Side1) -> Lin {
+    pub(crate) fn combine(&self, hi: &Side1) -> Lin {
         let b = -&hi.a;
         let mut terms = zedc_affine::scaled(&self.rest.terms, &b);
         zedc_affine::add_scaled(&mut terms, &hi.rest.terms, &self.a);

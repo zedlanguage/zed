@@ -560,8 +560,8 @@ fn bounded_hubs() -> Scope {
     ints(&all).assume(&hubs, true, &Premises::new())
 }
 
-/// Random seeds of [`wide`]; seed 2 leaves names unsettled and holds a star of two hubs, and
-/// one beside a conjunct of the two (all three in 18 of seeds 0 to 199).
+/// Random seeds of [`wide`]; seed 10 leaves names unsettled and holds a star of two hubs, and
+/// one beside a conjunct of the two (all three in 13 of seeds 0 to 119).
 mod a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product {
     use super::*;
 
@@ -683,9 +683,12 @@ mod a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product {
         }
     }
 
+    /// Seed 2 did this until a projection onto a name of a disjunction's arm kept the arms'
+    /// rows (PRECISION-forget-disjunction-arms); its leaves are settled at once since. Seed 10
+    /// holds all three before and after that change (with it, 13 of seeds 0 to 119).
     #[test]
-    fn seed_2_holds_a_star_of_two_related_hubs() {
-        let (stale, two, related, _) = run(&bounded_hubs(), [2], wide);
+    fn seed_10_holds_a_star_of_two_related_hubs() {
+        let (stale, two, related, _) = run(&bounded_hubs(), [10], wide);
         assert!(stale > 0, "the lazy scope settled every name at once");
         assert!(two > 0, "no state held a star of two hubs");
         assert!(related > 0, "no state held a star of two related hubs");
@@ -1846,14 +1849,19 @@ mod a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_prod
         run(&bounded_hubs(), [4520948814785025178], satellites);
     }
 
-    // Seed 14813679539726631198 of `satellites` (FAIL-lazy-satellites-seed-14813679539726631198,
-    // run seed 14813679539726631197, filed by b30-check): `n` settled apart, eager -3..=20 and
-    // lazy -3..=2 after the ninth step. Both are sound, as the concrete set is empty
-    // (`seed_14813679539726631198_has_no_point_after_its_ninth_step`); the eager scope is the
-    // looser, as `Conjuncts::forget` of the eighth step's rebound `a3` forgets each conjunct
-    // alone and keeps an arm that the other conjuncts rule out. Still red on aa28da140 (local
-    // job s1, 2026-11-28), so its test `run(&bounded_hubs(), [14813679539726631198],
-    // satellites)` joins this module with the fix, PRECISION-forget-disjunction-arms.
+    /// Seed 14813679539726631198 of [`satellites`]
+    /// (FAIL-lazy-satellites-seed-14813679539726631198, run seed 14813679539726631197, filed by
+    /// b30-check): `n` settled apart, eager -3..=20 and lazy -3..=2 after the ninth step. Both
+    /// are sound, as the concrete set is empty
+    /// ([`seed_14813679539726631198_has_no_point_after_its_ninth_step`]); the eager scope was
+    /// the looser, as `Conjuncts::forget` of the eighth step's rebound `a3` forgot each
+    /// conjunct alone and kept an arm that the other conjuncts rule out. Red on aa28da140
+    /// (local job s1, 2026-11-28); PRECISION-forget-disjunction-arms projects each arm under
+    /// the bounds on the name.
+    #[test]
+    fn seed_14813679539726631198() {
+        run(&bounded_hubs(), [14813679539726631198], satellites);
+    }
 
     /// Whether some integer point with this `n` meets the first eight steps of seed
     /// 14813679539726631198 (its trace, read by hand), and the ninth too when `ninth`: an

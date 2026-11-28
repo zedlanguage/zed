@@ -25,7 +25,7 @@ use imbl::shared_ptr::DefaultSharedPtr;
 use imbl::{GenericHashMap, OrdMap, OrdSet};
 use zed_kernel::digest::{Digest, TextState};
 
-use super::presburger::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
+use super::presburger::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared, Side1};
 use zedc_int::int::Int;
 
 /// The values of a set kept for each name, in a persistent map.
@@ -2215,10 +2215,60 @@ impl Conjuncts {
         }
     }
 
-    /// The conjunction with every conjunct that mentions `name` replaced by
-    /// [`Formula::forget`] of it, which says nothing of `name`: in time near the conjuncts
-    /// that mention it, but for the blocks, which are built again over the conjuncts linked
-    /// to them when one is not a leaf of its tree ([`Blocks::remove`]).
+    /// The conjunction with every conjunct that mentions `name` replaced by one that says
+    /// nothing of `name` and that the conjunct implies under the bounds on `name` among the
+    /// conjuncts: a disjunction by the disjunction of its arms each with `name` projected out
+    /// under those bounds (`forget_arm`), any other conjunct by [`Formula::forget`] of it. In
+    /// time near the conjuncts that mention it and the rows the arms make, but for the blocks,
+    /// which are built again over the conjuncts linked to them when one is not a leaf of its
+    /// tree ([`Blocks::remove`]).
+    ///
+    /// Before PRECISION-forget-disjunction-arms each arm too was read by [`Formula::forget`]
+    /// alone, so an arm that the bounds on `name` rule out stayed and said nothing: seed
+    /// 14813679539726631198 of l01_39's lazy satellites test kept the arm `a3 <= m - 4`
+    /// beside `a3 >= n - 1` and `m - n <= 1`, where the projection `m - n >= 3` of the arm
+    /// under the bound makes the scope empty, and its eager scope gave `n` the values
+    /// -3..=20 where every point has -3..=2.
+    ///
+    /// Proof that the result is sound: every point of the conjunction, read without `name`,
+    /// is a point of the result. Write `C` for the bounds on `x` (`name`) among the conjuncts
+    /// (`bound_on`). A conjunct `g` that is not a disjunction implies [`Formula::forget`] of
+    /// it, which mentions no `x` (its doc). A disjunction `g = A_1 || ... || A_k` with `C`
+    /// implies `A'_1 || ... || A'_k`, the arms of `forget_arm`, since `g && C` is
+    /// `(A_1 && C) || ... || (A_k && C)` and each `A_i && C` implies `A'_i` (its proof). So
+    /// the conjunction, which holds `C` and each `g`, implies each replacement, and none
+    /// mentions `x`: every point gives the result's formula `true` at any value of `x`.
+    ///
+    /// Proof that the result is exact for one disjunction, up to the shadow of `C` alone.
+    /// Suppose the conjuncts that mention `x` are `C` and one disjunction `g`, no product atom
+    /// holds `x` in them, and each arm `A_i` is a conjunction of rows on `x` and of parts
+    /// without `x`, every equality on `x` in `C` and `A_i` has the coefficient 1 or -1 on it,
+    /// and each pair of a lower and an upper bound on `x` among them has the integer points of
+    /// its real shadow in its dark shadow (`Side1::dark_is_real`, which holds where either
+    /// coefficient is 1). Write `R` for the conjuncts without `x` and `Π_C` for the real
+    /// shadows of the pairs of bounds both in `C`. Then `∃x. (R && C && g)` is
+    /// `R && ((∃x. (C && A_1)) || ... || (∃x. (C && A_k)))`, as `R` says nothing of `x` and
+    /// `∃` distributes over `||` (the law the literature entry of verification/bib.md,
+    /// "Projecting a name out of conjuncts with disjunctions", cites no paper for). And
+    /// `∃x. (C && A_i)` is `Π_C && A'_i` (the proof at `forget_arm`). So
+    /// `∃x. (conjunction) = R && Π_C && (A'_1 || ... || A'_k)`, the result with `Π_C`: the
+    /// result is the exact projection but for `Π_C`, the shadow of the bounds alone, which
+    /// this never made, as before; the scope settles the names those bounds relate before it
+    /// forgets one (`Scope::restore_implied`, `Scope::settle` of zedc-preimage). With two or
+    /// more disjunctions on `x` each is replaced so, which is sound but not exact, as `∃`
+    /// does not distribute over `&&`; the exact form is the product of their arms (row
+    /// PRECISION-forget-disjunctions-exact).
+    // Complexity tradeoff: naive version, `Formula::forget` of each arm alone, O(the arm),
+    // which keeps an arm the bounds on `x` rule out (the seed above). Used: each arm's rows on
+    // `x` combined with each other and with `C`, the pairs within `C` left out: O(l·(k + l))
+    // rows for an arm of `l` rows on `x` and `k` bounds in `C`, each of the terms of its pair,
+    // so O(Σ over the arms of l·(k + l)·t) for terms of `t` atoms. Why not the pairs within
+    // `C`: they are the same for every arm, `k²/4` rows at most, and `x` with many bounds is
+    // a hub of the scope (`Conjuncts::star`), whose bounds the scope settles in near-linear
+    // time rather than combining them in pairs. Trigger: a disjunction whose arms hold rows
+    // on `x`. Test: `conjuncts::tests::forgetting_a_name_projects_each_arm_under_its_bounds`
+    // and the scaling test beside it, which doubles the arms and the bounds; seed
+    // 14813679539726631198 of l01_39's lazy satellites test.
     pub fn forget(&mut self, name: &Arc<str>) {
         let gs: Vec<Arc<Formula>> = self.mentioning(name).cloned().collect();
         let mut p = Pending::default();
@@ -2227,15 +2277,138 @@ impl Conjuncts {
         }
         self.flush(p);
         self.unplace(&gs);
+        let x = Atom::Sym(name.clone());
+        // The bounds `C` on `x`, read once for every arm.
+        let mut bounds = (Vec::new(), Vec::new());
+        for c in gs.iter().filter_map(|g| bound_on(g, &x, name)) {
+            Side1::push(c, &x, usize::MAX, &mut bounds.0, &mut bounds.1);
+        }
         let mut held = Held::new();
         let mut p = Pending::default();
-        for g in gs {
-            self.and_held(g.forget(name), &mut held, &mut p);
+        for g in &gs {
+            let f = match &**g {
+                Formula::Or(arms) => {
+                    let arms = arms.iter().map(|a| forget_arm(a, &x, name, &bounds));
+                    g.rebuild(arms.collect())
+                }
+                _ => g.forget(name),
+            };
+            self.and_held(f, &mut held, &mut p);
         }
         self.flush(p);
         let rest: Vec<Arc<Formula>> = held.into_values().flatten().collect();
         self.unplace(&rest);
     }
+}
+
+/// Whether the constraint `c` mentions `name` in a product atom.
+fn in_product(c: &Con, name: &Arc<str>) -> bool {
+    (c.lin.terms.keys()).any(|a| matches!(a, Atom::Product(p, q) if p.is(name) || q.is(name)))
+}
+
+/// The conjunct `g` as a bound on `x`, the atom of `name`, for [`Conjuncts::forget`]: a
+/// constraint that holds `x` and no product of it. (A negated `>=` constraint is a
+/// constraint already, as [`Conjuncts::and`] keeps it.)
+fn bound_on<'g>(g: &'g Formula, x: &Atom, name: &Arc<str>) -> Option<&'g Con> {
+    match g {
+        Formula::Con(c) if c.lin.terms.contains_key(x) && !in_product(c, name) => Some(c),
+        _ => None,
+    }
+}
+
+/// The part `f` of an arm as a row on `x`, the atom of `name`: a constraint that holds `x` and
+/// no product of it, or the negation of a `>=` one, `!(t >= 0)`, which on the integers is
+/// `-t - 1 >= 0`.
+fn row_on(f: &Formula, x: &Atom, name: &Arc<str>) -> Option<Con> {
+    match f {
+        Formula::Not(n) => match &**n {
+            Formula::Con(c) if c.rel == Rel::Ge && bound_on(n, x, name).is_some() => Some(Con {
+                lin: Lin::constant(-1).minus(&c.lin),
+                rel: Rel::Ge,
+            }),
+            _ => None,
+        },
+        _ => bound_on(f, x, name).cloned(),
+    }
+}
+
+/// The arm `arm` of a disjunction with `x`, the atom of `name`, projected out under the bounds
+/// `C` on it, whose lower and upper sides are `c`, for [`Conjuncts::forget`]: the arm's parts
+/// without a row on `x` each by [`Formula::forget`] of it (itself where it does not mention
+/// `name`), and the real shadow of each pair of a lower and an upper bound on `x` among the
+/// arm's rows on `x` ([`row_on`]) and `C`, but for the pairs of two bounds of `C` and the two
+/// sides of one equality; `false` where a shadow without atoms is false. An arm with no row on
+/// `x` is [`Formula::forget`] of it, as before. A conjunction held in more than one place in the arm
+/// is read once, as [`Conjuncts::and`] reads one.
+///
+/// Proof that `arm && C` implies the result, which mentions no `x`. A part without a row
+/// on `x` implies its `forget`, which mentions no `x` (its doc). For a lower bound
+/// `a·x + r >= 0`, `a > 0`, and an upper bound `-b·x + s >= 0`, `b > 0`, that both hold,
+/// `b·(a·x + r) + a·(-b·x + s) = b·r + a·s >= 0`, a sum of nonnegative multiples of rows that
+/// hold (`Side1::combine`), with no `x`; a shadow with no atoms is then a constant at least 0,
+/// so one below 0 shows that no point has the pair. No product atom of `x` is in a row read.
+///
+/// Proof that, under the conditions of exactness at [`Conjuncts::forget`], `∃x. (arm && C)`
+/// is the result with `Π_C`, the shadows of the pairs within `C`. Write `Q` for the parts
+/// without `x` and `B` for the rows on `x` of the arm and `C`; `Q` says nothing
+/// of `x`, so `∃x. (Q && B)` is `Q && ∃x. B`. Each lower bound `a_j·x + r_j >= 0` of `B` is
+/// `x >= L_j`, `L_j = ⌈-r_j / a_j⌉`, and each upper `-b_k·x + s_k >= 0` is `x <= U_k`, `U_k =
+/// ⌊s_k / b_k⌋`, at a point of the other atoms; an equality with coefficient 1 or -1 is one of
+/// each, `L = U`, and so needs no divisibility. An integer `x` lies in every `[L_j, U_k]` iff
+/// `max_j L_j <= min_k U_k`, as the ends are integers, iff `L_j <= U_k` for every pair. For a
+/// pair, `L_j <= U_k` is the integer shadow of the two, which lies between the dark and the
+/// real shadow (Pugh 1991/1992, sec. 2.3.2; zedc-affine `shadow`'s module note), so where those
+/// two have the same integer points it is the real shadow `b_k·r_j + a_j·s_k >= 0`. Then
+/// `∃x. B` is the real shadows of all pairs: those within `C`, `Π_C`, and those this
+/// makes. With no lower or no upper bound there is no pair and an integer `x` exists, which
+/// the empty conjunction says. The two sides of one equality make no pair, and need none: with
+/// coefficient 1 or -1 their shadow is `0 >= 0`.
+fn forget_arm(arm: &Formula, x: &Atom, name: &Arc<str>, c: &(Vec<Side1>, Vec<Side1>)) -> Formula {
+    let mut rows: Vec<Con> = Vec::new();
+    let mut parts: Vec<Formula> = Vec::new();
+    let mut seen: HashSet<Id> = HashSet::new();
+    let mut stack = vec![arm];
+    while let Some(f) = stack.pop() {
+        if let Formula::And(fs) = f {
+            if seen.insert(Id::any(f)) {
+                stack.extend(fs.iter().rev());
+            }
+        } else if let Some(c) = row_on(f, x, name) {
+            rows.push(c);
+        } else {
+            parts.push(f.forget(name));
+        }
+    }
+    if rows.is_empty() {
+        return arm.forget(name);
+    }
+    let (mut lows, mut highs) = (Vec::new(), Vec::new());
+    for (i, r) in rows.iter().enumerate() {
+        Side1::push(r, x, i, &mut lows, &mut highs);
+    }
+    // The pairs with a bound of the arm: its lower bounds with every upper bound, and the
+    // lower bounds of `C` with its upper bounds, O(l·(k + l)), never the pairs within `C`
+    // (numbered `usize::MAX`, so no row of the arm shares a number with one).
+    let pairs = (lows.iter())
+        .flat_map(|lo| c.1.iter().chain(&highs).map(move |hi| (lo, hi)))
+        .chain(
+            c.0.iter()
+                .flat_map(|lo| highs.iter().map(move |hi| (lo, hi))),
+        );
+    for (lo, hi) in pairs {
+        if lo.row == hi.row {
+            continue;
+        }
+        let lin = lo.combine(hi);
+        if lin.terms.is_empty() {
+            if lin.constant.is_negative() {
+                return Formula::bottom();
+            }
+            continue;
+        }
+        parts.push(Formula::Con(Con { lin, rel: Rel::Ge }));
+    }
+    Formula::and(parts)
 }
 
 /// The equality constraints (`Rel::Eq`) of `rels` linked to `seeds` by chains of equalities
@@ -4705,6 +4878,174 @@ mod tests {
             l.plus(&Lin::atom(Atom::Sym((*n).into())).times(*k))
         });
         Formula::Con(Con { lin, rel })
+    }
+
+    /// [`row`] with the terms of coefficient 0 left out.
+    fn con(terms: &[(&str, i64)], c: i64, rel: Rel) -> Formula {
+        let terms: Vec<(&str, i64)> = terms.iter().copied().filter(|t| t.1 != 0).collect();
+        row(&terms, c, rel)
+    }
+
+    /// Whether `f` holds at the values `at`.
+    fn holds_at(f: &Formula, at: &[(&str, i64)]) -> bool {
+        let m: Model = (at.iter())
+            .map(|(n, v)| (Atom::Sym((*n).into()), Int::from(*v)))
+            .collect();
+        f.holds(&m)
+    }
+
+    /// A random row on `x`, `y` and `z` with `x`'s coefficient drawn from `xs` (0 among them
+    /// for a row that may leave `x` out), the others in -2..=2 and the constant in -3..=3; an
+    /// equality one time in `eq`, 0 for none.
+    fn random_row(rng: &mut zed_hash::SplitMix64, xs: &[i64], eq: usize) -> Formula {
+        let a = xs[rng.below(xs.len())];
+        let (b, c, k) = (rng.int(-2, 2), rng.int(-2, 2), rng.int(-3, 3));
+        let rel = if eq > 0 && rng.below(eq) == 0 {
+            Rel::Eq
+        } else {
+            Rel::Ge
+        };
+        con(&[("x", a), ("y", b), ("z", c)], k, rel)
+    }
+
+    /// `Conjuncts::forget` projects each arm of a disjunction under the bounds on the name
+    /// (PRECISION-forget-disjunction-arms). First the case of seed 14813679539726631198 of
+    /// l01_39's lazy satellites test, where the arm `a <= m - 4` under `a >= n - 1` is
+    /// `m - n >= 3`, which `m - n <= 1` rules out; `Formula::forget` of the arm alone gave
+    /// `true` and the disjunction said nothing. Then random conjunctions over `x`, `y` and
+    /// `z` in a box, checked at every point of the box: with one disjunction on `x` and
+    /// coefficients 1 and -1 on it, `∃x` of the conjunction is the result with the bounds on
+    /// `x` met (the exactness proved at `Conjuncts::forget`); with two disjunctions,
+    /// coefficients up to 3 and equalities, every point of the conjunction is one of the
+    /// result (soundness). Reading each arm alone, as before, fails the first assertion; the
+    /// exact check fails at the first case with an arm the bounds rule out.
+    #[test]
+    fn forgetting_a_name_projects_each_arm_under_its_bounds() {
+        let a: Arc<str> = "a".into();
+        let mut c = Conjuncts::default();
+        c.and(con(&[("a", 1), ("n", -1)], 1, Rel::Ge));
+        c.and(con(&[("n", 1), ("m", -1)], 1, Rel::Ge));
+        c.and(Formula::or(vec![
+            con(&[("m", 1), ("a", -1)], -4, Rel::Ge),
+            con(&[("n", 1)], -5, Rel::Ge),
+        ]));
+        c.forget(&a);
+        let f = c.formula();
+        assert!(!f.atoms().contains(&Atom::Sym(a.clone())), "{f:?}");
+        assert!(!holds_at(&f, &[("n", 0), ("m", 1)]), "{f:?}");
+        assert!(holds_at(&f, &[("n", 5), ("m", 6)]), "{f:?}");
+        let x: Arc<str> = "x".into();
+        // `y` and `z` in -R..=R; the bounds on `x` hold `-W <= x <= W`, so `∃x` is a search of
+        // -W..=W: no other row puts `x` past 2·2·R + 3 = 15, nor an equality outside W.
+        const R: i64 = 3;
+        const W: i64 = 40;
+        let mut rng = zed_hash::SplitMix64::new(20261128);
+        for case in 0..400 {
+            let exact = case % 2 == 0;
+            let xs: &[i64] = if exact { &[1, -1] } else { &[1, -1, 2, -3] };
+            let mut c = Conjuncts::default();
+            for n in ["y", "z"] {
+                c.and(con(&[(n, 1)], R, Rel::Ge));
+                c.and(con(&[(n, -1)], R, Rel::Ge));
+            }
+            let mut bounds = vec![con(&[("x", 1)], W, Rel::Ge), con(&[("x", -1)], W, Rel::Ge)];
+            for _ in 0..rng.below(4) {
+                bounds.push(random_row(&mut rng, xs, if exact { 4 } else { 3 }));
+            }
+            for g in &bounds {
+                c.and(g.clone());
+            }
+            for _ in 0..if exact { 1 } else { 2 } {
+                let arms = (0..1 + rng.below(3))
+                    .map(|_| {
+                        let parts = (0..1 + rng.below(3)).map(|_| match rng.below(4) {
+                            0 => random_row(&mut rng, &[0], 0),
+                            1 => Formula::negate(random_row(&mut rng, xs, 0)),
+                            _ => random_row(&mut rng, xs, if exact { 4 } else { 3 }),
+                        });
+                        Formula::and(parts.collect())
+                    })
+                    .collect();
+                c.and(Formula::or(arms));
+            }
+            let before = c.formula();
+            // The bounds `C` as the conjunction keeps them: a disjunction of one arm, or one
+            // an earlier conjunct decides, is among them, and its rows too are in `Π_C`.
+            let gs = match &before {
+                Formula::And(gs) => gs.to_vec(),
+                g => vec![g.clone()],
+            };
+            let gs = gs.into_iter().filter(|g| !matches!(g, Formula::Or(_)));
+            let bounds = Formula::and(gs.collect());
+            c.forget(&x);
+            let after = c.formula();
+            assert!(!after.atoms().contains(&Atom::Sym(x.clone())), "{after:?}");
+            for y in -R..=R {
+                for z in -R..=R {
+                    let some = |f: &Formula| {
+                        (-W..=W).any(|v| holds_at(f, &[("x", v), ("y", y), ("z", z)]))
+                    };
+                    let projected = some(&before);
+                    let result = holds_at(&after, &[("y", y), ("z", z)]);
+                    let at = format!("case {case}, y = {y}, z = {z}: {before:?} to {after:?}");
+                    assert!(!projected || result, "a point lost, {at}");
+                    if exact {
+                        assert_eq!(projected, result && some(&bounds), "not exact, {at}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The benchmarks of [`Conjuncts::forget`] under a disjunction: tools/run_tests.sh runs
+    /// each alone (`bench::`), so its meter counts instructions.
+    mod bench {
+        use super::*;
+        use crate::scaling;
+
+        /// `x` between `bounds / 2` names below it and as many above, and a disjunction of
+        /// `arms` arms, each `x <= w_j && v_j >= 0`: forgetting `x` makes `bounds / 2` rows in
+        /// each arm, `arms · bounds / 2` in all.
+        fn input(arms: usize, bounds: usize) -> Conjuncts {
+            let mut c = Conjuncts::default();
+            for i in 0..bounds / 2 {
+                c.and(con(&[("x", 1), (&format!("y{i}"), -1)], 0, Rel::Ge));
+                c.and(con(&[("x", -1), (&format!("z{i}"), 1)], 0, Rel::Ge));
+            }
+            c.and(Formula::or(
+                (0..arms)
+                    .map(|j| {
+                        Formula::and(vec![
+                            con(&[("x", -1), (&format!("w{j}"), 1)], 0, Rel::Ge),
+                            con(&[(&format!("v{j}"), 1)], 0, Rel::Ge),
+                        ])
+                    })
+                    .collect(),
+            ));
+            c
+        }
+
+        fn forget_scales(what: &str, n: usize, make: fn(usize) -> Conjuncts) {
+            let inputs = scaling::inputs(n, make);
+            let x: Arc<str> = "x".into();
+            scaling::check_order(what, n, 1, |n| {
+                let mut c = inputs[&n].clone();
+                c.forget(&x);
+                assert!(!c.is_bottom());
+            });
+        }
+
+        /// The arms doubled thrice at four bounds on `x`: O(arms) rows made.
+        #[test]
+        fn forgetting_a_name_scales_with_the_arms() {
+            forget_scales("forget x under n arms", 2000, |n| input(n, 4));
+        }
+
+        /// The bounds on `x` doubled thrice at four arms: O(bounds) rows made.
+        #[test]
+        fn forgetting_a_name_scales_with_the_bounds() {
+            forget_scales("forget x under n bounds", 2000, |n| input(4, n));
+        }
     }
 
     /// `Rows::ends` gives the conjuncts that are no rows and, of each key, exactly the rows of

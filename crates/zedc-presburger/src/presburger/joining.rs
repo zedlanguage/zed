@@ -386,7 +386,7 @@ impl Formula {
     /// [`Formula::and_keeping`] or [`Formula::or_keeping`]; a constraint has no parts and is
     /// copied. A part in the place of a conjunction kept in a conjunction, or of a disjunction
     /// kept in a disjunction ([`Formula::kept`]), is kept whole.
-    pub(super) fn rebuild(&self, mut parts: Vec<Formula>) -> Formula {
+    pub(crate) fn rebuild(&self, mut parts: Vec<Formula>) -> Formula {
         match self {
             Formula::Con(c) => Formula::Con(c.clone()),
             Formula::Holes(_) => self.clone(),
