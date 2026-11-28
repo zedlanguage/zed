@@ -385,6 +385,54 @@ fn decide_on_copies_of_a_cycle_turned_one_way_scales() {
     });
 }
 
+/// Disjoint one-way cycles as in [`copies_of_a_one_way_cycle`], of lengths 3, 4, 5 and so on
+/// while they fit in `total` variables, the rest added to the longest, so no two have one length;
+/// each variable at most `top`. Cycle `p`'s variables are `d{p}_{i}`.
+fn cycles_of_distinct_lengths(total: usize, top: i64) -> Formula {
+    let mut lens = Vec::new();
+    let mut sum = 0;
+    while sum + lens.len() + 3 <= total {
+        lens.push(lens.len() + 3);
+        sum += lens.len() + 2;
+    }
+    *lens.last_mut().expect("total is at least 3") += total - sum;
+    let mut fs = Vec::new();
+    for (p, &len) in lens.iter().enumerate() {
+        let v = |i: usize| Lin::atom(Atom::Sym(format!("d{p}_{}", i % len).into()));
+        for i in 0..len {
+            fs.push(Formula::Con(Con::ge(
+                &v(i + 1).times(3),
+                &v(i).plus(&Lin::constant(10)),
+            )));
+            fs.push(Formula::Con(Con::ge(&Lin::constant(top), &v(i))));
+        }
+    }
+    Formula::and(fs)
+}
+
+/// PERF-tie-rekey-count: `decide` on one-way cycles of distinct lengths, 900 and 7200 variables
+/// in all (40 cycles, and 117). Every variable has one row in, one row out and its cap, so all
+/// tie and refining the rows by their colors (`System::rekey`) cannot tell two cycles apart, yet
+/// no symmetry maps a cycle onto one of another length: unlike the copies above, a tie between
+/// cycles is not settled by a swap. A rekey of the whole system, O(N log N), once per cycle
+/// would make the run O(√N · N log N), about 23 times the work at 8 times the variables.
+/// Measured 2026-11-28: 10.0M and 80.3M instructions, 8.01 times the work, so the rekeys do not
+/// grow with the number of cycles here. How many rekeys ran was not counted.
+#[test]
+fn decide_on_cycles_of_distinct_lengths_scales() {
+    let n = 900;
+    assert_eq!(decide(&cycles_of_distinct_lengths(n, 4)), Ok(false));
+    let (small, large) = (
+        cycles_of_distinct_lengths(n, 5),
+        cycles_of_distinct_lengths(n * scaling::FACTOR, 5),
+    );
+    assert_eq!((decide(&small), decide(&large)), (Ok(true), Ok(true)));
+    scaling::check("decide on one-way cycles of distinct lengths", n, |m| {
+        let f = if m == n { &small } else { &large };
+        let _ = std::hint::black_box(decide(f));
+    });
+}
+
 /// [`disjuncts_a_solve_refuses`] with `k` rows more in the disjunction's group,
 /// `v0 - 20 <= w_i <= v0 + 20`: with them `solve` answers the first disjunct `Alone::point`
 /// tries, so the group of `O(k)` rows is solved once, not `k` times

@@ -1,15 +1,16 @@
 //! Seeded random small formulas over `x` and `y` in the box -5..=5 (PRES-conjunct-one-pass): two
 //! to four rows of two terms, and one time in three a disjunction of two rows. Each such formula
-//! that the propagation of `forced` does not settle passes through the three reads of its
-//! top-level conjuncts in `decide_written`: `may_start` (in `forced`), `OneRow::of` and
-//! `row_sums::read`. The benchmark `bench::random_conjuncts` decides the first n and 8n formulas
-//! of [`SEED`] and prints their instructions, the measure the row asks for; the test here checks
-//! the answers to the same formulas against every point of the box.
+//! that the propagation of `forced` does not settle passes through two reads of its top-level
+//! conjuncts in `decide_written`, `OneRow::of` and `row_sums::read`, and a projection of it
+//! through three, `may_start` (in `forced::empty`) first. The benchmarks
+//! `bench::random_conjuncts` decide and project the first n and 8n formulas of [`SEED`] and print
+//! their instructions, the measure the row asks for; the tests here check the answers to the
+//! same formulas against every point of the box.
 
 use std::sync::Arc;
 
 use zed_tests::instances::Rng;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, decide};
+use zedc::store::presburger::{Atom, Con, Formula, Lin, decide, project_each};
 
 /// The fixed seed of the formulas, so every run measures the same ones.
 pub(crate) const SEED: u64 = 0x5EED_0777;
@@ -106,8 +107,12 @@ pub(crate) fn cases(n: usize) -> Vec<Case> {
     (0..n).map(|_| Case::random(&mut rng)).collect()
 }
 
+fn sym(n: &str) -> Atom {
+    Atom::Sym(Arc::from(n))
+}
+
 fn var(n: &str) -> Lin {
-    Lin::atom(Atom::Sym(Arc::from(n)))
+    Lin::atom(sym(n))
 }
 
 /// `decide` on the first 400 formulas of the benchmark's seed gives the answer read off the 121
@@ -126,4 +131,26 @@ fn the_families_of_the_benchmarks_are_answered_at_small_sizes() {
         with_point > 0 && with_point < cases.len(),
         "{with_point} of 400 have a point"
     );
+}
+
+/// `project_each` onto `x` and `y` of the first 400 formulas of the benchmark's seed gives, for
+/// each, the values read off the 121 points of the box, with no refusal.
+#[test]
+fn the_projections_of_the_benchmarks_are_the_values_of_the_box_at_small_sizes() {
+    for (i, c) in cases(400).iter().enumerate() {
+        let (sets, _) = project_each(&c.formula(), &[sym("x"), sym("y")])
+            .unwrap_or_else(|e| panic!("case {i}: {c:?}: refused: {e:?}"));
+        for (k, set) in sets.into_iter().enumerate() {
+            let set = set.unwrap_or_else(|e| panic!("case {i}: {c:?}: refused: {e:?}"));
+            for v in LO - 1..=HI + 1 {
+                let want = (LO..=HI).contains(&v)
+                    && (LO..=HI).any(|w| if k == 0 { c.holds(v, w) } else { c.holds(w, v) });
+                assert_eq!(
+                    set.contains(v),
+                    want,
+                    "case {i}: {c:?}: value {v} of symbol {k}"
+                );
+            }
+        }
+    }
 }

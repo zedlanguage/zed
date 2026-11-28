@@ -39155,6 +39155,141 @@ mod r5_hull_tests {
         assert_eq!(has_point(base_parts(partial.clone(), 2)), Ok(true));
         assert_eq!(has_point(base_parts(partial, 1)), Ok(false));
     }
+
+    /// A guarded reflection chain in the shape of PRES-hull-random-refusals: `i` in `-r..=r`,
+    /// `q0 = i`, and at step `j` with `(g, h, k)` the value is kept when `i <= g` and becomes
+    /// `k - q` when `i >= h` (both when `h <= i <= g`), ending at `q_n = target`.
+    fn reflection_chain(steps: &[(i128, i128, i128)], r: i128, target: i128) -> Formula {
+        let n = steps.len();
+        let (i, q0) = (var("i"), var("q0"));
+        let c = Lin::constant;
+        let q = |j: usize, twin: bool| {
+            if j == 0 {
+                q0.clone()
+            } else {
+                var(&format!("q{j}_{twin}"))
+            }
+        };
+        let con = Formula::Con;
+        let and = |v| Formula::And(Shared::new(v));
+        let mut fs = vec![
+            con(Con::ge(&i, &c(-r))),
+            con(Con::ge(&c(r), &i)),
+            con(Con::eq(&q0, &i)),
+            con(Con::eq(&q(n, false), &c(target))),
+        ];
+        for (j, &(g, h, k)) in steps.iter().enumerate() {
+            let j = j + 1;
+            for twin in [false, true].into_iter().take(if j == n { 1 } else { 2 }) {
+                fs.push(Formula::Or(Shared::new(vec![
+                    and(vec![
+                        con(Con::ge(&c(g), &i)),
+                        con(Con::eq(&q(j, twin), &q(j - 1, false))),
+                    ]),
+                    and(vec![
+                        con(Con::ge(&i, &c(h))),
+                        con(Con::eq(&q(j, twin).plus(&q(j - 1, true)), &c(k))),
+                    ]),
+                ])));
+            }
+        }
+        and(fs)
+    }
+
+    /// The values the chain reaches, by walking the set of values step by step for each `i`.
+    /// This is also the candidate exact method for PRES-hull-random-refusals: per guard cell
+    /// (the guards read only `i`, so each step's arms are fixed within a cell) the set after
+    /// step `j` is `S` (kept), `k - S` (reflected) or their union. With `|k| <= K` every value
+    /// stays within `|i| + j·K` in absolute value (`|k - v| <= K + |v|`), so a set holds at most
+    /// `2(|i| + nK) + 1` values and the walk costs O(n·(|i| + nK)) per cell and target-free (all
+    /// targets at once), O(n²) for the test family's K = 4 at fixed `i`. That is over n log n;
+    /// see the reduction below for why no exact method is expected to be n log n in the binary
+    /// size, and LIT-hull-random-refusals for the dense-subset-sum lead for small K.
+    fn steps_reach(steps: &[(i128, i128, i128)], r: i128) -> BTreeSet<i128> {
+        let mut reach = std::collections::BTreeSet::new();
+        for i in -r..=r {
+            let mut values = std::collections::BTreeSet::from([i]);
+            for &(g, h, k) in steps {
+                let mut next = std::collections::BTreeSet::new();
+                for &v in &values {
+                    if i <= g {
+                        next.insert(v);
+                    }
+                    if i >= h {
+                        next.insert(k - v);
+                    }
+                }
+                values = next;
+            }
+            reach.extend(values);
+        }
+        reach
+    }
+
+    /// Subset Sum reduces to the chain's target question (PRES-hull-random-refusals,
+    /// LIT-hull-random-refusals). Derivation, checked by this test on the instances below:
+    /// 1. Take items `a_0..a_{m-1} >= 0` and targets `0 <= t <= T`. Let `A = Σ a_p`,
+    ///    `M = T + A + 1`, `B = M` (the test takes `T = A + 1`). Set `r = 0` (so `i = 0`) and every guard `g = h = 0`, so both arms hold at
+    ///    every step: each step independently keeps `v` or replaces it by `k - v`.
+    /// 2. For item `p` add two steps with `k = B + p·M` and `k = B + p·M + a_p`. The 2m constants
+    ///    increase strictly along the chain (`a_p < M`).
+    /// 3. Reflecting at constants `c_1 < c_2 < … < c_s` (the chosen steps, in chain order) from
+    ///    `v = 0` gives `c_s - c_{s-1} + c_{s-2} - …`, by induction on `s` (`k - v` at each).
+    /// 4. `s` odd: the value is `c_1 + Σ (c_{2l+1} - c_{2l})`, each bracket positive, so it is at
+    ///    least `c_1 >= B > t`.
+    /// 5. `s` even: the value is `Σ (c_{2l} - c_{2l-1})`, each bracket positive. A bracket whose
+    ///    two constants come from different items is at least `M - max a_p > t`
+    ///    (`(p+1)M - (pM + a_p)`), so a value equal to `t` uses only same-item brackets
+    ///    `(B + pM + a_p) - (B + pM) = a_p`, and the value is `Σ_{p in P} a_p` for a set `P`.
+    /// 6. Conversely every subset `P` is reached by reflecting at both steps of each `p in P`.
+    /// 7. So `t` is reached iff some subset of the items sums to `t`, with 2m steps and constants
+    ///    of O(log(m·(t + A))) bits: deciding the chain's target is NP-hard in the binary size
+    ///    (Subset Sum is NP-hard, KarlBringmann2016near), so an exact method within n log n of
+    ///    the binary size would give a polynomial Subset Sum algorithm. NP-hard is not a stop:
+    ///    the walk in [`steps_reach`] is exact and pseudopolynomial.
+    /// The test checks steps 1-7 on two items against the walk for every target in 0..=A+1, and
+    /// that `decide` is never wrong on them (a refusal is counted and printed, not accepted as
+    /// an answer).
+    #[test]
+    fn subset_sum_reduces_to_the_reflection_chain_target() {
+        for items in [&[3i128, 5][..], &[2, 7, 11][..]] {
+            let a: i128 = items.iter().sum();
+            let m = (a + 1) + a + 1;
+            let b = m;
+            let steps: Vec<_> = items
+                .iter()
+                .enumerate()
+                .flat_map(|(p, &ap)| {
+                    let base = b + p as i128 * m;
+                    [(0, 0, base), (0, 0, base + ap)]
+                })
+                .collect();
+            let reach = steps_reach(&steps, 0);
+            let mut refused = 0;
+            for t in 0..=a + 1 {
+                let subset = (0..1u32 << items.len()).any(|s| {
+                    (0..items.len())
+                        .filter(|&p| s >> p & 1 == 1)
+                        .map(|p| items[p])
+                        .sum::<i128>()
+                        == t
+                });
+                assert_eq!(
+                    reach.contains(&t),
+                    subset,
+                    "items {items:?} target {t}: walk vs subset sum"
+                );
+                match decide(&reflection_chain(&steps, 0, t)) {
+                    Ok(got) => assert_eq!(got, subset, "items {items:?} target {t}: decide"),
+                    Err(_) => refused += 1,
+                }
+            }
+            eprintln!(
+                "subset sum chain {items:?}: targets 0..={} refused {refused}",
+                a + 1
+            );
+        }
+    }
 }
 #[cfg(test)]
 mod r5_guard_input_tests {
