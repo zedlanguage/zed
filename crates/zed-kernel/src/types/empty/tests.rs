@@ -3850,7 +3850,10 @@ fn the_empty_tuple_is_shared_by_the_carrier_test() {
     for t in [Type::top(), &Type::top() - &Type::int()] {
         assert!(!(&t & &unit).is_empty(), "the meet holds `()`");
         for ts in [[t.clone(), unit.clone()], [unit.clone(), t.clone()]] {
-            assert!(!disjoint_top_carriers_depth0(&ts), "depth 0, {ts:?}");
+            assert!(
+                !(disjoint_outside_tuples(&ts) && no_shared_tuple_length(&ts)),
+                "depth 0, {ts:?}"
+            );
             assert!(!disjoint_top_carriers(&ts), "{ts:?}");
         }
     }

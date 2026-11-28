@@ -17464,16 +17464,35 @@ fn flat_part(t: &Type) -> Option<Type> {
         if f0.is_leaf() != Some(false) {
             q.tuples.lens.insert(0, f0);
         }
-        q.atoms = p.atoms.clone();
-        for name in p.atoms.payloads().iter() {
-            let bare = p.atoms.get(name).bare;
-            q.atoms.set(
-                name,
-                super::AtomPart {
-                    bare,
-                    payload: Type::empty(),
-                },
-            );
+        // The flat atoms are the bare names, each listed with its bare atom alone: a name
+        // listed only bare keeps its part, a payload name that is bare loses its payload, and
+        // one that is not becomes the part of an unlisted name and is unlisted (`Atoms::set`).
+        // Built either way, by changing the `P` payload names of a copy, O(P log n), or by
+        // listing the `b` bare names in an empty map, O(b log b); the one with fewer names is
+        // taken (PERF-parity-horn-witness-alloc: the copy's changes were most of the bytes here),
+        // and a copy with no payload name allocates nothing.
+        if p.atoms.payloads().len() <= p.atoms.bare_names() {
+            q.atoms = p.atoms.clone();
+            for name in p.atoms.payloads().iter() {
+                let bare = p.atoms.get(name).bare;
+                q.atoms.set(
+                    name,
+                    super::AtomPart {
+                        bare,
+                        payload: Type::empty(),
+                    },
+                );
+            }
+        } else {
+            for name in p.atoms.bare() {
+                q.atoms.set(
+                    name,
+                    super::AtomPart {
+                        bare: true,
+                        payload: Type::empty(),
+                    },
+                );
+            }
         }
     }))
 }
@@ -17543,7 +17562,8 @@ fn nonflat_part(t: &Type) -> Type {
 // 1. Flat. When `ts[0]` has a flat part (`flat_part`, exact), the meet of the flat parts is
 //    built and found empty, and a later type without one (cofinite atoms) shows nothing. When
 //    `ts[0]` has none, the meet is shown empty only when some type holds no flat value at all,
-//    which is the `all` test negated: that type then has no flat value to share.
+//    which is the `all` test negated: that type then has no flat value to share. The `all`
+//    test is read first in both cases, since a type with no flat value empties the meet.
 // 2. Morphisms. Not shown when every type may hold one, so some type holds none.
 // 3. Payload atoms. A shared `#a(v)` has `a` held with a payload by `ts[0]`: when `ts[0]` has
 //    cofinite atoms, every other type then holds some payload atom (cofinite, or a listed name
@@ -17557,11 +17577,27 @@ fn nonflat_part(t: &Type) -> Type {
 //    unlisted or lists it with a part not the empty leaf; `share_len` false means some type's
 //    part at every such `len` is the empty leaf.
 // The universes are those of `Parts`, so no shared value is left. `false` is always sound.
-fn disjoint_top_carriers_depth0(ts: &[Type]) -> bool {
-    if ts.len() < 2 {
-        return false;
-    }
-    let flat_meet_nonempty = {
+// Steps 1 to 3 are `disjoint_outside_tuples` and step 4 is `no_shared_tuple_length`, so that
+// `disjoint_top_carriers` runs steps 1 to 3 once (PERF-parity-horn-witness-alloc). For `ts` of
+// at least 2 types, the depth-0 test is `disjoint_outside_tuples(ts) &&
+// no_shared_tuple_length(ts)`.
+fn disjoint_outside_tuples(ts: &[Type]) -> bool {
+    // The flat values are booleans, literals, structs, bare atoms and `()` (the parts
+    // `flat_part` keeps); a type with none of them has no flat value, so the flat meet is
+    // empty. `()` was once missing here, and the test of shared lengths below starts at length
+    // 1, so `top & ()` was called disjoint (FAIL-carriers-empty-tuple-flat, test
+    // `the_empty_tuple_is_shared_by_the_carrier_test`). Read first, with nothing built, so the
+    // meet of the flat parts is built only when every type has a flat value
+    // (PERF-parity-horn-witness-alloc); the meet built after is exact, as before.
+    let has_flat = |t: &Type| {
+        let p = t.p();
+        p.atoms.cofinite()
+            || p.has_scalars()
+            || p.has_bare_atoms()
+            || p.structs
+            || p.tuples.get(0).is_leaf() != Some(false)
+    };
+    let flat_meet_nonempty = ts.iter().all(has_flat) && {
         let mut iter = ts.iter();
         if let Some(first) = iter.next().and_then(flat_part) {
             let mut acc = Some(first);
@@ -17579,19 +17615,9 @@ fn disjoint_top_carriers_depth0(ts: &[Type]) -> bool {
                 None => true,
             }
         } else {
-            // The flat values are booleans, literals, structs, bare atoms and `()` (the parts
-            // `flat_part` keeps); a type with none of them has no flat value, so the flat meet
-            // is empty. `()` was missing here, and the test of shared lengths below starts at
-            // length 1, so `top & ()` was called disjoint (FAIL-carriers-empty-tuple-flat, test
-            // `the_empty_tuple_is_shared_by_the_carrier_test`).
-            ts.iter().all(|t| {
-                let p = t.p();
-                p.atoms.cofinite()
-                    || p.has_scalars()
-                    || p.has_bare_atoms()
-                    || p.structs
-                    || p.tuples.get(0).is_leaf() != Some(false)
-            })
+            // `ts[0]` has cofinite atoms, and every type has a flat value (above): shown
+            // only when some type has none, as before.
+            true
         }
     };
     if flat_meet_nonempty {
@@ -17622,9 +17648,12 @@ fn disjoint_top_carriers_depth0(ts: &[Type]) -> bool {
             })
         }
     };
-    if share_payload_atom {
-        return false;
-    }
+    !share_payload_atom
+}
+
+/// Step 4 of the depth-0 test (proof above [`disjoint_outside_tuples`]): whether no tuple of
+/// length at least 1 is shared by every type of `ts`.
+fn no_shared_tuple_length(ts: &[Type]) -> bool {
     let all_rest = ts.iter().all(|t| t.p().tuples.rest);
     if all_rest {
         return false;
@@ -17728,34 +17757,18 @@ fn disjoint_top_carriers(ts: &[Type]) -> bool {
     if ts.len() < 2 {
         return false;
     }
-    if disjoint_top_carriers_depth0(ts) {
-        return true;
-    }
     // Check whether non-tuple universes already overlap; if so, depth-1 tuple projections alone
-    // cannot prove `ts` disjoint.
-    let no_tuple_ts: Vec<Type> = ts
-        .iter()
-        .map(|t| {
-            let p = t.p();
-            Type::with(|q| {
-                q.bools = p.bools;
-                q.ints = p.ints.clone();
-                q.rats = p.rats.clone();
-                q.floats = p.floats.clone();
-                q.f32s = p.f32s.clone();
-                q.strings = p.strings.clone();
-                q.structs = p.structs;
-                let f0 = p.tuples.get(0);
-                if f0.is_leaf() != Some(false) {
-                    q.tuples.lens.insert(0, f0);
-                }
-                q.atoms = p.atoms.clone();
-                q.morphisms = p.morphisms.clone();
-            })
-        })
-        .collect();
-    if !disjoint_top_carriers_depth0(&no_tuple_ts) {
+    // cannot prove `ts` disjoint. This was the depth-0 test of `ts` and then of each type with
+    // its tuples of length at least 1 removed, a type built per member. Steps 1 to 3 of that
+    // test read the flat parts, the `()` part (`Tuples::get(0)`, the same in both), the atoms
+    // and the morphisms, which the removal keeps, and step 4 holds for the reduced types, which
+    // list no length of at least 1 and have no `rest`. So both tests are steps 1 to 3 of `ts`,
+    // read once, and the first adds step 4 of `ts`.
+    if !disjoint_outside_tuples(ts) {
         return false;
+    }
+    if no_shared_tuple_length(ts) {
+        return true;
     }
     if ts.iter().any(|t| t.p().tuples.rest) {
         return false;
@@ -18253,12 +18266,27 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
         DiffNf(usize),
         Closure(Morphism),
     }
+    // A rule's premises are `prem[start..start + len]`, its outputs `out_inh` and `out_nf`
+    // (`NO_SLOT` for none) and its action `actions[action]` (`NO_SLOT` for `Action::Id`, the
+    // most common, stored nowhere). Kept in shared arrays and in `u32`
+    // (PERF-parity-horn-witness-alloc): a rule with a `Vec` of its own and `usize` fields was 96
+    // bytes plus a heap block, and the rules were most of this function's bytes.
     struct Rule {
-        premises: Vec<usize>,
-        rem: usize,
-        out_inh: Option<usize>,
-        out_nf: Option<usize>,
-        action: Action,
+        start: u32,
+        len: u32,
+        rem: u32,
+        out_inh: u32,
+        out_nf: u32,
+        action: u32,
+    }
+    const NO_SLOT: u32 = u32::MAX;
+    // A slot, rule or premise index as `u32`. An index of `NO_SLOT` or more panics rather than
+    // wrap, so a count past `u32` can stop the check but never give a wrong witness.
+    fn idx(x: usize) -> u32 {
+        u32::try_from(x)
+            .ok()
+            .filter(|&v| v != NO_SLOT)
+            .expect("fewer than 2^32 - 1 slots, rules and premises")
     }
 
     let Some(first) = members.first() else {
@@ -18281,19 +18309,20 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
     // For `DiffNf` auxiliary slots: which component `j` supplied the non-flat witness.
     let mut nf_choice: HashMap<usize, (usize, usize)> = HashMap::new();
     let mut rules: Vec<Rule> = Vec::new();
-    let mut watchers: Vec<Vec<usize>> = vec![Vec::new(); 2 * n];
-    // Direct `DiffNf` component watchers: slot -> list of `(aux_slot, comp_index)`.
-    let mut nf_arm_watchers: Vec<Vec<(usize, usize)>> = vec![Vec::new(); 2 * n];
+    let mut prem: Vec<u32> = Vec::new();
+    let mut actions: Vec<Action> = Vec::new();
+    // The distinct premises of the rule being added, reused from rule to rule.
+    let mut unique_p: Vec<u32> = Vec::new();
+    let mut watchers: Vec<Vec<u32>> = vec![Vec::new(); 2 * n];
+    // Direct `DiffNf` component watchers: slot -> list of `(aux_slot, comp_index)`. A map, since
+    // few slots have one: a list per slot was a second array the length of `vals`.
+    let mut nf_arm_watchers: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
     let mut queue: std::collections::VecDeque<(usize, usize)> = std::collections::VecDeque::new();
 
-    let alloc_slot = |vals: &mut Vec<Option<usize>>,
-                      watchers: &mut Vec<Vec<usize>>,
-                      nf_arm_watchers: &mut Vec<Vec<(usize, usize)>>|
-     -> usize {
+    let alloc_slot = |vals: &mut Vec<Option<usize>>, watchers: &mut Vec<Vec<u32>>| -> usize {
         let id = vals.len();
         vals.push(None);
         watchers.push(Vec::new());
-        nf_arm_watchers.push(Vec::new());
         id
     };
 
@@ -18344,24 +18373,34 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
     let mut todo: Vec<Step<'_>> = Vec::new();
     let mut done: Vec<(usize, usize)> = Vec::new();
 
-    let add_rule = |premises: Vec<usize>,
-                    out_inh: Option<usize>,
-                    out_nf: Option<usize>,
-                    action: Action,
-                    rules: &mut Vec<Rule>,
-                    watchers: &mut [Vec<usize>]| {
-        let rid = rules.len();
-        let mut unique_p = premises.clone();
+    let mut add_rule = |premises: &[usize],
+                        out_inh: Option<usize>,
+                        out_nf: Option<usize>,
+                        action: Action,
+                        rules: &mut Vec<Rule>,
+                        watchers: &mut [Vec<u32>]| {
+        let rid = idx(rules.len());
+        let start = idx(prem.len());
+        prem.extend(premises.iter().map(|&p| idx(p)));
+        unique_p.clear();
+        unique_p.extend_from_slice(&prem[start as usize..]);
         zed_collections::sorted::sort_dedup(&mut unique_p);
-        let rem = unique_p.len();
         for &p in &unique_p {
-            watchers[p].push(rid);
+            watchers[p as usize].push(rid);
         }
+        let action = match action {
+            Action::Id => NO_SLOT,
+            a => {
+                actions.push(a);
+                idx(actions.len() - 1)
+            }
+        };
         rules.push(Rule {
-            premises,
-            rem,
-            out_inh,
-            out_nf,
+            start,
+            len: idx(premises.len()),
+            rem: idx(unique_p.len()),
+            out_inh: out_inh.map_or(NO_SLOT, idx),
+            out_nf: out_nf.map_or(NO_SLOT, idx),
             action,
         });
     };
@@ -18379,7 +18418,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                         let pair = (i, n + i);
                         if root {
                             add_rule(
-                                vec![pair.0],
+                                &[pair.0],
                                 Some(def),
                                 None,
                                 Action::Id,
@@ -18387,7 +18426,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                                 &mut watchers,
                             );
                             add_rule(
-                                vec![pair.1],
+                                &[pair.1],
                                 None,
                                 Some(n + def),
                                 Action::Id,
@@ -18402,7 +18441,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                     if let Some(&pair) = seen.get(&e.class) {
                         if root {
                             add_rule(
-                                vec![pair.0],
+                                &[pair.0],
                                 Some(def),
                                 None,
                                 Action::Id,
@@ -18410,7 +18449,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                                 &mut watchers,
                             );
                             add_rule(
-                                vec![pair.1],
+                                &[pair.1],
                                 None,
                                 Some(n + def),
                                 Action::Id,
@@ -18423,8 +18462,8 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                         continue;
                     }
                     if !e.recursive {
-                        let s_inh = alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
-                        let s_nf = alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                        let s_inh = alloc_slot(&mut vals, &mut watchers);
+                        let s_nf = alloc_slot(&mut vals, &mut watchers);
                         let t = eval_cached(e);
                         let operand_empty = match &e.e {
                             rec::Shape::Diff(a, _) => eval_cached(a).verdict() == Verdict::Empty,
@@ -18445,7 +18484,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                         seen.insert(e.class, (s_inh, s_nf));
                         if root {
                             add_rule(
-                                vec![s_inh],
+                                &[s_inh],
                                 Some(def),
                                 None,
                                 Action::Id,
@@ -18453,7 +18492,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                                 &mut watchers,
                             );
                             add_rule(
-                                vec![s_nf],
+                                &[s_nf],
                                 None,
                                 Some(n + def),
                                 Action::Id,
@@ -18472,8 +18511,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                             let (lt, ut) = (eval_cached(l), eval_cached(u));
                             if lt.subtype_verdict(&ut) == Verdict::Empty {
                                 if lt.verdict() == Verdict::Empty {
-                                    let s_inh =
-                                        alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                                    let s_inh = alloc_slot(&mut vals, &mut watchers);
                                     let t = eval_cached(e);
                                     if let Some(r_mor) = s.rep(&t) {
                                         seed_slot(s_inh, r_mor, &mut vals, &mut queue);
@@ -18481,7 +18519,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                                     seen.insert(e.class, (s_inh, s_inh));
                                     if root {
                                         add_rule(
-                                            vec![s_inh],
+                                            &[s_inh],
                                             Some(def),
                                             Some(n + def),
                                             Action::Id,
@@ -18495,16 +18533,14 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                                     todo.push(Step::Make(e, 1));
                                     todo.push(Step::Visit(val));
                                 } else {
-                                    let s_inh =
-                                        alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                                    let s_inh = alloc_slot(&mut vals, &mut watchers);
                                     seen.insert(e.class, (s_inh, s_inh));
                                     if !root {
                                         done.push((s_inh, s_inh));
                                     }
                                 }
                             } else {
-                                let s_inh =
-                                    alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                                let s_inh = alloc_slot(&mut vals, &mut watchers);
                                 seen.insert(e.class, (s_inh, s_inh));
                                 if !root {
                                     done.push((s_inh, s_inh));
@@ -18512,7 +18548,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                             }
                         }
                         rec::Shape::Morphism(..) => {
-                            let s_inh = alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                            let s_inh = alloc_slot(&mut vals, &mut watchers);
                             let t = eval_cached(e);
                             if let Some(r_mor) = s.rep(&t) {
                                 seed_slot(s_inh, r_mor, &mut vals, &mut queue);
@@ -18520,7 +18556,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                             seen.insert(e.class, (s_inh, s_inh));
                             if root {
                                 add_rule(
-                                    vec![s_inh],
+                                    &[s_inh],
                                     Some(def),
                                     Some(n + def),
                                     Action::Id,
@@ -18543,7 +18579,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                             todo.push(Step::Visit(a));
                         }
                         _ => {
-                            let s_inh = alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers);
+                            let s_inh = alloc_slot(&mut vals, &mut watchers);
                             if !root {
                                 done.push((s_inh, s_inh));
                             }
@@ -18556,18 +18592,18 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                     let s_inh = if root {
                         def
                     } else {
-                        alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers)
+                        alloc_slot(&mut vals, &mut watchers)
                     };
                     let s_nf = if root {
                         n + def
                     } else {
-                        alloc_slot(&mut vals, &mut watchers, &mut nf_arm_watchers)
+                        alloc_slot(&mut vals, &mut watchers)
                     };
                     match &e.e {
                         rec::Shape::Union(_) => {
                             for &(pi, pnf) in &parts {
                                 add_rule(
-                                    vec![pi],
+                                    &[pi],
                                     Some(s_inh),
                                     None,
                                     Action::Id,
@@ -18575,7 +18611,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                                     &mut watchers,
                                 );
                                 add_rule(
-                                    vec![pnf],
+                                    &[pnf],
                                     None,
                                     Some(s_nf),
                                     Action::Id,
@@ -18591,7 +18627,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                             } else {
                                 let inhs: Vec<usize> = parts.iter().map(|p| p.0).collect();
                                 add_rule(
-                                    inhs,
+                                    &inhs,
                                     Some(s_inh),
                                     Some(s_nf),
                                     Action::Tuple(xs.len()),
@@ -18609,7 +18645,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                             } else {
                                 let inhs: Vec<usize> = parts.iter().map(|p| p.0).collect();
                                 add_rule(
-                                    inhs,
+                                    &inhs,
                                     Some(s_inh),
                                     Some(s_nf),
                                     Action::Atom(name.as_str().into(), xs.len()),
@@ -18629,7 +18665,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                             });
                             if let Some(m_mor) = found_m {
                                 add_rule(
-                                    vec![parts[0].0],
+                                    &[parts[0].0],
                                     Some(s_inh),
                                     Some(s_nf),
                                     Action::Closure(m_mor),
@@ -18663,7 +18699,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                                 {
                                     if closed_meet == Type::top() {
                                         add_rule(
-                                            vec![parts[idx].0],
+                                            &[parts[idx].0],
                                             Some(s_inh),
                                             None,
                                             Action::Id,
@@ -18671,7 +18707,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                                             &mut watchers,
                                         );
                                         add_rule(
-                                            vec![parts[idx].1],
+                                            &[parts[idx].1],
                                             None,
                                             Some(s_nf),
                                             Action::Id,
@@ -18700,7 +18736,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                             };
                             if r_empty || r_ty.verdict() == Verdict::Empty {
                                 add_rule(
-                                    vec![parts[0].0],
+                                    &[parts[0].0],
                                     Some(s_inh),
                                     None,
                                     Action::Id,
@@ -18708,7 +18744,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                                     &mut watchers,
                                 );
                                 add_rule(
-                                    vec![parts[0].1],
+                                    &[parts[0].1],
                                     None,
                                     Some(s_nf),
                                     Action::Id,
@@ -18722,7 +18758,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                                     seed_slot(s_inh, rep, &mut vals, &mut queue);
                                 }
                                 add_rule(
-                                    vec![parts[0].1],
+                                    &[parts[0].1],
                                     Some(s_inh),
                                     Some(s_nf),
                                     Action::Id,
@@ -18745,11 +18781,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                                         seeded = true;
                                     }
                                     if !seeded {
-                                        let aux_nf = alloc_slot(
-                                            &mut vals,
-                                            &mut watchers,
-                                            &mut nf_arm_watchers,
-                                        );
+                                        let aux_nf = alloc_slot(&mut vals, &mut watchers);
                                         let mut premises = Vec::with_capacity(xs.len() + 1);
                                         for (j, x) in xs.iter().enumerate() {
                                             let xp = match &x.e {
@@ -18760,12 +18792,15 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                                                 },
                                             };
                                             premises.push(xp.0);
-                                            nf_arm_watchers[xp.1].push((aux_nf, j));
+                                            nf_arm_watchers
+                                                .entry(xp.1)
+                                                .or_default()
+                                                .push((aux_nf, j));
                                         }
                                         if premises.len() == xs.len() {
                                             premises.push(aux_nf);
                                             add_rule(
-                                                premises,
+                                                &premises,
                                                 Some(s_inh),
                                                 Some(s_nf),
                                                 Action::DiffNf(xs.len()),
@@ -18793,56 +18828,54 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
     // construction or later) is popped exactly once and decrements each rule that reads it:
     // a rule fires if and only if all its premises are seeded. Cost: O(premises + slots).
     while let Some((slot, rep)) = queue.pop_front() {
-        let arms = std::mem::take(&mut nf_arm_watchers[slot]);
-        for (aux, j) in arms {
-            if let Entry::Vacant(e) = nf_choice.entry(aux) {
-                e.insert((j, rep));
-                seed_slot(aux, rep, &mut vals, &mut queue);
+        if let Some(arms) = nf_arm_watchers.remove(&slot) {
+            for (aux, j) in arms {
+                if let Entry::Vacant(e) = nf_choice.entry(aux) {
+                    e.insert((j, rep));
+                    seed_slot(aux, rep, &mut vals, &mut queue);
+                }
             }
         }
         let rids = std::mem::take(&mut watchers[slot]);
         for rid in rids {
-            if rules[rid].rem == 0 {
+            let rule = &mut rules[rid as usize];
+            if rule.rem == 0 {
                 continue;
             }
-            rules[rid].rem -= 1;
-            if rules[rid].rem == 0 {
-                let built = match &rules[rid].action {
-                    Action::Id => vals[rules[rid].premises[0]],
-                    Action::Tuple(m) => {
-                        let vs: Vec<usize> = rules[rid].premises[..*m]
-                            .iter()
-                            .map(|&p| vals[p].expect("ready"))
-                            .collect();
-                        Some(s.show(Rep::Tuple(vs)))
-                    }
-                    Action::Atom(name, m) => {
-                        let vs: Vec<usize> = rules[rid].premises[..*m]
-                            .iter()
-                            .map(|&p| vals[p].expect("ready"))
-                            .collect();
-                        let tup = s.show(Rep::Tuple(vs));
+            rule.rem -= 1;
+            if rule.rem == 0 {
+                let premises = &prem[rule.start as usize..(rule.start + rule.len) as usize];
+                let values = |m: usize| -> Vec<usize> {
+                    premises[..m]
+                        .iter()
+                        .map(|&p| vals[p as usize].expect("ready"))
+                        .collect()
+                };
+                let built = match actions.get(rule.action as usize) {
+                    None => vals[premises[0] as usize],
+                    Some(Action::Tuple(m)) => Some(s.show(Rep::Tuple(values(*m)))),
+                    Some(Action::Atom(name, m)) => {
+                        let tup = s.show(Rep::Tuple(values(*m)));
                         Some(s.show(Rep::Atom(name.clone(), tup)))
                     }
-                    Action::DiffNf(m) => {
-                        let aux = rules[rid].premises[*m];
+                    Some(Action::DiffNf(m)) => {
+                        let aux = premises[*m] as usize;
                         nf_choice.get(&aux).map(|&(j_nf, rep_nf)| {
-                            let mut vs: Vec<usize> = rules[rid].premises[..*m]
-                                .iter()
-                                .map(|&p| vals[p].expect("ready"))
-                                .collect();
+                            let mut vs = values(*m);
                             vs[j_nf] = rep_nf;
                             s.show(Rep::Tuple(vs))
                         })
                     }
-                    Action::Closure(m_mor) => Some(s.show(Rep::Closure(m_mor.clone()))),
+                    Some(Action::Closure(m_mor)) => Some(s.show(Rep::Closure(m_mor.clone()))),
+                    Some(Action::Id) => unreachable!("`add_rule` stores no `Action::Id`"),
                 };
+                let (oi, onf) = (rule.out_inh, rule.out_nf);
                 if let Some(new_rep) = built {
-                    if let Some(oi) = rules[rid].out_inh {
-                        seed_slot(oi, new_rep, &mut vals, &mut queue);
+                    if oi != NO_SLOT {
+                        seed_slot(oi as usize, new_rep, &mut vals, &mut queue);
                     }
-                    if let Some(onf) = rules[rid].out_nf {
-                        seed_slot(onf, new_rep, &mut vals, &mut queue);
+                    if onf != NO_SLOT {
+                        seed_slot(onf as usize, new_rep, &mut vals, &mut queue);
                     }
                 }
             }
