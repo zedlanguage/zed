@@ -170,7 +170,8 @@ pub(crate) fn solve_after_refusal(f: &Formula, want_model: bool) -> Option<Optio
 /// Decides `f` by Lemma C (the residue sweep) or Lemma E (the runs), whichever counts fewer
 /// units, or `None` when `f` is outside their shape or the cheaper costs more than
 /// [`PERIOD_SWEEP_SWITCHOVER`] units. Shape: the top-level definition rows ([`read_shape`],
-/// [`orient`]) are all on one variable `x` (no row on another row's quotient), and every
+/// [`orient`]; a shape with an end that is another's remainder is a constraint, not a row) are
+/// all on one variable `x` (no row on another row's quotient), and every
 /// constraint names only `x` and the rows' quotients and remainders. It runs where
 /// [`solve_modular`] and [`super::solve`] decline ([`solve_modular_scaled_or_swept`]).
 // Complexity tradeoff: the residue sweep costs O(L * W) for `L` the lcm of the moduli and `W`
@@ -235,6 +236,37 @@ pub(super) fn solve_by(
         .collect();
     let bounds = one_term_bounds(&top);
     let shapes: Vec<Shape<'_>> = top.iter().filter_map(|c| read_shape(c, &bounds)).collect();
+    // A shape with an end that is another shape's remainder is read as a constraint, not a row
+    // (FAIL-period-sweep-seed-11118421649851519545: `2 r2 == r3 - 12`, left when the general
+    // path settled a disjunction, reads as a row of modulus 2, and [`orient`] declined).
+    // Proof that every answer stays true. (1) The rows kept are read as before, each a true
+    // definition row ([`def_row`]), so every point of `f` is met at the residue of its `x`.
+    // (2) A shape left out stays a constraint of `f`, checked at each residue ([`t_set`]) or
+    // point ([`search_runs`]) like every other, and its atoms must still be parts (`inside`
+    // below), or `f` is declined. So an answer is a point of `f`, or "none" only when no
+    // residue has one.
+    // Proof that no formula answered before is declined now. Before, such a shape `B` could be
+    // a row only with its end `e`, the remainder of a row `A`, a node of the tree. With no
+    // chain (a row with a parent is declined) every row has the root as an end; `A` does, and
+    // its remainder is not one of its ends, so `e` is not the root: `e` is `B`'s quotient, and
+    // a row on `e` would be a chain, so none is. Leaving `B` out leaves the other rows on the
+    // root, a tree with no parent, and the period, an lcm over fewer moduli, divides the old
+    // one, so the residue count `period * cons` does not grow (`cons` counts every constraint
+    // either way). NOT PROVED: that the count of the runs' points does not grow, so a formula
+    // the runs alone answered under the limit might now go past it. (There `part` gave `e` the
+    // place of the later insert, as
+    // `B`'s quotient or `A`'s remainder; every constraint was checked at the values given, so
+    // the answer was true.) O(shapes) with hashing.
+    let remainders: TextSet<&Atom> = shapes.iter().filter_map(|s| s.r.as_ref()).collect();
+    let keep: Vec<bool> = shapes
+        .iter()
+        .map(|s| s.ends.iter().all(|(a, _)| !remainders.contains(a)))
+        .collect();
+    let shapes: Vec<Shape<'_>> = shapes
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(s, k)| k.then_some(s))
+        .collect();
     if shapes.is_empty() {
         return None;
     }

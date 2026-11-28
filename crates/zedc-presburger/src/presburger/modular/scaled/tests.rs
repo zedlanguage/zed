@@ -2994,6 +2994,107 @@ fn a_formula_the_general_path_refuses_is_swept_past_the_switchover() {
     assert!(found > 0, "seed {seed}: no formula refused of {tried}");
 }
 
+/// FAIL-period-sweep-seed-11118421649851519545: a top-level equation of two terms between the
+/// remainders of two rows (`2 r0 == r1 - 1`) reads as a row of modulus 2 ([`read_shape`]), and
+/// with it the rows' graph had more atoms than rows plus one, so [`orient`] gave `None` and the
+/// sweep declined a formula it decides. It is a constraint on the parts, checked as every
+/// constraint is, at each residue or point. Each answer is checked against the residues of `x`
+/// modulo the period 35.
+#[test]
+fn an_equation_between_two_remainders_is_a_constraint_of_the_sweep() {
+    let divs: Vec<Div> = [5, 7]
+        .into_iter()
+        .map(|m| Div {
+            t: 0,
+            a: 1,
+            k: 0,
+            m,
+            fixed: None,
+        })
+        .collect();
+    for c in [-1i64, 20, -4] {
+        let extra = Formula::Con(Con::eq(&r(0).times(2), &r(1).plus(&Lin::constant(c))));
+        let f = formula(&divs, Formula::and(Vec::new()), vec![extra]);
+        let want = (0..35).any(|v| 2 * (v % 5) == v % 7 + c);
+        for method in [sweep::Method::Runs, sweep::Method::Residues] {
+            for want_model in [false, true] {
+                let got = sweep::solve_by(&f, want_model, method, 400_000);
+                let Some(got) = got else {
+                    panic!("{method:?}, model {want_model}: declined\n{f}");
+                };
+                assert_eq!(got.is_some(), want, "{method:?}, model {want_model}\n{f}");
+                if want_model && let Some(m) = got {
+                    assert!(f.holds(&m), "{method:?}: point {m:?} of\n{f}");
+                }
+            }
+        }
+    }
+}
+
+/// FAIL-period-sweep-seed-11118421649851519545, the formula of that seed of
+/// [`a_formula_the_general_path_refuses_is_swept_past_the_switchover`]: the general path
+/// refuses it with `Growth` once the disjunction `2 r0 == 11 || 2 r2 == r3 - 12` is settled to
+/// its second side, and the sweep after the refusal then met the equation between the
+/// remainders `r2` and `r3` (see the test above) and declined. The sweep of the formula as
+/// written (500,000 units) says it has no point.
+#[test]
+fn the_period_sweep_seed_11118421649851519545_is_decided() {
+    let le = |a: &Lin, b: &Lin| Formula::Con(Con::ge(b, a));
+    let eq = |a: &Lin, b: &Lin| Formula::Con(Con::eq(a, b));
+    let k = Lin::constant;
+    let div = |a, k, m| Div {
+        t: 0,
+        a,
+        k,
+        m,
+        fixed: None,
+    };
+    let divs = vec![
+        div(-1, 6, 59),
+        div(-12, 4, 8),
+        div(-14, -2, 9),
+        div(13, 7, 59),
+    ];
+    let lits = Formula::and(vec![
+        le(&q(2).times(3), &r(2).times(2).plus(&k(1))),
+        le(&q(1).times(3).plus(&q(3).times(2)), &k(11)),
+        le(&k(7), &r(0).times(3).plus(&r(1).times(2))),
+        Formula::or(vec![
+            eq(&r(0).times(2), &k(11)),
+            eq(&r(2).times(2), &r(3).plus(&k(-12))),
+        ]),
+        Formula::or(vec![
+            le(
+                &r(0).times(2).plus(&r(1).times(2)),
+                &r(3).times(2).plus(&k(-19)),
+            ),
+            eq(&r(3).times(3), &k(19)),
+        ]),
+        Formula::or(vec![
+            le(&q(2).times(2), &k(-8)),
+            le(&q(2).times(3).plus(&r(2).times(2)).plus(&k(-4)), &q(0)),
+            le(&r(3).plus(&k(5)), &q(2)),
+            Formula::negate(Formula::and(vec![
+                le(&q(2), &r(2).plus(&k(-11))),
+                le(&k(-20), &q(2).times(2)),
+            ])),
+        ]),
+    ]);
+    let sum = q(0).times(3).plus(&q(1).times(2)).plus(&q(2)).plus(&q(3));
+    let f = formula(&divs, lits, vec![le(&k(414_681), &sum)]);
+    assert!(
+        matches!(
+            sweep::solve_by(&f, false, sweep::Method::Cheaper, 500_000),
+            Some(None)
+        ),
+        "{f}"
+    );
+    let decided = crate::presburger::decide(&f);
+    assert!(matches!(decided, Ok(false)), "{decided:?}\n{f}");
+    let point = crate::presburger::satisfiable(&f);
+    assert!(matches!(point, Ok(None)), "{point:?}\n{f}");
+}
+
 /// PRES-period-sweep-no-budget: no formula that 60267344b answered by its sweep (the residue
 /// sweep, first, up to 400,000 units) is refused now, though the sweep now runs first only up to
 /// `PERIOD_SWEEP_SWITCHOVER`: [`decide`](crate::presburger::decide) and `satisfiable` answer
