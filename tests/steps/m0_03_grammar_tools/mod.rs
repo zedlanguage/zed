@@ -968,7 +968,10 @@ fn a_display_after_a_handlers_arrow_reads_the_same_at_every_ring() {
         };
         let first = parsed(1);
         for ring in 2..=TOP {
-            assert!(same(&first, &parsed(ring)), "{text:?} reads differently at L{ring}");
+            assert!(
+                same(&first, &parsed(ring)),
+                "{text:?} reads differently at L{ring}"
+            );
         }
     }
 }

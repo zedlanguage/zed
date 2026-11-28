@@ -226,7 +226,7 @@ Expr ::: x else { k: 1 } ::: (x (else ({ k : 1 })))
 Expr ::: x -> { "a" -> 1 } ::: (x -> ({ ("a" -> 1) }))
 Expr ::: x -> { k -> 1 } ::: (x -> ({ (k -> 1) }))
 Expr ::: if c { 1, 2 } else { 3 } ::: (if c ({ 1 , 2 }) else ({ 3 }))
-Expr@1 ::: x else { 1, 2 } ::: ERROR
+Expr@1 ::: x else { 1, 2 } ::: (x (else ({ 1 , 2 })))
 Expr ::: x else ({ 1, 2 }) ::: (x (else (( ({ 1 , 2 }) ))))
 Item ::: f(x: int) -> (k: K) -> V = g(x); ::: (f ( (x : int) ) (-> ((( k : K )) -> V)) (= (g (( x ))) ;))
 # as, into, and a value with apply to the whole arithmetic expression to their left

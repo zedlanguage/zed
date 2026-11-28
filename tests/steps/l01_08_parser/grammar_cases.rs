@@ -981,7 +981,8 @@ pub const CASES: &[(&str, &str, u32, &str, &str)] = &[
     ("Block#0", "Block", 0, "{ x }", "{ x }"),
     ("Block#0", "Block", 0, "{ x = 1; }", "{ x = 1 ; }"),
     ("Block#0", "Block", 0, "{}", "{ }"),
-    ("Block#1", "Block", 0, "{ a: 1 }", "{ a : 1 }"),
+    ("Block#1", "Block", 2, "{ a: 1 }", "{ a : 1 }"),
+    ("Block#1", "Block", 0, "{ 1, 2 }", "{ 1 , 2 }"),
     (
         "Display#0",
         "Display",

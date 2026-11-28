@@ -221,7 +221,7 @@ Literal       = INT | FLOAT | RAT | STRING | 'true' | 'false'                   
 BinOp         = '+' | '-' | '*' | '/' | '^' | '++' | 'div' | 'mod' | '&&' | '||' | '==' | '!=' | '<=' | '<' | '>=' | '>'   L3
 
 Block         = '{' nest(Item* Expr?) '}'                                          L1
-              | Display                                                            L2
+              | Display                                                            L1
 Display       = '{' nest((Name ':' (Lambda | Expr12)?) % ',' ','?) '}'               L2
               | '{' '}'                                                            L1
               | '{' nest(Entry % ',' ','?) '}'                                     L1
