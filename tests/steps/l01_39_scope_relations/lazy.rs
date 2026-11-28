@@ -357,6 +357,18 @@ mod a_lazy_scope_settles_each_name_to_the_eager_product {
     }
 
     #[test]
+    fn seed_2533336388240946713_and_run_seed_5899313110846177143() {
+        // FAIL-lazy-scope-seed-2533336388240946706 (b30-pres28's merge_check, case seed
+        // 2533336388240946713: "n after", lazy -20..5 against eager -20..8), and run seed
+        // 5899313110846177143 of b31-tools (case seed not recorded, so all ten: "a1 after",
+        // eager -20..-13 against lazy -17..-13). Red on origin/main f79759f83 and e2e01f05f
+        // (b30-pres29's job lz2, b31-tools' repro), green on part A aa28da140 (local job s1).
+        let first = 5899313110846177143;
+        run(&start(), [2533336388240946713], test);
+        run(&start(), first..first + 10, test);
+    }
+
+    #[test]
     fn seeds_13676171914239005553_and_15784569534319398251() {
         // Case seeds of `random_seeds`: FAIL-lazy-scope-seed-13676171914239005552 (b31-kernel's
         // merge_check: "m after", lazy -20..0 against eager -20..-1) and
@@ -1820,6 +1832,72 @@ mod a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_prod
     fn seeds_from_7716123424606244342() {
         let first = 7716123424606244342;
         run(&bounded_hubs(), first..first + 8, satellites);
+    }
+
+    // Seed 14813679539726631198 of `satellites` (FAIL-lazy-satellites-seed-14813679539726631198,
+    // run seed 14813679539726631197, filed by b30-check): `n` settled apart, eager -3..=20 and
+    // lazy -3..=2 after the ninth step. Both are sound, as the concrete set is empty
+    // (`seed_14813679539726631198_has_no_point_after_its_ninth_step`); the eager scope is the
+    // looser, as `Conjuncts::forget` of the eighth step's rebound `a3` forgets each conjunct
+    // alone and keeps an arm that the other conjuncts rule out. Still red on aa28da140 (local
+    // job s1, 2026-11-28), so its test `run(&bounded_hubs(), [14813679539726631198],
+    // satellites)` joins this module with the fix, PRECISION-forget-disjunction-arms.
+
+    /// Whether some integer point with this `n` meets the first eight steps of seed
+    /// 14813679539726631198 (its trace, read by hand), and the ninth too when `ninth`: an
+    /// oracle that uses neither scope. A join is the union of its two arms, `t ∧ u` and
+    /// `¬t ∧ v`; `a3` is the value the eighth step rebinds, so it is the old `a3`, projected
+    /// away after it (the new `a3` is held by no step after, so it is left out).
+    ///
+    /// `n` and `m` lie in -20..=20 ([`bounded_hubs`]); the other names are searched in
+    /// -R..=R. That loses no point: each of them is compared only with thresholds `n + c`,
+    /// `m + c` or `n + m + c` for |c| <= 4, all in -44..=44, and moving a value beyond every
+    /// threshold to one past the last keeps the truth of each comparison, so a point exists
+    /// iff one exists in the box.
+    fn seed_14813_has_point(n: i64, ninth: bool) -> bool {
+        const R: i64 = 64;
+        (-20..=20i64).any(|m| {
+            // 4: `m - n >= 2` is false; 5, first conjunct: `m <= 1`.
+            m - n <= 1
+                && m <= 1
+                && (-R..=R).any(|a3| {
+                    // 1: `a3 - n >= -1`; 7: `n + m - a3 >= -1`.
+                    a3 - n >= -1
+                        && n + m - a3 >= -1
+                        && (-R..=R).any(|a2| {
+                            // 2: join of `a3 - m >= -3`, `n + m - a2 >= 2`, `m - n >= -1`.
+                            let two =
+                                (a3 - m >= -3 && n + m - a2 >= 2) || (a3 - m < -3 && m - n >= -1);
+                            two && (!ninth || a2 - (n + m) >= 0)
+                                && (-R..=R).any(|a0| {
+                                    // 3: join of `a2 - (n + m) >= 0`, `n - a0 >= 2`,
+                                    // `m - a3 >= 0`.
+                                    let three = (a2 - (n + m) >= 0 && n - a0 >= 2)
+                                        || (a2 - (n + m) < 0 && m - a3 >= 0);
+                                    // 6: `a0 <= 2 ∧ n >= -4 ∧ a1 - m >= 3` is false.
+                                    three
+                                        && (-R..=R).any(|a1| !(a0 <= 2 && n >= -4 && a1 - m >= 3))
+                                        // 5, second conjunct: `n + m - a4 >= -2 ∨ a2 - m >= 3`.
+                                        && (-R..=R).any(|a4| n + m - a4 >= -2 || a2 - m >= 3)
+                                })
+                        })
+                })
+        })
+    }
+
+    /// The oracle of seed 14813679539726631198 (FAIL-lazy-satellites-seed-14813679539726631198):
+    /// after its eighth step `n` takes exactly -3..=2, which the lazy scope settles; after the
+    /// ninth no point is left, so the eager scope's `n` in -3..=20 and the lazy one's -3..=2
+    /// are both sound, and the eager one is the looser. By hand: the ninth step's `a2 >= n + m`
+    /// leaves the second step's `¬t ∧ v` arm alone, `a3 <= m - 4`, and with the first step's
+    /// `a3 >= n - 1` that gives `m - n >= 3`, against the fourth's `m - n <= 1`.
+    #[test]
+    fn seed_14813679539726631198_has_no_point_after_its_ninth_step() {
+        let eighth: Vec<i64> = (-20..=20)
+            .filter(|&n| seed_14813_has_point(n, false))
+            .collect();
+        assert_eq!(eighth, (-3..=2).collect::<Vec<_>>());
+        assert!((-20..=20).all(|n| !seed_14813_has_point(n, true)));
     }
 }
 
