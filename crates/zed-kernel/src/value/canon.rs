@@ -19,7 +19,7 @@ pub enum Canon {
     Other(Value),
     /// A string, by its name.
     Str(text::names::Name),
-    /// A tuple or keypath, by its number in [`Namer::seqs`].
+    /// A tuple or keypath, by its number in `Namer::seqs`.
     Seq(u64),
 }
 

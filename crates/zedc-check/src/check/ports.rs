@@ -431,7 +431,7 @@ pub fn ports(t: &Tables<'_>) -> Ports {
 /// key's component at a port is `[]`, the port before the row pushes to it, and the value is a
 /// record with the field `result` and at most one field per port parameter. A key of another
 /// arity is refused where the row is elaborated (`zedc_elab`'s `test_case`), so it is skipped
-/// here. The checker's walk then checks each field ([`Ck::test_args`]), and may assume this
+/// here. The checker's walk then checks each field (`test_args` in walk.rs), and may assume this
 /// shape. Cost: one pass over each row's key components and record fields, O(r·(n + f)) for r
 /// rows of n parameters and records of f fields; a field is looked up among the n names, so a
 /// record costs O(f·n), small since both are written by hand.
