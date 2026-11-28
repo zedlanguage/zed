@@ -2319,7 +2319,7 @@ impl Printer<'_> {
 
 impl Type {
     /// Its members as the order of a union reads them, added to `out` and sorted by
-    /// [`order::cmp`]: the members its text prints ([`Printer::items`]), a recursive type
+    /// [`order::cmp`]: the members its text prints (`Printer::items`), a recursive type
     /// written by name as that name, `_` and `_ \ c` as `_`. Two types compare as
     /// components of a tuple, or of an atom's payload, by these lists ([`order::seq_cmp`],
     /// MSG-union-order-tuples). A recursive part with no name of its own is read through its

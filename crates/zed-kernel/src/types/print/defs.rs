@@ -263,7 +263,7 @@ fn take_locals(text: &mut String) {
 ///
 /// Complexity tradeoff: linear in the text, with a hash lookup per mark, plus a sort of each
 /// union's k members, O(k log k); each type is read twice, once for its written names
-/// ([`written_in`]). Naming each variable
+/// (`written_in`). Naming each variable
 /// where it is first written, and looking back over the text for a name in use, would be
 /// quadratic in a type with many variables (COMPLEXITY.md F169). The names of the closed types
 /// are kept for the mentions, memory linear in the marks.
