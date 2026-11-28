@@ -3060,8 +3060,12 @@ mod tests {
         terms.extend((1..=4097u64).map(|i| (i * g, BigInt::one())));
         let p = big(&terms);
         assert_eq!(p.terms().last().expect("terms").0, 4_296_011_775);
-        let (roots, spent) =
-            positive_roots_by(p.terms(), BigInt::from(2), Some(BigInt::one()), Horner::Built);
+        let (roots, spent) = positive_roots_by(
+            p.terms(),
+            BigInt::from(2),
+            Some(BigInt::one()),
+            Horner::Built,
+        );
         assert_eq!((roots, spent), (Vec::new(), 1));
         assert!(BoundSearch::new(p.terms(), &(BigInt::one() << (2 * g))).is_none());
         assert_eq!(horner_units(u64::MAX, 1), u64::MAX);
