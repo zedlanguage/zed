@@ -104,7 +104,7 @@ pub const WRITTEN: char = ':';
 /// by the name [`name_vars`] gives it there. Noncharacters, as the marks above are: U+FDD0 to
 /// U+FDDF are the marks of this module and zedc-check's `DECLARE`, U+FDE0 and U+FDE1 are
 /// zedc-check's placeholders (`HIDDEN`), U+FDE2 to U+FDE6 are [`LOCALS`] and U+FDE7 is
-/// [`SAME`], so these are the two after them; zedc-check swaps every noncharacter of U+FDD0 to
+/// `SAME`, so these are the two after them; zedc-check swaps every noncharacter of U+FDD0 to
 /// U+FDEF out of the program's texts while a message is laid out (`ProgramTexts`).
 pub const MENTION: char = '\u{FDE8}';
 /// Closes what [`MENTION`] opens.
