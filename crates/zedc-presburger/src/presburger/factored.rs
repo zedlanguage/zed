@@ -49,15 +49,16 @@
 //! *Claim.* If [`solve`] runs in time T(k) on inputs of size k (rows, side lists, mentioned
 //! atoms), the Boolean product of two n x n matrices is computed in time T(Θ(n²)) + O(n²).
 //!
-//! *Proof.* Let A, F be n x n Boolean matrices.
-//! 0. Embed: A' = [[I, A], [0, I]], F' = [[0, 0], [F, 0]], both 2n x 2n. Then (A' F')[u][v] =
-//!    Σ_x A'[u][x] F'[x][v]; for u, v < n the terms x < n have F'[x][v] = 0 and the terms x >= n
-//!    are A[u][x − n] F[x − n][v], so the top-left block of A' F' is A F. A' has a unit diagonal,
+//! *Proof.* Let A, F be n x n Boolean matrices; M(u, v) is the entry of M in row u, column v.
+//! 0. Embed: A' and F', both 2n x 2n, in blocks of n x n: A' has I, A in its top blocks and 0, I
+//!    in its bottom ones; F' is 0 except its bottom-left block, F. Then (A' F')(u, v) =
+//!    Σ_x A'(u, x) F'(x, v); for u, v < n the terms x < n have F'(x, v) = 0 and the terms x >= n
+//!    are A(u, x − n) F(x − n, v), so the top-left block of A' F' is A F. A' has a unit diagonal,
 //!    which step 1 uses, and F' is at least three quarters zeros. Write n' = 2n.
 //! 1. Build the instance of `tests::build_bmm` from A', F' (O(n'²)): variables w_x, y_x, z_v
-//!    (x, v < n'), g, r_1, r_2; one wanted product, side A the rows s_u = Σ_{A'[u][x]} w_x and
-//!    b_x = y_x − w_x, side B the rows t_v = z_v + (−1)^v g, t_+ = r_1 + g, t_− = r_2 − g;
-//!    mentioned: w_x * z_v iff F'[x][v] = 0, and every w_x * r_i. At least 3n'²/4 atoms are
+//!    (x, v < n'), g, r_1, r_2; one wanted product, side A the rows s_u = Σ_{A'(u, x) = 1} w_x
+//!    and b_x = y_x − w_x, side B the rows t_v = z_v + (−1)^v g, t_+ = r_1 + g, t_− = r_2 − g;
+//!    mentioned: w_x * z_v iff F'(x, v) = 0, and every w_x * r_i. At least 3n'²/4 atoms are
 //!    mentioned, and the rows have O(n'²) terms, so k = Θ(n²).
 //! 2. w_x has holders of both signs on side A (s_x, by the unit diagonal, and b_x) and g has
 //!    both signs on side B, all in one component and parity class, so pass 1 signs neither
@@ -66,13 +67,13 @@
 //!    it is dropped and b_x dies before step 5; w_x is then signed (item 2). Test: pass 1 lists
 //!    no pair (b_x, t).
 //! 4. Each pair (s_u, t) holds a free w_x * g with g unsigned, so pass 1 drops none (item 3).
-//! 5. Step 5: Def(s_u) = {w_x : A'[u][x] = 1} and Def(t_v) = {z_v}, so (s_u, t_v) holds a free
-//!    incidence w_x * z_v iff some x has A'[u][x] = 1 and F'[x][v] = 1, that is (A' F')[u][v] =
+//! 5. Step 5: Def(s_u) = {w_x : A'(u, x) = 1} and Def(t_v) = {z_v}, so (s_u, t_v) holds a free
+//!    incidence w_x * z_v iff some x has A'(u, x) = 1 and F'(x, v) = 1, that is (A' F')(u, v) =
 //!    1, and Theorem D drops exactly those pairs (item 4).
 //! 6. (s_u, t_+) and (s_u, t_−) share every free w_x * g, so neither is a single holder, and
 //!    Def(t_±) = {r_i} gives no free incidence: both stay, and g never gets a sign (item 5).
-//! 7. No other rule drops a pair (item 6), so R = {(s_u, t_v) : (A' F')[u][v] = 0} ∪ {(s_u,
-//!    t_±)}, and (A F)[u][v] = 1 iff (s_u, t_v) ∉ R for u, v < n, read off R in O(n²). ∎
+//! 7. No other rule drops a pair (item 6), so R = {(s_u, t_v) : (A' F')(u, v) = 0} ∪ {(s_u,
+//!    t_±)}, and (A F)(u, v) = 1 iff (s_u, t_v) ∉ R for u, v < n, read off R in O(n²). ∎
 //!
 //! Items 1 to 6 are proved in the design, sec. 5.3. Tests: R equals that set in 16 cases with
 //! A's unit diagonal (`tests::the_residual_of_the_bmm_reduction_is_the_zeros_of_a_f`), and A F
@@ -84,10 +85,11 @@
 //! - Unconditionally nothing above Ω(k) follows. Alman, Duan, Vassilevska Williams, Xu, Xu and
 //!   Zhou, "More Asymmetry Yields Faster Matrix Multiplication" (arXiv 2404.16349, DOI
 //!   10.48550/arXiv.2404.16349), intro.tex:8-9: "There is a straightforward lower bound of
-//!   $\omega\geq 2$ since the output size is $n^2$. No larger lower bound is known". [inferred:
-//!   that sentence is about the algebraic exponent ω; no lower bound above n² for the Boolean
-//!   product on a RAM is known either, which this source does not state.] So whether step 5 can
-//!   be O(k log k) in general is NOT PROVED either way.
+//!   $\omega\geq 2$ since the output size is $n^2$. No larger lower bound is known". That source
+//!   states this only for ω, the exponent of algebraic matrix multiplication. That no lower
+//!   bound above n² is known for the Boolean product on a RAM goes beyond it and is NOT PROVED
+//!   here (no source cited). So whether step 5 can be O(k log k) in general is NOT PROVED
+//!   either way.
 //! - An O(k log k) step 5 would multiply Boolean matrices in O(n² log n). The best bound known
 //!   is ω < 2.371177 (same source, intro.tex:23-24: "A recent work \cite{alphaevolve-note}
 //!   further improves the bound derived from our method to \[\omega<2.371177.\]"), so no known
@@ -98,6 +100,7 @@
 //!   Saranurak, STOC 2015 (DOI 10.1145/2746539.2746609), introduction.tex:17: "there is no truly
 //!   subcubic ($O(n^{3-\eps})$) time {\em combinatorial} algorithm for multiplying two $n\times
 //!   n$ Boolean matrices": n^{3 − ε} with n = Θ(k^{1/2}) is k^{1.5 − ε/2}.
+//!
 //! So under either hypothesis the general worklist is above k log k; neither is proved. Copies
 //! and the full records: verification/bib.md of the worktree b30-pres25 (Henzinger_2015,
 //! Alman_2025), not committed.
