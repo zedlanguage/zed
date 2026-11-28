@@ -178,7 +178,7 @@ pub(super) fn join(a: &Text, b: &Text) -> Text {
 }
 
 /// `t` joined to itself `k` times: `2^k` times as long, in `O(k)` nodes.
-fn doubled(t: &str, k: u32) -> Text {
+pub(super) fn doubled(t: &str, k: u32) -> Text {
     let mut t = Text::from(t);
     for _ in 0..k {
         t = join(&t, &t);
