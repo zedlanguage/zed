@@ -5,6 +5,7 @@
 use super::*;
 use crate::seed::Rng;
 use std::collections::BTreeSet;
+use crate::value::Value;
 
 /// Checks every node of `s`: keys in order, heap order by priority with ties broken by key, and
 /// the size, sum and classes of each subtree; returns the keys in order. A walk with a stack.
@@ -598,4 +599,58 @@ fn a_path_against_seed_0(n: u64) -> TreapSet<i64> {
 fn a_path_of_keys_chosen_against_the_fixed_draw_is_dropped_on_a_small_stack() {
     let s = a_path_against_seed_0(2048);
     crate::scaling::on_a_stack(64 * 1024, move || drop(s));
+}
+
+/// The 4096 families `{j -> 0 : j < 12}` with key `j` moved by `shift` where bit `j` of `mask` is
+/// set (R2_CODEX B2 of XR-set-tied-digest-proof): unequal maps, since the two key bands do not
+/// overlap and each choice can be read back from the map.
+fn families_with_keys_moved_by(shift: i64) -> Vec<Value> {
+    use crate::value::Family;
+    (0..1u32 << 12)
+        .map(|mask| {
+            let entries = (0..12i64).map(|j| {
+                let k = j + if mask >> j & 1 == 1 { shift } else { 0 };
+                (Value::Int(k), Value::Int(0))
+            });
+            Value::Family(Family::from_map(entries.collect()))
+        })
+        .collect()
+}
+
+/// The number of `families`, the height of their treap set, and the number of distinct
+/// priorities among them.
+fn height_of_families(families: Vec<Value>) -> (usize, u64, usize) {
+    let n = families.len();
+    let distinct: BTreeSet<&Value> = families.iter().collect();
+    assert_eq!(distinct.len(), n, "the families are unequal");
+    let prios: BTreeSet<u64> = families.iter().map(Elem::priority).collect();
+    let set: TreapSet<Value> = families.into_iter().collect();
+    assert_eq!(set.len(), n);
+    (n, height(&set.root), prios.len())
+}
+
+/// A program can write 4096 unequal families of one `value::digest`: the digest reads an
+/// integer key `k` only through `R^(k mod 2^61 - 2)` (value.rs, `R` and `integer_residues`), so
+/// keys `j` and `j + 2^61 - 2` give one term. Their priority at S5 (`impl Elem for Value`, tag
+/// 17) is a function of that digest, so they tie under every draw and their treap is a path.
+/// Height bound: `8 ceil(log2(n + 1))`, the empirical ceiling of XR-set-tied-digest-proof §7.
+#[test]
+fn families_a_program_writes_with_one_digest_give_a_logarithmic_height() {
+    let (n, height, prios) = height_of_families(families_with_keys_moved_by((1 << 61) - 2));
+    eprintln!("{n} families: height {height}, {prios} distinct priorities");
+    assert!(
+        height <= 8 * u64::from((n as u64 + 1).next_power_of_two().ilog2()),
+        "{n} families of one digest: height {height}, {prios} distinct priorities"
+    );
+}
+
+/// Negative control: keys moved by `2^61 - 2 + 12` land on other terms, so the families have
+/// distinct digests and their treap has a logarithmic height today.
+#[test]
+fn families_with_keys_moved_off_the_period_have_a_logarithmic_height() {
+    let (n, height, prios) = height_of_families(families_with_keys_moved_by((1 << 61) - 2 + 12));
+    eprintln!("{n} families: height {height}, {prios} distinct priorities");
+    assert_eq!(prios, n, "distinct priorities");
+    let bound = 8 * u64::from((n as u64 + 1).next_power_of_two().ilog2());
+    assert!(height <= bound, "{n} families: height {height}");
 }

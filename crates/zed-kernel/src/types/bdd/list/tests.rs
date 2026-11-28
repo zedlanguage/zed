@@ -133,3 +133,55 @@ fn blocks_chosen_against_a_fixed_hash_give_a_logarithmic_height() {
          and the model gives this height a probability below e^{ln_bound:.1}, under 1/n"
     );
 }
+
+/// The height of a treap of `zed_collections::treap`.
+fn treap_height<I: zed_collections::treap::Item>(t: &zed_collections::treap::Tree<I>) -> usize {
+    t.as_ref()
+        .map_or(0, |n| 1 + treap_height(n.left()).max(treap_height(n.right())))
+}
+
+/// PROBE (XR-set-tied-digest-proof test 6): the index of a list built a literal at a time from
+/// rows of one digest, its atom entries, stale entries and the height of its atom treap.
+#[test]
+fn probe_index_of_rows_of_one_digest() {
+    let n = 4096;
+    let rows = crate::types::bdd::set::tests::rows_of_one_digest(n);
+    let stats = |f: &Bdd<Row>| -> String {
+        let Bdd::List(c, _) = f else {
+            return "not a list".into();
+        };
+        let Some(ix) = c.indexed() else {
+            return format!("{} blocks, no index", c.len);
+        };
+        let entries = zed_collections::treap::len(&ix.atoms);
+        let stale = zed_collections::treap::iter(&ix.atoms)
+            .filter(|AtomEntry(_, l)| zed_collections::treap::get(&ix.labels, l).is_none())
+            .count();
+        format!(
+            "{} blocks, {} labels, {entries} atom entries, {stale} stale, atom treap height {}",
+            c.len,
+            zed_collections::treap::len(&ix.labels),
+            treap_height(&ix.atoms)
+        )
+    };
+    for (name, or_every) in [("or only", 1usize), ("or, and alternating", 2)] {
+        let mut f = Bdd::literal_key((rows[0].clone(), true));
+        for (i, r) in rows.iter().enumerate().skip(1) {
+            f = match i % or_every == 0 || or_every == 1 {
+                true => f.or_literal((r.clone(), true)),
+                false => f.and_literal((r.clone(), true)),
+            };
+        }
+        eprintln!("{name}: built: {}", stats(&f));
+        assert!(f.cells_are_sound());
+        for k in [n / 2, n - 3] {
+            for (or, t) in [(true, true), (true, false), (false, true), (false, false)] {
+                let g = match or {
+                    true => f.or_literal((rows[k].clone(), t)),
+                    false => f.and_literal((rows[k].clone(), t)),
+                };
+                eprintln!("{name}: then {} ({k}, {t}): {}", if or { "or" } else { "and" }, stats(&g));
+            }
+        }
+    }
+}
