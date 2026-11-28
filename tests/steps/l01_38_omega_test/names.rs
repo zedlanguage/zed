@@ -1611,13 +1611,14 @@ fn a_tied_formula_settled_with_projections_gives_one_answer_under_every_naming()
         *seen.entry(format!("{} / {found}", answer(&f))).or_insert(0) += 1;
     }
     // The chain's component has no two atoms of one color, so its projection is made over the
-    // names its structure gives; the solver refuses that projection (Growth), as it refused
-    // the projections of 14 namings in 60 before, and the rows linked to the disjuncts, so the
-    // formula is refused under every naming. `false` is the true answer: the refusal is the
-    // cost of answering alike (PROOF-settle-marks-naming-free).
+    // names its structure gives. The solver refused that projection (Growth), and the formula
+    // was refused under every naming, until the TVPI bound propagation (`zedc_solvers::tvpi`,
+    // FAIL-one-way-torus-growth-refusal) was run before the refusal: it shows the projection
+    // empty, so the formula gets its true answer, `false`, under every naming (24 of 24 at
+    // seed 18328561664570305771, 2026-11-28).
     assert_eq!(
         seen.keys().collect::<Vec<_>>(),
-        ["Err(Unordered, 12 variables, 12 disjunctions) / Unordered"],
+        ["Ok(false) / no point"],
         "seed {seed}: {seen:?}"
     );
 }
@@ -2179,7 +2180,9 @@ pub(super) fn separate_pairs(n: usize) -> Formula {
 
 /// The tied doubled cycle ([`doubled_cycle`]) with every variable at most `top`, variable `i`
 /// named `v{name[i]}`. Summing its rows gives `4·Σ x >= 120`, so with `top <= 4`, where
-/// `Σ x <= 24`, it has no point; the solver refuses it for its tie.
+/// `Σ x <= 24`, it has no point. The solver refused it for its tie until the TVPI bound
+/// propagation (`zedc_solvers::tvpi`) was run before the refusal; every row has at most two
+/// variables, so it is now shown empty.
 fn capped_cycle(top: i64, name: &[usize]) -> Formula {
     let mut rows = doubled_cycle();
     for i in 0..6 {
@@ -2192,17 +2195,20 @@ fn capped_cycle(top: i64, name: &[usize]) -> Formula {
 
 #[test]
 fn a_disjunct_the_solver_refuses_is_not_taken_for_a_point() {
-    // `(C && x <= 4) || (C && x <= 3)`, `C` the doubled cycle: neither disjunct has a point,
-    // and the solver refuses both, so settling removes neither. The answer must not be `true`
-    // (verifier of NAME-ties repair 3 found `decide` gave `Ok(true)` while `satisfiable`
-    // refused): it is refused, by `decide` and `satisfiable` alike, under every naming.
+    // `(C && x <= 4) || (C && x <= 3)`, `C` the doubled cycle: neither disjunct has a point.
+    // The answer must not be `true` (verifier of NAME-ties repair 3 found `decide` gave
+    // `Ok(true)` while `satisfiable` refused). The solver refused both disjuncts until the
+    // TVPI bound propagation (`zedc_solvers::tvpi`, FAIL-one-way-torus-growth-refusal) was
+    // run before the refusal: every row of `C` and every cap has at most two variables, so
+    // both disjuncts are now shown empty, and the answer is `false`, by `decide` and
+    // `satisfiable` alike, under every naming.
     let mut seen = BTreeMap::new();
     each_permutation(6, |perm| {
         let f = Formula::or(vec![capped_cycle(4, perm), capped_cycle(3, perm)]);
         let d = decide(&f);
         let s = satisfiable(&f);
-        assert!(d.is_err(), "{f}: decide gave {d:?}");
-        assert!(s.is_err(), "{f}: satisfiable gave {s:?}");
+        assert!(matches!(d, Ok(false)), "{f}: decide gave {d:?}");
+        assert!(matches!(s, Ok(None)), "{f}: satisfiable gave {s:?}");
         *seen.entry(answer(&f)).or_insert(0) += 1;
     });
     assert_eq!(seen.len(), 1, "{seen:?}");
@@ -2211,9 +2217,12 @@ fn a_disjunct_the_solver_refuses_is_not_taken_for_a_point() {
 #[test]
 fn a_refused_disjunct_beside_one_with_a_point_gives_one_answer() {
     // `y` in `[0, 9]` and `(C && x <= 3) || (1 <= y <= 2)`, `C` the doubled cycle: the second
-    // disjunct has a point and the first is refused. The disjunction is linked to no other, so
-    // the formula has a point, under every naming of the cycle and whether `y` sorts before or
-    // after it; `satisfiable` must not take the refused disjunct because its name comes first.
+    // disjunct has a point and the first has none (refused until the TVPI bound propagation
+    // was run before the refusal; now shown empty, so
+    // [`a_refused_four_variable_disjunct_beside_one_with_a_point_gives_one_answer`] keeps a
+    // refused disjunct). The disjunction is linked to no other, so the formula has a point,
+    // under every naming of the cycle and whether `y` sorts before or after it; `satisfiable`
+    // must not take the empty disjunct because its name comes first.
     for y in ["a", "z"] {
         let v = Lin::atom(Atom::Sym(y.into()));
         let k = Lin::constant;
@@ -2224,6 +2233,108 @@ fn a_refused_disjunct_beside_one_with_a_point_gives_one_answer() {
                 Formula::Con(Con::ge(&k(9), &v)),
                 Formula::or(vec![
                     capped_cycle(3, perm),
+                    Formula::and(vec![
+                        Formula::Con(Con::ge(&k(2), &v)),
+                        Formula::Con(Con::ge(&v, &k(1))),
+                    ]),
+                ]),
+            ]);
+            assert_eq!(decide(&f), Ok(true), "{f}");
+            let m = satisfiable(&f).unwrap_or_else(|e| panic!("{f}: {e}"));
+            let m = m.expect("a point");
+            assert!(f.holds(&m), "{f}: {m:?}");
+            *seen.entry(answer(&f)).or_insert(0) += 1;
+        });
+        assert_eq!(seen.len(), 1, "{seen:?}");
+    }
+}
+
+/// The rows of `stages::CROSSING` with each constant raised by `s`, each variable in
+/// `[-half, half]`.
+fn crossing_rows(s: i64, half: i64) -> Vec<Row> {
+    let rows: Vec<Row> = super::stages::CROSSING
+        .iter()
+        .map(|(c, k)| ge(c, k + s))
+        .collect();
+    with_box(&rows, 4, half)
+}
+
+/// [`crossing_rows`] raised by 8 in `[-4, 4]`, variable `i` named `v{name[i]}`: every
+/// elimination adds terms and each row has three or four variables, so the TVPI bound
+/// propagation cannot decide it, and the solver refuses it with `Growth` (completeness.rs,
+/// `project_each_boxed` test).
+fn crossing_box(name: &[usize]) -> Formula {
+    formula(&crossing_rows(8, 4), name)
+}
+
+/// The number of points of `rows` over four variables, each in `[-half, half]`, by enumeration.
+fn points_in_box(rows: &[Row], half: i64) -> usize {
+    let w = 2 * half + 1;
+    (0..w.pow(4))
+        .filter(|p| {
+            let x: Vec<i64> = (0..4).map(|i| p / w.pow(i) % w - half).collect();
+            holds(rows, &x)
+        })
+        .count()
+}
+
+#[test]
+fn two_refused_disjuncts_with_no_point_are_not_taken_for_a_point() {
+    // `B(7, 4) || B(8, 3)`, `B(s, half)` the rows of `stages::CROSSING` raised by `s` in
+    // `[-half, half]` ([`crossing_rows`]): enumeration finds no point in either, and every row
+    // but the box has three or four variables, so the TVPI bound propagation cannot show them
+    // empty and the solver refuses each with `Growth` under all 24 namings (measured
+    // 2026-11-28 over `s` in -6..=8 and `half` in 1..=4: these two, `s` 1 to 6 at half 4 and
+    // `s` 6 and 7 at half 3 are refused with no point; `s` 8 at half 4 has one point). The
+    // answer must not be `true` and `satisfiable` must not give a point, whatever the naming,
+    // and every naming gets one answer (TEST-refused-disjuncts-no-point-fixture; this replaces
+    // [`a_disjunct_the_solver_refuses_is_not_taken_for_a_point`]'s fixture, which the TVPI
+    // bound propagation now shows empty).
+    let parts = [(7, 4), (8, 3)];
+    for (s, half) in parts {
+        let rows = crossing_rows(s, half);
+        assert_eq!(points_in_box(&rows, half), 0, "B({s}, {half}) has a point");
+        assert_eq!(
+            decide(&formula(&rows, &[0, 1, 2, 3])),
+            Err(Refusal::Growth),
+            "B({s}, {half}) is refused"
+        );
+    }
+    let mut seen = BTreeMap::new();
+    each_permutation(4, |perm| {
+        let f = Formula::or(
+            parts
+                .iter()
+                .map(|&(s, half)| formula(&crossing_rows(s, half), perm))
+                .collect(),
+        );
+        let d = decide(&f);
+        assert_ne!(d, Ok(true), "{f}: decide gave {d:?}");
+        let s = satisfiable(&f);
+        assert!(!matches!(s, Ok(Some(_))), "{f}: satisfiable gave {s:?}");
+        *seen.entry(answer(&f)).or_insert(0) += 1;
+    });
+    assert_eq!(seen.len(), 1, "{seen:?}");
+}
+
+#[test]
+fn a_refused_four_variable_disjunct_beside_one_with_a_point_gives_one_answer() {
+    // As [`a_refused_disjunct_beside_one_with_a_point_gives_one_answer`], with the refused
+    // disjunct [`crossing_box`] in place of the capped doubled cycle, which the TVPI bound
+    // propagation now shows empty: `y` in `[0, 9]` and `B || (1 <= y <= 2)`. The formula has a
+    // point under every naming of `B` and whether `y` sorts before or after it.
+    let alone = decide(&crossing_box(&[0, 1, 2, 3]));
+    assert_eq!(alone, Err(Refusal::Growth), "the disjunct is refused");
+    for y in ["a", "z"] {
+        let v = Lin::atom(Atom::Sym(y.into()));
+        let k = Lin::constant;
+        let mut seen = BTreeMap::new();
+        each_permutation(4, |perm| {
+            let f = Formula::and(vec![
+                Formula::Con(Con::ge(&v, &k(0))),
+                Formula::Con(Con::ge(&k(9), &v)),
+                Formula::or(vec![
+                    crossing_box(perm),
                     Formula::and(vec![
                         Formula::Con(Con::ge(&k(2), &v)),
                         Formula::Con(Con::ge(&v, &k(1))),
