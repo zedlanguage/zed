@@ -8,14 +8,16 @@ use super::*;
 /// arm, so a chain of n links each read by k tests makes 2 n k term reads and costs O(n k).
 #[test]
 fn reading_chains_of_terms_scales() {
-    let chains = scaling::inputs(512, |n| nested_halvings(n, 2));
+    // At 1000 (SCALE-small-n-rest; 512 before), each chain built only in the process of its
+    // size.
     let x = ints(&["x".into()]);
-    scaling::check_order(
+    scaling::check_order_inputs(
         "a chain of n bindings `zj = z(j-1) div 2`, each read by 2 nested tests",
-        512,
+        1000,
         1,
-        |n| {
-            zedc::store::product::arms(&chains[&n], &x);
+        |n| nested_halvings(n, 2),
+        |chain| {
+            zedc::store::product::arms(chain, &x);
         },
     );
 }
@@ -28,7 +30,9 @@ fn reading_chains_of_terms_scales() {
 /// the arms differ from the scopes they are tested in by `Θ(n²)` names in all: the output is
 /// quadratic, and the work, of order `n²`, is checked at that order. A test that reads each
 /// link through its term only when it changes cannot do better, since the narrowed range of
-/// each link is in the output.
+/// each link is in the output. It stays at 40 (SCALE-small-n-rest): the output has `n (n + 1)`
+/// reads with no log factor, so the 777 floor of an `n log n` pass does not apply, and at 1000
+/// the run at 8n would read 64 million links.
 #[test]
 fn a_test_that_narrows_every_link_reads_every_link_once() {
     let chains = scaling::inputs(40, |n| else_halvings(n, 2));
@@ -50,14 +54,16 @@ fn a_test_that_narrows_every_link_reads_every_link_once() {
 #[test]
 fn abs_min_and_max_of_a_summary_of_n_pieces_scale() {
     let xy = ints(&["x".into(), "y".into()]);
+    // At 1000 (SCALE-small-n-rest; 64 before), each body built only in the process of its
+    // size.
     for (name, f, sign) in choices() {
-        let bodies = scaling::inputs(64, |n| over_a_sawtooth(n, f, sign));
-        scaling::check_order(
+        scaling::check_order_inputs(
             &format!("{name} over a sawtooth of n pieces, tested"),
-            64,
+            1000,
             1,
-            |n| {
-                zedc::store::product::arms(&bodies[&n], &xy);
+            |n| over_a_sawtooth(n, f, sign),
+            |body| {
+                zedc::store::product::arms(body, &xy);
             },
         );
     }

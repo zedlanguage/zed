@@ -51,8 +51,9 @@ fn fences_scales_with_the_size_of_the_documents() {
 
 #[test]
 fn fence_layers_scales_with_the_number_of_fences() {
-    let dirs = specs("scale_fence_layers", 25, many_fences);
-    scales("fence_layers", 25, &dirs, |d| lays_out_fences(d, 25));
+    // At 1000 (SCALE-small-n-rest; 25 before).
+    let dirs = specs("scale_fence_layers", 1000, many_fences);
+    scales("fence_layers", 1000, &dirs, |d| lays_out_fences(d, 1000));
 }
 
 #[test]
@@ -83,8 +84,9 @@ fn programs(name: &str, n: usize) -> [(usize, Dir); 2] {
 #[test]
 fn ring_scales_with_the_length_of_a_file() {
     let spec = spec_dir("scale_ring", &design(""), "");
-    let sized = programs("scale_ring_p", 150);
-    scales("ring", 150, &sized, |d| ring_runs(&spec, d));
+    // At 1000 (SCALE-small-n-rest; 150 before).
+    let sized = programs("scale_ring_p", 1000);
+    scales("ring", 1000, &sized, |d| ring_runs(&spec, d));
 }
 
 #[test]
@@ -99,8 +101,9 @@ fn layer_scales_with_the_length_of_a_program() {
 #[test]
 fn layer_scales_with_the_main_files_of_one_package() {
     let spec = spec_dir("scale_layer_package", &design(""), "");
-    let sized = [25, 200].map(|m| (m, package_dir("scale_layer_package_p", m)));
-    check("layer, by main files of one package", 25, |m| {
+    // At 1000 (SCALE-small-n-rest; 25 before).
+    let sized = [1000, 8000].map(|m| (m, package_dir("scale_layer_package_p", m)));
+    check("layer, by main files of one package", 1000, |m| {
         let (_, d) = sized
             .iter()
             .find(|s| s.0 == m)
@@ -190,8 +193,9 @@ fn progress_scales_with_the_length_of_the_plan() {
 /// `zed` and `text` fences.
 #[test]
 fn sync_scales_with_the_number_of_fences() {
-    let dirs = specs("scale_sync", 25, sync_body);
-    scales("sync", 25, &dirs, syncs);
+    // At 1000 (SCALE-small-n-rest; 25 before).
+    let dirs = specs("scale_sync", 1000, sync_body);
+    scales("sync", 1000, &dirs, syncs);
 }
 
 /// The reader of the table of words puts each word of a cell into a hash map, a word named

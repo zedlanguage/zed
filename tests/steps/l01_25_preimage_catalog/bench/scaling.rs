@@ -40,18 +40,19 @@ fn the_transfer_scales() {
 /// the domain, each in time of the size of the term, so its time is of the order of the
 /// number of points: `n` for one input in `0..=n`, `n^2` for two; and where the plain
 /// preimage is exact on sub-boxes, of the boxes the boundary crosses: `n` for `x * y <= n`.
+/// The checks of order 1 run at 1000 (SCALE-small-n-rest; 256 and 64 before). The search over
+/// `1..=n` squared stays at 16: its `n^2` points have no log factor, so the 777 floor of an
+/// `n log n` pass does not apply, and at 1000 the run at 8n would visit 64 million points.
 #[test]
 fn the_exact_search_scales_with_the_number_of_points() {
     let run = |what: &str, n: usize, power: u32, make: fn(usize) -> (Term, Domains)| {
-        let made = scaling::inputs(n, make);
-        scaling::check_order(what, n, power, |k| {
-            let (t, ds) = &made[&k];
+        scaling::check_order_inputs(what, n, power, make, |(t, ds)| {
             exact_preimage(t, ds, &Classes::new(), &Demand::Bool(true));
         });
     };
     run(
         "`x * x mod 10 == 9` over `0..=n` under `@exact`",
-        256,
+        1000,
         1,
         squares,
     );
@@ -63,7 +64,7 @@ fn the_exact_search_scales_with_the_number_of_points() {
     );
     run(
         "`x * y <= n` over `1..=n` squared under `@exact`",
-        64,
+        1000,
         1,
         hyperbola,
     );
@@ -97,12 +98,14 @@ fn long(what: &'static str, make: fn(usize) -> Term, ds: fn(usize) -> Domains) {
 /// [`long`] at sizes `n` and `8n`.
 fn long_at(what: &'static str, n: usize, make: fn(usize) -> Term, ds: fn(usize) -> Domains) {
     let measure = move || {
-        let large = n * scaling::FACTOR;
-        let (a, b) = ((make(n), ds(n)), (make(large), ds(large)));
-        scaling::check(what, n, |k| {
-            let (t, d) = if k == n { &a } else { &b };
-            preimage(t, d, &Demand::Bool(true));
-        });
+        scaling::check_inputs(
+            what,
+            n,
+            |k| (make(k), ds(k)),
+            |(t, d)| {
+                preimage(t, d, &Demand::Bool(true));
+            },
+        );
     };
     scaling::on_a_stack(2 << 20, measure);
 }
@@ -152,7 +155,7 @@ fn long_tests_of_many_inputs() {
 fn long_squares_of_one_name() {
     long_at(
         "squares of one long name, each read as a power",
-        256,
+        1000,
         squares_of_one_name,
         one,
     );
@@ -166,10 +169,8 @@ fn long_shared_arms() {
 /// [`long_at`] for the relations of the linear-relation domain.
 fn long_relations(what: &'static str, n: usize, make: fn(usize) -> Term) {
     let measure = move || {
-        let (a, b) = (make(n), make(n * scaling::FACTOR));
         let inputs: [Arc<str>; 1] = ["i".into()];
-        scaling::check(what, n, |k| {
-            let t = if k == n { &a } else { &b };
+        scaling::check_inputs(what, n, make, |t| {
             relations(&[t], &inputs, false).expect("in the domain");
         });
     };
@@ -179,20 +180,20 @@ fn long_relations(what: &'static str, n: usize, make: fn(usize) -> Term) {
 #[test]
 fn long_nested_values() {
     let what = "values nested in the arms of `if`s";
-    long_relations(what, 256, nested_values);
-    long_at(what, 256, nested_values, one);
+    long_relations(what, 1000, nested_values);
+    long_at(what, 1000, nested_values, one);
 }
 
 #[test]
 fn long_shared_values() {
-    long_relations("`if`s whose arms read one shared term", 256, shared_values);
+    long_relations("`if`s whose arms read one shared term", 1000, shared_values);
 }
 
 #[test]
 fn long_shared_chains() {
     long_relations(
         "chains of `&&` and `||` whose `if` arms read one shared chain",
-        256,
+        1000,
         shared_chains,
     );
 }
@@ -201,16 +202,20 @@ fn long_shared_chains() {
 fn a_chain_of_and_written_as_ifs_is_joined_in_one_pass() {
     // On origin/main 32654e93 this test fails: k = 256 to 2048 took 0.27 to 22.8 G instructions
     // (86 times) and 0.07 to 4.40 GB (60.1 times; limit 24). Read as a chain (`Walk::chain`):
-    // 15.6 to 132 M instructions (8.5 times) and 8.0 times the bytes.
+    // 15.6 to 132 M instructions (8.5 times) and 8.0 times the bytes. Now at k = 1000
+    // (SCALE-small-n-rest).
     let measure = || {
-        let made = scaling::inputs(256, |k| {
-            let names: Vec<Arc<str>> = (0..k).map(|j| format!("a{j}").into()).collect();
-            (and_ifs(k), names)
-        });
-        scaling::check("a chain of k `&&` on k names, written as `if`s", 256, |k| {
-            let (t, names) = &made[&k];
-            relations(&[t], names, false).expect("in the domain");
-        });
+        scaling::check_inputs(
+            "a chain of k `&&` on k names, written as `if`s",
+            1000,
+            |k| {
+                let names: Vec<Arc<str>> = (0..k).map(|j| format!("a{j}").into()).collect();
+                (and_ifs(k), names)
+            },
+            |(t, names)| {
+                relations(&[t], names, false).expect("in the domain");
+            },
+        );
     };
     scaling::on_a_stack(2 << 20, measure);
 }
@@ -220,26 +225,30 @@ fn a_chain_of_or_written_as_ifs_is_joined_in_one_pass() {
     // Read as an `if` (b4e083a7, or `Walk::or_if` turned off) this test fails: k = 256 to 2048
     // took 28.8 to 784 M instructions (27.2 times) and 15.6 to 663 MB (42.6 times; limit 24).
     // Read as `g || b`, a chain (`Walk::chain`): 15.8 to 128 M instructions (8.1 times) and
-    // 4.8 to 38.1 MB (8.0 times).
+    // 4.8 to 38.1 MB (8.0 times). Now at k = 1000 (SCALE-small-n-rest).
     let measure = || {
-        let made = scaling::inputs(256, |k| {
-            let names: Vec<Arc<str>> = (0..k).map(|j| format!("a{j}").into()).collect();
-            (or_ifs(k), names)
-        });
-        scaling::check("a chain of k `||` on k names, written as `if`s", 256, |k| {
-            let (t, names) = &made[&k];
-            relations(&[t], names, false).expect("in the domain");
-        });
+        scaling::check_inputs(
+            "a chain of k `||` on k names, written as `if`s",
+            1000,
+            |k| {
+                let names: Vec<Arc<str>> = (0..k).map(|j| format!("a{j}").into()).collect();
+                (or_ifs(k), names)
+            },
+            |(t, names)| {
+                relations(&[t], names, false).expect("in the domain");
+            },
+        );
     };
     scaling::on_a_stack(2 << 20, measure);
 }
 
 /// [`rereads`] with `r` places and `k` limits, each at `n` and `8n` and both at once: the
 /// work is of order `r + k` and not `r k`, since a chain whose formula holds where it is
-/// reached on the stack it was read at is read once there (COMPLEXITY.md S31b).
+/// reached on the stack it was read at is read once there (COMPLEXITY.md S31b). At n = 1000
+/// (SCALE-small-n-rest; 64 before), each input built only in the process of its size.
 #[test]
 fn long_chains_read_at_many_places_under_recursion() {
-    let n = 64;
+    let n = 1000;
     let measure = move || {
         let inputs: [Arc<str>; 1] = ["i".into()];
         let large = n * scaling::FACTOR;
@@ -261,9 +270,14 @@ fn long_chains_read_at_many_places_under_recursion() {
             ),
         ];
         for (what, (r, k), (r8, k8)) in cases {
-            let (a, b) = (rereads(r, k), rereads(r8, k8));
-            scaling::check(what, n, |s| {
-                let t = if s == n { &a } else { &b };
+            let make = |s: usize| {
+                if s == n {
+                    rereads(r, k)
+                } else {
+                    rereads(r8, k8)
+                }
+            };
+            scaling::check_inputs(what, n, make, |t| {
                 relations(&[t], &inputs, false).expect("in the domain");
             });
         }
@@ -317,7 +331,7 @@ fn long_closing_a_chain_of_doubled_calls() {
 fn long_shared_values_preimage() {
     long_at(
         "the preimage of `if`s whose arms read one shared term",
-        256,
+        1000,
         shared_values,
         one,
     );
