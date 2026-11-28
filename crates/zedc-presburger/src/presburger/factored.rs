@@ -40,9 +40,9 @@
 //! the orthogonal-vectors family, design sec. 5.3), the output is |R|, and step 5 costs
 //! exception 3 (the exact peel, Σ|a||b| over the pairs left). Its worklist on `wlgrow_g`, once
 //! exception 4 (ratio 34 at 8n), is O(N log N) by the sign events of [`Joint::gain`], proved at
-//! `tests::the_worklist_of_wlgrow_g_scales` (7.50). Boolean matrix multiplication reduces to step 5 (design
-//! sec. 5.3, test `tests::the_residual_of_the_bmm_reduction_is_the_zeros_of_a_f`), so no
-//! combinatorial algorithm for step 5 beats n^3 / polylog unless that does.
+//! `tests::the_worklist_of_wlgrow_g_scales` (7.50). Boolean matrix multiplication reduces to
+//! step 5 (design sec. 5.3, test `tests::the_residual_of_the_bmm_reduction_is_the_zeros_of_a_f`),
+//! so no combinatorial algorithm for step 5 beats n^3 / polylog unless that does.
 //!
 //! **The exact peel and its lower bound** (row PERF-factored-peel-wlisted, b22-factored3,
 //! 2026-11-24). The peel lists the free atoms of each pair the count rules leave, W_listed =
