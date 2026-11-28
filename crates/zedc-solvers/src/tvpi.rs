@@ -672,7 +672,7 @@ mod tests {
     }
 
     /// Every order of `rs`, by Heap's algorithm.
-    fn orders(rs: &[(Vec<Term>, Int)]) -> Vec<Vec<(Vec<Term>, Int)>> {
+    fn orders<T: Clone>(rs: &[T]) -> Vec<Vec<T>> {
         let mut rs = rs.to_vec();
         let mut c = vec![0; rs.len()];
         let mut all = vec![rs.clone()];
@@ -707,6 +707,36 @@ mod tests {
             let rs = parity(u as i64);
             for (i, order) in orders(&rs).iter().enumerate() {
                 assert_eq!(answer(order), *want, "cap {u}, order {i}: {order:?}");
+            }
+        }
+    }
+
+    /// `rs` with each variable `j` renamed `name[j]`.
+    fn renamed(rs: &[(Vec<Term>, Int)], name: &[usize]) -> Vec<(Vec<Term>, Int)> {
+        rs.iter()
+            .map(|(a, k)| {
+                let a = a.iter().map(|(j, c)| (name[*j], c.clone())).collect();
+                (a, k.clone())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_naming_gives_one_answer_where_the_search_stops_at_its_bound() {
+        let names = orders(&[0, 1, 2, 3]);
+        assert_eq!(names.len(), 24);
+        let given: Vec<Option<bool>> = (0..=200).map(|u| answer(&parity(u))).collect();
+        let last = given
+            .iter()
+            .rposition(|a| *a == Some(true))
+            .expect("a cap the search crosses");
+        assert!(given.contains(&None), "no cap reaches the bound: {given:?}");
+        // Every naming, at every cap from well below the last crossed one to well above it.
+        let caps = given.iter().enumerate().take(last + 9);
+        for (u, want) in caps.skip(last.saturating_sub(8)) {
+            let rs = parity(u as i64);
+            for name in &names {
+                assert_eq!(answer(&renamed(&rs, name)), *want, "cap {u}, names {name:?}");
             }
         }
     }
