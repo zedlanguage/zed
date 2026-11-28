@@ -4,6 +4,7 @@
 //! through every member call.
 
 use crate::source::{prints, rejected, same};
+use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_26_type_resolution::sig;
 
 #[test]
@@ -94,6 +95,30 @@ fn a_key_that_meets_the_keys_passes_the_atoms_it_does_not_take() {
     let mut parts: Vec<&str> = found.trim_start_matches("() -> ").split(" | ").collect();
     parts.sort_unstable();
     assert_eq!(parts, ["#none", "#notFound", "1", "2"], "{found}");
+}
+
+#[test]
+fn a_read_of_a_family_or_a_function_takes_an_atom_the_family_takes() {
+    // Row CHECK-atom-key-mixed-receiver: `f` is a data family in one branch and a function of
+    // one parameter in the other, so the read `f[k]` is not one of data families alone. The
+    // family takes `#a` as a key, so where `f` is the family the read gives its entry, 1, and
+    // does not pass `#a` through as an atom the read did not take. Where `f` is the function,
+    // its arrow takes `#a` too: DESIGN rule 6 of sec:type_resolution (DESIGN.md:1783), "of an
+    // argument's loose atoms, those no arrow takes pass through, and the rest stay in the
+    // argument and select arrows as any other value does", and a parameter is narrowed only by
+    // its uses (DESIGN.md:5866), which `(x) -> 7` has none of, so the read gives 7. A body that
+    // narrows the parameter to numbers, `(x) -> x + 1`, refuses `#a`, which passes through.
+    let read_with = |fun: &str, g: &str| {
+        format!(
+            "xs = [10, 20];\ng = {g};\nm = {{ #a -> 1, 3 -> 2 }};\n\
+             f = if xs.count > {fun} {{ g }} else {{ m }};\n\
+             k = if xs.count > 1 {{ #a }} else {{ 3 }};\n\
+             y = f[k];\n"
+        )
+    };
+    let got = [("5", "(x) -> 7"), ("1", "(x) -> 7"), ("5", "(x) -> x + 1"), ("1", "(x) -> x + 1")]
+        .map(|(fun, g)| value(&read_with(fun, g), "y"));
+    assert_eq!(got, ["1", "7", "1", "#a"], "family, function; each with `(x) -> 7` first");
 }
 
 #[test]

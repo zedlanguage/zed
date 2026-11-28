@@ -7,9 +7,9 @@
 
 use zed_kernel::Shared;
 
-use zed_kernel::term::build::{app, lam, let_, lit, prim, var};
+use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::types::Type;
-use zed_kernel::{Evaluator, Pattern, Prim, Term, Value, World};
+use zed_kernel::{Evaluator, Family, Pattern, Prim, Term, Value, World};
 use zedc::zir::lower::lower;
 use zedc::zir::memory;
 
@@ -213,4 +213,38 @@ fn a_function_inside_a_tuple_pattern_binds_its_part() {
         app(var("h"), vec![var("n")]),
     );
     assert_eq!(agree(&calls(3, m)), Ok(ints(3)));
+}
+
+/// `GetAtomKey` on a value that is the family `{#a -> 1, 3 -> 2}` at the first call and a
+/// function at the second (row CHECK-atom-key-mixed-receiver): the family reads `#a` as its
+/// key, 1, and the function is applied to `#a`, so `(x) -> 7` gives 7 and `(x) -> x + 1`
+/// gives `#a` back, as `+` passes an atom. The kernel, the machine and native code agree.
+#[test]
+fn an_atom_key_read_applies_a_function_and_reads_a_family() {
+    let fam = Value::Family(Family::of([
+        (Value::atom("a"), Value::Int(1)),
+        (Value::Int(3), Value::Int(2)),
+    ]));
+    let read = |fun: Term| {
+        let h = if_(
+            prim(Prim::Eq, vec![var("z"), lit(0)]),
+            lit(fam.clone()),
+            fun,
+        );
+        let_(
+            "h",
+            h,
+            prim(Prim::GetAtomKey, vec![var("h"), lit(Value::atom("a"))]),
+        )
+    };
+    let seven = lam(&["x"], lit(7));
+    assert_eq!(
+        agree(&calls(2, read(seven))),
+        Ok(Value::tuple(vec![Value::Int(1), Value::Int(7)]))
+    );
+    let plus = lam(&["x"], prim(Prim::Add, vec![var("x"), lit(1)]));
+    assert_eq!(
+        agree(&calls(2, read(plus))),
+        Ok(Value::tuple(vec![Value::Int(1), Value::atom("a")]))
+    );
 }
