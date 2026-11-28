@@ -814,6 +814,110 @@ fn a_bound_of_the_outer_function_and_one_of_a_returned_function_print_apart() {
     assert_eq!(text.matches(" for ").count(), 2, "{text}");
 }
 
+/// The text of the signature `s`, read back with `read::parse_type`: the type read back,
+/// compared with `s` both ways, and the read signature's bounded and held variables.
+fn read_back_bounds(s: zedc::check::ty::Sig) -> Result<(String, Vec<String>, Vec<String>), String> {
+    use std::sync::Arc;
+    let text = s.to_string();
+    let back = zedc::check::read::parse_type(&text).map_err(|e| format!("{text}\n  error: {e}"))?;
+    let want = Ty::func(Arc::new(s));
+    if !(back.subtype(&want) && want.subtype(&back)) {
+        return Err(format!("{text}\n  reads back as another type: {back}"));
+    }
+    let read = (back.fns.iter().next()).ok_or_else(|| format!("{text}: no function"))?;
+    let bounds = read.bounds.keys().map(|v| v.to_string()).collect();
+    let held = read.held.iter().map(|v| v.to_string()).collect();
+    Ok((text, bounds, held))
+}
+
+/// XR-heldname-print-batch round 1, Codex B1: a variable bounded by carriers that the printed
+/// function binds, standing only inside rows written once as definitions and nowhere directly
+/// in the arrow, must read back bounded. The fixture is Codex's: a one-arrow signature with `T`
+/// its own variable, the carriers of `T -> T for T in int | f64`, and the result R_n, with R_0
+/// = `(T, T)` and R_{i+1} = `(R_i, R_i)`, one row node at both places. Controls: the rows at one
+/// level, written in full, read back bounded; and with `T` written directly at the parameter,
+/// the six levels read back bounded.
+#[test]
+fn a_bound_used_only_in_lifted_parts_reads_back_as_bounded() {
+    use super::standing_twice::read_sig;
+    use std::sync::Arc;
+    let bounded = read_sig("(a: T) -> T for T in int | f64");
+    let t = bounded.arrows[0].result.clone();
+    let rows = |n: usize| {
+        (0..n).fold(Ty::tuple(vec![t.clone(), t.clone()]), |r, _| {
+            Ty::tuple(vec![r.clone(), r])
+        })
+    };
+    // `T` at no parameter: its own variable, bounded, held by none. With `T` at the parameter,
+    // the parsed signature's own, held and bounds are taken as they are.
+    let mut only = read_sig("(a: int) -> int");
+    only.own.insert(Arc::from("T"));
+    only.bounds = bounded.bounds.clone();
+    let with = |base: &zedc::check::ty::Sig, n: usize| {
+        let mut s = base.clone();
+        s.arrows[0].result = rows(n);
+        s
+    };
+    let cases = [
+        ("lifted only, 6 levels", with(&only, 6), true),
+        ("control: in full, 1 level", with(&only, 1), false),
+        (
+            "control: T at the parameter, 6 levels",
+            with(&bounded, 6),
+            true,
+        ),
+    ];
+    let mut report = Vec::new();
+    let mut bad = 0;
+    for (name, s, lifted) in cases {
+        match read_back_bounds(s) {
+            Ok((text, bounds, held)) => {
+                let named = text.contains("type Part");
+                let ok = named == lifted && bounds == ["T"];
+                bad += usize::from(!ok);
+                report.push(format!(
+                    "{name}: {}\n{text}\n  bounds read back {bounds:?}, held {held:?}",
+                    if ok { "ok" } else { "WRONG" }
+                ));
+            }
+            Err(e) => {
+                bad += 1;
+                report.push(format!("{name}: FAILS\n{e}"));
+            }
+        }
+    }
+    assert_eq!(bad, 0, "\n{}", report.join("\n"));
+}
+
+/// XR-heldname-print-batch round 1, Codex B1, the held case: `T` stands directly only in the
+/// result, so its bound reads back, but the parameters hold it only through `Part1`. The
+/// signature's held variables (`Sig::held`, those a parameter holds) must be those of the text
+/// written in full.
+#[test]
+fn a_bound_held_only_through_a_definition_is_held() {
+    use super::standing_twice::read_sig;
+    let full = read_sig("((T, T), (T, T)) -> T for T in int | f64");
+    let named = read_sig("type Part1 = (T, T);\n(Part1, Part1) -> T for T in int | f64");
+    let show = |s: &zedc::check::ty::Sig| format!("bounds {:?}, held {:?}", s.bounds, s.held);
+    assert_eq!(
+        (named.bounds.clone(), named.held.clone()),
+        (full.bounds.clone(), full.held.clone()),
+        "\nnamed: {}\nfull:  {}",
+        show(&named),
+        show(&full)
+    );
+}
+
+/// XR-heldname-print-batch round 1, Claude C-1: the example DESIGN.md gives at zed ad1433e
+/// (sec:diagnostics, "Types in a message") for `bounded_rows(3, 0)`.
+#[test]
+fn the_design_example_of_a_bound_in_shared_rows_prints_as_written() {
+    assert_eq!(
+        sig_of(&bounded_rows(3, 0), "f").to_string(),
+        "type Part1 = (T, (T, U));\ntype Part2 = (Part1, (Part1, V));\n(T, U, V, W) -> (0, (Part2, (Part2, W))) for T in int | f64"
+    );
+}
+
 /// Over seeded random signatures whose result is a tree of tuples, each tuple built over two
 /// of the parts before it and so shared where both pick one, over an own variable `T`, a
 /// variable `U` bounded by carriers, `int` and a function bounding a variable of its own: each
