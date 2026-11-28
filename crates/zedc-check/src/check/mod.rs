@@ -3156,7 +3156,7 @@ struct Ck<'t, 'a> {
     arrow_now: ty::ArrowTrail,
     /// For each span with a fit, the trail current when its first fit was written
     /// ([`Self::set`]), where one was: of two rebuildings at a span, the one kept. Compared
-    /// with [`Self::arrow_now`] at the refusal of a second one ([`Self::arrow_cause`]).
+    /// with [`Self::arrow_now`] at the refusal of a second one ([`arrow_cause`]).
     fit_arrows: HashMap<Span, Arc<ty::ArrowFrame>>,
     /// How many lambdas are being checked at the arrows of an intersection outside a trial
     /// (`FitF::joined` in walk.rs): while any is, a bare `else` is not refused at each arrow
