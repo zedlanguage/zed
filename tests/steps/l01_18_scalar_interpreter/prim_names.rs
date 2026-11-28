@@ -73,6 +73,11 @@ fn check_refusal(p: Prim, w: &str, message: &str) {
         // A tuple may hold a function (DESIGN.md step L1.17), so a tuple of functions is made,
         // and only the program's result, which must be data, refuses it.
         Prim::Tuple => assert_eq!(message, "the program's result holds a function", "{p:?}"),
+        // A read by an atom key of a value that may be a function of one parameter applies the
+        // function to the key (CHECK-atom-key-mixed-receiver), so the function read at a
+        // function gives a function, and only the program's result, which must be data,
+        // refuses it.
+        Prim::GetAtomKey => assert_eq!(message, "the program's result is a function", "{p:?}"),
         Prim::Path | Prim::PathKey | Prim::PathLen => assert_eq!(
             message,
             format!("{w} applied to a function, {OUTSIDE}"),
