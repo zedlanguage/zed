@@ -1514,3 +1514,84 @@ fn a_kept_and_a_built_form_of_one_integer_stay_two_literal_trees() {
     assert!(!lits(&k1).ptr_eq(&lits(&b)));
     assert_eq!(k1.cmp(&b), std::cmp::Ordering::Equal);
 }
+
+/// FIX-key-order-spelled-roots, test T5 of XR-set-tied-digest-proof round 1 (Claude): two
+/// groups whose member `X` places the bisimilar definitions `Aa` and `Bb` beside other held
+/// types, `(0, Aa) op (t1, Bb)` against `(0, Bb) op (t1, Aa)`, are two spellings of one
+/// denotation with the names in different places. `Key::order` exists to tell such spellings
+/// apart (types.rs, the comment on the `names_order` step), so they must not compare Equal. The
+/// claim under test: `spelled_roots` pairs the operands of a meet or union by each side's
+/// spelling hash and never reads a held type, so for about half of the `t1` it pairs `(0, Aa)`
+/// with `(t1, Aa)` and returns Equal (82 of the 252 cases before the fix pairs by class). The
+/// variants: meet and union, and each with a third operand naming `X` itself, so `X` is a
+/// recursive member and not a plain type. Two controls: one spelling made twice is Equal, and
+/// so is one spelling with its operands written in the other order, which the fix must not
+/// split (the operands of a meet or union are a set).
+#[test]
+fn members_with_names_in_other_places_are_not_equal() {
+    use rec::{Def, Expr, Group};
+    let lit = |n| Type::lit(&Value::Int(n)).expect("a literal");
+    let nat = |name: &str, me: usize| Def {
+        name: name.into(),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Tuple(vec![]),
+            Expr::Tuple(vec![Expr::Type(lit(0)), Expr::Ref(me, vec![])]),
+        ]),
+    };
+    let x = |meet: bool, own: bool, t1: i64, first: usize, second: usize, reversed: bool| {
+        let mut ops = vec![
+            Expr::Tuple(vec![Expr::Type(lit(0)), Expr::Ref(first, vec![])]),
+            Expr::Tuple(vec![Expr::Type(lit(t1)), Expr::Ref(second, vec![])]),
+        ];
+        if own {
+            ops.push(Expr::Tuple(vec![Expr::Type(lit(-1)), Expr::Ref(0, vec![])]));
+        }
+        if reversed {
+            ops.reverse();
+        }
+        Def {
+            name: "X".into(),
+            params: vec![],
+            body: if meet {
+                Expr::And(ops)
+            } else {
+                Expr::Union(ops)
+            },
+        }
+    };
+    let member = |meet, own, t1, first, second, reversed| {
+        Group::new(vec![
+            x(meet, own, t1, first, second, reversed),
+            nat("Aa", 1),
+            nat("Bb", 2),
+        ])
+        .expect("a group")
+        .instance(vec![])
+        .remove(0)
+    };
+    let mut equal = Vec::new();
+    for meet in [false, true] {
+        for own in [false, true] {
+            for t1 in 1..64 {
+                let (a, b) = (
+                    member(meet, own, t1, 1, 2, false),
+                    member(meet, own, t1, 2, 1, false),
+                );
+                // The controls: one spelling against itself, made twice or with its operands
+                // written in the other order, is Equal.
+                let again = member(meet, own, t1, 1, 2, false);
+                assert_eq!(a.cmp(&again), std::cmp::Ordering::Equal, "{a}");
+                let reordered = member(meet, own, t1, 1, 2, true);
+                assert_eq!(a.cmp(&reordered), std::cmp::Ordering::Equal, "{a}");
+                if a.cmp(&b) == std::cmp::Ordering::Equal {
+                    equal.push((meet, own, t1));
+                }
+            }
+        }
+    }
+    assert!(
+        equal.is_empty(),
+        "Equal with names in other places (meet, own, t1): {equal:?}"
+    );
+}

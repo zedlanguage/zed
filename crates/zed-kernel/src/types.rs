@@ -9075,8 +9075,8 @@ pub mod rec {
             match (self.at, other.at) {
                 (At::Member(i), At::Member(j)) => a.defs[i].name.cmp(&b.defs[j].name),
                 (At::Part(n), At::Part(m)) if !(Arc::ptr_eq(a, b) && n == m) => spelled(
-                    (a.part(n), &a.defs, a.spells()),
-                    (b.part(m), &b.defs, b.spells()),
+                    (a.part(n), (&a.defs, a.classes_at(), a.spells())),
+                    (b.part(m), (&b.defs, b.classes_at(), b.spells())),
                 ),
                 _ => std::cmp::Ordering::Equal,
             }
@@ -9397,9 +9397,16 @@ pub mod rec {
             // group pays for it: `l01_23_groups_and_refusals::judgments::deciding_a_group_scales`
             // holds that first run, at 256 and 2,048 definitions, to the n log n limit (2,141,806
             // and 17,071,066 bytes, 8.0 times, 2026-11-12), and so decides neither ring before.
-            self.0
-                .canon
-                .get_or_init(|| canon(&self.0.bodies, &self.0.name_hashes))
+            self.0.canon.get_or_init(|| {
+                // The starting sort compares held types by `Type::cmp`, which leaves names out
+                // inside `hash::blind`; the form is kept for the group's life, so it must be made
+                // with names (FIX-key-order-spelled-roots; XR-set-tied-digest-proof §4.1 step 2).
+                debug_assert!(
+                    !super::names_blind(),
+                    "a group's canonical form is made while names are left out"
+                );
+                canon(&self.0.bodies, &self.0.name_hashes)
+            })
         }
     }
 
@@ -9413,6 +9420,11 @@ pub mod rec {
         /// The spelling hashes of the nodes, by number ([`Canon::spell`]), so the form is made.
         fn spells(&self) -> &[u64] {
             &self.canon.get().expect("a key's group has its form").spell
+        }
+
+        /// The classes of the nodes, by number ([`Canon::at`]), so the form is made.
+        fn classes_at(&self) -> &[u32] {
+            &self.canon.get().expect("a key's group has its form").at
         }
 
         /// The definitions in the order of their classes, then their names: what tells apart two
@@ -9459,10 +9471,8 @@ pub mod rec {
                 .map(|(&i, &j)| (&*self.bodies[i], &*other.bodies[j]));
             spelled_roots(
                 roots,
-                &self.defs,
-                &other.defs,
-                self.spells(),
-                other.spells(),
+                (&self.defs, self.classes_at(), self.spells()),
+                (&other.defs, other.classes_at(), other.spells()),
             )
         }
     }
@@ -9700,14 +9710,34 @@ pub mod rec {
             node,
         }
     }
-    /// The order of two nodes of one class by their spelling ([`Canon::spell`]), `defs` naming the
-    /// definitions each one's occurrences name: by head, an occurrence by the name it is written
-    /// with, then the children in place order, in a loop. The types they hold are not read: two
-    /// nodes of one class hold equal ones. The operands of a meet or a union are paired in the
-    /// order of their spelling hashes (`xh`, `yh`, by node number), as [`canon`] hashes them, so
-    /// that the order they are written in does not count; operands whose hashes tie keep their
-    /// written order, which decides only where two spellings collide in hash. Time linear in the
-    /// nodes, besides a sort of each meet's or union's operands.
+    /// The order of two nodes of one class by their spelling ([`Canon::spell`]), each side given
+    /// as the definitions its occurrences name, its nodes' classes ([`Canon::at`]) and its
+    /// spelling hashes, by node number: by head and class, an occurrence by the name it is
+    /// written with, then the children in place order, in a loop. The types they hold are not
+    /// read: two nodes of one class hold equal ones, and every pair compared is of one class. The
+    /// operands of a meet or a union are paired in the order of their classes, then of their
+    /// spelling hashes, as [`canon`] lists them, so that the order they are written in does not
+    /// count; operands whose class and hash tie keep their written order, which decides only
+    /// where two spellings of one class collide in hash. Time linear in the nodes, besides a sort
+    /// of each meet's or union's operands.
+    ///
+    /// Why the class first (FIX-key-order-spelled-roots): a spelling hash reads the name digest of
+    /// a held type ([`Shape::name_tag`]), but the head does not read the type. Paired by hash
+    /// alone, the operands of `(0, Aa) | (t1, Bb)` and `(0, Bb) | (t1, Aa)`, with `Aa` and `Bb`
+    /// one class under two names, were paired `(0, Aa)` with `(t1, Aa)` for about half of the
+    /// `t1`, and the two spellings compared Equal, though their names sit in different places.
+    /// Paired by class, `(0, Aa)` meets `(0, Bb)` and the names tell them apart. Proof that a
+    /// pair is always of one class: the roots are (two members of one class, or two parts of one
+    /// class, [`Key::order`]); the children of two nodes of one class, in place order, are of
+    /// equal classes, since a class's children are one list of classes for all its nodes
+    /// ([`Canon::classes`]); the operands of two meets or unions of one class are one multiset
+    /// of classes (sorted there), so sorting each side by class pairs equal classes; and two
+    /// groups whose forms compare Equal ([`Canon::order`]) number their classes alike. So the
+    /// class compared at each pair is equal on every walk that starts from such roots; it is
+    /// compared all the same, at the cost of one lookup, so that a broken premise orders the
+    /// spellings rather than equating different ones. Test:
+    /// `types::tests::members_with_names_in_other_places_are_not_equal` (82 of 252 cases Equal
+    /// before).
     ///
     /// Tests (PROOF-kernel-proofdoc3a-gaps (l)): pairing by hash, not by written order, is
     /// checked by `l01_23_groups_and_refusals::refusals::reordered_union_arms_give_equal_members`
@@ -9718,11 +9748,15 @@ pub mod rec {
     /// reaches a hash tie: with 64-bit hashes none occurs in practice, and the short-address
     /// build's collision tests (`l01_37a_short_addresses`) do not take this path.
     fn spelled<'a>(
-        (x, xs, xh): (&'a Node, &'a [Def], &[u64]),
-        (y, ys, yh): (&'a Node, &'a [Def], &[u64]),
+        (x, xside): (&'a Node, Side<'a>),
+        (y, yside): (&'a Node, Side<'a>),
     ) -> std::cmp::Ordering {
-        spelled_roots([(x, y)], xs, ys, xh, yh)
+        spelled_roots([(x, y)], xside, yside)
     }
+
+    /// One side of [`spelled_roots`]: the definitions, the class of each node and the spelling
+    /// hash of each node, by node number.
+    type Side<'a> = (&'a [Def], &'a [u32], &'a [u64]);
 
     /// Compares retained spellings, with one visited set across all the roots.
     // Complexity tradeoff: comparing d roots independently can read a shared N-node DAG
@@ -9730,10 +9764,8 @@ pub mod rec {
     // O(pairs) memory; meet operands still need their spelling-order sorts.
     fn spelled_roots<'a>(
         roots: impl IntoIterator<Item = (&'a Node, &'a Node)>,
-        xs: &'a [Def],
-        ys: &'a [Def],
-        xh: &[u64],
-        yh: &[u64],
+        (xs, xc, xh): Side<'a>,
+        (ys, yc, yh): Side<'a>,
     ) -> std::cmp::Ordering {
         fn head<'a>(n: &'a Node, defs: &'a [Def]) -> (u8, usize, &'a str) {
             match &n.e {
@@ -9749,25 +9781,27 @@ pub mod rec {
                 continue;
             }
             let c = (head(x, xs).cmp(&head(y, ys)))
+                .then_with(|| xc[x.at as usize].cmp(&yc[y.at as usize]))
                 .then_with(|| x.e.kids().count().cmp(&y.e.kids().count()));
             if c.is_ne() {
                 return c;
             }
             if x.e.unordered() {
                 // Complexity tradeoff (COMPLEXITY.md K102): pairing in place order is O(k), but
-                // depends on the written order; the sort by hash costs O(k log k) per meet or
-                // union pair, so the walk stays O(N log N) in the nodes, and a hash tie falls back
-                // to the written order, which then decides only between colliding spellings.
-                let by_hash = |n: &'a Node, h: &[u64]| {
-                    let mut kids: Vec<&'a Node> = n.e.kids().map(|c| &**c).collect();
-                    kids.sort_by_key(|c| h[c.at as usize]);
+                // depends on the written order; the sort by class, then hash, costs O(k log k)
+                // per meet or union pair, so the walk stays O(N log N) in the nodes, and a tie
+                // falls back to the written order, which then decides only between colliding
+                // spellings of one class. The sort is stable (`sort_by_key`).
+                let by_class = |n: &'a Node, c: &[u32], h: &[u64]| {
+                    let mut kids: Vec<&'a Node> = n.e.kids().map(|k| &**k).collect();
+                    kids.sort_by_key(|k| (c[k.at as usize], h[k.at as usize]));
                     kids
                 };
                 stack.extend(
-                    by_hash(x, xh)
+                    by_class(x, xc, xh)
                         .into_iter()
                         .rev()
-                        .zip(by_hash(y, yh).into_iter().rev()),
+                        .zip(by_class(y, yc, yh).into_iter().rev()),
                 );
             } else if !matches!(x.e, Shape::Ref(..)) {
                 // The counts are equal, so the pairs from the ends are the pairs in reverse.
