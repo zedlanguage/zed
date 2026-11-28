@@ -102,7 +102,7 @@
 //!   n$ Boolean matrices": n^{3 − ε} with n = Θ(k^{1/2}) is k^{1.5 − ε/2}.
 //!
 //! So under either hypothesis the general worklist is above k log k; neither is proved. Copies
-//! and the full records: verification/bib.md of the worktree b30-pres25 (Henzinger_2015,
+//! and the full records: /home/luke/Work/wt/verification-b30-pres25/bib.md (Henzinger_2015,
 //! Alman_2025), not committed.
 //!
 //! **The exact peel and its lower bound** (row PERF-factored-peel-wlisted, b22-factored3,
