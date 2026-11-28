@@ -18,6 +18,7 @@ use zed_kernel::{Rat, Value};
 
 use super::ty::{Binds, NodeId, Row, Shape, Sig, Ty, WrittenRange};
 use super::{Held, HeldDef, Inexact, Loss, Ranged, carrier_mask, denoted_inexact};
+pub use super::{def_entries, reset_def_entries};
 use zedc_lattice::interval::Num;
 use zedc_syntax::ast::{self, Expr, ExprKind, RangeEnd, Type, TypeKind};
 use zedc_syntax::lex::{self, Part, Tok};

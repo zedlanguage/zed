@@ -19551,6 +19551,26 @@ fn denoted_inexact(
     (ty, d.inexact, d.unbound.unwrap_or_default())
 }
 
+thread_local! {
+    /// The definitions [`Denote::reach`] has walked on this thread: one for each definition
+    /// it reads the names of. Per thread, so tests that read in parallel do not count each
+    /// other's.
+    static DEF_ENTRIES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The definitions counted in [`DEF_ENTRIES`] on this thread since the last
+/// [`reset_def_entries`]: for the tests that reading a printed type walks each definition a
+/// bounded number of times, not once per function type that names it
+/// (FIX-heldname-reading-cost).
+pub fn def_entries() -> u64 {
+    DEF_ENTRIES.with(std::cell::Cell::get)
+}
+
+/// Sets this thread's count of [`def_entries`] to 0.
+pub fn reset_def_entries() {
+    DEF_ENTRIES.with(|c| c.set(0));
+}
+
 /// The steps that say why each part of the written type `t` that is written as a tuple type, an
 /// atom with a payload, a union, an intersection or a difference has no value, and so is
 /// printed `Never` (DESIGN.md sec:diagnostics: a message names every step from the cause to
@@ -20311,6 +20331,7 @@ impl<'a> Denote<'a> {
             if !last.walked[usize::from(last.params)].insert(k) {
                 continue;
             }
+            DEF_ENTRIES.with(|c| c.set(c.get() + 1));
             let def = &held.defs[k];
             todo.extend(def.refs.iter().copied());
             if let Some(home) = self.open.first_mut() {

@@ -424,6 +424,54 @@ fn shared_tuple_places_cross_two_then_one_without_losing_the_definition() {
     assert_eq!(bad, 0, "\n{}", report.join("\n"));
 }
 
+/// XR-heldname-print-batch round 2, Gemini B4-N1: in
+/// [`shared_tuple_places_cross_two_then_one_without_losing_the_definition`] the pair `(S, S)`
+/// is one tuple at one place, so `S` stands at 1+1+1 places. Here `S`, the tuple R_6, stands
+/// inside `A = (S, int)`, one tuple at both places of `(A, A)`, so twice below a shared part,
+/// and once more in `P | S`: 2+1, then 2 once the union is printed `_`. The finding asked that
+/// both texts keep R_6's definition. They need not: with `P | S` printed `_`, R_6 has one use,
+/// in `A`'s body, and `A` none in a body, so `defs::lift` (zed-kernel print/defs.rs) names
+/// neither and writes both in full, which its length rule allows, and the text is shorter
+/// than with the union kept (7 definitions, then 5, on f81d067ae and after the round 2 fixes).
+/// What must hold: each text reads back and prints again to itself, the union printed `_`
+/// never makes the text longer, and the parts inside R_6 stay named.
+#[test]
+fn a_tuple_inside_a_shared_part_does_not_grow_as_a_union_erases_its_other_place() {
+    use std::sync::Arc;
+    use zedc::check::ty::{Binds, Ty};
+    let bounded = read_sig("(a: T) -> T for T in int | f64");
+    let t = bounded.arrows[0].result.clone();
+    let row = (0..6).fold(Ty::tuple(vec![t.clone(), t]), |r, _| {
+        Ty::tuple(vec![r.clone(), r])
+    });
+    let holder = read_sig("(x: (S, int)) -> int").arrows[0].params[0].clone();
+    let a = holder.replace(&[(Arc::<str>::from("S"), row.clone())].into());
+    let mut texts = Vec::new();
+    for arrows in ["(a: T) -> ((A, A), S)", "(a: T) -> ((A, A), P | S)"] {
+        let binds: Binds = [
+            (Arc::<str>::from("S"), row.clone()),
+            (Arc::<str>::from("A"), a.clone()),
+        ]
+        .into();
+        let mut s = read_sig(arrows).replace(&binds);
+        s.own.retain(|v| &**v != "S" && &**v != "A");
+        s.bounds = bounded.bounds.clone();
+        let text = s.to_string();
+        let back = zedc::check::read::parse_type(&text).map(|b| b.to_string());
+        assert_eq!(back.as_deref(), Ok(text.as_str()), "{arrows}");
+        texts.push(text);
+    }
+    let defs: Vec<usize> = texts
+        .iter()
+        .map(|t| t.matches("type Part").count())
+        .collect();
+    assert!(
+        defs[0] >= 6 && defs[1] >= 5 && texts[1].len() <= texts[0].len(),
+        "{defs:?} definitions:\n{}",
+        texts.join("\n\n")
+    );
+}
+
 /// Row TEST-takes-note-name-in-definition: the result of `k` holds tuples written once, as
 /// definitions (row PRINT-shared-part-exponential), whose variables are unbounded, beside a
 /// variable bounded by `apply`'s parameter. The note of what `k` takes and the type the
