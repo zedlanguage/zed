@@ -94,7 +94,10 @@ fn n_shapes_told_apart_inside_a_tuple_fit_themselves_renamed_scales() {
         let union = |ts: Vec<Ty>| ts.into_iter().reduce(|a, b| a.union(&b)).unwrap();
         let shape = |p: &str, i: usize| {
             let atom = Ty::lit(&Value::atom(&format!("m{i}")));
-            Ty::tuple(vec![Ty::tuple(vec![Ty::var(format!("{p}{i}").into()), atom])])
+            Ty::tuple(vec![Ty::tuple(vec![
+                Ty::var(format!("{p}{i}").into()),
+                atom,
+            ])])
         };
         let shapes = |p: &str| union((0..n).map(|i| shape(p, i)).collect());
         let int = Ty::carrier(Carrier::Int);
