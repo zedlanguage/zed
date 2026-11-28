@@ -216,17 +216,10 @@ fn literals_and_atoms_removed_one_at_a_time_scale() {
 /// Builds the second type of a pair from the count and the base.
 type Other = fn(usize, usize) -> Type;
 
-/// `odd_tuples(c)` against `other(c)` at `c = n` and `8n`, equal when `equal`; case `k` of the
-/// pool's bases. Each timed run compares `pairs` pairs, each at a base of its own, so a run's
+/// `odd_tuples(c)` against `other(c)`, a type not equal to it, at `c = n` and `8n`; case `k` of
+/// the pool's bases. Each timed run compares `pairs` pairs, each at a base of its own, so a run's
 /// count averages the constant that the integers in the types set (PERF-xor-tuple-compare).
-fn comparing_exclusive_ors(
-    what: &str,
-    n: usize,
-    pairs: usize,
-    k: usize,
-    other: Other,
-    equal: bool,
-) {
+fn comparing_exclusive_ors(what: &str, n: usize, pairs: usize, k: usize, other: Other) {
     let make = |c: usize, i: usize| -> Vec<(Type, Type)> {
         (i * pairs..(i + 1) * pairs)
             .map(|j| {
@@ -238,7 +231,7 @@ fn comparing_exclusive_ors(
     scaling::check_order_fresh(what, n, 1, make, |c, run_pairs: Vec<(Type, Type)>| {
         for (x, y) in &run_pairs {
             Type::forget_emptiness();
-            assert_eq!(x.equiv(y), equal, "c = {c}");
+            assert!(!x.equiv(y), "c = {c}");
         }
         run_pairs
     });
@@ -273,23 +266,41 @@ fn comparing_exclusive_ors_of_tuple_types_scales() {
         4,
         0,
         |c, b| odd_tuples(c + 1, b),
-        false,
     );
 }
 
-/// Size (TEST-bench-move-l0123, author P169): n 64 before, now 2048; 1x 3.0 ms at load
-/// 18.78.
+/// `odd_tuples(c)` built in reverse and compared with its build in turn, made before the run, at
+/// `c = n` and `8n`.
 #[test]
 fn comparing_equal_exclusive_ors_of_tuple_types_scales() {
-    comparing_exclusive_ors(
-        "an exclusive or of tuple types against itself built in reverse, by count",
-        2048,
+    // FAIL-l0123-exclusive-or-benches-allocate-nothing: through `comparing_exclusive_ors` the
+    // timed run was the comparison alone, of two builds that are one node (item
+    // CHAIN-zip-size), constant work (about 33,000 instructions at both sizes) and from
+    // 3706656c3 no bytes, which the check of the bytes refuses. The reverse build is timed
+    // now, the work that ends at that node; the comparison alone is held to constant time by
+    // `one_pass::bench::two_builds_of_an_exclusive_or_are_compared_in_constant_time`.
+    let make = |c: usize, i: usize| {
+        let b = base(c, 1, i);
+        (odd_tuples(c, b), b)
+    };
+    scaling::check_order_fresh(
+        "an exclusive or of tuple types built in reverse and compared with itself, by count",
+        N_EQUAL,
         1,
-        1,
-        odd_tuples_reversed,
-        true,
+        make,
+        |c, (x, b): (Type, usize)| {
+            Type::forget_emptiness();
+            let y = odd_tuples_reversed(c, b);
+            assert!(x.equiv(&y), "c = {c}");
+            (x, y)
+        },
     );
 }
+
+/// Size of [`comparing_equal_exclusive_ors_of_tuple_types_scales`]: 1x 196 ms at load 25,
+/// 1,311M to 11,378M instructions, 8.68 times; at 2048 it was 9.06 times, over `PREFERRED`, the
+/// ratio falling with `c` as one of `c log c` does.
+const N_EQUAL: usize = 8192;
 
 /// Size (TEST-bench-move-l0123, author P169): n 512 before, now 4096; 1x 291 ms at load
 /// 18.57.

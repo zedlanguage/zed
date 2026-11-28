@@ -741,12 +741,14 @@ fn the_families_of_exclusive_ors_and_chains_are_decided() {
 }
 
 /// Small instance of `bench::an_exclusive_or_built_in_two_orders_is_equal_to_itself_in_linear_time`
-/// (TEST-bench-move-l0123, author P170): an exclusive or built in turn and in reverse is the
-/// same type, and one with a tuple type more is not.
+/// (TEST-bench-move-l0123, author P170) and of
+/// `bench::two_builds_of_an_exclusive_or_are_compared_in_constant_time`: an exclusive or built
+/// in turn and in reverse is the same type, one node, and one with a tuple type more is not.
 #[test]
 fn an_exclusive_or_built_in_two_orders_is_equal_to_itself() {
     for c in [1, 2, 3, 4, 7] {
         let (x, y) = (parity(c, false).ty(2), parity(c, true).ty(2));
+        assert_eq!(x, y, "{c}: one node (item CHAIN-zip-size)");
         Type::forget_emptiness();
         assert!(x.equiv(&y), "{c}");
         Type::forget_emptiness();

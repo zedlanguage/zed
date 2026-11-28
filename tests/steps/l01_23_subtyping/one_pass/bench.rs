@@ -27,17 +27,43 @@ fn exclusive_ors_and_chains_of_overlapping_tuple_types_are_decided_in_one_pass()
     );
 }
 
-/// Two builds of one exclusive or, in two orders, are one node (item CHAIN-zip-size), so they
-/// are equal in time linear in the tuple types.
+/// An exclusive or built in reverse, beside its build in turn, and compared with it, in time
+/// linear in the tuple types.
 #[test]
 fn an_exclusive_or_built_in_two_orders_is_equal_to_itself_in_linear_time() {
-    // Left at its old size, 32 (TEST-bench-move-l0123, author P169): the timed work is one
-    // comparison of two hash-consed nodes, about 15 µs at either size (ratio 0.998, load 39),
-    // so no size brings the 1x run near 0.5 s.
-    let types = scaling::inputs(32, |c| (parity(c, false).ty(2), parity(c, true).ty(2)));
+    // FAIL-l0123-exclusive-or-benches-allocate-nothing: until then the timed run was the
+    // comparison alone, of two builds made before it, which are one node (item CHAIN-zip-size):
+    // about 33,800 instructions and 1,200 bytes at both sizes, and from 3706656c3 (the identity
+    // test first in `Type::subtype`) no bytes, so the check of the bytes refused it. The
+    // reverse build is now timed, the work that ends at that node; the comparison of the two
+    // builds alone is held to constant time in the next test.
+    let firsts = scaling::inputs(N_REVERSE, |c| parity(c, false).ty(2));
     scaling::check(
-        "an exclusive or against its reverse build, by tuple types",
+        "an exclusive or built in reverse and compared with its build in turn, by tuple types",
+        N_REVERSE,
+        |c| {
+            Type::forget_emptiness();
+            let y = parity(c, true).ty(2);
+            assert!(firsts[&c].equiv(&y), "{c}");
+        },
+    );
+}
+
+/// Size of [`an_exclusive_or_built_in_two_orders_is_equal_to_itself_in_linear_time`]: 1x 92 ms
+/// at load 25, 643M to 5,671M instructions, 8.82 times; at 1000 it was 9.01 times, over
+/// `PREFERRED`, the ratio falling with `c` as one of `c log c` does.
+const N_REVERSE: usize = 4096;
+
+/// Two builds of one exclusive or, in two orders, are one node (item CHAIN-zip-size), so
+/// `equiv` decides them by the identity test first in `Type::subtype`, in constant time and
+/// with no allocation; its small instance asserts the one node.
+#[test]
+fn two_builds_of_an_exclusive_or_are_compared_in_constant_time() {
+    let types = scaling::inputs(32, |c| (parity(c, false).ty(2), parity(c, true).ty(2)));
+    scaling::check_instructions_only(
+        "an exclusive or against its reverse build, both built before, by tuple types",
         32,
+        0,
         |c| {
             let (x, y) = &types[&c];
             Type::forget_emptiness();
