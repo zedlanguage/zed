@@ -730,6 +730,146 @@ fn forty_shared_rows_beside_a_union_written_blank_print_in_linear_text() {
     assert_eq!(at_three, [beside, holding, first, cascade], "{at_three:#?}");
 }
 
+/// Row PRINT-bounded-var-in-shared-tuple-exponential: the rows of [`shared_rows`] with the
+/// parameter `a{bounded}` passed at `w`, of `int | f64`, so that it is a variable bounded by
+/// carriers: `a0` stands in the innermost row, held twice at each of the `n` levels; `an`
+/// stands in the outermost row only.
+pub(super) fn bounded_rows(n: usize, bounded: usize) -> String {
+    let params: Vec<String> = (0..=n).map(|i| format!("positional a{i}")).collect();
+    let rows = (1..=n).fold("a0".to_string(), |s, i| format!("p({s}, a{i})"));
+    format!(
+        "w(positional x: int | f64) = 0;\np(positional s, positional v) = (s, (s, v));\nf({}) = (w(a{bounded}), {rows});\n",
+        params.join(", ")
+    )
+}
+
+/// Row PRINT-bounded-var-in-shared-tuple-exponential: a variable bounded by carriers in the
+/// shared rows of [`bounded_rows`] leaves each row written once, as a definition that names the
+/// variable, with the bounds clause written once at the end of the signature (DESIGN.md
+/// sec:diagnostics, "Types in a message"). Before the row a tuple holding a variable bounded by
+/// carriers was never written once, so the text doubled at each level: 346 bytes at 6 levels
+/// with the bound inside the rows, against 167 with it outside. The print runs on a thread of
+/// its own with a time limit, so that the old path fails at the limit. Each text reads back,
+/// compared both ways with the signature at `n` ≤ 6 and printed again to the same text
+/// ([`printed_back`]). The benchmark is
+/// `bench::scaling::shared_rows_holding_a_bounded_variable_print_in_linear_time`.
+#[test]
+fn forty_shared_rows_holding_a_bounded_variable_print_in_linear_text() {
+    let (sent, got) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let texts: Result<Vec<(usize, usize, String)>, String> = [2, 3, 6, 40]
+            .into_iter()
+            .flat_map(|n| [(n, 0), (n, n)])
+            .map(|(n, b)| printed_back(&bounded_rows(n, b), n).map(|t| (n, b, t)))
+            .collect();
+        let _ = sent.send(texts);
+    });
+    let texts = got
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the signatures of 40 shared rows holding a bounded variable print within 10 s")
+        .unwrap_or_else(|e| panic!("{e}"));
+    for (n, b, text) in &texts {
+        assert!(
+            text.len() <= 64 * (n + 2),
+            "a{b} bounded: {} bytes at {n} levels:\n{text}",
+            text.len()
+        );
+        assert_eq!(text.matches(" for ").count(), 1, "a{b} bounded:\n{text}");
+    }
+    let at_three = |b: usize| {
+        (texts.iter())
+            .find(|(n, bb, _)| *n == 3 && *bb == b)
+            .map(|(_, _, t)| t.as_str())
+            .expect("a text at three levels")
+    };
+    assert_eq!(
+        at_three(0),
+        "type Part1 = (T, (T, U));\ntype Part2 = (Part1, (Part1, V));\n(T, U, V, W) -> (0, (Part2, (Part2, W))) for T in int | f64"
+    );
+}
+
+/// The function `h` that `f` returns bounds its own variable, `y`, which stands in rows held
+/// twice at each level: `f`'s text names no part that holds `h`'s variable, as the bounds clause
+/// of `h` is written inside `f`'s text, where `h` stands, and a definition is read at the top of
+/// the text; so `h`'s rows are written in full. The text reads back as the signature.
+#[test]
+fn a_returned_function_with_its_own_bound_writes_its_rows_in_full() {
+    let src = "w(positional x: int | f64) = 0;\np(positional s, positional v) = (s, (s, v));\nf(positional a1, positional a2) = {\n  h(positional y) = (w(y), p(p(y, a1), a2));\n  h\n};\n";
+    let text = printed_back(src, 2).unwrap_or_else(|e| panic!("{e}"));
+    assert!(!text.contains("type "), "{text}");
+    assert_eq!(text.matches(" for ").count(), 1, "{text}");
+}
+
+/// A name bound by two functions in one text: `f` bounds `a0`, which stands in its shared
+/// rows, and the function `h` it returns bounds `y` of its own. `f`'s rows are written once, as
+/// definitions naming `f`'s variable; `h`'s variable keeps a name of its own, with its own
+/// clause, and the text reads back as the signature.
+#[test]
+fn a_bound_of_the_outer_function_and_one_of_a_returned_function_print_apart() {
+    let src = "w(positional x: int | f64) = 0;\np(positional s, positional v) = (s, (s, v));\nf(positional a0, positional a1, positional a2) = {\n  h(positional y) = (w(y), y);\n  (w(a0), p(p(p(a0, a1), a2), a1), h)\n};\n";
+    let text = printed_back(src, 3).unwrap_or_else(|e| panic!("{e}"));
+    assert!(text.contains("type Part1 = "), "{text}");
+    assert_eq!(text.matches(" for ").count(), 2, "{text}");
+}
+
+/// Over seeded random signatures whose result is a tree of tuples, each tuple built over two
+/// of the parts before it and so shared where both pick one, over an own variable `T`, a
+/// variable `U` bounded by carriers, `int` and a function bounding a variable of its own: each
+/// text reads back as the signature both ways and prints again to the same text.
+#[test]
+fn random_shared_rows_with_bounded_variables_print_and_read_back() {
+    use std::sync::Arc;
+    use zedc::check::read::parse_type;
+    let (mut rng, seed) = zed_tests::seed::Rng::fresh(
+        "random_shared_rows_with_bounded_variables_print_and_read_back",
+    );
+    // `T` stands at two parameters, so it is printed by name wherever it stands: a variable
+    // that stands once is printed `_`, and `(a: _) -> int` does not read back as a type below
+    // `(a: T) -> int` (measured; row PRINT-lone-var-underscore-readback), which is not this
+    // test's subject. The variables are the parameters' own types, so they are the
+    // signature's variables.
+    let base = super::standing_twice::read_sig(
+        "(a: T, d: T, b: U, c: (z: V) -> V for V in int | f64) -> int for U in int | f64",
+    );
+    let p = &base.arrows[0].params;
+    let leaves = [
+        p[0].clone(),
+        p[2].clone(),
+        Ty::set(KType::int()),
+        p[3].clone(),
+    ];
+    let mut bad = Vec::new();
+    for case in 0..64 {
+        let mut parts: Vec<Ty> = leaves.to_vec();
+        let depth = 1 + (rng.next_u64() % 7) as usize;
+        for _ in 0..depth {
+            let mut pick = || parts[(rng.next_u64() % parts.len() as u64) as usize].clone();
+            let row = Ty::tuple(vec![pick(), pick()]);
+            parts.push(row);
+        }
+        let mut s = base.clone();
+        s.arrows[0].result = parts.pop().expect("a tuple");
+        let text = s.to_string();
+        let want = Ty::func(Arc::new(s));
+        match parse_type(&text) {
+            Err(e) => bad.push(format!("case {case}: {text}: {e}")),
+            Ok(back) if !(back.subtype(&want) && want.subtype(&back)) => bad.push(format!(
+                "case {case}: {text} reads back as another type: {back}"
+            )),
+            Ok(back) if back.to_string() != text => {
+                bad.push(format!("case {case}: {text} reads back as {back}"))
+            }
+            Ok(_) => {}
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "seed {seed}: {} of 64:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
 /// `r(positional line, bump = 1) = { a1 = (line else #none -> 0) + bump; a2 = (line else
 /// #none -> a1) + bump; … an }`: each sum meets the parameter's class beside an int on one
 /// path and an int alone on another, so each keeps two states where it kept one

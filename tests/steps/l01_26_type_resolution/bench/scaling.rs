@@ -9,14 +9,14 @@ use zedc::check::ty::{Carrier, Ty};
 use super::super::Resolved;
 use super::super::info;
 use super::super::scaling::{
-    a_chain_of_tests, bounded_at_many_parameters, call_chain, chain, constants_and_functions,
-    covering_overload, curried, curried_bare_sums, curried_sums, curried_tested, disjoint_rows,
-    else_patterns, fan, functions_holding_one, generic_applied_to_many, many_destructurings,
-    meeting_on_different_sets, met_and_within, nested_overload, never_arguments, overlapping_rows,
-    overloads, payloads, resolved, results_holding_a_variable, results_met_alone,
-    results_with_functions_met, shared_overloads, shared_rows, sum, sums_of_a_line_or_a_count,
-    tuple, underscore_rows, variables, wide_arrows, wide_destructuring, wider_overloads,
-    with_a_function_arrow,
+    a_chain_of_tests, bounded_at_many_parameters, bounded_rows, call_chain, chain,
+    constants_and_functions, covering_overload, curried, curried_bare_sums, curried_sums,
+    curried_tested, disjoint_rows, else_patterns, fan, functions_holding_one,
+    generic_applied_to_many, many_destructurings, meeting_on_different_sets, met_and_within,
+    nested_overload, never_arguments, overlapping_rows, overloads, payloads, resolved,
+    results_holding_a_variable, results_met_alone, results_with_functions_met, shared_overloads,
+    shared_rows, sum, sums_of_a_line_or_a_count, tuple, underscore_rows, variables, wide_arrows,
+    wide_destructuring, wider_overloads, with_a_function_arrow,
 };
 
 /// Runs `want` on the unit `text(m)` at `n` and `8 * n`, both read and resolved before either
@@ -657,6 +657,34 @@ fn a_function_of_n_shared_rows_prints_in_linear_time() {
                 "{} bytes at {m} levels",
                 text.len()
             );
+        },
+    );
+}
+
+/// Row PRINT-bounded-var-in-shared-tuple-exponential: the signatures of `f` in
+/// `bounded_rows(n, b)`, with the variable bounded by carriers in the innermost row (`b` = 0)
+/// and in the outermost only (`b` = n), print in time and text linear in `n`. The signatures
+/// are checked before the timing, so the runs time the print alone. Besides its ratio: the text
+/// is at most 64 bytes a level. Small instance, read back:
+/// `scaling::forty_shared_rows_holding_a_bounded_variable_print_in_linear_text`.
+#[test]
+fn shared_rows_holding_a_bounded_variable_print_in_linear_time() {
+    let n = 800;
+    let sigs = scaling::inputs(n, |m| {
+        [0, m].map(|b| super::super::sig_of(&bounded_rows(m, b), "f"))
+    });
+    scaling::check(
+        "the signatures of n shared rows holding a bounded variable, printed",
+        n,
+        |m| {
+            for s in &sigs[&m] {
+                let text = s.to_string();
+                assert!(
+                    text.len() <= 64 * (m + 2),
+                    "{} bytes at {m} levels",
+                    text.len()
+                );
+            }
         },
     );
 }
