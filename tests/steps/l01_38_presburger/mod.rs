@@ -44,6 +44,7 @@ mod oracle;
 mod pncx_probe;
 mod product_parity;
 pub(crate) mod random;
+mod random_conjuncts;
 mod shared;
 mod slack_points;
 mod slack_scale;

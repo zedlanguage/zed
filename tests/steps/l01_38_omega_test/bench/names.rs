@@ -335,6 +335,56 @@ fn decide_on_a_cycle_turned_one_way_scales() {
     });
 }
 
+/// `k` disjoint copies of the cycle of [`one_way_cycle`] over `len` variables, written sparsely
+/// (copy `p`'s variables `c{p}_{i}`), each variable at most `top` when `top` is given. Summing
+/// one copy's rows gives `2·Σ v >= 10·len`, so at `top = 4` there is no point, at 5 every
+/// variable at 5 is one.
+fn copies_of_a_one_way_cycle(k: usize, len: usize, top: Option<i64>) -> Formula {
+    let v = |p: usize, i: usize| Lin::atom(Atom::Sym(format!("c{p}_{}", i % len).into()));
+    let mut fs = Vec::new();
+    for p in 0..k {
+        for i in 0..len {
+            fs.push(Formula::Con(Con::ge(
+                &v(p, i + 1).times(3),
+                &v(p, i).plus(&Lin::constant(10)),
+            )));
+            if let Some(top) = top {
+                fs.push(Formula::Con(Con::ge(&Lin::constant(top), &v(p, i))));
+            }
+        }
+    }
+    Formula::and(fs)
+}
+
+/// PERF-tie-rekey-count: `decide` on `k` copies of a 5-variable cycle turned one way. All `5k`
+/// variables tie at the first step and every copy has the same colors, so after the first copy's
+/// variable is eliminated the other copies can tie again, each such tie a `System::rekey` of the
+/// whole system, O(N log N). If that happened once per copy the run would be O(k·N log N),
+/// 64 times the work at 8 times the copies. Measured locally (2 cores, release, on 80a56df72):
+/// 52.4M and 455.7M instructions, 8.69 times, so the ties do not recur once per copy. A torus of
+/// such cycles would test ties after a step without that structure, but `decide` refuses it
+/// before ties matter (FAIL-one-way-torus-growth-refusal).
+#[test]
+fn decide_on_copies_of_a_cycle_turned_one_way_scales() {
+    let k = 100;
+    for m in [k, k * scaling::FACTOR] {
+        assert_eq!(
+            decide(&copies_of_a_one_way_cycle(m, 5, Some(5))),
+            Ok(true),
+            "k = {m}"
+        );
+    }
+    let (small, large) = (
+        copies_of_a_one_way_cycle(k, 5, Some(4)),
+        copies_of_a_one_way_cycle(k * scaling::FACTOR, 5, Some(4)),
+    );
+    assert_eq!((decide(&small), decide(&large)), (Ok(false), Ok(false)));
+    scaling::check("decide on copies of a cycle turned one way", k, |m| {
+        let f = if m == k { &small } else { &large };
+        let _ = std::hint::black_box(decide(f));
+    });
+}
+
 /// [`disjuncts_a_solve_refuses`] with `k` rows more in the disjunction's group,
 /// `v0 - 20 <= w_i <= v0 + 20`: with them `solve` answers the first disjunct `Alone::point`
 /// tries, so the group of `O(k)` rows is solved once, not `k` times

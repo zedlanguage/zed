@@ -24,6 +24,7 @@ mod one_row;
 mod oracle;
 mod pncx_probe;
 mod product_parity;
+mod random_conjuncts;
 mod shared;
 mod slack_scale;
 mod small_cost;
