@@ -811,9 +811,12 @@ pub(super) mod row_sums {
 
     use zed_tests::scaling::Meter;
     use zed_tests::step_helpers::l01_38_presburger::solver_alone;
+    use zedc::store::classed::Classed;
+    use zedc::store::interval::IntervalSet;
+    use zedc::store::lattice::Congruence;
     use zedc::store::presburger::{
         Atom, Con, Formula, JOIN_LIMIT_SET, JOINED, Lin, ROW_SUMS_JOIN, ROW_SUMS_OFF, Refusal,
-        decide, project_each, satisfiable,
+        decide, project_each, project_each_classed, satisfiable,
     };
 
     use super::super::repair::answers;
@@ -1117,6 +1120,86 @@ pub(super) mod row_sums {
             each.iter().all(|s| s.as_ref().is_ok_and(|s| s.is_empty())),
             "{each:?}"
         );
+    }
+
+    /// One equation over two atoms, answered with no join (`row_sums::equation`): exact on
+    /// small ranges against every point, for coefficients 1 and 2 with ranges whose steps touch
+    /// (`y0` in {0, 2, 4} with `y0 == -2·y1`), signs of every kind, a gcd of 2, a gcd of 3 that
+    /// leaves no point, coprime coefficients, and a third atom in no row; and on ranges of width
+    /// 10^12 and 10^15, where the join would list one interval per value of `y1 = 3·y0`, the
+    /// answer is two ranges met with the class 0 modulo 3, and no join runs (`JOINED` is
+    /// `None`). Red before green, on origin/main at abac8b5c4: `JOINED` was
+    /// `Some((20000000, false))`, the join stopped at its limit.
+    #[test]
+    fn one_equation_over_two_atoms_is_answered_exactly() {
+        let cases = [
+            (
+                vec![(0, 10), (20, 25)],
+                vec![(-5, 30), (40, 41)],
+                vec![2, -1],
+                0,
+            ),
+            (vec![(0, 0), (2, 2), (4, 4)], vec![(-3, 3)], vec![1, 2], 0),
+            (
+                vec![(-20, -3), (5, 30)],
+                vec![(-10, 10), (14, 15)],
+                vec![4, -6],
+                2,
+            ),
+            (vec![(0, 5), (9, 9)], vec![(0, 5), (8, 8)], vec![3, 6], 4),
+            (
+                vec![(-30, 30), (50, 60)],
+                vec![(-30, 30), (50, 60)],
+                vec![7, 11],
+                1,
+            ),
+            (
+                vec![(-9, 9), (12, 12)],
+                vec![(-9, 9), (15, 16)],
+                vec![-3, -5],
+                -7,
+            ),
+        ];
+        for (r0, r1, cs, t) in cases {
+            Case {
+                ranges: vec![r0.clone(), r1.clone()],
+                rows: vec![(cs.clone(), t, true)],
+            }
+            .is_answered_exactly();
+            let mut cs = cs;
+            cs.push(0);
+            Case {
+                ranges: vec![r0, r1, vec![(1, 2), (7, 7)]],
+                rows: vec![(cs, t, true)],
+            }
+            .is_answered_exactly();
+        }
+        let (w, big) = (1_000_000_000_000i64, 1_000_000_000_000_000i64);
+        let f = Case {
+            ranges: vec![
+                vec![(0, w), (2 * w, 2 * w + 5)],
+                vec![(-big, big), (2 * big, 2 * big + 1)],
+            ],
+            rows: vec![(vec![3, -1], 0, true)],
+        }
+        .formula();
+        JOINED.with(|j| j.set(Some((0, true))));
+        let got = project_each_classed(&f, &[v(0), v(1)]).expect("a projection");
+        assert_eq!(JOINED.with(Cell::get), None, "no join runs");
+        let ranges = |a: (i64, i64), b: (i64, i64)| {
+            IntervalSet::of(a.0, a.1).join(&IntervalSet::of(b.0, b.1))
+        };
+        let want = [
+            Classed::plain(ranges((0, w), (2 * w, 2 * w + 5))),
+            Classed::new(
+                ranges((0, 3 * w), (6 * w, 6 * w + 15)),
+                Congruence::new(3, 0),
+            ),
+        ];
+        assert!(got.causes.is_empty(), "{:?}", got.causes);
+        for (i, (got, want)) in got.sets.iter().zip(&want).enumerate() {
+            assert_eq!(got.as_ref().ok(), Some(want), "y{i}");
+        }
     }
 
     /// 300 shared-sum formulas of a new seed each run, the first 30 compared with the solver

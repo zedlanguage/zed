@@ -44,7 +44,7 @@ fn three_cases_of_two_classes_scale() {
     );
     for lazy in [false, true] {
         let what = format!("three cases of two classes past the old listing limit, lazy: {lazy}");
-        zed_tests::scaling::check_order(&what, 1_000, 1, |n| {
+        zed_tests::scaling::check_order(&what, 1_000, 0, |n| {
             std::hint::black_box(three_cases_at(1_000 * n as i64, lazy));
         });
     }
