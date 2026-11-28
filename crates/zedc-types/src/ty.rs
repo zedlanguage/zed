@@ -24540,7 +24540,10 @@ impl Scope {
     }
 
     /// Whether `sig` binds a variable, as its own or bounded: only such a signature is an
-    /// opening of [`Scope::openings`].
+    /// opening of [`Scope::openings`]. On the count walk this is the same as "binds a name of
+    /// `others`" (META3 D5): the first time `Shared::of` reaches a signature other than the
+    /// owner, it puts that signature's bounds and own names into `others` (ty.rs:26261-26264
+    /// at fcc1ca682), and settled signatures and rows are skipped before that point.
     fn binds(sig: &Sig) -> bool {
         !sig.own.is_empty() || !sig.bounds.is_empty()
     }
