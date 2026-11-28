@@ -671,14 +671,19 @@ select_pieces() {
       # <group>:: itself, so that --only '^l01_26_type_resolution::random::a_wrong_claim_is_caught'
       # runs that one test, as tools/time_tests.sh needs (TOOLS-time-tests-fixes: it printed NO
       # PIECE MATCHES). That text is the condition, and not a pattern that could match such a
-      # name, so that only the binaries --only names are listed, not every split step's; a step
-      # that is one piece named <group> is not split, so <group>:: alone still selects nothing
-      # there and check_terms says how to select the step (TOOL-run-tests-empty-filter). A piece
+      # name, so that only the binaries --only names are listed, not every split step's. A step
+      # that is one piece named <group> is split the same way when --only holds <group>:: and
+      # then a path, so that --only 'm0_03_grammar_tools::plan::' runs those tests one at a time,
+      # as the header says (TOOLS-run-tests-only-double-colon: it printed NO PIECE MATCHES, as a
+      # full test path did). <group>:: alone, with nothing after it but the end, a ) or a |,
+      # still selects nothing there and check_terms says how to select the step
+      # (TOOL-run-tests-empty-filter). A piece
       # that runs one test `--exact` is that test already, matched or not by selected above;
       # listing each such piece's tests cost an awk a piece, 15 s for the 850 pieces of l01_26 at
       # load 64, where the old selection took 3 s.
       [[ $k == test && $only == *::* &&
         ($name =~ ^$group-[0-9a-f]+(::|$) || ($name == short-* && $name == "$group") ||
+        ($name == "$group" && $only == *"$group::"[!\|\)\$]*) ||
         ($name == "$group::"* && $args != --exact* && $only == *"$group::"*)) ]] || continue
       list_binary "$bin"
       for t in $(piece_tests "$bin" $args); do
