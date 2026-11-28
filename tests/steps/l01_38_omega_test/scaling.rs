@@ -752,3 +752,212 @@ fn the_families_of_the_benchmarks_are_answered_at_small_sizes() {
         point_of("a grid", &grid(v));
     }
 }
+
+/// Whether some point of the box `[-half, half]^n` meets every row `Σ c·x[i] + k >= 0`, when
+/// each row spans at most three consecutive variables: a dynamic program over the pairs
+/// `(x[i-1], x[i])` that meet every row ending at `i`, O(n·(2·half+1)³) row tests.
+fn banded_point(rows: &[(&[(usize, i64)], i64)], n: usize, half: i64) -> bool {
+    let end = |t: &[(usize, i64)]| t.iter().map(|(i, _)| *i).max().unwrap_or(0);
+    let meets = |p: &[i64], last: usize| {
+        rows.iter()
+            .filter(|(t, _)| end(t) == last)
+            .all(|(t, k)| t.iter().map(|(i, c)| c * p[*i]).sum::<i64>() + k >= 0)
+    };
+    let mut p = vec![0; n];
+    let mut pairs = std::collections::BTreeSet::new();
+    for a in -half..=half {
+        p[0] = a;
+        if !meets(&p, 0) {
+            continue;
+        }
+        for b in -half..=half {
+            p[1] = b;
+            if meets(&p, 1) {
+                pairs.insert((a, b));
+            }
+        }
+    }
+    for i in 2..n {
+        let mut next = std::collections::BTreeSet::new();
+        for &(a, b) in &pairs {
+            p[i - 2] = a;
+            p[i - 1] = b;
+            for c in -half..=half {
+                p[i] = c;
+                if meets(&p, i) {
+                    next.insert((b, c));
+                }
+            }
+        }
+        pairs = next;
+    }
+    !pairs.is_empty()
+}
+
+/// The five slowest systems of PRES-splinter-depth (random banded blocks of six to ten
+/// variables, coefficients 2..11, constants -12..12; 3,882 of 168,100 were refused with
+/// `Shadows`). Each was refused because a splinter's own dark shadow was empty. Rational
+/// elimination (Fourier-Motzkin, each bound rounded outward) puts every variable of every
+/// system inside `[-8, 8]`, so enumeration of `[-9, 9]` is exact: the first has a point, the
+/// other four have none. `decide` and `satisfiable` answer each as enumeration does or refuse
+/// it with `Shadows`, never with a wrong answer. The refusal is the one DESIGN.md "Limits"
+/// allows: six to ten live variables, outside the fragment step L1.38 decides completely, and
+/// Pugh's enumeration of the gap by value would cost steps linear in the coefficient values,
+/// not polynomial in the rows. Whether to widen the fragment is the author's row
+/// DECIDE-presburger-banded-fragment.
+#[test]
+fn banded_blocks_refused_for_a_splinter_are_answered_or_refused() {
+    for (n, rows) in BANDED {
+        let f = Formula::and(rows.iter().map(|(t, k)| row(t, *k, false)).collect());
+        let point = banded_point(rows, n, 9);
+        let d = decide(&f);
+        assert!(
+            d == Ok(point) || d == Err(Refusal::Shadows),
+            "{f}: decide gave {d:?}, enumeration {point}"
+        );
+        let m = satisfiable(&f);
+        let s = m.as_ref().map(Option::is_some);
+        assert!(
+            s == Ok(point) || s == Err(&Refusal::Shadows),
+            "{f}: satisfiable gave {s:?}, enumeration {point}"
+        );
+        if let Ok(Some(m)) = m {
+            assert!(f.holds(&m), "{m:?} fails {f}");
+        }
+    }
+}
+
+/// The third system of [`BANDED`] (nine variables, no point) with one variable fixed by an
+/// equality, at every value of `[-8, 8]` (PRES-banded-fixed-growth). A fixed variable leaves a
+/// question with one live variable fewer, and still none of these has a point, but with `x6` at
+/// -1 or 0, or `x7` at -1 to 2, it is refused with `Growth` where the whole system is refused
+/// with `Shadows`: substituting the value turns rows into bounds on one variable, which are
+/// merged, so the count of rows the eliminations may not exceed is smaller than the whole
+/// system's (NOT PROVED as the cause; measured only as these refusals). Eight live variables
+/// are outside the fragment step L1.38 decides completely (DESIGN.md "Limits"), so `Growth` is a
+/// refusal DESIGN allows, and whether to widen the fragment is DECIDE-presburger-banded-fragment.
+/// What is tested: no answer is wrong, and every refusal is `Growth` or `Shadows`.
+#[test]
+fn a_banded_block_with_one_variable_fixed_is_answered_or_refused() {
+    let (n, rows) = BANDED[2];
+    let base: Vec<Formula> = rows.iter().map(|(t, k)| row(t, *k, false)).collect();
+    assert!(!banded_point(rows, n, 9));
+    for j in 0..n {
+        for c in -8i64..=8 {
+            let mut fs = base.clone();
+            fs.push(Formula::Con(Con::eq(&x(j), &Lin::constant(c))));
+            let f = Formula::and(fs);
+            let d = decide(&f);
+            assert!(
+                matches!(d, Ok(false) | Err(Refusal::Growth | Refusal::Shadows)),
+                "x{j} = {c}: decide gave {d:?}"
+            );
+        }
+    }
+}
+
+type Rows = &'static [(&'static [(usize, i64)], i64)];
+
+/// The five slowest systems of PRES-splinter-depth, `(variables, rows)`, each row
+/// `(Σ c·x[i] terms, k)` meaning `Σ c·x[i] + k >= 0`; see
+/// [`banded_blocks_refused_for_a_splinter_are_answered_or_refused`].
+const BANDED: [(usize, Rows); 5] = [
+    (
+        6,
+        &[
+            (&[(0, 2), (1, -9)], 2),
+            (&[(0, -10), (1, 8)], -7),
+            (&[(1, 5), (2, -3)], 4),
+            (&[(1, -10), (2, 3)], -5),
+            (&[(1, 8), (2, -5), (3, -2)], 7),
+            (&[(2, 6), (3, -7)], 6),
+            (&[(2, -11), (3, 6)], 12),
+            (&[(2, -10), (3, 6), (4, 6)], -10),
+            (&[(3, 7), (4, -5)], 2),
+            (&[(3, -6), (4, 10)], 5),
+            (&[(4, 3), (5, -3)], 12),
+            (&[(4, -11), (5, 2)], 9),
+        ],
+    ),
+    (
+        6,
+        &[
+            (&[(0, 8), (1, -10)], 10),
+            (&[(0, -3), (1, 10)], 4),
+            (&[(1, 9), (2, -7)], 7),
+            (&[(1, -11), (2, 7)], -4),
+            (&[(1, -11), (2, 8), (3, -7)], -5),
+            (&[(2, 6), (3, -8)], 8),
+            (&[(2, -10), (3, 7)], -2),
+            (&[(2, 5), (3, 1), (4, 3)], 1),
+            (&[(3, 3), (4, -2)], 3),
+            (&[(3, -9), (4, 7)], -3),
+            (&[(4, 9), (5, -2)], 1),
+            (&[(4, -6), (5, 11)], 6),
+        ],
+    ),
+    (
+        9,
+        &[
+            (&[(0, 9), (1, -7)], 6),
+            (&[(0, -6), (1, 3)], 7),
+            (&[(1, 8), (2, -4)], 11),
+            (&[(1, -2), (2, 9)], 0),
+            (&[(1, 11), (2, 3), (3, -11)], -1),
+            (&[(2, 4), (3, -6)], 6),
+            (&[(2, -3), (3, 6)], 9),
+            (&[(2, 4), (3, 11), (4, -7)], 2),
+            (&[(3, 11), (4, -3)], -5),
+            (&[(3, -9), (4, 8)], -3),
+            (&[(3, -1), (4, 8), (5, -4)], -8),
+            (&[(4, 9), (5, -6)], 0),
+            (&[(4, -8), (5, 9)], 4),
+            (&[(4, 6), (5, -9), (6, -6)], 0),
+            (&[(5, 11), (6, -8)], 5),
+            (&[(5, -4), (6, 6)], 10),
+            (&[(6, 4), (7, -5)], 10),
+            (&[(6, -6), (7, 5)], 8),
+            (&[(6, 9), (7, 3), (8, 4)], 6),
+            (&[(7, 3), (8, -10)], 7),
+            (&[(7, -3), (8, 10)], 9),
+        ],
+    ),
+    (
+        6,
+        &[
+            (&[(0, 3), (1, -8)], -6),
+            (&[(0, -4), (1, 4)], 9),
+            (&[(1, 3), (2, -3)], 10),
+            (&[(1, -11), (2, 8)], 2),
+            (&[(1, 9), (2, -5), (3, -7)], -4),
+            (&[(2, 3), (3, -10)], 5),
+            (&[(2, -9), (3, 11)], -2),
+            (&[(2, 2), (3, 11), (4, 1)], 9),
+            (&[(3, 9), (4, -7)], 11),
+            (&[(3, -10), (4, 7)], -2),
+            (&[(4, 8), (5, -8)], 4),
+            (&[(4, -11), (5, 6)], 11),
+        ],
+    ),
+    (
+        7,
+        &[
+            (&[(0, 11), (1, -7)], 12),
+            (&[(0, -2), (1, 7)], 10),
+            (&[(0, 4), (1, 11), (2, -2)], -3),
+            (&[(1, 4), (2, -8)], 8),
+            (&[(1, -4), (2, 8)], 0),
+            (&[(2, 6), (3, -5)], 0),
+            (&[(2, -7), (3, 3)], 5),
+            (&[(2, 2), (3, -5), (4, -10)], 6),
+            (&[(3, 5), (4, -2)], 10),
+            (&[(3, -3), (4, 3)], -3),
+            (&[(3, -8), (4, -7), (5, -11)], -11),
+            (&[(4, 8), (5, -9)], 1),
+            (&[(4, -9), (5, 10)], 4),
+            (&[(4, 2), (5, -4), (6, 7)], 1),
+            (&[(5, 4), (6, -2)], 4),
+            (&[(5, -11), (6, 2)], 9),
+        ],
+    ),
+];
