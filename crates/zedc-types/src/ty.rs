@@ -2697,7 +2697,7 @@ pub fn tys_hold_only_closed_fns<'a>(tys: impl Iterator<Item = &'a Ty>) -> bool {
 /// (HELDNAME-closed-in-callee).
 ///
 /// A data family that holds a function ([`Sig::holds_fn_as_data`]) is asked here as one
-/// signature, since [`fns_outside_tys`] collects `t.fns` and does not enter it. The finishing
+/// signature, since `fns_outside_tys` collects `t.fns` and does not enter it. The finishing
 /// enters it instead ([`Ty::with_held_fns`] in `Ck::r10_finish_one_fwd_callee`) and asks each
 /// function inside. The two agree in the direction the forward needs
 /// (DOC-heldname-data-families-own-vars). Proof. (1) A family binds no own variable: each site
