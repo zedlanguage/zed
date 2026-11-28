@@ -35380,6 +35380,74 @@ mod probe_order {
         );
     }
 
+    /// The parts [`probe`] leaves are the same, read without their order, when the
+    /// disjunctions nested inside each disjunct, and their disjuncts, are shuffled: the open
+    /// case of the note at [`content_order`], which sorts the top level only
+    /// (PROOF-probe-order-independent). Each case is a system of [`rows_in`] with one or two
+    /// disjunctions more whose disjuncts are themselves systems of [`rows_in`] on the same
+    /// atoms, so each holds two disjunctions or more.
+    #[test]
+    fn probe_leaves_the_same_parts_whatever_the_order_of_the_disjunctions_inside_a_disjunct() {
+        let (mut rng, seed) = Rng::fresh(
+            "probe_leaves_the_same_parts_whatever_the_order_of_the_disjunctions_inside_a_disjunct",
+        );
+        let mut diffs = Vec::new();
+        let mut asked = 0;
+        for case in 0..300 {
+            let n = 2 + rng.below(4);
+            let b = 2 + rng.int_i128(0, 6);
+            let base = Parts::of(nnf(&rows_in(&mut rng, n, b), true));
+            let mut ors = base.ors.clone();
+            for _ in 0..1 + rng.below(2) {
+                let ds = (0..2 + rng.below(2))
+                    .map(|_| Rc::new(Parts::of(nnf(&rows_in(&mut rng, n, b), true))))
+                    .collect();
+                ors.push(ds);
+            }
+            let p = Parts::by_hand(base.cons.clone(), ors);
+            if !p.ors.iter().flatten().any(|d| d.ors.len() >= 2) {
+                continue;
+            }
+            asked += 1;
+            let mut mixed = || {
+                let ors = (p.ors.iter())
+                    .map(|o| {
+                        (o.iter())
+                            .map(|d| {
+                                let mut inner = d.ors.clone();
+                                rng.shuffle(&mut inner);
+                                for e in &mut inner {
+                                    rng.shuffle(e);
+                                }
+                                part(d.cons.clone(), inner)
+                            })
+                            .collect()
+                    })
+                    .collect();
+                Parts::by_hand(p.cons.clone(), ors)
+            };
+            let q = mixed();
+            let run = |q: Parts| match probe(q, &HashSet::new()) {
+                Ok(Some(q)) => format!("{:?}", key(&q)),
+                other => format!("{:?}", other.map(|o| o.is_some())),
+            };
+            let first = run(p.clone());
+            let other = run(q);
+            if first != other {
+                diffs.push(format!(
+                    "case {case}:\n  as written {first}\n  inner shuffled {other}"
+                ));
+            }
+        }
+        assert!(asked >= 100, "seed {seed:#x}: only {asked} cases with nested disjunctions");
+        assert!(
+            diffs.is_empty(),
+            "seed {seed:#x}, {} of {asked}:\n{}",
+            diffs.len(),
+            diffs.first().map_or("", String::as_str)
+        );
+    }
+
     /// Every point with the atoms `v0` to `v(n-1)` each in `0..=b`.
     fn box_points(n: usize, b: i128) -> Vec<Model> {
         let mut out = vec![Model::new()];

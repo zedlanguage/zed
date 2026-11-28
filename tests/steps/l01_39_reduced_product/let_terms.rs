@@ -368,6 +368,42 @@ fn a_summarized_binding_read_inside_a_term_narrows_its_input() {
     assert_eq!(ints_of(&a, "(z == 3)", true, "x"), "[5..=6]");
 }
 
+/// The same over two inputs (PA-let-followups part 2 for a summary over k > 1 inputs):
+/// `if 0 <= x <= 6 && 0 <= y <= 1 { w = x + y; z = w div 2; if z == 3 { 1 } else { 2 } }`.
+/// The test reads `z` through its term, which gives `w` the integers `6..=7` and narrows `x`
+/// to `5..=6`; `w`, summarized over `x` and `y`, must then lie in its summary's image over
+/// them, `5..=7`, where it was `0..=7`. The image is the hull of the sum of the inputs' bounds,
+/// so `6..=7`, which the inversion found, is not reached this way.
+#[test]
+fn a_binding_summarized_over_two_inputs_read_inside_a_term_narrows_by_its_inputs() {
+    let within = |n: &str, hi: i64| {
+        prim(
+            Prim::And,
+            vec![
+                prim(Prim::Ge, vec![var(n), int(0)]),
+                prim(Prim::Le, vec![var(n), int(hi)]),
+            ],
+        )
+    };
+    let body = if_(
+        prim(Prim::And, vec![within("x", 6), within("y", 1)]),
+        let_(
+            "w",
+            prim(Prim::Add, vec![var("x"), var("y")]),
+            let_(
+                "z",
+                prim(Prim::IntDiv, vec![var("w"), int(2)]),
+                test(prim(Prim::Eq, vec![var("z"), int(3)])),
+            ),
+        ),
+        int(3),
+    );
+    let a = checked_arms(&body);
+    assert_eq!(ints_of(&a, "(z == 3)", true, "x"), "[5..=6]");
+    assert_eq!(ints_of(&a, "(z == 3)", true, "y"), "[0..=1]");
+    assert_eq!(ints_of(&a, "(z == 3)", true, "w"), "[5..=7]");
+}
+
 /// A summary of `n` pieces over `x`: the `if` chain whose piece `j` holds the inputs below
 /// `10 (j + 1)` (and from `10 j`, but for the first) and is `x - (10 j + 5)` for an even `j`
 /// and `(10 j + 5) - x` for an odd one, so it is 0 at `10 j + 5` and slopes up and down.
