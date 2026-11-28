@@ -334,8 +334,9 @@ fn arms() -> Vec<(&'static str, String, String)> {
             outside(
                 "H",
                 "a recursive occurrence stands in the guarantee of `H(A) -> int \\ A`, whose \
-                 value type `int \\ A` has a parameter under a complement or to the right of \
-                 `\\`, where a larger argument gives a smaller type, so it may be empty",
+                 value type `int \\ A` has a parameter under a complement, to the right of \
+                 `\\` or in a guarantee, where a larger argument gives a smaller type, so it \
+                 may be empty",
             ),
         ),
         (
@@ -429,6 +430,89 @@ fn not_monotone_only_where_proved() {
             "{arm}: {got}"
         );
     }
+}
+
+/// The admission of the one-parameter group `body`, named `name` with parameter `A`: `Ok` when
+/// accepted, else the refusal's message.
+fn admitted_with_param(name: &str, body: Expr) -> Result<(), String> {
+    Group::new(vec![Def {
+        name: name.into(),
+        params: vec!["A".into()],
+        body,
+    }])
+    .map(|_| ())
+    .map_err(|e| e.message)
+}
+
+/// A parameter in the guarantee of a morphism type shrinks that type as the argument grows:
+/// `(A) -> V` with `V` empty holds a value only when `A` is empty. So a value type with a
+/// parameter in a guarantee may be empty at a larger argument though it is inhabited at
+/// `empty`, and the group's emptiness can flip. `T(empty)` holds the empty morphism in
+/// `(empty) -> !_` while `T(int)`'s `(int) -> !_` is empty (FIX-shrinks-guarantee-param,
+/// cross-review XR-group-admit-precision-plan round 1, META1 D0: Claude B-2's two texts and
+/// Gemini's two `F(A)` texts, all admitted at e2e01f05f; Gemini computed `F(empty)` Inhabited
+/// and `F(int)` Refused(NoWitness) for the first).
+#[test]
+fn a_parameter_in_a_guarantee_of_the_value_type_is_refused() {
+    let p = || Expr::Param(0);
+    let h = || Expr::Ref(0, vec![p()]);
+    let ab = || and(Expr::Type(Type::atom("a")), Expr::Type(Type::atom("b")));
+    let none = || not(top());
+    let cases = [
+        // type T(P) = (T(P)) -> ((P) -> !_)
+        ("T", m(h(), h(), m(p(), p(), none()))),
+        // type T(P) = (T(P)) -> (((P) -> !_) | (T(P), !_))
+        (
+            "T",
+            m(
+                h(),
+                h(),
+                union(vec![m(p(), p(), none()), pair(h(), none())]),
+            ),
+        ),
+        // type F(A) = (F(A)) -> ((A) -> (#a & #b))
+        ("F", m(h(), h(), m(p(), p(), ab()))),
+        // type F(A) = (F(A)) -> ((A) -> ((#a & #b), F(A)))
+        ("F", m(h(), h(), m(p(), p(), pair(ab(), h())))),
+    ];
+    let wrong: Vec<String> = cases
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, (name, body))| match admitted_with_param(name, body) {
+            Ok(()) => Some(format!("case {i}: admitted")),
+            Err(got) if got.contains("in a guarantee") || got.contains("mentions the group") => {
+                None
+            }
+            Err(got) => Some(format!("case {i}: {got}")),
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    // Control: a parameter in a union of the value type, inhabited at every argument, stays
+    // accepted.
+    assert_eq!(
+        admitted_with_param("G", m(h(), h(), union(vec![p(), int()]))),
+        Ok(())
+    );
+}
+
+/// The closed value type of cross-review XR-group-admit-precision-plan round 1, Codex Q2:
+/// `type R(A) = (R(A)) -> ((A) -> empty)` names no member in its value type, so only the
+/// parameter walk can refuse it; `R(int)` holds no value while `R(empty)` does. Codex named
+/// the closed-value path and its `holds` callback: `holds` (types.rs) reads a part of the
+/// value type that names no member through that callback, which is `value_flaw` and so
+/// `shrinks`; its other routes (`covers`, a class forced by the guarantee, an empty
+/// guarantee) give a value of `l -> v` at every argument, so the one arm in `shrinks` closes
+/// this case too (red without it, 2026-11-28). Codex's form with the member,
+/// `(R(A)) -> ((A) -> (empty, R(A)))`, is refused as "mentions the group" with or without it.
+#[test]
+fn a_closed_value_type_with_a_parameter_in_a_guarantee_is_refused() {
+    let p = || Expr::Param(0);
+    let h = || Expr::Ref(0, vec![p()]);
+    let got = admitted_with_param("R", m(h(), h(), m(p(), p(), empty())));
+    assert!(
+        got.as_ref().is_err_and(|g| g.contains("in a guarantee")),
+        "{got:?}"
+    );
 }
 
 /// `D0 = (D1) -> int`, each `Di = (int, D(i-1))`, and the last `(int, D(n-2) & ((empty) ->

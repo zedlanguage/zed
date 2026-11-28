@@ -538,8 +538,8 @@ impl Group {
         }
         if shrinks(v, false) {
             return Some(
-                "has a parameter under a complement or to the right of `\\`, where a larger \
-                 argument gives a smaller type, so it may be empty",
+                "has a parameter under a complement, to the right of `\\` or in a guarantee, \
+                 where a larger argument gives a smaller type, so it may be empty",
             );
         }
         // Why a value at every parameter `empty` is enough: `L -> V` with `V` empty holds a value
@@ -784,8 +784,19 @@ fn bounded(l: &Arc<Node>, u: &Arc<Node>) -> bool {
     !same(l, u) && !empty && !top
 }
 
-/// Whether a parameter in `e` stands under a complement or to the right of `\\`, where a larger
-/// argument shrinks `e`; `under` says whether `e` itself does.
+/// Whether a parameter in `e` stands under a complement, to the right of `\\` or in the
+/// guarantee of a morphism type, where a larger argument shrinks `e`; `under` says whether `e`
+/// itself does.
+///
+/// The guarantee is such a place: `l .. u -> v` holds the morphisms defined on at least `l`,
+/// so a larger `l` holds fewer, and `(A) -> !_` holds the empty morphism at `A = empty` and
+/// nothing at `A = int`. Before this arm the guarantee was walked as the permission and the
+/// value type are, so `type T(P) = (T(P)) -> ((P) -> !_)` was admitted though `T(empty)` is
+/// inhabited and `T(int)` is not (FIX-shrinks-guarantee-param, cross-review
+/// XR-group-admit-precision-plan round 1, META1 D0). A larger permission or value type holds
+/// more morphisms, so those stay at `under`. Tests:
+/// `l01_23_subtyping::admission::a_parameter_in_a_guarantee_of_the_value_type_is_refused` and
+/// `a_closed_value_type_with_a_parameter_in_a_guarantee_is_refused`.
 fn shrinks(e: &Node, under: bool) -> bool {
     let mut todo = vec![(e, under)];
     while let Some((e, under)) = todo.pop() {
@@ -793,6 +804,7 @@ fn shrinks(e: &Node, under: bool) -> bool {
             Shape::Param(_) if under => return true,
             Shape::Not(a) => todo.push((a, true)),
             Shape::Diff(a, b) => todo.extend([(&**a, under), (&**b, true)]),
+            Shape::Morphism(l, u, v) => todo.extend([(&**l, true), (&**u, under), (&**v, under)]),
             s => todo.extend(s.kids().map(|c| (&**c, under))),
         }
     }
