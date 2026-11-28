@@ -17233,25 +17233,59 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of any check, so C does not depend on them, which (F2) uses where it says Y's
     /// constraints are among X's.
     ///
-    /// What stays open: (H1) is not established for every program. The check of a call need
-    /// on a function value can walk that function's body (`check_on` → `meet` → `call_found` →
-    /// `drive` → `resume`, found 2026-11-27 by a call graph of `self.` calls in check/*.rs,
-    /// which over-approximates: whether this path runs inside the search is not known), and
-    /// that walk reaches `class_takes` (`resume` → `bind` → `fix_bound` → `fix_class` →
-    /// `class_takes`, and `resume` → `binary_end` → `as_written` → `construct` → `binary_op` →
-    /// `equal_classes` → `class_takes`). If a class read there
-    /// is one of this level whose mask the search narrows later, a literal's carrier can be
-    /// chosen at `int | f64` in one order and at `int` in another. So (F) is proved where no
-    /// use met in the search is a call of a function value whose body is walked there, or
-    /// where no class such a walk reads by `class_takes` is one the search writes; and (H2)
-    /// is (b3)'s open part. A program refuting the order independence would have a link
-    /// whose merge meets a call of a passed function whose body compares a value of a class
-    /// the search narrows with a literal (row PROOF-join-narrowed-literal-carrier). The test
-    /// `tests::join_narrowed_joins_a_chain_whatever_the_order_of_its_roots` checks the order
-    /// independence without use checks, and
+    /// (b5) No check runs inside the search, so (H1) holds and (H2) is never used (row
+    /// PROOF-join-narrowed-literal-carrier). The concern was that the check of a call need on
+    /// a function value walks that function's body (`check_on` → `meet` → `call_found` →
+    /// `drive` → `resume`) and reaches `class_takes` (`resume` → `bind` → `fix_bound` →
+    /// `fix_class` → `class_takes`, and `resume` → `binary_end` → `as_written` → `construct` →
+    /// `binary_op` → `equal_classes` → `class_takes`), which could choose a literal's carrier
+    /// at `int | f64` in one order and at `int` in another. Every such path starts at
+    /// `check_on`, as does the `NeedKind::Remap` arm of `meet`. Inside the search a check can
+    /// start only in [`Self::merge`], called from [`Self::join_link`], at its loop over `cross`:
+    /// the pairs of a use of one class and a tuple or function in the other's `flowed`. The
+    /// other calls in `merge` and `join_link` run no check: `r10_force_root` →
+    /// `r10_force_forward` calls `find` and `build_fwd_need_from_open` (no method of `self`)
+    /// and writes only uses and fresh classes; `touch` (`r10_force_root`), `link_proof`,
+    /// `log_class`, `lower_uses` (`lower`, `bound_levels`, `find`), `show`, `error_offering`
+    /// (`derive`, which only reads, and `error_with` → `reject`), and `push_carrier_groups`
+    /// (`find`).
+    /// Invariant I: a root whose `flowed` is not empty has a mask with no bit but `OTHER`.
+    /// (I1) A class is made with `flowed` empty (the two `Class` constructors in mod.rs and
+    /// `make_fresh_class`), so I holds for it.
+    /// (I2) `flowed` grows at one place outside the unit tests, [`Self::flow`], and only for a
+    /// tuple or function piece p. For p, `class_of(p)` is `None` (it is `Some` only for a
+    /// variable) and `p.carrier()` is `None` (it is `Some` only for a carrier piece), so `flow`
+    /// first ran `restrict(k, OTHER)`, which leaves the mask of k's root within `OTHER` or
+    /// fails, and then pushes onto that root (`r10_force_root` between the two writes no mask
+    /// and links no class).
+    /// (I3) A mask is written at two places. [`Ck::restrict_asking`] writes `old & mask` and
+    /// returns false before writing 0, so a mask within `OTHER` stays within it. `merge` gives
+    /// the root the `flowed` of both classes and the mask m = a & b, and returns false before
+    /// writing if m = 0; if either class had `flowed` not empty, its mask is within `OTHER`, so
+    /// m is too. So masks only lose bits and are never 0.
+    /// (I4) The other place a root gets a parent, [`Self::join_results`], writes neither the
+    /// mask nor the `flowed` of the root it keeps.
+    /// (I5) A dropped layer gives back the whole entry of each class written in it
+    /// (`probe::Classes`: a write in an open layer goes to the layer's copy of the entry, and
+    /// `drop_layer` puts back the entry from before the layer), so the state after the drop is
+    /// the state before the layer, where I held. The writes that go past a layer
+    /// (`begin_through`) are those of `r10_force_forward`, uses and fresh classes, which keep I.
+    /// So I holds at every step.
+    /// (C) The search calls `join_link(k, j)` on the roots k and j only if k = j, where `merge`
+    /// returns at once, or one of the two, say k, has a mask with no `OTHER` bit. If k's `flowed`
+    /// were not empty, by I its mask would be within `OTHER` with no `OTHER` bit, so 0, which
+    /// (I3) excludes. If j's `flowed` is not empty, its mask is within `OTHER`, so the two masks
+    /// share no bit and `merge` returns false before it writes or checks. Otherwise both are
+    /// empty, and `cross` is empty. So no check runs inside the search: no literal's carrier is
+    /// chosen there, no class is made there, and (F) is the claim without use checks proved
+    /// above. Checked: a trace in `merge` that printed any `cross` pair met while the search
+    /// ran fired on none of the l01_26 and l01_26a tests, run module by module and then test by
+    /// test, nor on 41 programs of this shape in every order of their statements, 2026-11-28,
+    /// b22-names2. Tests: `tests::join_narrowed_joins_a_chain_whatever_the_order_of_its_roots`,
     /// `l01_26_type_resolution::narrowing::the_tested_classes_end_alike_whatever_the_order_of_their_tests_and_uses`
-    /// with them: a chain of three tested classes and a use, in all 24 orders, gives one
-    /// signature and one set of errors (evidence, not proof).
+    /// (a chain of three tested classes and a use, in all 24 orders), and
+    /// `l01_26_type_resolution::narrowing::a_passed_function_comparing_a_narrowed_value_with_a_literal_ends_alike_in_every_order`
+    /// (six programs where a passed function compares a narrowed value with the literal `1`).
     // Complexity tradeoff (COMPLEXITY.md row F119): the naive version passes over the links
     // until no join changes a class, O(n²) for a chain of n links where each pass moves a
     // carrier one link (inferred). The two passes it was replaced with were O(n log n) but
@@ -17322,9 +17356,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut read = 0;
         loop {
             if stack.is_empty() {
-                // A merge checks the uses of each class on what flowed into the other
-                // ([`Self::merge`]), which may make a class of carriers outside the search:
-                // the groups not yet seen are looked at again once the search stops.
+                // Every class the search makes one of carriers is found through the log
+                // (`push_carrier_groups`), and no merge here runs a check that could make
+                // one elsewhere ((b5) above); this scan of the groups not yet seen, once the
+                // stack empties, finds nothing more, and is kept as a cheap second look.
                 stack.extend(
                     (0..roots.len()).filter(|&g| {
                         !seen[g] && self.classes[self.find(roots[g])].mask & OTHER == 0
