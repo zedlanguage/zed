@@ -689,6 +689,30 @@ fn shared_rows_holding_a_bounded_variable_print_in_linear_time() {
     );
 }
 
+/// Row PERF-standing-twice-shared-empty: [`zedc::check::ty::Sig::standing_twice`], which the
+/// checker asks of a signature before a note names its variables, runs on the signatures of
+/// `f` in `shared_rows(n)` and in `bounded_rows(n, 0)` in time linear in `n`, the order of
+/// printing them, as its doc says. Before the row it walked each shared row at each of its
+/// places, 2^n times at n levels, and did not end in 60 s at 800 levels. Besides its ratio:
+/// each of the `n + 1` variables stands as a parameter and in the result, so all stand twice,
+/// the bounded `a0` among them.
+#[test]
+fn the_variables_standing_twice_in_n_shared_rows_are_found_in_linear_time() {
+    let n = 800;
+    let sigs = scaling::inputs(n, |m| {
+        [shared_rows(m, false), bounded_rows(m, 0)].map(|t| super::super::sig_of(&t, "f"))
+    });
+    scaling::check(
+        "the variables standing twice in a signature of n shared rows",
+        n,
+        |m| {
+            for s in &sigs[&m] {
+                assert_eq!(s.standing_twice().len(), m + 1, "{m} levels");
+            }
+        },
+    );
+}
+
 /// Row PRINT-shared-underscore-union-tuple: the signatures of `f` in `underscore_rows(n)`, each
 /// form, whose shared rows stand beside, inside, or at a place of a union written `_`, print in
 /// time and text linear in `n`. The signatures are checked before the timing, so the runs time

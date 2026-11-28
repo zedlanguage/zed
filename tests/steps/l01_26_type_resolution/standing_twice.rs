@@ -309,14 +309,42 @@ fn a_variable_bounded_by_carriers_stands_twice_where_the_text_writes_it_twice() 
     );
 }
 
+/// Row PERF-standing-twice-shared-empty: [`Sig::standing_twice`] walks a tuple with variables
+/// that the print writes once (`Shared::local`, crates/zedc-types/src/ty.rs) once, and counts each place of
+/// a variable bounded by carriers inside it once for each place of the tuple. Here `N` stands
+/// only in the tuple `(N, int)`, held once inside each of the parameters `(S, int)`, so twice
+/// below a part: it stands twice, as the text, which writes that short tuple in full at both
+/// places, shows. With one place of the tuple it stands once. A count of the places the walk
+/// writes, the tuple's text once, would give one for both.
+#[test]
+fn a_bounded_variable_in_a_tuple_written_once_stands_at_each_place_of_the_tuple() {
+    use std::sync::Arc;
+    use zedc::check::ty::Binds;
+    let inner = read_sig("((x: (N, int)) -> int for N in int | f64)");
+    let row = inner.arrows[0].params[0].clone();
+    for (arrows, want) in [
+        ("(a: (S, int), b: (S, int)) -> int", true),
+        ("(a: (S, int), b: int) -> int", false),
+    ] {
+        let s = read_sig(arrows);
+        let binds: Binds = [(Arc::<str>::from("S"), row.clone())].into();
+        let mut s = s.replace(&binds);
+        s.own.retain(|v| &**v != "S");
+        s.bounds = inner.bounds.clone();
+        let shown = s.to_string();
+        assert_eq!(places_of(&shown, "N"), 1 + usize::from(want), "{shown}");
+        assert_eq!(s.standing_twice().contains("N"), want, "{shown}");
+    }
+}
+
 /// Row TEST-takes-note-name-in-definition: the result of `k` holds tuples written once, as
 /// definitions (row PRINT-shared-part-exponential), whose variables are unbounded, beside a
 /// variable bounded by `apply`'s parameter. The note of what `k` takes and the type the
 /// checker found share the message's one block of definitions, and name each variable as it
 /// does, inside the definitions and out (MSG-takes-note-name-shared): the bounded one, last
 /// (`T6`) or first (`T`) among the parameters, and those of the definitions, which start at
-/// `U` when the bounded one is `T`. A tuple that holds a variable bounded by carriers is never
-/// written once (`Shared` in zedc-types), so the bounded variable stays outside them.
+/// `U` when the bounded one is `T`. The bounded one, bounded by a need and not by carriers,
+/// stands only in the outermost tuple, so it stays outside the definitions.
 #[test]
 fn the_takes_note_names_the_variables_of_a_definition_as_the_type_does() {
     let p = "p(positional s, positional v) = (s, (s, v));\n";

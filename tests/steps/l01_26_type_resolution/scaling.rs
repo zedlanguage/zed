@@ -776,15 +776,17 @@ fn forty_shared_rows_holding_a_bounded_variable_print_in_linear_text() {
         );
         assert_eq!(text.matches(" for ").count(), 1, "a{b} bounded:\n{text}");
     }
-    let at_three = |b: usize| {
+    // At 6 levels, as the unbounded rows print: a row is named once it stands in another
+    // part's body, so the two innermost rows are written in full inside `Part1`.
+    let at_six = |b: usize| {
         (texts.iter())
-            .find(|(n, bb, _)| *n == 3 && *bb == b)
+            .find(|(n, bb, _)| *n == 6 && *bb == b)
             .map(|(_, _, t)| t.as_str())
-            .expect("a text at three levels")
+            .expect("a text at six levels")
     };
     assert_eq!(
-        at_three(0),
-        "type Part1 = (T, (T, U));\ntype Part2 = (Part1, (Part1, V));\n(T, U, V, W) -> (0, (Part2, (Part2, W))) for T in int | f64"
+        at_six(0),
+        "type Part1 = ((T, (T, U)), ((T, (T, U)), V));\ntype Part2 = (Part1, (Part1, W));\ntype Part3 = (Part2, (Part2, T5));\ntype Part4 = (Part3, (Part3, T6));\n(T, U, V, W, T5, T6, T7) -> (0, (Part4, (Part4, T7))) for T in int | f64"
     );
 }
 
@@ -801,13 +803,13 @@ fn a_returned_function_with_its_own_bound_writes_its_rows_in_full() {
 }
 
 /// A name bound by two functions in one text: `f` bounds `a0`, which stands in its shared
-/// rows, and the function `h` it returns bounds `y` of its own. `f`'s rows are written once, as
-/// definitions naming `f`'s variable; `h`'s variable keeps a name of its own, with its own
-/// clause, and the text reads back as the signature.
+/// rows, five levels deep, and the function `h` it returns bounds `y` of its own. `f`'s rows
+/// are written once, as definitions naming `f`'s variable; `h`'s variable keeps a name of its
+/// own, with its own clause, and the text reads back as the signature.
 #[test]
 fn a_bound_of_the_outer_function_and_one_of_a_returned_function_print_apart() {
-    let src = "w(positional x: int | f64) = 0;\np(positional s, positional v) = (s, (s, v));\nf(positional a0, positional a1, positional a2) = {\n  h(positional y) = (w(y), y);\n  (w(a0), p(p(p(a0, a1), a2), a1), h)\n};\n";
-    let text = printed_back(src, 3).unwrap_or_else(|e| panic!("{e}"));
+    let src = "w(positional x: int | f64) = 0;\np(positional s, positional v) = (s, (s, v));\nf(positional a0, positional a1, positional a2) = {\n  h(positional y) = (w(y), y);\n  (w(a0), p(p(p(p(p(a0, a1), a2), a1), a2), a1), h)\n};\n";
+    let text = printed_back(src, 5).unwrap_or_else(|e| panic!("{e}"));
     assert!(text.contains("type Part1 = "), "{text}");
     assert_eq!(text.matches(" for ").count(), 2, "{text}");
 }
