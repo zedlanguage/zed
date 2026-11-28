@@ -3644,6 +3644,7 @@ impl Placing<'_> {
     ///   the two promotes of [`Scope::bind`] and of the one of [`Scope::join_kept`] pass, so
     ///   those calls were taken out (META4: a construct whose test is green without it goes).
     ///   The tests stay as checks that lazy equals eager on those programs.
+    ///
     /// The premises the round 2 arguments used:
     /// - (P1) Every read of a lazy leaf's product settles it first: [`Scope::settled`] for a
     ///   name, [`Scope::settle_test`] over [`Scope::test_closure`] for a test (which follows
