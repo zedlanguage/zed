@@ -6,9 +6,11 @@
 use std::collections::HashMap;
 
 use zed_tests::scaling;
+use zedc::resolve::resolve_text;
 
 use crate::scaling::{
-    Parsed, chain, deep, facets, imports, methods, named, parsed, parts, pass, repeated, wide,
+    Parsed, built, chain, deep, facets, imports, methods, named, parsed, part_chain, parts, pass,
+    repeated, wide,
 };
 
 /// Checks that `pass` over `make(n)` is linear in `n`, from `n` = `base`.
@@ -56,6 +58,22 @@ fn a_type_of_many_local_parts_scales() {
         "a list of n local parts and n nested `with type` clauses",
         1000,
         parts,
+    );
+}
+
+/// Complexity tradeoff (COMPLEXITY.md IMPL-with-list): each clause of a chain of `with type`
+/// clauses finds the type at the bottom of the chain by one lookup, where a walk down the chain
+/// from each clause was O(n²) in the clauses.
+#[test]
+fn resolving_a_chain_of_local_parts_scales() {
+    let units = scaling::inputs(1000, |n| built(&parsed(part_chain(n))));
+    scaling::check(
+        "resolving n local parts in a list and in chains",
+        1000,
+        |n| {
+            let (text, stmts) = &units[&n];
+            let _ = std::hint::black_box(resolve_text(stmts, Some(text)));
+        },
     );
 }
 

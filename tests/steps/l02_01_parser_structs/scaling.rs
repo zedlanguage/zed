@@ -113,6 +113,38 @@ pub(super) fn parts(n: usize) -> String {
     )
 }
 
+/// `parts(n)`, then `type F = A -> Q0 with type Q0 = (A, Q1) with type Q1 = (A, Q2) … with type
+/// Q… = A for A in int | rat;`: a chain of `n` clauses around a function type, each part using
+/// the variable of the `for` and the part of the clause outside it, which the resolver reads in
+/// one pass over the chain (`Resolver::part_home`, COMPLEXITY.md IMPL-with-list).
+pub(super) fn part_chain(n: usize) -> String {
+    let clauses: String = (0..n)
+        .map(|i| match i + 1 < n {
+            true => format!(" with type Q{i} = (A, Q{})", i + 1),
+            false => format!(" with type Q{i} = A"),
+        })
+        .collect();
+    format!(
+        "{}type F = A -> Q0{clauses} for A in int | rat;\n",
+        parts(n)
+    )
+}
+
+/// The statements of `p`, built.
+pub(super) fn built(p: &Parsed) -> (String, Vec<zedc::ast::Stmt>) {
+    (p.text.clone(), unit(&p.text, &p.tokens, &p.tree).unwrap())
+}
+
+/// The input of the resolution benchmark in `bench.rs` resolves with no error at small sizes.
+#[test]
+fn local_parts_in_a_chain_resolve_at_small_sizes() {
+    for n in [1, 2, 9] {
+        let (text, stmts) = built(&parsed(part_chain(n)));
+        let resolved = zedc::resolve::resolve_text(&stmts, Some(&text));
+        assert!(resolved.is_ok(), "n = {n}: {:?}", resolved.err());
+    }
+}
+
 /// `v with { f0(0), f1(1), … }`, a list of `n` facets (SPEC-with-list), which this zedc parses
 /// and refuses as of layer L7.
 pub(super) fn facets(n: usize) -> String {
