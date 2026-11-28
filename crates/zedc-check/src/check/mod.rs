@@ -8949,53 +8949,81 @@ impl<'t, 'a> Ck<'t, 'a> {
                         if t.fns.is_empty() && t.tuples.is_empty() && t.payloads.is_empty() {
                             return t.clone();
                         }
-                        // Each held function that binds all its variables is finished here,
-                        // once for every caller (FAIL-map-chain-clashing-held-name-quadratic;
-                        // before, only those that hold their own variables alone, so
-                        // `k(x) = y -> (x, y)`, whose lambda reads `k`'s `x`, kept its classes
-                        // written `$k` and every caller decoded its forward). The test is
-                        // `tys_hold_only_closed_fns`'s, which sets `FwdNeed::held_open_fn`.
+                        // Each held function closed within this callee is finished here, once
+                        // for every caller: one that binds all its variables, and one that
+                        // reads classes from around it that are own to the callee, as the
+                        // lambda `x -> (x, a)` of `h(a, m) = m.map(x -> (x, a))` reads `a`'s
+                        // class (HELDNAME-closed-in-callee; before, only the first kind, and
+                        // every caller of a link holding the second decoded its forward, O(n^2)
+                        // over a chain, 40.2 and 45.1 times the instructions at 8n in
+                        // FAIL-map-chain-open-held-fn-quadratic's benches). Those read classes,
+                        // `keep`, stay written `$k`. The test is `Sig::closed_within`, the
+                        // same that sets `FwdNeed::held_open_fn` (`r10_get_or_build_summary`).
                         // Proof that every caller gives the names written here, step by step.
-                        // (1) `f` is closed: each variable it holds at any depth is own to a
-                        // signature on its path within `f` (`Sig::binds_all_its_variables`,
-                        // proved there), so none is read from a caller. (2) The finished
-                        // copy is `finished_with(f.settle(stale))` (`finished_arc_with`),
-                        // which reads `f`, the classes (`&self`: the finish pass changes no
-                        // class) and the memos of the pass, which give one result per address:
-                        // so one copy, made from `f` alone, the same in every caller, as for a
-                        // function that holds its own variables alone, the case before. (3)
-                        // It writes each variable of `f` by the name `printed` gives it in the
-                        // caller (a class by its class's name, another by its own spelling)
-                        // unless `rename_apart` named it apart within `f`, which happens only
-                        // where an item before it in `f`'s order kept the same name with
-                        // another key (the proof at `rename_apart`), and gives no fresh name
-                        // otherwise. (4) Every variable of `f` is a held name of each
-                        // forward whose callee holds `f` in a leaf need: by (1) each is own
-                        // to a signature of `f`'s nest, so in its `VarFacts::names` (`of`
-                        // adds each own variable there), which `FwdNeed::held_names_of` lists,
-                        // through each child forward's held names for a deeper callee; and a
-                        // caller's facts gather them (`VarFacts::fwd_names`). (5) So in the
-                        // caller's `finished_with` each variable of `f` is an item of
-                        // `rename_apart`, put last, with the same key and name as in (3): if
-                        // (3) named one apart in `f`, two of the caller's held items have one
-                        // name and two keys, the later is renamed (`apart`), and the caller
-                        // takes the flat form, which E names; if not, each is written in the
-                        // callee by the name it is printed by, the premise of the proof that
-                        // a held name not named apart leaves every name as E's order gives it
-                        // (at `finished_with`, (i) to (iii)). A held name whose class has a
-                        // type is decoded by the caller as before (`solved`). (6) A function
-                        // not closed is left as before, and the forward then has
-                        // `held_open_fn` set and a class among its held names where one
-                        // stays `$k`, which the caller decodes (`unnamed`). Not taken: the
-                        // test `holds_only_own_variables` alone (O(n^2) over a chain mapping
-                        // by `k`, 31.9 times the time at 8n). Cost: the same as before, each
-                        // function finished once in the pass (`fwd_memo`), and the test
-                        // O(1) on the kept facts.
+                        // (1) Each variable `f` holds at any depth is own to a signature on its
+                        // path within `f`, or is a class of `keep`, own to the callee
+                        // (`Sig::closed_within`, proved there); so none is read from a caller.
+                        // (2) The finished copy is `finished_keeping(f.settle(stale), keep)`,
+                        // which reads `f`, `keep` (from `f`'s facts), the classes (`&self`: the
+                        // finish pass changes no class) and the memos of the pass, which give
+                        // one result per address: so one copy, made from `f` alone, the same in
+                        // every caller. (3) It writes each class of `keep` as it is, and each
+                        // other variable of `f` by the name `printed` gives it in the caller (a
+                        // class by its class's name, another by its own spelling) unless
+                        // `rename_apart` named it apart within `f`, which happens only where an
+                        // item before it in `f`'s order kept the same name with another key
+                        // (the proof at `rename_apart`), and gives no fresh name otherwise.
+                        // (4) Every variable of `f` outside `keep` is a held name of each
+                        // forward whose callee holds `f` in a leaf need: by (1) each is own to
+                        // a signature of `f`'s nest, so in its `VarFacts::names` (`of` adds each
+                        // own variable there), which `FwdNeed::held_names_of` lists, through
+                        // each child forward's held names for a deeper callee; and a caller's
+                        // facts gather them (`VarFacts::fwd_names`). (5) So in the caller's
+                        // `finished_with` each such variable is an item of `rename_apart`, put
+                        // last, with the same key and name as in (3): if (3) named one apart in
+                        // `f`, two of the caller's held items have one name and two keys, the
+                        // later is renamed (`apart`), and the caller takes the flat form, which
+                        // E names; if not, each is written in the callee by the name it is
+                        // printed by, the premise of the proof that a held name not named apart
+                        // leaves every name as E's order gives it (at `finished_with`, (i) to
+                        // (iii)). A class of `keep` is no name of the caller's: the decode
+                        // replaces it through `sigma`, as a parameter's class, or gives it a
+                        // fresh class, as an internal result (a free class of a held function
+                        // is own to the callee and a parameter or result, `#4` and `#6`; the
+                        // proof at `r10_get_or_build_summary`), so it is written in no
+                        // caller as `$k`; held as an item it can only make `apart`, and so the
+                        // flat form, never a name that differs from E's. A held name whose
+                        // class has a type is decoded by the caller as before (`solved`).
+                        // (6) A function not closed within the callee (one reading a caller's
+                        // variable through `outer`) is left as before, and the forward then has
+                        // `held_open_fn` set and a class among its held names where one stays
+                        // `$k`, which the caller decodes (`unnamed`). Checked against the
+                        // finishing as it was (`R10Config::finish_only_closed_held`) on every
+                        // field of the check's output, by
+                        // `r10_functions_closed_in_the_callee_agree_with_the_control` and 64
+                        // seeded chains. Not taken: the test `holds_only_own_variables` alone
+                        // (O(n^2) over a chain mapping by `k`, 31.9 times the time at 8n), and
+                        // `binds_all_its_variables` (O(n^2) over the chains above). Cost: the
+                        // same as before, each function finished once in the pass
+                        // (`fwd_memo`), and the test O(|outer_classes| log c) on the kept facts.
                         t.with_held_fns(|f| {
-                            let closed =
-                                f.holds_only_own_variables() || f.binds_all_its_variables();
+                            let closed = match self.r10.cfg.finish_only_closed_held {
+                                false => f.closed_within(&callee.own),
+                                true => f.holds_only_own_variables() || f.binds_all_its_variables(),
+                            };
                             if closed && !f.facts().classes.is_empty() {
-                                let nf = self.finished_arc_with(f, made, fwd_memo);
+                                let keep = &f.facts().outer_classes;
+                                debug_assert!(
+                                    self.solving(keep.iter()).is_empty(),
+                                    "a class own to a callee that ended has no type"
+                                );
+                                let settled = f.settle(&|v| self.stale(v));
+                                let nf = match keep.is_empty() {
+                                    true => self.finished_with(&settled, made, fwd_memo),
+                                    false => {
+                                        self.finished_keeping(&settled, Some(keep), made, fwd_memo)
+                                    }
+                                };
                                 if !Arc::ptr_eq(&nf, f) {
                                     changed = true;
                                 }
@@ -9040,6 +9068,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         made: &mut Renamings,
         fwd_memo: &mut FinishMemo,
     ) -> Arc<Sig> {
+        self.finished_keeping(s, None, made, fwd_memo)
+    }
+
+    /// [`Self::finished_with`], leaving each class variable of `kept` as it is written: no
+    /// item of the naming, never renamed. `kept` is the classes a held function reads from
+    /// around it, own to the callee that holds it (`r10_finish_one_fwd_callee`), which each
+    /// caller's decode replaces through `sigma` or gives a class of its own; none has a type
+    /// (checked there), so `solving` and the settling give none either.
+    fn finished_keeping(
+        &self,
+        s: &Arc<Sig>,
+        kept: Option<&ty::NameSet>,
+        made: &mut Renamings,
+        fwd_memo: &mut FinishMemo,
+    ) -> Arc<Sig> {
         // One that holds no class variable, as most do once settled, is as it is.
         if s.facts().classes.is_empty() && !s.has_fwd_needs() && s.facts().fwd_names.is_empty() {
             return s.clone();
@@ -9070,6 +9113,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         // What each variable printed stands for, with the name it is printed by; a class that
         // no function named prints as `_`, with no name to clash, and is left out.
         let printed = |v: &Arc<str>, held: bool| -> Option<(Printed, Arc<str>)> {
+            if kept.is_some_and(|kept| kept.contains(v)) {
+                return None;
+            }
             match class_id(v).filter(|&k| k < self.classes.len()) {
                 Some(k) => {
                     if self.r10_is_closed_internal(k) {
@@ -9160,7 +9206,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         // variable from around it leaves its class `unnamed` and pays this; the benches
         // `n_maps_by_a_function_whose_held_name_clashes_check_in_linear_time` and
         // `n_maps_by_a_function_returning_a_lambda_that_reads_its_parameter_check_in_linear_time`
-        // (l08_02_remaps) measure the closed cases, and no bench measures the open one.
+        // (l08_02_remaps) measure the closed cases. Since HELDNAME-closed-in-callee a held
+        // function that reads only classes own to its callee is finished too:
+        // `n_maps_by_a_closure_over_the_links_parameter_check_in_linear_time` and
+        // `n_maps_by_id_then_by_a_lambda_reading_a_parameter_check_in_linear_time` measure it
+        // (ratios 40.2 and 45.1 before, 7.8 and 8.0 after, 2026-11-28). Still O(n^2): a held
+        // name named apart at each link (`apart`), as in a chain whose links each return a
+        // lambda `x -> (x, a)` beside the call (`id`'s `T` against the lambda's `T`), ratio
+        // 54.8; row FAIL-map-chain-held-name-renamed-apart-quadratic, bench parked.
         let mut flat_memo: Option<FlatMemo> = None;
         let (vars, b, order, given) = loop {
             let s = &s_ref;
@@ -9178,7 +9231,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .collect();
             // A held class still written `$k` in a callee, where the eager checker writes its
             // name: the callee was not finished there, since a function its forward holds
-            // reads a variable from around it (`r10_finish_one_fwd_callee`,
+            // reads a variable of a caller, not only classes own to the callee
+            // (`Sig::closed_within`, HELDNAME-closed-in-callee; `r10_finish_one_fwd_callee`,
             // `FwdNeed::held_open_fn`, `VarFacts::fwd_unfinished`), and the renaming below,
             // which cannot enter the callee, would leave `$0` where the eager checker writes
             // its name. Decoded as well. Cost: O(1) per signature, the bit read; the decode it

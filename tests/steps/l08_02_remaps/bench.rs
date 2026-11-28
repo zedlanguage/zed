@@ -1598,29 +1598,13 @@ fn open_held_chain(n: usize, head: &str, link: &str) -> String {
 }
 
 #[test]
-fn n_links_each_holding_a_lambda_reading_its_parameter_beside_a_chain_call_check_in_linear_time() {
-    // Row FAIL-map-chain-open-held-fn-quadratic: each link returns, beside the call of the
-    // link before, a lambda reading the link's parameter `a`. The forward is refused (`#12`).
-    let n_links = 25;
-    let srcs = scaling::inputs(n_links, |n| {
-        open_held_chain(
-            n,
-            "id(positional x) = x;\nh0(positional a, positional m) = (m.map(id), x -> (x, a));\n",
-            "h{i}(positional a, positional m) = (h{p}(a, m), x -> (x, a));\n",
-        )
-    });
-    let run = |n: usize| assert!(elab(&srcs[&n]).is_ok(), "{}", &srcs[&n]);
-    scaling::check(
-        "n functions chained, each returning a lambda that reads the link's parameter",
-        n_links,
-        run,
-    );
-}
-
-#[test]
 fn n_maps_by_a_closure_over_the_links_parameter_check_in_linear_time() {
     // Row FAIL-map-chain-open-held-fn-quadratic: each link maps by `k(a)`, a lambda that
-    // reads the link's parameter `a`; each link's forward is decoded once.
+    // reads the link's parameter `a`. Red before HELDNAME-closed-in-callee: `k`'s callee was
+    // not finished, as its lambda reads `k`'s `x`, so each link decoded its forward flat
+    // (ratio 40.2, 2026-11-27); `x`'s class is own to `k`, so it is finished now (7.8). The
+    // third bench of the row, a lambda beside the call, is parked under
+    // FAIL-map-chain-held-name-renamed-apart-quadratic.
     let n_links = 25;
     let srcs = scaling::inputs(n_links, |n| {
         open_held_chain(
@@ -1640,7 +1624,8 @@ fn n_maps_by_a_closure_over_the_links_parameter_check_in_linear_time() {
 #[test]
 fn n_maps_by_id_then_by_a_lambda_reading_a_parameter_check_in_linear_time() {
     // Row FAIL-map-chain-open-held-fn-quadratic: each link maps by `id`, then by a lambda
-    // that reads the link's parameter `a`; each link's forward is decoded once.
+    // that reads the link's parameter `a`. Red before HELDNAME-closed-in-callee, which
+    // finishes a held function closed within its callee: ratio 45.1 before, 8.0 after.
     let n_links = 25;
     let srcs = scaling::inputs(n_links, |n| {
         open_held_chain(

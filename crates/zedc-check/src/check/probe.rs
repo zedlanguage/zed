@@ -69,6 +69,15 @@ pub struct R10Config {
     /// forward, as D did before that row while `#4-own-vars` refused every function that binds
     /// variables of its own.
     pub skip_held_names: bool,
+    /// HELDNAME-closed-in-callee control: a callee finishes only the held functions that bind
+    /// all their variables, as before that row, so a forward holding one that reads classes of
+    /// its callee keeps them written `$k` and its callers decode it (`unnamed`); the reference
+    /// the default check is compared with.
+    pub finish_only_closed_held: bool,
+    /// HELDNAME-defer-unmentioned-admit control: `#12` refuses every call with a variable left
+    /// to the function's own calls (`defer` not empty), as before that row, not only one whose
+    /// needs mention such a variable; the reference the default check is compared with.
+    pub refuse_any_defer: bool,
 }
 
 impl Default for R10Config {
@@ -87,6 +96,8 @@ impl Default for R10Config {
             skip_barrier: None,
             drop_conds: HashSet::new(),
             skip_held_names: false,
+            finish_only_closed_held: false,
+            refuse_any_defer: false,
         }
     }
 }
@@ -289,6 +300,12 @@ pub struct CalleeSummary {
     /// `r10_chain_of_maps_by_a_function_returning_a_lambda_decodes_no_link`.
     pub held_open_fn: bool,
     pub held_classes: BTreeSet<Arc<str>>,
+    /// Every variable the needs mention, at any depth, as their decode may write it apart from
+    /// an internal result of `[first_result_id, first_result_id + total_results)`: the
+    /// variables of the leaf needs (functions held in them entered), of each forward's `sigma`,
+    /// `exits` and `on_vars`, the held names, and the explicit result variables. `#12` admits
+    /// a call whose `defer` meets none of them nor an internal result (the lemma there).
+    pub mentioned: HashSet<Arc<str>>,
     pub intrinsic_fails: BTreeSet<&'static str>,
     pub exposed_needs: Vec<ExposedTemplate>,
     pub var_steps: Vec<FwdVarStep>,

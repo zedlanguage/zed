@@ -4772,6 +4772,384 @@ fn chain_e1_held_names_are_renamed_compared_and_listed_as_e_does() {
     );
 }
 
+/// A chain of `n` links: `head`, then `link` for each `i` in `1..n`, with `{i}` written as `i`
+/// and `{p}` as `i - 1`.
+fn link_chain(head: &str, link: &str, n: usize) -> String {
+    let mut s = String::from(head);
+    for i in 1..n {
+        let text = link.replace("{i}", &i.to_string());
+        s.push_str(&text.replace("{p}", &(i - 1).to_string()));
+    }
+    s
+}
+
+/// The chains of row FAIL-map-chain-open-held-fn-quadratic whose links each hold, in a map's
+/// operand, a function that reads classes own to the link: its parameter `a`'s, and in the
+/// lambdas the class of the lambda's parameter, which the link's map owns. (label, head,
+/// link) for [`link_chain`].
+const CLOSED_IN_CALLEE_CHAINS: [(&str, &str, &str); 4] = [
+    (
+        "lambda",
+        "h0(positional a, positional m) = m.map(x -> (x, a));\n",
+        "h{i}(positional a, positional m) = h{p}(a, m).map(x -> (x, a));\n",
+    ),
+    (
+        "k_of_a",
+        "k(positional x) = y -> (x, y);\nh0(positional a, positional m) = m.map(k(a));\n",
+        "h{i}(positional a, positional m) = h{p}(a, m).map(k(a));\n",
+    ),
+    (
+        "id_then_lambda",
+        "id(positional x) = x;\nh0(positional a, positional m) = m.map(id).map(x -> (x, a));\n",
+        "h{i}(positional a, positional m) = h{p}(a, m).map(id).map(x -> (x, a));\n",
+    ),
+    (
+        "k_of_a_twice",
+        "k(positional x) = y -> (x, y);\n\
+         h0(positional a, positional m) = m.map(k(a)).map(k(a));\n",
+        "h{i}(positional a, positional m) = h{p}(a, m).map(k(a)).map(k(a));\n",
+    ),
+];
+
+/// HELDNAME-closed-in-callee: a chain whose links each map by a function reading classes own
+/// to the link (`k(a)`'s lambda `y -> (a, y)`, or `x -> (x, a)`) decodes no link in `finish`:
+/// each callee finishes such a function, keeping the link's classes as they are written
+/// (`Sig::closed_within`, `Ck::finished_keeping`), so its forward has no class left `$k` where
+/// E writes a name (`VarFacts::fwd_unfinished`). Red before: the callee left the function as
+/// it was, and `finished_with` decoded the forward at each link (`unnamed`), O(n^2) needs; the
+/// benches of row FAIL-map-chain-open-held-fn-quadratic, 40.2 and 45.1 times the
+/// instructions at 8n.
+#[test]
+fn r10_chains_holding_a_function_closed_in_the_callee_decode_no_link() {
+    for (label, head, link) in CLOSED_IN_CALLEE_CHAINS {
+        for with_call in [false, true] {
+            for n in [10usize, 40] {
+                let mut src = link_chain(head, link, n);
+                if with_call {
+                    src.push_str(&format!("r = h{}(1, {{\"k\" -> 0}})[\"k\"];\n", n - 1));
+                }
+                reset_fwd_decode_count();
+                let (info, _) = run_with_cfg(&src, R10Config::default());
+                let decodes = fwd_decode_count();
+                assert!(info.errors.is_empty(), "{label} n={n}: {:?}", info.errors);
+                assert!(
+                    decodes <= u64::from(with_call),
+                    "{label} n={n} call={with_call}: {decodes} decodes"
+                );
+                // Negative control: the finishing as it was decodes at each link where the held
+                // function binds a variable of its own (`k(a)`'s `y`) or follows one that does
+                // (`id`); the lambda `x -> (x, a)` alone binds none and decoded none before.
+                reset_fwd_decode_count();
+                let control = R10Config {
+                    finish_only_closed_held: true,
+                    ..R10Config::default()
+                };
+                let _ = run_with_cfg(&src, control);
+                let before = fwd_decode_count();
+                if label != "lambda" {
+                    assert!(
+                        before >= (n - 1) as u64,
+                        "{label} n={n} call={with_call}: the control decoded {before}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// HELDNAME-closed-in-callee: the check with the finishing of functions closed within their
+/// callee gives the output of the control that finishes only the functions binding all their
+/// variables (`finish_only_closed_held`), whose callers decode the forward where a class stays
+/// `$k`, and so name the flat needs as E does: every field of `Info`, each signature's text,
+/// digest, `Same`, `fits_sig`, decoded needs and own variables ([`info_eq_full`]). The
+/// programs: lambdas reading a parameter beside a chain call (the `r10_promote_one` cases),
+/// the chains of [`CLOSED_IN_CALLEE_CHAINS`] with and without a call, a chain whose links
+/// hold the function beside the chain call (bench 3's shape), names that clash (a link's own
+/// `T` beside the held lambda's), a function reading two parameters, and a function closed
+/// within itself beside one closed only within the callee.
+#[test]
+fn r10_functions_closed_in_the_callee_agree_with_the_control() {
+    let id = "id(positional x) = x;\nh0(positional m) = m.map(id);\n\
+              h1(positional m) = h0(m).map(id);\n";
+    let mut programs: Vec<(String, String)> = vec![
+        (
+            "pair".into(),
+            format!("{id}g(positional a) = (m -> (a, h1(m)), a);\n"),
+        ),
+        (
+            "lambda".into(),
+            format!("{id}g(positional a) = m -> (a, h1(m));\n"),
+        ),
+        (
+            "block".into(),
+            format!("{id}g(positional a) = {{\n    h = m -> (a, h1(m));\n    h\n}};\n"),
+        ),
+        (
+            "two".into(),
+            format!("{id}g(positional a) = (m -> (a, h1(m)), n -> (a, h1(n)));\n"),
+        ),
+        (
+            "curried".into(),
+            format!("{id}g(positional a) = n -> m -> (a, n, h1(m));\n"),
+        ),
+        (
+            "beside".into(),
+            link_chain(
+                "id(positional x) = x;\nh0(positional a, positional m) = (m.map(id), x -> (x, a));\n",
+                "h{i}(positional a, positional m) = (h{p}(a, m), x -> (x, a));\n",
+                4,
+            ),
+        ),
+        (
+            "clash".into(),
+            link_chain(
+                "h0(positional a, positional m) = (m.map(x -> (x, a)), (y) -> y);\n",
+                "h{i}(positional a, positional m) = (h{p}(a, m), m.map(x -> (x, a)), (y) -> y);\n",
+                4,
+            ),
+        ),
+        (
+            "two_parameters".into(),
+            link_chain(
+                "h0(positional a, positional b, positional m) = m.map(x -> (b, x, a));\n",
+                "h{i}(positional a, positional b, positional m) = h{p}(a, b, m).map(x -> (b, x, a));\n",
+                4,
+            ),
+        ),
+        (
+            "closed_beside_open".into(),
+            link_chain(
+                "k(positional x) = y -> (x, y);\nid(positional x) = x;\n\
+                 h0(positional a, positional m) = m.map(id).map(k(a)).map(k);\n",
+                "h{i}(positional a, positional m) = h{p}(a, m).map(id).map(k(a)).map(k);\n",
+                4,
+            ),
+        ),
+    ];
+    for (label, head, link) in CLOSED_IN_CALLEE_CHAINS {
+        for n in [2usize, 4] {
+            let src = link_chain(head, link, n);
+            let call = format!("{src}r = h{}(1, {{\"k\" -> 0}})[\"k\"];\n", n - 1);
+            programs.push((format!("{label} n={n}"), src));
+            programs.push((format!("{label} n={n} with a call"), call));
+        }
+    }
+    let control = R10Config {
+        finish_only_closed_held: true,
+        ..R10Config::default()
+    };
+    for (label, src) in &programs {
+        let (d, _) = run_with_cfg(src, R10Config::default());
+        let (c, _) = run_with_cfg(src, control.clone());
+        assert!(d.errors.is_empty(), "{label}: {:?}\n{src}", d.errors);
+        if let Err(msg) = info_eq_full(label, &c, &d) {
+            panic!("{msg}\n{src}");
+        }
+    }
+}
+
+/// HELDNAME-closed-in-callee, seeded: chains of 2 to 6 links, each link a random sequence of
+/// one to three maps drawn from functions closed within themselves (`id`, `k`) and within the
+/// link only (`x -> (x, a)`, `k(a)`, `y -> (a, y, a)`), with and without a top-level call,
+/// give the control's output as above. 64 seeds; each program takes a few milliseconds.
+#[test]
+fn r10_seeded_chains_closed_in_the_callee_agree_with_the_control() {
+    const MAPS: [&str; 5] = [
+        ".map(id)",
+        ".map(k)",
+        ".map(x -> (x, a))",
+        ".map(k(a))",
+        ".map(y -> (a, y, a))",
+    ];
+    let control = R10Config {
+        finish_only_closed_held: true,
+        ..R10Config::default()
+    };
+    for seed in 0u64..64 {
+        // xorshift64*, seeded away from 0.
+        let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let mut next = |bound: usize| {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            (state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as usize % bound
+        };
+        let links = 2 + next(5);
+        let mut src = String::from("id(positional x) = x;\nk(positional x) = y -> (x, y);\n");
+        for i in 0..links {
+            let mut body = match i {
+                0 => "m".to_string(),
+                _ => format!("h{}(a, m)", i - 1),
+            };
+            for _ in 0..1 + next(3) {
+                body.push_str(MAPS[next(MAPS.len())]);
+            }
+            src.push_str(&format!("h{i}(positional a, positional m) = {body};\n"));
+        }
+        if next(2) == 1 {
+            src.push_str(&format!("r = h{}(1, {{\"k\" -> 0}})[\"k\"];\n", links - 1));
+        }
+        let (d, _) = run_with_cfg(&src, R10Config::default());
+        let (c, _) = run_with_cfg(&src, control.clone());
+        assert!(d.errors.is_empty(), "seed {seed}: {:?}\n{src}", d.errors);
+        if let Err(msg) = info_eq_full(&format!("seed {seed}"), &c, &d) {
+            panic!("{msg}\n{src}");
+        }
+    }
+}
+
+/// HELDNAME-defer-unmentioned-admit: a chain whose links each return, beside the call of the
+/// link before, a lambda reading the link's parameter (`h{i}(a, m) = (h{i-1}(a, m),
+/// x -> (x, a))`) admits each chain call, though the callee's result holds a function whose
+/// parameter's class is deferred (`defer` = {`x`'s class}): no need of the callee mentions
+/// it, so `#12` admits (the lemma at `#12`). Red before: `#12` refused every such call (the
+/// control `refuse_any_defer` still does). Each link still decodes its forward once, for
+/// another cause: `id`'s held class, printed `T`, is named apart from the `T` of the link's
+/// own lambda, which takes `finished_with`'s flat form (`apart`), as the eager checker names
+/// it `W` in its flat needs. That decode is O(i) at link i, so bench 3 of row
+/// FAIL-map-chain-open-held-fn-quadratic stays at 54.8 times the instructions at 8n (53.7
+/// before this row, 2026-11-28); row FAIL-map-chain-held-name-renamed-apart-quadratic. The
+/// count is pinned at one a link so a change in either cause shows here.
+#[test]
+fn r10_a_chain_whose_links_hold_a_lambda_beside_the_call_admits_each_link() {
+    let head =
+        "id(positional x) = x;\nh0(positional a, positional m) = (m.map(id), x -> (x, a));\n";
+    let link = "h{i}(positional a, positional m) = (h{p}(a, m), x -> (x, a));\n";
+    for n in [10usize, 40] {
+        let src = link_chain(head, link, n);
+        reset_fwd_decode_count();
+        let (info, stats) = run_with_cfg(&src, R10Config::default());
+        let decodes = fwd_decode_count();
+        assert!(info.errors.is_empty(), "n={n}: {:?}", info.errors);
+        assert_eq!(stats.refused.get("#12"), None, "n={n}: {:?}", stats.refused);
+        assert_eq!(
+            decodes,
+            n as u64 - 1,
+            "n={n}: one decode a link, the held name named apart"
+        );
+        let control = R10Config {
+            refuse_any_defer: true,
+            ..R10Config::default()
+        };
+        reset_fwd_decode_count();
+        let (_, stats) = run_with_cfg(&src, control);
+        assert!(
+            stats.refused.get("#12").is_some_and(|&k| k >= n - 1),
+            "n={n}: the control refused {:?}",
+            stats.refused
+        );
+    }
+}
+
+/// HELDNAME-defer-unmentioned-admit, negative control: `h(f) = (f(1), z -> f(z))` defers
+/// `z`'s class, which the need "`f` takes `z`" mentions, so `#12` still refuses the call
+/// through `g` and the need waits for the lambda's calls (row FAIL-tuple-lambda-calls-param):
+/// `g(x -> x + 1)` passes, and a function that does not take numbers is refused at the
+/// lambda's call, the same as under the control.
+#[test]
+fn r10_a_deferred_variable_a_need_mentions_is_refused() {
+    let control = R10Config {
+        refuse_any_defer: true,
+        ..R10Config::default()
+    };
+    let base = "h(positional f) = (f(1), z -> f(z));\ng(positional f) = h(f);\n";
+    let cases = [
+        ("passes", format!("{base}r = g(x -> x + 1)[1](2);\n"), true),
+        ("bare", base.to_string(), true),
+        (
+            "refused",
+            format!("{base}r = g(x -> x + 1)[1](\"s\");\n"),
+            false,
+        ),
+    ];
+    for (label, src, ok) in cases {
+        let (d, stats) = run_with_cfg(&src, R10Config::default());
+        let (c, _) = run_with_cfg(&src, control.clone());
+        assert!(
+            stats.refused.get("#12").is_some_and(|&k| k >= 1),
+            "{label}: {:?}",
+            stats.refused
+        );
+        assert_eq!(d.errors.is_empty(), ok, "{label}: {:?}", d.errors);
+        if let Err(msg) = info_eq_full(label, &c, &d) {
+            panic!("{msg}\n{src}");
+        }
+    }
+}
+
+/// HELDNAME-defer-unmentioned-admit: the check admitting calls whose deferred variables no
+/// need mentions gives the control's output (`refuse_any_defer`) on every field
+/// ([`info_eq_full`]): bench 3's chain with and without a call, a lambda beside a need that
+/// does not read its parameter (`h(f, a) = (f(1), z -> (z, a))`), a lambda inside a family
+/// (`{"k" -> (z -> (z, a))}`), two lambdas, a curried one, and the negative control's program
+/// beside an admitted call.
+#[test]
+fn r10_calls_with_unmentioned_deferred_variables_agree_with_the_control() {
+    let control = R10Config {
+        refuse_any_defer: true,
+        ..R10Config::default()
+    };
+    let beside = |n: usize| {
+        link_chain(
+            "id(positional x) = x;\nh0(positional a, positional m) = (m.map(id), x -> (x, a));\n",
+            "h{i}(positional a, positional m) = (h{p}(a, m), x -> (x, a));\n",
+            n,
+        )
+    };
+    let mut programs: Vec<(String, String)> = Vec::new();
+    for n in [2usize, 4] {
+        programs.push((format!("beside n={n}"), beside(n)));
+        let call = format!(
+            "{}r = h{}(1, {{\"k\" -> 0}});\ns = r[1](2);\n",
+            beside(n),
+            n - 1
+        );
+        programs.push((format!("beside n={n} with a call"), call));
+    }
+    let more = [
+        (
+            "unread",
+            "h(positional f, positional a) = (f(1), z -> (z, a));\n\
+             g(positional f, positional a) = h(f, a);\nr = g(x -> x + 1, 3)[1](2);\n",
+        ),
+        (
+            "family",
+            "id(positional x) = x;\n\
+             h(positional a, positional m) = (m.map(id), {\"k\" -> (z -> (z, a))});\n\
+             g(positional a, positional m) = h(a, m);\nr = g(1, {\"k\" -> 0})[1][\"k\"](3);\n",
+        ),
+        (
+            "two",
+            "id(positional x) = x;\n\
+             h(positional a, positional m) = (m.map(id), x -> (x, a), y -> (a, y));\n\
+             g(positional a, positional m) = h(a, m);\nr = g(1, {\"k\" -> 0})[2](3);\n",
+        ),
+        (
+            "curried",
+            "id(positional x) = x;\n\
+             h(positional a, positional m) = (m.map(id), x -> y -> (x, y, a));\n\
+             g(positional a, positional m) = h(a, m);\nr = g(1, {\"k\" -> 0})[1](3)(4);\n",
+        ),
+        (
+            "mentioned_beside_unmentioned",
+            "h(positional f) = (f(1), z -> f(z));\ng(positional f) = h(f);\n\
+             id(positional x) = x;\n\
+             k(positional a, positional m) = (m.map(id), x -> (x, a));\n\
+             j(positional a, positional m) = (k(a, m), g(y -> y + a));\n\
+             r = j(1, {\"k\" -> 0});\n",
+        ),
+    ];
+    programs.extend(more.iter().map(|(l, s)| (l.to_string(), s.to_string())));
+    for (label, src) in &programs {
+        let (d, _) = run_with_cfg(src, R10Config::default());
+        let (c, _) = run_with_cfg(src, control.clone());
+        assert!(d.errors.is_empty(), "{label}: {:?}\n{src}", d.errors);
+        if let Err(msg) = info_eq_full(label, &c, &d) {
+            panic!("{msg}\n{src}");
+        }
+    }
+}
+
 mod bench;
 mod expected;
 mod landing6_battery;

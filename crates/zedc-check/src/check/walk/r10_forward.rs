@@ -281,8 +281,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                     n.vars_in(&mut nv_tie);
                     tie_uf.union_group(nv_tie.order.iter());
                     held_foreign_fn |= !zedc_types::ty::tys_hold_only_own_fns(n.tys());
-                    // The functions `r10_finish_one_fwd_callee` finishes, by the same test.
-                    held_open_fn |= !zedc_types::ty::tys_hold_only_closed_fns(n.tys());
+                    // The functions `r10_finish_one_fwd_callee` finishes, by the same test: those
+                    // closed within the callee (HELDNAME-closed-in-callee), or under the control
+                    // those that bind all their variables.
+                    held_open_fn |= match self.r10.cfg.finish_only_closed_held {
+                        false => {
+                            !zedc_types::ty::tys_hold_only_fns_closed_within(n.tys(), &sig.own)
+                        }
+                        true => !zedc_types::ty::tys_hold_only_closed_fns(n.tys()),
+                    };
                     for t in n.tys() {
                         let vf = t.var_facts();
                         // A function held in the need's types that binds variables of its own
@@ -366,11 +373,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // (`k(x) = y -> (x, y)`: the lambda reads `k`'s `x`) is finished by (4)
                         // as well, with the proof at `r10_finish_one_fwd_callee` that every
                         // caller gives the names it gets (FAIL-map-chain-clashing-held-name-
-                        // quadratic). Where `f` reads a variable from around it, (4) leaves
+                        // quadratic), and so is one whose free variables are classes own to the
+                        // callee (`Sig::closed_within`; `x -> (x, a)` in `h(a, m) =
+                        // m.map(x -> (x, a))`), keeping those classes as written, which each
+                        // caller's decode replaces (HELDNAME-closed-in-callee). Where `f` reads
+                        // a variable of a caller (`outer` not empty), (4) leaves
                         // `f` as it is and its classes stay written `$k` in the callee, where E
                         // writes their names: (3) decodes there too, since the forward then has
-                        // `held_open_fn` set (by `tys_hold_only_closed_fns`, the test the
-                        // finishing makes, below) and a class among its held names
+                        // `held_open_fn` set (by `tys_hold_only_fns_closed_within`, the test
+                        // the finishing makes, above) and a class among its held names
                         // (`VarFacts::fwd_unfinished`, `unnamed` in `finished_with`; the test
                         // `r10_map_by_a_chain_function_agrees_with_e`, whose digests differed
                         // before). The decode starts from the caller's signature as
@@ -794,6 +805,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
 
+        // The variables `#12` asks about (HELDNAME-defer-unmentioned-admit): one set, built
+        // once per signature from the walks above, O(m) for m variables mentioned.
+        let mut mentioned: HashSet<Arc<str>> = all_mentioned_vars.order.iter().cloned().collect();
+        mentioned.extend(on_mentioned_vars.order.iter().cloned());
+        mentioned.extend(held_names.iter().cloned());
+        mentioned.extend(explicit_results.iter().cloned());
+
         let mut visible_vars: HashSet<Arc<str>> = used_param_vars.iter().cloned().collect();
         visible_vars.extend(exit_var_set);
         let var_ties = tie_uf.project(&visible_vars);
@@ -814,6 +832,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             held_foreign_fn,
             held_open_fn,
             held_classes,
+            mentioned,
             intrinsic_fails,
             exposed_needs,
             var_steps,
@@ -852,7 +871,51 @@ impl<'t, 'a> Ck<'t, 'a> {
         if partial || !self.leaving.is_empty() {
             fails.insert("#11".into());
         }
-        if !defer.is_empty() {
+        // `defer`: the variables of the parameters of functions the call's result holds, whose
+        // needs wait for those functions' calls (`Ck::apply_one`), in the callee's variables.
+        // Refused only where a need of the callee may mention one (HELDNAME-defer-unmentioned-
+        // admit; before, wherever `defer` was not empty, so each link of a chain whose result
+        // holds a lambda beside the chain call, `h{i}(a, m) = (h{i-1}(a, m), x -> (x, a))`,
+        // replayed its callee's needs, O(n^2), 53.7 times the instructions at 8n in row
+        // FAIL-map-chain-open-held-fn-quadratic's bench 3).
+        //
+        // Lemma: if no variable of `defer` is a variable of the needs `replay` meets, then
+        // `replay(defer)` and `replay(∅)` do the same and return the same. Proof: `replay`
+        // decodes the forwards first, without reading `defer`; then, need by need, it reads
+        // `defer` only in the test "a variable of the need is in `defer`", and grows `defer`
+        // only where that test holds. By the premise it holds for no need, so `defer` stays as
+        // given, every need is replayed by `replay_one` as with `∅`, and `left` stays empty,
+        // as with `∅`. Admission stands for `replay(∅)` (the proofs of `A'`), so it stands for
+        // `replay(defer)` too.
+        //
+        // The premise, from the summary: every variable of a need `replay` meets is in
+        // `summary.mentioned` or is an internal result. A leaf need of the callee holds the
+        // variables `need_deep_vars` gives (functions held in it entered). A forward decodes
+        // (`FwdNeed::decode_from`) to its callee's leaf needs with each parameter replaced by
+        // its `sigma` type, whose variables are mentioned, each result by an exit type
+        // (mentioned) or an internal result class, and every other variable left as written:
+        // a name a held function binds (a held name, mentioned), or a variable own to that
+        // callee that is neither, which its own `#6` refuses (its intrinsic fails join this
+        // summary's). A forward deeper in the nest maps through its parent's `sigma` the same
+        // way. Internal results are the classes `[k0, k0 + total_results)` when the results are
+        // consecutive (`first_result_id`); otherwise `#26` refuses, and any class is counted
+        // here. So the test below refuses every call where the premise may fail.
+        //
+        // Negative control: `h(positional f) = (f(1), z -> f(z))` called through `g(f) = h(f)`
+        // defers `z`, which the need "`f` takes `z`" mentions, so the call is still refused
+        // and the need joins the lambda (`r10_a_deferred_variable_a_need_mentions_is_refused`).
+        // Cost: O(|defer|) hash lookups, beside the walk of the result that built `defer`.
+        let internal = |v: &Arc<str>| match (summary.first_result_id, class_id(v)) {
+            (Some(k0), Some(k)) => k >= k0 && k < k0 + summary.total_results,
+            (None, k) => k.is_some(),
+            (_, None) => false,
+        };
+        if !defer.is_empty()
+            && (self.r10.cfg.refuse_any_defer
+                || defer
+                    .iter()
+                    .any(|v| summary.mentioned.contains(v) || internal(v)))
+        {
             fails.insert("#12".into());
         }
         if !self.refused.is_empty() {

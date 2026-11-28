@@ -2690,6 +2690,17 @@ pub fn tys_hold_only_closed_fns<'a>(tys: impl Iterator<Item = &'a Ty>) -> bool {
     })
 }
 
+/// Whether each function `tys` hold outside functions is closed within a signature whose own
+/// variables are `own` ([`Sig::closed_within`]): the functions `Ck::r10_finish_one_fwd_callee`
+/// (zedc-check) finishes inside a callee with those own variables
+/// (HELDNAME-closed-in-callee).
+pub fn tys_hold_only_fns_closed_within<'a>(
+    tys: impl Iterator<Item = &'a Ty>,
+    own: &BTreeSet<Arc<str>>,
+) -> bool {
+    fns_outside_tys(tys, |_| true).is_some_and(|fns| fns.iter().all(|f| f.closed_within(own)))
+}
+
 /// [`fns_outside`] over the types `tys`.
 fn fns_outside_tys<'a>(
     tys: impl Iterator<Item = &'a Ty>,
@@ -23583,6 +23594,24 @@ impl Sig {
     pub fn binds_all_its_variables(&self) -> bool {
         let f = self.facts();
         f.outer.is_empty() && f.outer_classes.is_empty()
+    }
+
+    /// Whether it binds all its variables or reads from around it only class variables in
+    /// `own`, the own variables of a signature that holds it (HELDNAME-closed-in-callee):
+    /// `x -> (x, a)` held in a need of `h(a, m) = m.map(x -> (x, a))`, whose variables are
+    /// classes own to `h`. By the proof at [`Sig::binds_all_its_variables`], `outer ∪
+    /// outer_classes` of its facts is the set of variables it holds at some signature of its
+    /// nest with no signature on the path to it owning them, so this holds exactly when each
+    /// such variable is a class variable (`outer_classes`, not `outer`) in `own`. It reads
+    /// nothing else from around, so what is made from it and `own` alone is the same wherever
+    /// the signature with those own variables holds it. A function that holds only its own
+    /// variables binds them all ([`Sig::holds_only_own_variables`]: each is own to the
+    /// signature holding it, so on its path), so both sets are empty and this holds of it.
+    /// Cost: O(c log o) on the kept facts, for its c outer classes and o own variables; O(1)
+    /// where it binds all its variables.
+    pub fn closed_within(&self, own: &BTreeSet<Arc<str>>) -> bool {
+        let f = self.facts();
+        f.outer.is_empty() && f.outer_classes.iter().all(|v| own.contains(v))
     }
 
     /// Whether it has needs, or a function its arrows return at any depth has: such a
