@@ -935,17 +935,111 @@ fn a_bound_held_only_through_a_definition_is_held() {
 
 /// XR-heldname-print-batch round 1, Claude C-1: the example of DESIGN.md (sec:diagnostics,
 /// "Types in a message") of a bound in shared rows. At zed ad1433e it gave a text with two
-/// definitions for `bounded_rows(3, 0)`, which the printer writes in full: a row is named only
-/// where the definitions are shorter than the copies they replace (`defs::lift`). The example
-/// is now `bounded_rows(6, 0)`, whose text is this, and reads back as the signature, bound and
-/// all ([`printed_back`]).
+/// definitions for `bounded_rows(3, 0)`, which the printer writes in full: there the would-be
+/// `Part1` holds no named part and stands only in the type itself, not inside a definition,
+/// so `defs::lift` writes it in full where it stands (round 2, Claude C-1: the reason is that
+/// rule, not the length of the definitions). The example is now `bounded_rows(6, 0)`, whose
+/// text is this, and reads back as the signature, bound and all ([`printed_back`]); the text at
+/// three levels is pinned too.
 #[test]
 fn the_design_example_of_a_bound_in_shared_rows_prints_as_written() {
-    let three = printed_back(&bounded_rows(3, 0), 3).unwrap_or_else(|e| panic!("{e}"));
-    assert!(!three.contains("type "), "{three}");
+    assert_eq!(
+        printed_back(&bounded_rows(3, 0), 3).unwrap_or_else(|e| panic!("{e}")),
+        "(T, U, V, W) -> (0, (((T, (T, U)), ((T, (T, U)), V)), (((T, (T, U)), ((T, (T, U)), V)), W))) for T in int | f64"
+    );
     assert_eq!(
         printed_back(&bounded_rows(6, 0), 6).unwrap_or_else(|e| panic!("{e}")),
         "type Part1 = ((T, (T, U)), ((T, (T, U)), V));\ntype Part2 = (Part1, (Part1, W));\ntype Part3 = (Part2, (Part2, T5));\ntype Part4 = (Part3, (Part3, T6));\n(T, U, V, W, T5, T6, T7) -> (0, (Part4, (Part4, T7))) for T in int | f64"
+    );
+}
+
+/// XR-heldname-print-batch round 2, Claude C-2 and Gemini C2-1: the example of DESIGN.md
+/// (sec:diagnostics, "Types in a message") of shared rows beside a union written `_`, `First`
+/// of [`underscore_rows`] at three levels. The outer row stands at two places, one inside the
+/// `_`, so it is written in full at the one place left; `Part1` stands inside it, a tuple the
+/// type holds twice, so it is named. Read back, the outer row stands once, so `Part1` no longer
+/// stands inside another part and the text printed again writes it in full.
+#[test]
+fn the_design_example_of_shared_rows_beside_a_blank_prints_as_written() {
+    let text = sig_of(&underscore_rows(3, Underscore::First), "f").to_string();
+    let params = "(T, U, V, W, xs: _, i: _, ys: _, j: _, c: bool, d: bool) -> ";
+    assert_eq!(
+        text,
+        format!("type Part1 = ((T, (T, U)), ((T, (T, U)), V));\n{params}(_, (Part1, (Part1, W)))")
+    );
+    let back = zedc::check::read::parse_type(&text).unwrap_or_else(|e| panic!("{text}: {e}"));
+    assert_eq!(
+        back.to_string(),
+        format!(
+            "{params}(_, (((T, (T, U)), ((T, (T, U)), V)), (((T, (T, U)), ((T, (T, U)), V)), W)))"
+        )
+    );
+}
+
+/// XR-heldname-print-batch round 2, Gemini C1-1b and Codex C1: the examples of DESIGN.md
+/// (sec:diagnostics, "Types in a message") of rows over a variable bounded by a need and over
+/// a leftover, as the fixes of round 2 (D4) print them. The need-bounded variable prints with
+/// no bounds clause, so its rows are named as those of an unbounded variable, and the text
+/// reads back to itself with that variable unbounded (row PRINT-need-bound-clause). The rows
+/// over the leftover `T \ #a` of [`leftover_rows`] at two levels are named, and the text reads
+/// back to itself with the signature's one need.
+#[test]
+fn the_design_examples_of_need_bounded_and_leftover_rows_print_as_written() {
+    use zedc::check::read::parse_type;
+    use zedc::check::ty::OTHER;
+    let need = sig_of(&need_bounded_rows(4), "f");
+    assert!(need.bounds.values().any(|m| m & OTHER != 0), "{need}");
+    let text = need.to_string();
+    assert_eq!(
+        text,
+        "type Part1 = ((T, (T, U)), ((T, (T, U)), V));\ntype Part2 = (Part1, (Part1, W));\n(T, U, V, W, T5) -> (int, (Part2, (Part2, T5)))"
+    );
+    let back = parse_type(&text).unwrap_or_else(|e| panic!("{text}: {e}"));
+    assert_eq!(back.to_string(), text);
+    let read = back
+        .fns
+        .first()
+        .unwrap_or_else(|| panic!("{text} reads back as no function"));
+    assert!(read.bounds.values().all(|m| m & OTHER == 0), "{text}");
+    let left = sig_of(&leftover_rows(2), "f");
+    let text = left.to_string();
+    assert_eq!(
+        text,
+        "type Part1 = #a | #a(..);\ntype Part2 = ((T \\ Part1) | 0, ((T \\ Part1) | 0, U));\n(T, U, V) -> (Part2, (Part2, V))"
+    );
+    let back = parse_type(&text).unwrap_or_else(|e| panic!("{text}: {e}"));
+    assert_eq!(back.to_string(), text);
+    let read = back
+        .fns
+        .first()
+        .unwrap_or_else(|| panic!("{text} reads back as no function"));
+    assert_eq!((read.needs.len(), left.needs.len()), (1, 1), "{text}");
+}
+
+/// XR-heldname-print-batch round 2, Gemini C1-2 and Codex C1: the example of DESIGN.md
+/// (sec:diagnostics, "Types in a message") of an atom with a known payload shape in shared rows.
+/// `(a0, #a(1))` holds one, so every row over it is written in full at each place
+/// ([`Shared::of`] reads `payload_shapes`); `(a0, #a)` holds an atom with no payload, and its
+/// rows are named. The full text doubles at each level, a gap of the printer that the text
+/// states.
+#[test]
+fn a_known_payload_shape_writes_shared_rows_in_full() {
+    let rows = |inner: &str| {
+        let rows = (1..=3).fold(inner.to_string(), |s, i| format!("p({s}, a{i})"));
+        let src = format!(
+            "p(positional s, positional v) = (s, (s, v));\nf(positional a0, positional a1, positional a2, positional a3) = {rows};\n"
+        );
+        sig_of(&src, "f").to_string()
+    };
+    let r1 = "((T, #a(1)), ((T, #a(1)), U))";
+    let r2 = format!("({r1}, ({r1}, V))");
+    assert_eq!(
+        rows("(a0, #a(1))"),
+        format!("(T, U, V, W) -> ({r2}, ({r2}, W))")
+    );
+    assert_eq!(
+        rows("(a0, #a)"),
+        "type Part1 = ((T, #a), ((T, #a), U));\ntype Part2 = (Part1, (Part1, V));\n(T, U, V, W) -> (Part2, (Part2, W))"
     );
 }
 
