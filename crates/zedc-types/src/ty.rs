@@ -9795,12 +9795,33 @@ fn meet(ms: impl IntoIterator<Item = Member>) -> Member {
 /// member's at a place inside therefore does not hold the member's component at the place
 /// around it, and so does not hold the member, which is what filing at the top claims (the
 /// claim [`Choices`] rests on). A variable in `x` may be any tuples, so its tuples' components
-/// may be held anywhere. Each row of a shape is filed under at most one place (the walk keeps
-/// the rows it has filed, by [`Row::node`]): a row shared at two paths is filed at the first,
-/// which files less finely but holds by (4) all the same; a shape with rows shared at many paths
-/// (a type written with names for its parts) is then filed in its number of rows, not paths.
-/// Test: l01_26 fits `shapes_told_apart_inside_their_one_tuple_fit_themselves_renamed`,
-/// refused before.
+/// may be held anywhere.
+///
+/// Which places inside are filed, and what that costs, proof (FAIL-sub-shared-tuples-variable-
+/// bench): (5) filing at fewer places files less finely, and holds by (4) all the same: a
+/// bucket then holds more shapes, each of which the search still tries. (6) Each row of a
+/// shape is filed under at most one place (the walk keeps the rows it has filed, by
+/// [`Row::node`]): a row shared at two paths is filed at the first, so by (5) it holds. (7)
+/// Where every shape of a [`Choices`] has a component at a path, and that component is one
+/// tuple, the same row ([`Row::node`]) in each, the places inside it are not filed: the shapes'
+/// keys at each of them are the keys of that one row, so filing there puts no two shapes of a
+/// group in two buckets and puts no shape in another group (each gets the same places), and
+/// by (5) leaving them out holds. What filing them could add is a lookup that finds no bucket
+/// for a member that no shape holds; the search answers no for that member too, trying the
+/// shapes of its bucket. A [`Choices`] of one shape is such a case at every path, and files no
+/// place inside a component. (8) Cost: by (6) a shape's places are at most its components and
+/// the components of the rows it has inside them, each row counted once, not once a path (a
+/// type written with names for its parts is filed in its number of rows); by (7) a comparison
+/// that files each component of a row it meets ([`Comparing::filed`]) files only that
+/// component's top places where the component is one shape: for `shared_tuples(n, B) <:
+/// shared_tuples(n, C)` (`(t, t)`, `t` the same `n - 1` deep), n places over its n levels,
+/// where filing down to the bottom at each level filed n²/2. Not covered: several shapes told
+/// apart deep inside distinct rows, met as a component at each of many rows that share them,
+/// are filed again at each; a memo of the places inside by row would file them once.
+/// Tests: `ty::tests::sub_of_shared_tuples_with_a_variable_allocates_linear_bytes` (56.65
+/// times the bytes at 8n before), l01_26 `bench::deep_ops::
+/// sub_of_shared_tuples_with_a_variable_takes_linear_time`; for (1) to (4), l01_26 fits
+/// `shapes_told_apart_inside_their_one_tuple_fit_themselves_renamed`, refused before.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct TuplePlace {
     inside: Option<usize>,
@@ -9934,38 +9955,65 @@ type Buckets = Vec<(usize, Bucket)>;
 impl Choices {
     /// The shapes, each by its index in its list, the keys of its components ([`class`]) and
     /// its components, all of one width. Linear in the shapes' components, and in the rows of
-    /// the places filed inside them, each row once a shape ([`TuplePlace`]).
+    /// the places filed inside them, each row once a shape; no place inside a component that is
+    /// one row in every shape is filed, so none for one shape ([`TuplePlace`] (7), (8)).
     fn new<'k>(shapes: impl IntoIterator<Item = (usize, &'k [CompKey], Vec<&'k Ty>)>) -> Choices {
         // The groups by the places where a shape's components have a class, each with whether
         // it is one value there; each group's places are set once all are filed.
         let mut by_places: BTreeMap<Vec<(TuplePlace, bool)>, Group> = BTreeMap::new();
-        for (i, keys, ys) in shapes {
-            let mut places = Vec::new();
-            let mut key = Vec::new();
-            let mut seen = HashSet::new();
-            // The components still to file, last first, so each place's are filed after it
-            // and before the next place's: the places of a shape come in one order whatever
-            // the shape, the order of their paths.
-            let mut todo: Vec<(Option<usize>, usize, &CompKey, &Ty)> = (keys.iter().zip(ys))
-                .enumerate()
-                .rev()
-                .map(|(j, (c, y))| (None, j, c, y))
-                .collect();
-            while let Some((inside, at, c, y)) = todo.pop() {
+        let shapes: Vec<_> = shapes.into_iter().collect();
+        // Each shape's places, its keys there, and the rows filed inside it ([`Row::node`]).
+        let mut filed: Vec<_> = (shapes.iter())
+            .map(|_| (Vec::new(), Vec::new(), HashSet::new()))
+            .collect();
+        // The paths still to file, last first, each with the shapes that have a component
+        // there: by its shape's index in `shapes`, the place it is inside, and its place in
+        // the tuple there. Each path's are filed after it and before the next path's, so the
+        // places of a shape come in one order whatever the shape, the order of their paths.
+        type Path<'k> = Vec<(usize, Option<usize>, usize, &'k CompKey, &'k Ty)>;
+        let width = shapes.first().map_or(0, |(_, keys, _)| keys.len());
+        let mut todo: Vec<Path<'_>> = (0..width)
+            .rev()
+            .map(|j| {
+                (shapes.iter().enumerate())
+                    .map(|(s, (_, keys, ys))| (s, None, j, &keys[j], ys[j]))
+                    .collect()
+            })
+            .collect();
+        while let Some(path) = todo.pop() {
+            // The one tuple, not one value, of each shape here, with the place filed for it.
+            let mut inner = Vec::new();
+            for (s, inside, at, c, y) in path {
                 let Some((k, point)) = c else { continue };
-                let here = places.len();
+                let (places, key, _) = &mut filed[s];
+                if point.is_none() && y.tuples.len() == 1 {
+                    inner.extend(y.tuples.first().map(|r| (s, places.len(), r)));
+                }
                 places.push((TuplePlace { inside, at }, point.is_some()));
                 key.push(point.clone().map_or_else(|| k.clone(), ShapeKey::Point));
-                // One tuple, not one value, filed by its components too ([`TuplePlace`]).
-                if point.is_some() || y.tuples.len() != 1 {
+            }
+            // Where every shape is one row here, the places inside it tell no two apart
+            // ([`TuplePlace`]): a choice of one shape files no place inside.
+            if inner.len() == shapes.len() && inner.iter().all(|e| e.2.node() == inner[0].2.node())
+            {
+                continue;
+            }
+            // Each shape's row filed once, at its first path; its components, by place.
+            let mut next: Vec<Path<'_>> = Vec::new();
+            for (s, here, r) in inner {
+                if !filed[s].2.insert(r.node()) {
                     continue;
                 }
-                let Some(r) = y.tuples.first().filter(|r| seen.insert(r.node())) else {
-                    continue;
-                };
-                let inner = (r.keys().comps.iter().zip(r.iter())).enumerate().rev();
-                todo.extend(inner.map(|(j, (c, y))| (Some(here), j, c, y)));
+                for (j, (c, y)) in r.keys().comps.iter().zip(r.iter()).enumerate() {
+                    if next.len() == j {
+                        next.push(Vec::new());
+                    }
+                    next[j].push((s, Some(here), j, c, y));
+                }
             }
+            todo.extend(next.into_iter().rev());
+        }
+        for ((i, _, _), (places, key, _)) in shapes.iter().zip(filed) {
             let deep = places.iter().any(|(p, _)| p.inside.is_some());
             let group = by_places.entry(places).or_insert_with(|| Group {
                 places: Vec::new(),
@@ -9974,8 +10022,8 @@ impl Choices {
                 all: Vec::new(),
                 exact: std::sync::OnceLock::new(),
             });
-            group.buckets.entry(key).or_default().push(i);
-            group.all.push(i);
+            group.buckets.entry(key).or_default().push(*i);
+            group.all.push(*i);
         }
         let groups = (by_places.into_iter())
             .map(|(places, group)| Group { places, ..group })
@@ -27656,6 +27704,39 @@ mod tests {
             range: None,
         };
         Sig::one(vec![x], vec![t], result)
+    }
+
+    /// `(t, t)` for `t` the same `n - 1` deep, `bottom` at the bottom: `n` rows, `2^n` paths.
+    fn shared_tuples(n: usize, bottom: Ty) -> Ty {
+        (0..n).fold(bottom, |t, _| Ty::tuple(vec![t.clone(), t]))
+    }
+
+    #[test]
+    fn sub_of_shared_tuples_with_a_variable_allocates_linear_bytes() {
+        // `shared_tuples(n, B) <: shared_tuples(n, C)` at n = 125 and 1000, the sizes of the
+        // probe that found FAIL-sub-shared-tuples-variable-bench. Each level's component is
+        // filed once for the comparison ([`Comparing::filed`]), a one-tuple shape whose
+        // component is again one tuple, `n - d` deep at level d. Filed by the components at
+        // every place down to the bottom ([`TuplePlace`], d59d29480), the levels filed n²/2
+        // places, 56.65 times the bytes at 8n; filed only where shapes may be told apart, n.
+        // The full-size benchmark is l01_26 `bench::deep_ops::
+        // sub_of_shared_tuples_with_a_variable_takes_linear_time`.
+        let bytes = |n: usize| {
+            let a = shared_tuples(n, Ty::var("B".into()));
+            let b = shared_tuples(n, Ty::var("C".into()));
+            crate::scaling::on_a_thread(64 << 20, || {
+                (crate::scaling::Meter::new())
+                    .work(|| assert!(a.sub(&b, &mut Binds::new())))
+                    .bytes
+            })
+        };
+        crate::scaling::hold(
+            "sub of shared tuples with a variable, 125 and 1000 levels",
+            "bytes",
+            bytes(125),
+            bytes(1000),
+            1,
+        );
     }
 
     #[test]
