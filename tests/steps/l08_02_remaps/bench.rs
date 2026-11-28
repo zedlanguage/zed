@@ -1556,3 +1556,103 @@ fn n_maps_by_a_function_returning_a_lambda_that_reads_its_parameter_check_in_lin
         run,
     );
 }
+
+#[test]
+fn n_maps_by_a_lambda_reading_a_parameter_from_around_it_check_in_linear_time() {
+    // Plan row FAIL-map-chain-open-held-fn-quadratic, the case FAIL-map-chain-clashing-held-
+    // name-quadratic left open: each link maps by a lambda that reads the link's parameter
+    // `a`, a variable from around the lambda. Green (7.8 times the work at 8n, 2026-11-28):
+    // each link's forward is kept and decoded nowhere. The red cases of the row are the
+    // three benches below.
+    let n_links = 25;
+    let srcs = scaling::inputs(n_links, |n| {
+        let mut src = String::from("h0(positional a, positional m) = m.map(x -> (x, a));\n");
+        for i in 1..n {
+            src.push_str(&format!(
+                "h{i}(positional a, positional m) = h{}(a, m).map(x -> (x, a));\n",
+                i - 1
+            ));
+        }
+        src
+    });
+    let run = |n: usize| assert!(elab(&srcs[&n]).is_ok(), "{}", &srcs[&n]);
+    scaling::check(
+        "n functions chained, each mapping by a lambda that reads the link's parameter",
+        n_links,
+        run,
+    );
+}
+
+/// The chain of n links whose link 0 is `head` and link i is `link` with `{i}` for i and
+/// `{p}` for i - 1, row FAIL-map-chain-open-held-fn-quadratic.
+fn open_held_chain(n: usize, head: &str, link: &str) -> String {
+    let mut src = String::from(head);
+    for i in 1..n {
+        src.push_str(
+            &link
+                .replace("{i}", &i.to_string())
+                .replace("{p}", &(i - 1).to_string()),
+        );
+    }
+    src
+}
+
+#[test]
+fn n_links_each_holding_a_lambda_reading_its_parameter_beside_a_chain_call_check_in_linear_time() {
+    // Row FAIL-map-chain-open-held-fn-quadratic: each link returns, beside the call of the
+    // link before, a lambda reading the link's parameter `a`. The forward is refused (`#12`).
+    let n_links = 25;
+    let srcs = scaling::inputs(n_links, |n| {
+        open_held_chain(
+            n,
+            "id(positional x) = x;\nh0(positional a, positional m) = (m.map(id), x -> (x, a));\n",
+            "h{i}(positional a, positional m) = (h{p}(a, m), x -> (x, a));\n",
+        )
+    });
+    let run = |n: usize| assert!(elab(&srcs[&n]).is_ok(), "{}", &srcs[&n]);
+    scaling::check(
+        "n functions chained, each returning a lambda that reads the link's parameter",
+        n_links,
+        run,
+    );
+}
+
+#[test]
+fn n_maps_by_a_closure_over_the_links_parameter_check_in_linear_time() {
+    // Row FAIL-map-chain-open-held-fn-quadratic: each link maps by `k(a)`, a lambda that
+    // reads the link's parameter `a`; each link's forward is decoded once.
+    let n_links = 25;
+    let srcs = scaling::inputs(n_links, |n| {
+        open_held_chain(
+            n,
+            "k(positional x) = y -> (x, y);\nh0(positional a, positional m) = m.map(k(a));\n",
+            "h{i}(positional a, positional m) = h{p}(a, m).map(k(a));\n",
+        )
+    });
+    let run = |n: usize| assert!(elab(&srcs[&n]).is_ok(), "{}", &srcs[&n]);
+    scaling::check(
+        "n functions chained, each mapping by `k(a)`, a lambda reading the link's parameter",
+        n_links,
+        run,
+    );
+}
+
+#[test]
+fn n_maps_by_id_then_by_a_lambda_reading_a_parameter_check_in_linear_time() {
+    // Row FAIL-map-chain-open-held-fn-quadratic: each link maps by `id`, then by a lambda
+    // that reads the link's parameter `a`; each link's forward is decoded once.
+    let n_links = 25;
+    let srcs = scaling::inputs(n_links, |n| {
+        open_held_chain(
+            n,
+            "id(positional x) = x;\nh0(positional a, positional m) = m.map(id).map(x -> (x, a));\n",
+            "h{i}(positional a, positional m) = h{p}(a, m).map(id).map(x -> (x, a));\n",
+        )
+    });
+    let run = |n: usize| assert!(elab(&srcs[&n]).is_ok(), "{}", &srcs[&n]);
+    scaling::check(
+        "n functions chained, each mapping by `id` and by a lambda reading the link's parameter",
+        n_links,
+        run,
+    );
+}

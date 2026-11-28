@@ -8488,9 +8488,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// Decodes `NeedKind::Fwd` in `s` (and in the nested functions `s` holds) ONLY when
-    /// `s` holds an outer variable (`!s.holds_only_own_variables()`) alongside `NeedKind::Fwd`.
-    /// Never decodes on top-level chain functions `h_i` (`O(1)` per link).
+    /// Decodes `NeedKind::Fwd` in `s` and in the nested functions `s` holds, each only when
+    /// that function reads a variable from around it ([`Sig::binds_all_its_variables`] false)
+    /// alongside `NeedKind::Fwd`. Never decodes on top-level chain functions `h_i` (`O(1)` per
+    /// link).
     ///
     /// Complexity tradeoff: the functions `s` holds nest as deep as the program nests its
     /// lambdas, and each holds the variables of those around it. Naive: recurse into each
@@ -8624,24 +8625,44 @@ impl<'t, 'a> Ck<'t, 'a> {
         // `Sig::vars_marks` gives over the whole nest (the proof in `sig_walk`, which walks
         // the nest at any depth), and its held names last, by (i) to (iii) at `finished_with`;
         // neither proof asks that the signature holding the forward hold its own variables
-        // alone. Not proved: that a compact forward and its flat needs are named alike in
-        // every signature (row PROOF-map-chain-d-skip-and-admit, open, which every forward
-        // left compact rests on, the top-level ones as well); (3) uses it for a forward in a
-        // closed signature nested in another, and the step (2), that each internal result of
-        // such a forward is an own variable of `cur` in E, rests on admission's `#16`, read
-        // but not proved here. Measured: over `zedc-check --lib` the old test decoded at 310
-        // places in 5 tests (`r10_forward_sweep_of_leaves_depths_and_siblings_agrees_with_e`
-        // 168, `r10_chain_of_maps_by_a_function_returning_a_lambda_decodes_no_link` 96,
+        // alone.
+        //
+        // Open claim C1, which (3) rests on and which is not proved here: a compact forward
+        // in a closed signature nested in another is named by `finished_with` of the
+        // signature at the top of the nest exactly as its flat needs would be named there.
+        // C1 is the nested case of row PROOF-map-chain-d-skip-and-admit (open), the claim
+        // that a compact forward and its flat needs are named alike in every signature, on
+        // which every forward left compact rests, the top-level ones as well. It splits as:
+        // C1.1, each internal result of the forward is an own variable of `cur` in E, which
+        // is what admission's `#16` (each argument class at the level of the function
+        // admitted, `r10_forward.rs`, `r10_eval_a_prime`) is read to give, not proved here;
+        // C1.2, given C1.1, the runs of the forward's results fall at the places
+        // `Sig::vars_marks` gives over the nest (proved in `sig_walk`); C1.3, given C1.1 and
+        // C1.2, the held names come last by (i) to (iii) at `finished_with` (proved there).
+        // Only C1.1 is open beyond PROOF-map-chain-d-skip-and-admit itself.
+        //
+        // Measured: over `zedc-check --lib` the old test decoded at 310 places in 5 tests
+        // (`r10_forward_sweep_of_leaves_depths_and_siblings_agrees_with_e` 168,
+        // `r10_chain_of_maps_by_a_function_returning_a_lambda_decodes_no_link` 96,
         // `r10_map_by_a_chain_function_agrees_with_e` 38,
         // `r10_function_with_own_variables_held_in_a_map_agrees_with_e` 4,
         // `r10_promoted_forward_results_are_own_variables` 4), which compare with E's text
-        // (`expected.out`; for the four cases added with this fix, D's text before it) except
-        // the second, which counts decodes, and the new test decodes at none; with this decode removed outright the 112 r10 tests pass,
-        // so no test reaches a signature that holds an outer variable and a forward
-        // (2026-11-28). Tests: r10_tests.rs
-        // `r10_chain_of_maps_by_a_function_returning_a_lambda_decodes_no_link`, and every
-        // r10 test that compares D's text with E's (`expected.out`).
+        // (`expected.out`; for the four cases added with this fix, D's text before it)
+        // except the second, which counts decodes; the new test decodes at none of them.
+        // The decode below is reached by no program in the default check: the expansion at
+        // `generalize` (Neon B4) expands the forwards of each signature that holds a class
+        // of a function around it, so none is left for here; with this decode removed
+        // outright the 112 r10 tests pass (2026-11-28). With that expansion skipped
+        // (`skip_barrier: Some("B4")`) it is reached, and D's text is the default check's;
+        // with both the expansion and this decode skipped D's text is the default check's
+        // too, so that control does not tell whether this decode is needed (measured over
+        // the five programs of the test below, 2026-11-28). Tests: r10_tests.rs
+        // `r10_chain_of_maps_by_a_function_returning_a_lambda_decodes_no_link`,
+        // `r10_open_forward_kept_without_b4_is_decoded_at_finish`, and every r10 test that
+        // compares D's text with E's (`expected.out`).
         if cur.has_fwd_needs() && !cur.binds_all_its_variables() {
+            #[cfg(test)]
+            OPEN_FWD_PROMOTED.with(|n| n.set(n.get() + 1));
             // Tagged: [`Self::finished_with`] renames each tagged result to its name.
             let decoded = Self::r10_decode_fwd_needs(&cur, true);
             if child_changed {
@@ -20653,6 +20674,13 @@ mod completeness;
 
 #[cfg(test)]
 mod r10_tests;
+
+#[cfg(test)]
+thread_local! {
+    /// The number of signatures whose forwards [`Ck::r10_promote_one`] decoded, as holding a
+    /// variable from around them, on this thread since a test last set it to 0.
+    static OPEN_FWD_PROMOTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[cfg(test)]
 mod tests {

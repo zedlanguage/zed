@@ -58,7 +58,8 @@ pub struct R10Config {
     pub f8_before_resolve: bool,
     /// M56(c) control: simulate stuck `forcing` skipping the second forward on a `merge`.
     pub force_skip_second_on_merge: bool,
-    /// Barrier skip control (`"f1"`..`"f8"`, `"N4"`).
+    /// Barrier skip control (`"f1"`..`"f8"`, `"N4"`, and `"B4"`, the expansion at `generalize` of
+    /// the kept forwards of a signature that holds a class of a function around it).
     pub skip_barrier: Option<&'static str>,
     /// Admission conditions dropped for negative controls (`"#7'"`, `"#14"`, `"#19"`, `"#27"`,
     /// etc.).

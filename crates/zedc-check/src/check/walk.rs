@@ -16604,8 +16604,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         // the names given here only below a function that is not closed, and two of them
         // inside one closed function kept names that collide (landing review of
         // LAND-map-chain-neon, Neon B4). Cost: one walk of the signature's variables, only
-        // for a signature with forwards.
+        // for a signature with forwards. Since this expansion, no known program gives
+        // `finished_with` a forward in a signature that holds a variable from around it; the
+        // control `skip_barrier: Some("B4")` leaves such forwards kept, so that the decode
+        // [`Ck::r10_promote_one`] keeps for them is reached by a test.
         if sig.has_fwd_needs()
+            && !self.r10.barrier_skipped("B4")
             && sig_vars(&sig).iter().any(|v| {
                 class_id(v).is_some_and(|k| {
                     self.classes.is_materialized(k) && self.classes[self.find(k)].level < level

@@ -2018,6 +2018,66 @@ fn r10_chain_of_maps_by_a_function_returning_a_lambda_decodes_no_link() {
     }
 }
 
+/// The decode that `Ck::r10_promote_one` keeps, of the forwards of a signature that reads a
+/// variable from around it, reached. In the default check no known program reaches it: the
+/// expansion at `generalize` (Neon B4) expands the kept forwards of each signature that holds
+/// a class of a function around it. Each program here holds, in `g`'s result, a lambda that
+/// reads `g`'s parameter `a` and calls `h1`, a chain function with a kept forward; with the
+/// expansion skipped (`skip_barrier: Some("B4")`) the lambda keeps `h1`'s forward and
+/// `finished_with` decodes it, and D's text is the default check's. Not shown here: that the
+/// decode is needed, as with it skipped as well D's text was the default check's too
+/// (measured with a probe, 2026-11-28; the claim C1 at `r10_promote_one`).
+#[test]
+fn r10_open_forward_kept_without_b4_is_decoded_at_finish() {
+    let id = "id(positional x) = x;\nh0(positional m) = m.map(id);\n\
+              h1(positional m) = h0(m).map(id);\n";
+    let programs = [
+        (
+            "pair",
+            format!("{id}g(positional a) = (m -> (a, h1(m)), a);\n"),
+        ),
+        (
+            "lambda",
+            format!("{id}g(positional a) = m -> (a, h1(m));\n"),
+        ),
+        (
+            "block",
+            format!("{id}g(positional a) = {{\n    h = m -> (a, h1(m));\n    h\n}};\n"),
+        ),
+        (
+            "two",
+            format!("{id}g(positional a) = (m -> (a, h1(m)), n -> (a, h1(n)));\n"),
+        ),
+        (
+            "curried",
+            format!("{id}g(positional a) = n -> m -> (a, n, h1(m));\n"),
+        ),
+    ];
+    for (name, src) in programs {
+        super::OPEN_FWD_PROMOTED.with(|n| n.set(0));
+        let (d0, _) = run_with_cfg(&src, R10Config::default());
+        assert!(d0.errors.is_empty(), "{name}: {:?}", d0.errors);
+        assert_eq!(
+            super::OPEN_FWD_PROMOTED.with(|n| n.get()),
+            0,
+            "{name}: default decodes"
+        );
+        let cfg = R10Config {
+            skip_barrier: Some("B4"),
+            ..R10Config::default()
+        };
+        let (d, _) = run_with_cfg(&src, cfg);
+        let reached = super::OPEN_FWD_PROMOTED.with(|n| n.get());
+        assert!(reached >= 1, "{name}: the decode is not reached without B4");
+        assert_eq!(
+            expected::info_text(&d),
+            expected::info_text(&d0),
+            "{name}: text"
+        );
+        assert_info_eq(name, &expected::flat_info(&d0), &d);
+    }
+}
+
 /// FAIL-map-chain-own-vars-carry: programs beside those of L3-G1 above, where D may refuse a
 /// forward, and must still give E's results and signatures. A chain function passed to a map
 /// inside another chain's link (`k(mm) = mm.map(h3)`) holds a compact forward with internal
