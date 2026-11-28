@@ -678,9 +678,15 @@ pub(super) enum Horner {
 const HORNER_COST: f64 = 1.0;
 
 /// The units [`BoundSearch`] charges for one test of [`positive_from`]: `D (D + 1) / 2`
-/// products and sums, in groups of `t`, each group under one pass of a unit.
+/// products and sums, in groups of `t`, each group under one pass of a unit. Computed in u128
+/// (`D (D + 1)` passes u64 from `D` near `2^32`, a sparse degree the cap may still admit) and
+/// saturated at `u64::MAX`: a saturated count only keeps the tests from running, as
+/// `units <= spent - rented` then never holds, and a test only cuts `hi`, so no answer changes.
 fn horner_units(d: u64, t: usize) -> u64 {
-    (d * (d + 1) / 2).div_ceil(t as u64).max(1)
+    let d = u128::from(d);
+    u64::try_from((d * (d + 1) / 2).div_ceil(t as u128))
+        .unwrap_or(u64::MAX)
+        .max(1)
 }
 
 /// Whether `p(x)` has the sign of its leading coefficient at every real `x >= u`, shown by the
@@ -782,23 +788,22 @@ enum Stage {
 }
 
 impl BoundSearch {
-    fn new(p: &[(u64, BigInt)], hi: &BigInt) -> BoundSearch {
+    /// The search, none where no exponent is under the cap and `hi` (`top = 0`): then nothing
+    /// would be tested, and the units are not computed.
+    fn new(p: &[(u64, BigInt)], hi: &BigInt) -> Option<BoundSearch> {
         let d = p.last().map_or(0, |(d, _)| *d).max(1);
         let b = p.iter().map(|(_, c)| c.bits()).max().unwrap_or(0);
-        let by_cap = (2 * b / d).saturating_sub(1);
+        let by_cap = (2 * u128::from(b) / u128::from(d)).saturating_sub(1);
         let by_hi = match *hi > BigInt::from(2) {
             true => (hi - 1u32).bits() - 1,
             false => 0,
         };
-        let top = by_cap.min(by_hi);
-        BoundSearch {
+        let top = u64::try_from(by_cap).unwrap_or(u64::MAX).min(by_hi);
+        (top > 0).then(|| BoundSearch {
             units: horner_units(d, p.len()),
             top,
-            stage: match top {
-                0 => Stage::Done,
-                _ => Stage::Doubling { fail: 0, m: 1 },
-            },
-        }
+            stage: Stage::Doubling { fail: 0, m: 1 },
+        })
     }
 
     /// The next point to test, none once the search is done. Moves past a stage whose range
@@ -854,7 +859,7 @@ impl BoundSearch {
 /// integer `u >= 2` whose test passes, if one is found below `hi` under the cap.
 #[cfg(test)]
 fn horner_bound(p: &[(u64, BigInt)], hi: &BigInt, spent: &mut u64) -> Option<BigInt> {
-    let mut search = BoundSearch::new(p, hi);
+    let mut search = BoundSearch::new(p, hi)?;
     let mut bound = None;
     while let Some(x) = search.next() {
         *spent += search.units;
@@ -913,7 +918,9 @@ pub(super) fn positive_roots_by(
     // the budget bounds.
     let d = p.last().map_or(0, |(d, _)| *d) as f64;
     let trigger = HORNER_COST * d * d / p.len() as f64;
-    let mut bound = (horner != Horner::Off).then(|| BoundSearch::new(p, &hi));
+    let mut bound = (horner != Horner::Off)
+        .then(|| BoundSearch::new(p, &hi))
+        .flatten();
     let mut rented: u64 = 0;
     while let Some((l, mut h)) = open.pop() {
         spent += 1;
@@ -935,7 +942,8 @@ pub(super) fn positive_roots_by(
         // at the end and `budget + rented <= 2 budget` at the switch to the chain. Proof:
         // 1. Invariant `rented <= spent`. It holds at the start (`rented = 0`). `spent` only
         //    grows, which keeps it. `rented` grows only here, by `units` at a test, and the
-        //    condition of this loop is `rented + units <= spent` before that test, so the
+        //    condition of this loop is `units <= spent - rented` before that test (a
+        //    difference, so no sum can overflow; it is not negative by the invariant), so the
         //    invariant holds after it.
         // 2. At the end of the loop over `open`, the units returned are `spent + rented <= 2
         //    spent` by 1.
@@ -956,7 +964,7 @@ pub(super) fn positive_roots_by(
         // `2 rented <= spent + rented` on the cubics of the benches.
         while let Some(search) = bound.as_mut()
             && (horner == Horner::AtStart
-                || (spent as f64 >= trigger && rented + search.units <= spent))
+                || (spent as f64 >= trigger && search.units <= spent - rented))
         {
             let Some(x) = search.next() else {
                 bound = None;
@@ -3011,6 +3019,28 @@ mod tests {
                 "B = {b}: {rented} of {spent} units on the bound"
             );
         }
+    }
+
+    /// A sparse degree past the cap forms no search and computes no units (cross-review
+    /// XR-roots-bound-search-schedule round 1, Codex Q6): on `2^g + sum over i = 1..4097 of
+    /// x^(i g)`, `g = 2^20 - 1`, `D = 4097 g = 4,296,011,775 > B = 2^20`, so `top = 0`, and
+    /// `D (D + 1)` passes u64. Red before (2026-11-28, 4f6bdf1bf): `BoundSearch::new` computed
+    /// [`horner_units`] before it looked at `top`, and the product overflowed (a panic with the
+    /// test build's overflow checks). `b = 1` leaves no interval, so only the search's set-up
+    /// runs. Units past u64 saturate.
+    #[test]
+    fn a_sparse_degree_past_the_cap_forms_no_bound_search() {
+        let g: u64 = (1 << 20) - 1;
+        let mut terms = vec![(0, BigInt::one() << g)];
+        terms.extend((1..=4097u64).map(|i| (i * g, BigInt::one())));
+        let p = big(&terms);
+        assert_eq!(p.terms().last().expect("terms").0, 4_296_011_775);
+        let (roots, spent) =
+            positive_roots_by(p.terms(), BigInt::from(2), Some(BigInt::one()), Horner::Built);
+        assert_eq!((roots, spent), (Vec::new(), 1));
+        assert!(BoundSearch::new(p.terms(), &(BigInt::one() << (2 * g))).is_none());
+        assert_eq!(horner_units(u64::MAX, 1), u64::MAX);
+        assert_eq!(horner_units(4_296_011_775, 4098), 2_251_795_653_396_128);
     }
 
     /// [`chain_ends`] is the sum it is written as, for every `t` up to 300.
