@@ -535,19 +535,34 @@ export function buildGraph(inp: Inputs): BoardState {
   // lines had one by 2026-11-25, and five of their edges were missing from the graph).
   const list = (x: unknown): string[] =>
     typeof x === "string" ? [x] : Array.isArray(x) ? x.filter((s) => typeof s === "string") : [];
+  // The plan row's needs come first and the ledger lines change them, so an unneeds or unfeeds line
+  // takes back a need written in the plan too (TOOLS-dagview-unneeds-plan-edges, 2026-11-28: they
+  // were joined after the lines, and check-live's advice for an implied edge failed on plan edges).
+  const planNeeds = new Map(rows.map((r) => [r.id, r.needs]));
+  // Per item, the needs its own lines give, and the items whose last word on their feed into it
+  // is an unfeeds: such an item is dropped from the item's plan needs unless its own lines give it.
+  const given = new Map<string, Set<string>>();
+  const unfed = new Map<string, Set<string>>();
   for (const [id, es] of ledger) {
     if (!nodeIds.has(id)) continue;
     // The item's needs and feeds after its lines in order, each unneeds or unfeeds taking back what
     // the lines before it gave. Sets keep this linear in the number of ids the lines name.
-    const needSet = new Set<string>();
+    const needSet = new Set<string>(planNeeds.get(id) ?? []);
+    const givenSet = new Set<string>();
     const feedSet = new Set<string>();
+    const unfedSet = new Set<string>();
     for (const e of es) {
-      for (const n of list(e.needs)) needSet.add(n);
-      for (const n of list(e.unneeds)) needSet.delete(n);
-      for (const f of list(e.feeds)) feedSet.add(f);
-      for (const f of list(e.unfeeds)) feedSet.delete(f);
+      for (const n of list(e.needs)) (needSet.add(n), givenSet.add(n));
+      for (const n of list(e.unneeds)) (needSet.delete(n), givenSet.delete(n));
+      for (const f of list(e.feeds)) (feedSet.add(f), unfedSet.delete(f));
+      for (const f of list(e.unfeeds)) (feedSet.delete(f), unfedSet.add(f));
     }
     own.set(id, [...needSet]);
+    given.set(id, givenSet);
+    for (const f of unfedSet) {
+      if (!unfed.has(f)) unfed.set(f, new Set());
+      unfed.get(f)!.add(id);
+    }
     for (const f of feedSet) {
       const to = replaced(f);
       if (to !== null && dropped(to)) continue;
@@ -561,7 +576,10 @@ export function buildGraph(inp: Inputs): BoardState {
   }
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
-    const all = new Set([...r.needs, ...(own.get(r.id) ?? []), ...(fed.get(r.id) ?? [])]);
+    const back = unfed.get(r.id);
+    const mine = given.get(r.id);
+    const base = (own.get(r.id) ?? r.needs).filter((n) => !back?.has(n) || mine?.has(n));
+    const all = new Set([...base, ...(fed.get(r.id) ?? [])]);
     rows[i] = { ...r, needs: [...all].filter((n) => n !== r.id && !gone(n)) };
   }
 

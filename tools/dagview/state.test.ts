@@ -216,6 +216,23 @@ test("a later line's unneeds and unfeeds take back an earlier line's edge, and a
   assert.ok(by(buildNodes(again)).get("C")!.needs.includes("X"));
 });
 
+test("unneeds and unfeeds take back a need written in the plan, and a later line gives it again", () => {
+  // TOOLS-dagview-unneeds-plan-edges (2026-11-28): the plan's needs were joined after the ledger's
+  // lines, so check-live's advice for an implied edge ("unfeeds or a plan edit") failed for a plan edge.
+  const taken = inputs("", '{"id":"B","state":"note","unneeds":["LR2"]}\n{"id":"A","state":"note","unfeeds":["C"]}\n');
+  const nodes = by(buildNodes(taken));
+  assert.deepEqual(nodes.get("B")!.needs, ["A"]);
+  assert.deepEqual(nodes.get("C")!.needs, ["B"]);
+  const again = inputs(
+    "",
+    '{"id":"B","state":"note","unneeds":["LR2"]}\n{"id":"B","state":"note","needs":["LR2"]}\n' +
+      '{"id":"A","state":"note","unfeeds":["C"]}\n{"id":"A","state":"note","feeds":["C"]}\n',
+  );
+  const back = by(buildNodes(again));
+  assert.deepEqual(back.get("B")!.needs, ["A", "LR2"]);
+  assert.deepEqual(back.get("C")!.needs, ["B", "A"]);
+});
+
 test("an item outside Zed draws no box, whether a plan row, the ledger or the log names it, and no edge names it", () => {
   const inp = inputs(
     "2026-11-02 10:00:00 | X:impl#1 | start\n2026-11-02 10:00:01 | V:impl#1 | start\n",
