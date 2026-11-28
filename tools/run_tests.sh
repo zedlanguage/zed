@@ -1293,6 +1293,20 @@ split="
 # the limit alone: the test of probes in every order, 20.0 s at load 11.8, is now four tests of
 # 375 cases, and the test of the cone rule, 20.1 s at load 12.9, three, one a shape
 # (TESTS-split-two-presburger-tests-near-20s).
+# zedc_preimage's lib has 170 tests: 149 correctness tests and 21 benchmarks. A plain
+# `cargo test -p zedc-preimage --lib` ran 62 of them in 60 s on one core (b30-pres4,
+# 2026-11-27), past the 60 s cap of a job's line. Each correctness test alone
+# (tools/time_tests.sh, 1 core, load 22): 52.4 s together; the five tests below, 18.3 s. The
+# other piece, 144 tests and 34 s, is three pieces by module (zedc_*-* below):
+# preimage::tests::or_ifs with one_inequality_answers_as_the_solver (7 tests, 10.0 s,
+# slowest 4.3 s), the other preimage:: (68, 13.1 s, slowest 1.4 s), and the others: address,
+# divisors, holes, loops, product, shared_ints, spans (69, 10.9 s, slowest 2.8 s). Each
+# correctness test is in exactly one piece, checked against the listing with libtest's rule (a
+# filter or a --skip matches anywhere in a name), and no name outside preimage:: holds
+# preimage::. The benchmarks took 0.05 to 6.4 s each alone, about 48 s together, and ran past
+# 60 s in one process, so each is a piece of its own (--bench), as every benchmark is. A job's
+# lines run the same filters: `cargo test -p zedc-preimage --lib -- <filters> --skip bench::`,
+# and each benchmark `--exact` (TESTS-split-zedc-preimage-lib).
 alone="
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_1
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_2
@@ -1528,6 +1542,14 @@ step_pieces() {
               echo "$n::presburger::$m $c $p presburger::$m::$skips"
               rest="$rest --skip presburger::$m::"
             done
+          fi
+          # zedc_preimage's rest in three pieces (see alone): preimage::tests::or_ifs with
+          # one_inequality_answers_as_the_solver, the other preimage::, and the others.
+          if [ "$g" = zedc_preimage ]; then
+            o="preimage::tests::or_ifs preimage::tests::one_inequality_answers_as_the_solver"
+            echo "$n::preimage::or_ifs $c $p $o$skips"
+            echo "$n::preimage $c $p preimage::$skips --skip ${o// / --skip }"
+            rest=" --skip preimage::"
           fi
           echo "$n $c $p$skips$rest"
           ;;
