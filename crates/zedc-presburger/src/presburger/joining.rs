@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use zed_kernel::digest::DigestMap;
-use zedc_int::int::Int;
+use zedc_int::int::{Int, Num};
 use zedc_lattice::interval::{End, IntervalSet};
 
 use super::formula::{Atom, Con, Formula, Lin, Model, Rel, Shared};
@@ -217,8 +217,129 @@ impl Formula {
         };
         let (la, lb) = (left(&oa, cb), left(&ob, ca));
         let mut out: Vec<Formula> = pa.iter().filter(|g| shared.contains(g)).cloned().collect();
-        out.push(Formula::or(vec![la, lb]));
+        let mut joined = Formula::or(vec![la, lb]);
+        if let Formula::Or(ds) = &joined
+            && let Some(merged) = Formula::merge_intervals(ds)
+        {
+            joined = Formula::or(merged);
+        }
+        out.push(joined);
         Formula::and(out)
+    }
+
+    /// The disjuncts `ds` with those that each hold one linear form `l` in an interval merged
+    /// where the intervals of one form overlap or touch, or `None` when none do. A disjunct is
+    /// an interval of `l` when it is a constraint, or a conjunction of constraints, on the
+    /// terms of `l` or of `-l` alone (`l` has its first coefficient positive): `l + c >= 0` is
+    /// `l >= -c`, `-l + c >= 0` is `l <= c`, an equality is a point, and a conjunction is the
+    /// meet. The merged intervals are written back as [`within`] writes them.
+    ///
+    /// Each join of a nest of tests on two hubs, `n - m <= j` true on one side and false on
+    /// the other, adds one disjunct to the relation, so that after `j` joins it held
+    /// `m >= n - 1 || m >= n - 2 || (m >= n - 3 && n - 3 >= m) || ...`, which is `m >= n - j`.
+    /// A relation with a conjunct that is not a constraint gives no bound on a family of
+    /// stars (`Scope::family_bound`), so each join refreshed every star, and each projection
+    /// read every disjunct: O(k²) and more for `k` tests (row EAGER-hub-diff-join, COMPLEXITY.md
+    /// row C49). Merged, the relation holds the one constraint `m >= n - j`.
+    ///
+    /// Proof that the result is the same formula over the integers: the disjuncts not merged
+    /// are kept as they are. Every atom is integer valued, so `l` is; a disjunct read as an
+    /// interval holds exactly where `l` lies in it, since each constraint of it holds exactly
+    /// where `l` lies in its half-line or point, and a conjunction holds where all do. The
+    /// disjunction of the disjuncts of one form then holds exactly where `l` lies in the union
+    /// of their intervals. `IntervalSet::from_pieces` gives that union as disjoint pieces,
+    /// joining two pieces `[a, b]` and `[b + 1, c]` into `[a, c]`, which hold the same
+    /// integers; a gap, even one `l` can never take when its coefficients share a factor, is
+    /// kept, so no value is added. An empty interval is a disjunct that is false and is
+    /// dropped; a piece that is the whole line gives `true`. A disjunct of another form, or
+    /// one that is not an interval, is not touched.
+    // Complexity tradeoff: O(a log a + t) for `a` disjuncts with `t` terms in all, the groups
+    // keyed by form in a sorted map and each group's pieces sorted by `from_pieces`. A
+    // disjunction with no two disjuncts of one form returns `None` after that one pass, so
+    // the join costs what `Formula::or` costs already.
+    pub(crate) fn merge_intervals(ds: &[Formula]) -> Option<Vec<Formula>> {
+        // A linear form, its terms.
+        type Form = BTreeMap<Atom, Int>;
+        // The form of `d` with its first coefficient positive, and the interval of it where
+        // `d` holds; `None` when `d` is not an interval of one form.
+        fn interval(d: &Formula) -> Option<(Form, End, End)> {
+            let cons = match d {
+                Formula::And(gs) => &gs[..],
+                Formula::Con(_) => std::slice::from_ref(d),
+                _ => return None,
+            };
+            let mut form: Option<Form> = None;
+            let (mut lo, mut hi) = (End::NegInf, End::PosInf);
+            for g in cons {
+                let Formula::Con(c) = g else { return None };
+                let negative = c.lin.terms.values().next()?.is_negative();
+                let same = match &form {
+                    Some(f) => {
+                        f.len() == c.lin.terms.len()
+                            && f.iter().zip(&c.lin.terms).all(|((a, k), (b, j))| {
+                                a == b && if negative { *k == -j } else { k == j }
+                            })
+                    }
+                    None => {
+                        form = Some(if negative {
+                            c.lin.terms.iter().map(|(a, k)| (a.clone(), -k)).collect()
+                        } else {
+                            c.lin.terms.clone()
+                        });
+                        true
+                    }
+                };
+                if !same {
+                    return None;
+                }
+                // `l + c` or `-l + c` compared with zero: `l` at least `-c`, at most `c`.
+                let at = End::Fin(Num::from(&if negative {
+                    c.lin.constant.clone()
+                } else {
+                    -&c.lin.constant
+                }));
+                let (l, h) = match (c.rel, negative) {
+                    (Rel::Ge, false) => (at, End::PosInf),
+                    (Rel::Ge, true) => (End::NegInf, at),
+                    (Rel::Eq, _) => (at.clone(), at),
+                };
+                lo = lo.max(l);
+                hi = hi.min(h);
+            }
+            Some((form?, lo, hi))
+        }
+        let mut groups: BTreeMap<Form, Vec<(usize, End, End)>> = BTreeMap::new();
+        for (i, d) in ds.iter().enumerate() {
+            if let Some((form, lo, hi)) = interval(d) {
+                groups.entry(form).or_default().push((i, lo, hi));
+            }
+        }
+        // Per disjunct merged away, `None`; at the first of a merged group, its union.
+        let mut out: Vec<Option<Formula>> = ds.iter().cloned().map(Some).collect();
+        let mut any = false;
+        for (form, members) in groups {
+            if members.len() < 2 {
+                continue;
+            }
+            let first = members[0].0;
+            let count = members.len();
+            let indices: Vec<usize> = members.iter().map(|m| m.0).collect();
+            let set =
+                IntervalSet::from_pieces(members.into_iter().map(|(_, lo, hi)| (lo, hi)).collect());
+            if set.len() == count {
+                continue;
+            }
+            any = true;
+            for i in indices {
+                out[i] = None;
+            }
+            let l = Lin {
+                terms: form,
+                constant: Int::ZERO,
+            };
+            out[first] = Some(within(&l, &set));
+        }
+        any.then(|| out.into_iter().flatten().collect())
     }
 
     /// The formula with every constraint that mentions `sym`, alone or in a product,

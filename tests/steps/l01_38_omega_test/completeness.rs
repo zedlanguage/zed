@@ -370,14 +370,52 @@ fn either_takes_out_the_shared_conjuncts_and_drops_a_complement() {
     // `true` and only the shared part is left.
     assert_eq!(Formula::either(&a, &b, &|_| Formula::top()), s);
     // `x <= 4` and `x >= 5 && x <= 9`: `x <= 4 || x >= 5` is true, so `x >= 5` is dropped and
-    // the two join to `x <= 4 || x <= 9`.
+    // the two join to `x <= 4 || x <= 9`, two intervals of `x` merged to `x <= 9`.
     let below = ge(&[("x", -1)], 4);
     let between = Formula::and(vec![ge(&[("x", 1)], -5), ge(&[("x", -1)], 9)]);
     let e = Formula::either(&below, &between, &id);
-    assert_eq!(e, Formula::or(vec![below.clone(), ge(&[("x", -1)], 9)]));
+    assert_eq!(e, ge(&[("x", -1)], 9));
     assert!(same_points(&e, &Formula::or(vec![below, between]), &["x"]));
     // Equal sides: the whole is shared, and the disjunction of nothing left is `true`.
     assert_eq!(Formula::either(&a, &a, &id), a);
+}
+
+#[test]
+fn either_merges_the_disjuncts_that_are_intervals_of_one_form() {
+    // Row EAGER-hub-diff-join: the join of the two sides of a test on `x - y` keeps one
+    // constraint where intervals of `x - y` meet or touch, not a disjunct for each test.
+    let id = |c: &Con| Formula::Con(c.clone());
+    let xy = |k: i128| ge(&[("x", 1), ("y", -1)], k);
+    let yx = |k: i128| ge(&[("x", -1), ("y", 1)], k);
+    let check = |a: &Formula, b: &Formula, want: &Formula| {
+        let e = Formula::either(a, b, &id);
+        assert_eq!(&e, want, "either({a}, {b})");
+        assert!(same_points(
+            &e,
+            &Formula::or(vec![a.clone(), b.clone()]),
+            &["x", "y", "z"]
+        ));
+    };
+    // `x - y >= 1` and `x - y == 0` written as two constraints: `x - y >= 0`, whichever sign
+    // the form is written with.
+    let point = Formula::and(vec![xy(0), yx(0)]);
+    check(&xy(-1), &point, &xy(0));
+    // `x - y >= 1 || x - y <= -3` and `-2 <= x - y <= 0`: the whole line, `true`.
+    let ends = Formula::or(vec![xy(-1), yx(-3)]);
+    let middle = Formula::and(vec![xy(2), yx(0)]);
+    check(&ends, &middle, &Formula::top());
+    // A gap is kept: `x - y >= 3` and `x - y <= 1` miss `x - y == 2`.
+    check(&xy(-3), &yx(1), &Formula::or(vec![xy(-3), yx(1)]));
+    // `2x <= 0` and `2x >= 2` leave a gap `2x` never takes; it is kept all the same.
+    let (low, high) = (ge(&[("x", -2)], 0), ge(&[("x", 2)], -2));
+    check(&low, &high, &Formula::or(vec![low.clone(), high.clone()]));
+    // A disjunct of another form, `z >= 0`, is kept as it is, beside the merged one.
+    let other = Formula::or(vec![xy(-1), ge(&[("z", 1)], 0)]);
+    check(
+        &other,
+        &point,
+        &Formula::or(vec![xy(0), ge(&[("z", 1)], 0)]),
+    );
 }
 
 #[test]

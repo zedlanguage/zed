@@ -12152,10 +12152,13 @@ impl Scope {
                 side.seen.order.sync(&side.relation, &side.names);
             }
             for n in &moved {
+                // An eager side's stars at `n` are the cut's; `around` would add them all.
                 if eager {
                     leaves.extend(side.cut_leaves(&side.relation, n));
+                    leaves.extend(side.relation.around_other_hubs(n));
+                } else {
+                    leaves.extend(side.relation.around(n));
                 }
-                leaves.extend(side.relation.around(n));
             }
         }
         a.refresh(&leaves);
@@ -12221,13 +12224,31 @@ impl Scope {
                 }
             }
         }
+        // Of two eager sides, the stars at a hub whose free conjuncts differ are at their
+        // projection on each side where their family's bound does not cut their leaf, as for a
+        // hub moved above; the others are refreshed.
+        // Complexity tradeoff: naive version, every leaf of each class at such a hub refreshed
+        // on both sides unless one side holds every hub of the class as the join does, O(k)
+        // per join for `k` stars, O(k²) over a nest of `k` tests `n - m <= j` on the hubs,
+        // whose joins hold a constraint on `m` that differs from both sides'. Used: the
+        // leaves the family bounds cut ([`Scope::cut_leaves`]), as for a hub moved (row
+        // EAGER-hub-diff-join, COMPLEXITY.md row C49).
+        if eager {
+            for n in &cored {
+                for side in [&mut a, &mut b] {
+                    side.seen.order.sync(&side.relation, &side.names);
+                    let cut = side.cut_leaves(&side.relation, n);
+                    due.extend(cut.into_iter().filter(|x| !leaves.contains(x)));
+                }
+            }
+        }
         let mut checked: BTreeSet<&conjuncts::Class> = BTreeSet::new();
         let at: Vec<&Arc<str>> = if eager {
             Vec::new()
         } else {
-            moved.iter().collect()
+            cored.iter().chain(&moved).collect()
         };
-        for n in cored.iter().chain(at) {
+        for n in at {
             for side in [self, other] {
                 for c in side.relation.classes_at(n) {
                     if !checked.insert(c) {
@@ -15838,10 +15859,11 @@ impl Scope {
             seeds.changed.insert(n.clone());
             // A satellite moved changes the stars at the hubs it relates to, whose conjuncts do
             // not mention it ([`Conjuncts::around`]); a lazy scope finds their leaves stale.
+            // The stars at `n` itself are those `moved_blocks` found by the cut above.
             if !self.lazy {
                 out.extend(
                     self.relation
-                        .around(n)
+                        .around_other_hubs(n)
                         .iter()
                         .filter_map(|x| self.relation.star(x)),
                 );

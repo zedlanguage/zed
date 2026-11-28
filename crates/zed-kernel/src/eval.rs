@@ -2681,7 +2681,9 @@ impl<'t> Machine<'_, 't> {
         // (CHECK-atom-key-mixed-receiver).
         if p == Prim::GetAtomKey && matches!(args[0], V::Closure(_) | V::Prim(_)) {
             let mut args = args.into_iter();
-            let f = args.next().expect("`GetAtomKey` takes two arguments, checked above");
+            let f = args
+                .next()
+                .expect("`GetAtomKey` takes two arguments, checked above");
             return self.apply(&f, args.collect());
         }
         // A tuple, an atom or a family display made with a part that is no data, or a value

@@ -116,9 +116,18 @@ fn a_read_of_a_family_or_a_function_takes_an_atom_the_family_takes() {
              y = f[k];\n"
         )
     };
-    let got = [("5", "(x) -> 7"), ("1", "(x) -> 7"), ("5", "(x) -> x + 1"), ("1", "(x) -> x + 1")]
-        .map(|(fun, g)| value(&read_with(fun, g), "y"));
-    assert_eq!(got, ["1", "7", "1", "#a"], "family, function; each with `(x) -> 7` first");
+    let got = [
+        ("5", "(x) -> 7"),
+        ("1", "(x) -> 7"),
+        ("5", "(x) -> x + 1"),
+        ("1", "(x) -> x + 1"),
+    ]
+    .map(|(fun, g)| value(&read_with(fun, g), "y"));
+    assert_eq!(
+        got,
+        ["1", "7", "1", "#a"],
+        "family, function; each with `(x) -> 7` first"
+    );
 }
 
 #[test]

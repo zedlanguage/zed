@@ -502,6 +502,23 @@ fn tests_on_a_hub(start: &Scope, k: usize) -> (Scope, Scope) {
     (one_after_another, nest)
 }
 
+/// The nest of `k` `if`s on the tests `n - m <= k`, …, `n - m <= 1` ([`hubs_within`]) on
+/// `start`: down by each true arm, then each level's false arm joined on the way up.
+fn hubs_within_nested(start: &Scope, k: usize) -> Scope {
+    let p = Premises::new();
+    let test = |i: usize| hubs_within((k - i) as i64);
+    let mut levels = vec![start.clone()];
+    for i in 0..k {
+        let next = levels[i].assume(&test(i), true, &p);
+        levels.push(next);
+    }
+    let mut nest = levels.pop().expect("the innermost level");
+    for i in (0..k).rev() {
+        nest = nest.join(&levels[i].assume(&test(i), false, &p));
+    }
+    nest
+}
+
 /// The tests of [`a_lazy_scope_settles_the_hubs_of_a_class_of_stars_in_linear_time`] at size
 /// `k`: `n + m >= 1 || n - m >= 30`, then `k` stars `ai >= n + m - i`, then `k` tests
 /// `n >= m - (k - i)` among the hubs, each stronger than the last.
@@ -1726,6 +1743,39 @@ fn an_eager_join_settles_the_stars_as_the_lazy_one() {
         let a: Arc<str> = format!("a{i}").into();
         assert_eq!(eager.get(&a), lazy.settled(&a), "a{i}");
         assert_eq!(eager.get(&a).ints().to_string(), "[-1..]", "a{i}");
+    }
+}
+
+#[test]
+fn an_eager_nest_of_tests_within_the_hubs_settles_the_stars_as_the_lazy_one() {
+    // Row EAGER-hub-diff-join: an eager join or move of a hub refreshes only the stars at it
+    // that the bound of their family cuts (`Scope::cut_leaves`), and of the stars `around`
+    // the hub only those at other hubs (`Conjuncts::around_other_hubs`); the joins keep the
+    // tests' intervals of `n - m` as one constraint (`Formula::either`). A lazy scope settles
+    // every star when read, by none of these. Each nest compares the two at every name.
+    let starts: [fn(usize, bool) -> Scope; 3] = [
+        |k, lazy| {
+            let s = stars_of_two_hubs(k);
+            if lazy { s.lazy() } else { s }
+        },
+        |k, lazy| {
+            let s = stars_above_the_hubs(k, false);
+            if lazy { s.lazy() } else { s }
+        },
+        stars_under_a_disjunction,
+    ];
+    for (which, start) in starts.iter().enumerate() {
+        for k in 1..=5 {
+            let eager = hubs_within_nested(&start(k, false), k);
+            let lazy = hubs_within_nested(&start(k, true), k);
+            let names = ["n".to_string(), "m".to_string()]
+                .into_iter()
+                .chain((0..k).map(|i| format!("a{i}")));
+            for x in names {
+                let x: Arc<str> = x.into();
+                assert_eq!(eager.get(&x), lazy.settled(&x), "start {which}, k {k}, {x}");
+            }
+        }
     }
 }
 

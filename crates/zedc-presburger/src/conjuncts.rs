@@ -1162,6 +1162,33 @@ impl Conjuncts {
             .collect()
     }
 
+    /// [`Conjuncts::around`] without the leaves of the classes of which `y` is itself a hub:
+    /// the stars a move of `y` changes though `y` is no hub of theirs. An eager scope finds
+    /// the leaves of the stars at `y` that a move can change by the bounds of their families
+    /// (`Scope::cut_leaves`), which read the conjuncts among the hubs, `y`'s with the rest,
+    /// so that these alone are left to add (row EAGER-hub-diff-join). A class's names but
+    /// its leaf are its hubs, so `y` is a hub of the class when a conjunct of it mentions `y`.
+    // Complexity tradeoff: naive version, `around`, which gives every leaf at a hub `y` is
+    // near and so every star at `y` when `y` is a satellite among the hubs of its own stars:
+    // O(k) leaves refreshed per join or move for `k` stars, O(k²) over a nest of `k` tests
+    // on the hubs. Used: the classes at the hubs near `y` read as `around` reads them, each
+    // checked in O(s) for its `s` conjuncts, O(C·s + c log c) for `C` classes and `c` leaves
+    // given. Test: `l01_39_reduced_product::scaling::bench::
+    // tests_within_two_hubs_of_many_stars_in_an_eager_scope_scale`.
+    pub fn around_other_hubs(&self, y: &str) -> BTreeSet<Arc<str>> {
+        if self.index.wide.get(y).is_some_and(|w| *w > 0) {
+            return BTreeSet::new();
+        }
+        let classes: BTreeSet<&Class> = (self.index.nearby.of(y))
+            .flat_map(|h| self.index.class_at.of(h))
+            .filter(|c| !c.iter().any(|g| names(g).contains(y)))
+            .collect();
+        classes
+            .iter()
+            .flat_map(|c| self.class_leaves(c).cloned())
+            .collect()
+    }
+
     /// The conjuncts that mention `name` but those of the stars whose hub it is: those a move
     /// of `name` makes due in a scope that leaves its stars' leaves to be settled when read.
     pub fn moving(&self, name: &str) -> impl Iterator<Item = &Arc<Formula>> {
