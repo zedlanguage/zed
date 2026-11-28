@@ -15287,6 +15287,10 @@ impl Scope {
                 .filter(|(_, l)| l.summary.vars().len() == 1)
                 .map(|(n, l)| (n.clone(), l.summary.clone()))
                 .collect();
+            let many_inputs: Vec<Arc<str>> = (lets.iter())
+                .filter(|(_, l)| l.read.is_some())
+                .map(|(n, _)| n.clone())
+                .collect();
             let demand = Demand::Ints(self.get(&z).ints().clone());
             #[cfg(feature = "counts")]
             super::preimage::counts::TERM_READS.set(super::preimage::counts::TERM_READS.get() + 1);
@@ -15320,16 +15324,47 @@ impl Scope {
             // `..` while `x` became `5..=6`, PA-let-followups part 2). Its value is its
             // summary of that input at every state, so it lies in the summary's image over
             // the input's integers as now narrowed, an `O(1)` read ([`LetPa::image`]), as
-            // [`Scope::bind_with`] meets a binding with it. A summary over two inputs or more
-            // is not met so: its image costs every input, where the test costs only those it
-            // narrows (item PA-letpre-linear); that case stays open in PA-let-followups.
-            // Test: `l01_39_reduced_product::let_terms::
-            // a_summarized_binding_read_inside_a_term_narrows_its_input`.
+            // [`Scope::bind_with`] meets a binding with it. Test: `l01_39_reduced_product::
+            // let_terms::a_summarized_binding_read_inside_a_term_narrows_its_input`.
             for (l, summary) in &one_input {
                 if !summary.vars().iter().any(|v| narrowed.contains_key(v)) {
                     continue;
                 }
                 let Some(image) = summary.image(|v| self.names.get(v).map(Product::ints)) else {
+                    continue;
+                };
+                if self.meet_name(l, &image, convex, prem) {
+                    met = true;
+                    if self.no_value(l) {
+                        return true;
+                    }
+                }
+            }
+            // The same for a summary over two inputs or more, read through the tree of its
+            // terms' bounds ([`View::term_read`]) (PA-let-followups part 2 for k > 1:
+            // `w = x + y; z = w div 2` under `z == 3` with `x` in `0..=6` and `y` in `0..=1`
+            // kept `w` at `0..=7` while `x` became `5..=6`). Its image over all `k` inputs
+            // ([`LetPa::image`]) would cost `O(k)` a test, where the test costs only the inputs
+            // it narrows (item PA-letpre-linear). Used: the summary's tree, which
+            // [`Scope::inputs_and_lets`] read for this test, updated at the names that differ
+            // since, the `m` inputs met just above, `O(m log k)` ([`images::updated`]), and its
+            // total read as the image in `O(1)` ([`LetPa::image_read`], with its proof that it
+            // bounds the value); a summary none of whose inputs the narrowing gave is skipped
+            // by `O(m log k)` lookups. The image is the hull of the sum of the terms' bounds,
+            // so with `w = x + y` it is `5..=7`, not the `6..=7` the term's inversion found for
+            // `w`; that inversion is not kept for names read through summaries. Test:
+            // `l01_39_reduced_product::let_terms::
+            // a_binding_summarized_over_two_inputs_read_inside_a_term_narrows_by_its_inputs`.
+            for l in &many_inputs {
+                let Some(held) = self.view().summary(l) else {
+                    continue;
+                };
+                let vars = held.summary.vars();
+                if !narrowed.keys().any(|v| vars.contains(v)) {
+                    continue;
+                }
+                let read = self.view().term_read(&held);
+                let Some(image) = held.summary.image_read(&read) else {
                     continue;
                 };
                 if self.meet_name(l, &image, convex, prem) {

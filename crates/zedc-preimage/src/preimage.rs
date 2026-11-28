@@ -14297,6 +14297,43 @@ impl LetPa {
         })
     }
 
+    /// [`LetPa::image`] over the domains `read` holds, from the total of its tree of the
+    /// terms' bounds ([`SummaryRead::total`]): `O(1)`, where [`LetPa::image`] costs every
+    /// input, so a caller that keeps the tree updated where its inputs change pays for those
+    /// alone (PA-let-followups part 2, item PA-letpre-linear). `None` when an input's domain
+    /// is empty, as [`LetPa::image`] gives no image without an input's integers.
+    ///
+    /// Why it bounds the value. The summary is `constant + Σ_v t_v(v)` over its inputs `v`
+    /// (`Sep`, formed). The leaf of `v` holds the least and greatest value of `t_v` over `v`'s
+    /// domain ([`LetPa::term_bounds`]: `lo` and `hi` when finite, a count in `lo_inf` and
+    /// `hi_inf` when not, a count in `no_val` when `t_v` has no value there), and the total
+    /// adds every field ([`TermBounds::plus`]). So where each input lies in its domain the
+    /// value is at least `constant + lo` when no least value is infinite and at most
+    /// `constant + hi` when no greatest one is, the sum of the bounds of the terms; and where
+    /// some term has no value the summary has none, the empty set. This is the hull that
+    /// `Sep::bounds` gives [`LetPa::image`], which adds the same bounds one term at a time.
+    pub fn image_read(&self, read: &dyn SummaryRead) -> Option<IntervalSet> {
+        let tot = read.total();
+        if tot.void > 0 {
+            return None;
+        }
+        if tot.no_val > 0 {
+            return Some(IntervalSet::empty());
+        }
+        let c = &self.formed().constant;
+        let lo = if tot.lo_inf > 0 {
+            NegInf
+        } else {
+            Fin(Num::from(&(c + &tot.lo)))
+        };
+        let hi = if tot.hi_inf > 0 {
+            PosInf
+        } else {
+            Fin(Num::from(&(c + &tot.hi)))
+        };
+        Some(IntervalSet::range(lo, hi))
+    }
+
     /// What the input `v` read over `ints`, and not over the domain the summary was formed
     /// over ([`LetPa::form`]), adds to the bounds of its value: nothing when it has no term or
     /// the summary was not formed over domains. `O(log k)` for `k` inputs.
