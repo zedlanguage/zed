@@ -8627,6 +8627,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         // neither proof asks that the signature holding the forward hold its own variables
         // alone.
         //
+        // NOT PROVED: claim C1 as a whole, and each of C1.1, C1.2 and C1.3 as a step of it
+        // (cross-review XR-heldname-print-batch round 1, Codex A3-N). The decode below is kept
+        // as the fallback for that reason; removing it would rest on an unproved claim. Row
+        // PROOF-heldname-b4-witness: prove that every open forward reaching this point had a
+        // B4 witness at `generalize` (then replace the decode with a boundary assertion), or
+        // find the program that needs the decode.
+        //
         // Open claim C1, which (3) rests on and which is not proved here: a compact forward
         // in a closed signature nested in another is named by `finished_with` of the
         // signature at the top of the nest exactly as its flat needs would be named there.
@@ -8637,9 +8644,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         // is what admission's `#16` (each argument class at the level of the function
         // admitted, `r10_forward.rs`, `r10_eval_a_prime`) is read to give, not proved here;
         // C1.2, given C1.1, the runs of the forward's results fall at the places
-        // `Sig::vars_marks` gives over the nest (proved in `sig_walk`); C1.3, given C1.1 and
-        // C1.2, the held names come last by (i) to (iii) at `finished_with` (proved there).
-        // Only C1.1 is open beyond PROOF-map-chain-d-skip-and-admit itself.
+        // `Sig::vars_marks` gives over the nest (`sig_walk`); C1.3, given C1.1 and C1.2, the
+        // held names come last by (i) to (iii) at `finished_with`. Each step is NOT PROVED:
+        // C1.1 lacks the proof that E records a fresh need for each slot and that resolution,
+        // merging and generalization keep it own; C1.2 needs the order and deduplication of
+        // the results under sibling and child substitution as a premise, not only their
+        // ownership (two internal runs swapped are both still own); C1.3 needs the held keys
+        // and base names to correspond, which C1.1 and C1.2 do not give (a clash takes the
+        // fallback).
         //
         // Measured: over `zedc-check --lib` the old test decoded at 310 places in 5 tests
         // (`r10_forward_sweep_of_leaves_depths_and_siblings_agrees_with_e` 168,
@@ -8950,7 +8962,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             return t.clone();
                         }
                         // Each held function closed within this callee is finished here, once
-                        // for every caller: one that binds all its variables, and one that
+                        // per enclosing callee: one that binds all its variables, and one that
                         // reads classes from around it that are own to the callee, as the
                         // lambda `x -> (x, a)` of `h(a, m) = m.map(x -> (x, a))` reads `a`'s
                         // class (HELDNAME-closed-in-callee; before, only the first kind, and
@@ -8959,15 +8971,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // FAIL-map-chain-open-held-fn-quadratic's benches). Those read classes,
                         // `keep`, stay written `$k`. The test is `Sig::closed_within`, the
                         // same that sets `FwdNeed::held_open_fn` (`r10_get_or_build_summary`).
-                        // Proof that every caller gives the names written here, step by step.
+                        // The copy written here is a template, not a promise about every
+                        // caller: a caller none of whose held items clashes with its names
+                        // reuses it as written, and a caller where one does falls back to the
+                        // flat form, which E names (`apart`, step (5)). Proof, step by step.
                         // (1) Each variable `f` holds at any depth is own to a signature on its
                         // path within `f`, or is a class of `keep`, own to the callee
                         // (`Sig::closed_within`, proved there); so none is read from a caller.
                         // (2) The finished copy is `finished_keeping(f.settle(stale), keep)`,
                         // which reads `f`, `keep` (from `f`'s facts), the classes (`&self`: the
                         // finish pass changes no class) and the memos of the pass, which give
-                        // one result per address: so one copy, made from `f` alone, the same in
-                        // every caller. (3) It writes each class of `keep` as it is, and each
+                        // one result per address: so one copy, made from `f` alone, the same
+                        // template for every caller of this callee. (3) It writes each class of `keep` as it is, and each
                         // other variable of `f` by the name `printed` gives it in the caller (a
                         // class by its class's name, another by its own spelling) unless
                         // `rename_apart` named it apart within `f`, which happens only where an

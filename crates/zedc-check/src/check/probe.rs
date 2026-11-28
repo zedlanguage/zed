@@ -294,8 +294,9 @@ pub struct CalleeSummary {
     /// zedc-types.
     /// Test: r10_tests.rs `r10_function_held_in_a_forward_block_counts_for_own_variables`.
     pub held_foreign_fn: bool,
-    /// Whether a function held in the needs, outside functions, binds a variable by no
-    /// signature of its nest; see `FwdNeed::held_open_fn` in zedc-types.
+    /// Whether a function held in the needs, outside functions, is not closed within the
+    /// callee (`Sig::closed_within(&callee.own)` false; `tys_hold_only_fns_closed_within`);
+    /// see `FwdNeed::held_open_fn` in zedc-types.
     /// Test: r10_tests.rs
     /// `r10_chain_of_maps_by_a_function_returning_a_lambda_decodes_no_link`.
     pub held_open_fn: bool,

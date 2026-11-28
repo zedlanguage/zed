@@ -2681,9 +2681,10 @@ pub fn tys_hold_only_own_fns<'a>(tys: impl Iterator<Item = &'a Ty>) -> bool {
 
 /// Whether each function `tys` hold outside functions binds all its variables
 /// ([`Sig::holds_only_own_variables`] or [`Sig::binds_all_its_variables`]): the functions
-/// `Ck::r10_finish_one_fwd_callee` (zedc-check) finishes inside a callee, so that a forward
-/// whose leaf needs hold only such functions has its held names written by name there
-/// ([`FwdNeed::held_open_fn`]).
+/// `Ck::r10_finish_one_fwd_callee` (zedc-check) finished inside a callee before
+/// HELDNAME-closed-in-callee, which now finishes those of [`tys_hold_only_fns_closed_within`].
+/// Read only by the control `R10Config::finish_only_closed_held`, to set
+/// [`FwdNeed::held_open_fn`] as it was.
 pub fn tys_hold_only_closed_fns<'a>(tys: impl Iterator<Item = &'a Ty>) -> bool {
     fns_outside_tys(tys, |_| true).is_some_and(|fns| {
         (fns.iter()).all(|f| f.holds_only_own_variables() || f.binds_all_its_variables())
@@ -4675,11 +4676,12 @@ pub struct VarFacts {
     /// function held where no forward holds a function, as nearly all.
     pub fwd_names: NameSet,
     /// Whether a signature of the nest keeps a compact forward that has a class among its
-    /// held names and holds a function that binds some variable of its nest by no signature
-    /// of it ([`FwdNeed::held_open_fn`]): `Ck::r10_finish_one_fwd_callee` finishes only the
-    /// held functions that bind all their variables ([`Sig::binds_all_its_variables`]), so
-    /// such a forward's callee may still write a held class as `$k` where the eager checker
-    /// writes its name, and `Ck::finished_with` decodes it. Before FAIL-map-chain-clashing-held-name-
+    /// held names and holds a function not closed within its callee
+    /// ([`FwdNeed::held_open_fn`]): `Ck::r10_finish_one_fwd_callee` finishes only the held
+    /// functions closed within the callee ([`Sig::closed_within`] on the callee's own
+    /// variables, [`tys_hold_only_fns_closed_within`]; HELDNAME-closed-in-callee), so such a
+    /// forward's callee may still write a held class as `$k` where the eager checker writes
+    /// its name, and `Ck::finished_with` decodes it. Before FAIL-map-chain-clashing-held-name-
     /// quadratic the finishing took only the functions holding their own variables alone,
     /// and this bit read [`FwdNeed::held_foreign_fn`], so `k(x) = y -> (x, y)` in `m.map(k)`,
     /// whose lambda reads `k`'s `x`, was decoded at every link of a chain, O(n^2). ORed as
@@ -6081,11 +6083,12 @@ pub struct FwdNeed {
     /// (landing round 6).
     pub held_foreign_fn: bool,
     /// Whether a function held, outside functions, in the needs the block stands for, a
-    /// child forward's among them, binds a variable of its nest by no signature of it
-    /// ([`tys_hold_only_closed_fns`] false): one `Ck::r10_finish_one_fwd_callee` does not
-    /// finish, so its classes stay written `$k` in the callee ([`VarFacts::fwd_unfinished`]).
-    /// It implies [`Self::held_foreign_fn`], since a function that holds only its own
-    /// variables binds them all. Made with it and read only by the facts, so it is stale
+    /// child forward's among them, is not closed within its callee
+    /// ([`tys_hold_only_fns_closed_within`] on the callee's own variables false;
+    /// HELDNAME-closed-in-callee): one `Ck::r10_finish_one_fwd_callee` does not finish, so
+    /// its classes stay written `$k` in the callee ([`VarFacts::fwd_unfinished`]). It implies
+    /// [`Self::held_foreign_fn`], since a function that holds only its own variables binds
+    /// them all and so is closed within any callee. Made with it and read only by the facts, so it is stale
     /// where that bit is, and never read so, by the same decodes
     /// (FAIL-map-chain-clashing-held-name-quadratic).
     pub held_open_fn: bool,
@@ -23563,7 +23566,10 @@ impl Sig {
     /// own variables alone: `k(x) = y -> (x, y)` binds every variable it holds, though its
     /// lambda holds `x`, `k`'s. A signature that binds all its variables is a closed term:
     /// nothing in it is read from around, so what is made from it alone (its finished form,
-    /// `Ck::finished_with` in zedc-check) is the same wherever it is held.
+    /// `Ck::finished_with` in zedc-check) is the same wherever it is held. That form is a
+    /// template: a holder reuses it as written where none of its names clashes with a name
+    /// of the holder, and falls back to the flat form where one does (`apart` at
+    /// `finished_with`).
     /// Proof that it is `outer` and `outer_classes` of [`Sig::facts`] both empty. Write
     /// `O(s)` for `outer ∪ outer_classes` of `s`, `V(s)` for the variables its types hold
     /// outside functions, `F(s)` for the functions they hold there, and `H(s)` for the names
