@@ -30,9 +30,9 @@
 //! `` `x` is (int, rat, bool) here `` and `` `x` is declared `(int, rat, bool)` ``: naming it
 //! would put a definition into short messages for a type written three or four times. A step
 //! whose printed type an earlier step wrote writes `the same type as step k` instead, unless
-//! the type is no longer than those words or stands in code ([`same_type_as_step`]), so a chain of n names
-//! that each hold the one before with one type of m components, `x1 = x0; x2 = x1; …`,
-//! writes the type once (MSG-derive-same-chain).
+//! the type is no longer than those words or stands in code ([`same_type_as_step`]), so a
+//! chain of n names that each hold the one before with one type of m components,
+//! `x1 = x0; x2 = x1; …`, writes the type once (MSG-derive-same-chain).
 //!
 //! [`lift`] also names the type variables a message's types write by name (UNDERSCORE-print),
 //! which a printed type marks with the noncharacters U+FDD9 to U+FDDE ([`VARS`]), so that no name
@@ -367,22 +367,22 @@ pub(super) fn enclose(roots: &mut [String]) {
 }
 
 /// Marks, in each of the steps of a message, `steps` in reading order, a printed type that an
-/// earlier step wrote, so that [`spell`] writes it as `the same type as step k`, `k` the
+/// earlier step wrote, so that `spell` writes it as `the same type as step k`, `k` the
 /// number, from 1, of the first step that wrote it (DESIGN sec:diagnostics, "Types in a
 /// message"; MSG-derive-same-chain). Run on the steps before [`lift`]. A printed type is a
-/// text [`enclose`] marked, one that holds a reference: a tuple, a union or another part this
+/// text `enclose` marked, one that holds a reference: a tuple, a union or another part this
 /// module defines. Equal types are equal texts here, since a part is placed once and its
 /// references are its place, and the variables of each printed type are marked apart from any
 /// other's ([`VARS`]), so the comparison is of the texts. A type with no part, as `int` or
 /// `1`, holds no mark and is written where it stands; a type the message writes once is not
 /// changed; nor is one that, spelled, is no longer than the words, as `String | #outOfBounds`
-/// or a part named in that step, `Part4`; nor is a type inside code, after an odd number of backquotes, as the result of
-/// `` `bool -> (Part2, 0)` ``, which must read back as a type.
+/// or a part named in that step, `Part4`; nor is a type inside code, after an odd number of
+/// backquotes, as the result of `` `bool -> (Part2, 0)` ``, which must read back as a type.
 ///
-/// The type is marked, not replaced: [`SAME`], `k`, [`SAME`], then the type as it was. So the
-/// parts are counted, and named, as if each step wrote the type, and [`spell`] decides by the type as
-/// that step spells it whether it is shorter than the words, with the spelling cut off at the
-/// words' length.
+/// The type is marked, not replaced: `SAME`, `k`, `SAME`, then the type as it was. So the
+/// parts are counted, and named, as if each step wrote the type, and `spell` decides by the
+/// type as that step spells it whether it is shorter than the words, with the spelling cut off
+/// at the words' length.
 ///
 /// So a chain `x1 = x0; …; xn = x(n-1)` of names of one type of m components writes that type
 /// once, and each later step `the same type as step k`, where it wrote it at each step shown.
