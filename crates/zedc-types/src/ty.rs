@@ -10050,11 +10050,15 @@ fn member_hit(table: Option<&MemberTable>, xs: &[&Ty]) -> Option<usize> {
     })
 }
 
+/// The shapes given to [`Choices::new`]: each by its index in its list, the keys of its
+/// components (`K`, borrowed or owned) and its components.
+type ShapesKeyed<'r, K> = Vec<(usize, K, Vec<&'r Ty>)>;
+
 impl Filed {
     /// In the size of `t`'s tuples and payloads. The keys of the tuples are those each row
     /// keeps ([`Row::keys`]); those of a payload shape are found here.
     fn new(t: &Ty) -> Filed {
-        let mut rows: HashMap<usize, Vec<(usize, &[CompKey], Vec<&Ty>)>> = HashMap::new();
+        let mut rows: HashMap<usize, ShapesKeyed<'_, &[CompKey]>> = HashMap::new();
         for (i, r) in t.tuples.iter().enumerate() {
             rows.entry(r.len())
                 .or_default()
@@ -10063,8 +10067,7 @@ impl Filed {
         let mut payloads = HashMap::new();
         for (n, rs) in &t.payloads {
             let Some(rs) = rs else { continue };
-            let mut groups: HashMap<ShapeGroup, Vec<(usize, Vec<CompKey>, Vec<&Ty>)>> =
-                HashMap::new();
+            let mut groups: HashMap<ShapeGroup, ShapesKeyed<'_, Vec<CompKey>>> = HashMap::new();
             for (i, r) in rs.iter().enumerate() {
                 let ys = comps(r);
                 let keys = ys.iter().map(|y| class(y)).collect();
