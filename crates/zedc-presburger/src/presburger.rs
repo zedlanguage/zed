@@ -20572,17 +20572,41 @@ impl Omega {
     /// `l01_38_omega_test::names::a_cycle_turned_both_ways_and_a_longer_cycle_one_way_are_decided`,
     /// `l01_38_omega_test::names::a_tie_that_shares_a_row_is_refused`. COMPLEXITY.md row
     /// NAME-ties.
-    // Assumption, not proved (ASSUME-documented): the argument above needs every step of the
-    // loop after the tie to read only the rows and the flags that hold no variable, and each
-    // step to be the same under a renaming of the variables (the invariant [`solve`] states).
-    // No proof covers every step, and a step added later that reads a variable's index would
-    // break it. The counts of `System::shrinking` are those of the rows held when a tie is
-    // read from them (`System::shrink` states why), and `System::touch` marks every variable
-    // of fewest rows, none by index. Evidence:
+    // Proof (PROOF-untie-renaming, b30-pres4, 2026-11-27) that every step of [`Omega::run`]
+    // after the tie reads only the rows and the flags that hold no variable, and is the same
+    // under a renaming `τ` of the variables that keeps their colors (the invariant [`solve`]
+    // states). Each step that chooses, in the order `run` takes them:
+    // 1. The next equality is the least by color (`Equalities::least`); a tie of pivots is
+    //    taken only by a swap that maps the rows onto themselves (`Omega::pivot_swaps`), and
+    //    is otherwise kept as a pair of opposite rows (`loose_tie`), so by content alone.
+    // 2. `Omega::differences` defines each member of a class by its representative, the least
+    //    by (color, offset, place); two members of one color and offset are equal at every
+    //    point and alike in the rows, so the place only names the variable left
+    //    (`Ties::representatives`).
+    // 3. `Omega::cycles` turns into equalities the rows of edges inside a strongly connected
+    //    component: a set read from the rows alone, then ordered by step 1.
+    // 4. Eliminations before the pending definitions are written (`Omega::deferred`): the
+    //    order of steps changes, never whether a point exists (PROOF-solve-omega-path-renaming).
+    // 5. `System::one_sided` is taken by its first index, but the rows left after all are
+    //    dropped are the same in every order (the note at that step), and `Omega::fix` gives
+    //    each fixable variable a value read from its own bounds.
+    // 6. The exact, lossless, inexact and shrinking stages choose by `System::least` and
+    //    `System::least_unfilled`, by color, and pass every tie back through this function.
+    //    The counts of `System::shrinking` are those of the rows held when a tie is read from
+    //    them (`System::shrink` states why), and `System::touch` marks every variable of
+    //    fewest rows, none by index.
+    // 7. `Omega::batch_pendant` sorts by (color, place) and takes only the prefix in which no
+    //    two colors are equal, which `τ` maps onto itself.
+    // 8. With three variables left, `live3::decide` decides completely; the order can change
+    //    which point, not the verdict. [`splinters`] checks `τ` on the rows it reads.
+    // So the two runs agree step by step up to `τ`. Not covered: a step added to `run` later;
+    // it must choose by content or come back here, and the list above is the review list.
+    // Evidence:
     // `l01_38_omega_test::names::ties_taken_by_a_swap_agree_with_enumeration` (200 random symmetric
     // systems against enumeration, under both namings) and
     // `a_tie_that_a_swap_maps_onto_itself_is_decided`. No test reaches the branch of
-    // [`broken_swap`] where a swap fails. If false, the answer can depend on the names (an answer
+    // [`broken_swap`] where a swap fails. If a later step breaks it, the answer can depend on the
+    // names (an answer
     // under one naming, a refusal under another). Each run is still an exact elimination order, so
     // no answer is wrong: determinism and precision only.
     fn untie(&mut self, least: Option<Least>, taken: impl Fn(isize) -> bool) -> Option<Least> {
@@ -20904,11 +20928,27 @@ impl Omega {
         // alike) and one without a unit coefficient (`3·a + 2·b + 3·c + 2 == 0`), each step on
         // the second wrote a fresh variable into the tied pair, which met as a new equality,
         // and the steps went on without end (test `loose_pair_tests`).
-        // Assumption, not proved: keeping the rewritten pair loose never holds back a tie that
-        // a later step needs. The two rows still state the equality, so the set is unchanged;
-        // what could be lost is only an elimination by that equality. Evidence: the 2255
-        // pieces of zedc_presburger, zedc_preimage and l01_ (2026-11-14) gave the same
-        // verdicts as before, apart from two snapshots that already failed on main.
+        // Claim: keeping the rewritten pair loose changes no answer and turns off no swap of a
+        // tie; it gives up only an elimination by the rewritten equality. Proof. (1) The rows:
+        // a pair `a·v + k >= 0` and `-a·v - k >= 0` holds exactly the points of `a·v + k == 0`,
+        // and `resolve` writes each definition `v_j = d_j` of `defs` into both rows alike, so
+        // the rewritten pair holds exactly the points of the rewritten equality; the set the
+        // system states is the one it stated before the write, whether the pair meets or not.
+        // (2) The swaps: `sys.loose` is only ever added to (no `clear`, `remove` or `retain`;
+        // `System` is not `Clone`, and each run builds its own), and the pair was put there by
+        // `loosen` before this write, so `sys.loose` is not empty already. Every step that
+        // settles a tie by a swap requires it empty: `Omega::equality` (`symmetric`),
+        // `Omega::swapped_pivots` and `Omega::untie` (each `self.sys.loose.is_empty()`). So the
+        // insert below turns off no swap that was on. (3) What the insert does change: the pair
+        // is not met as an equality (`System::add`, `meets`), so no elimination by it is made;
+        // the two rows go to the stages below as inequalities, each of which decides the set it
+        // is given or refuses, and a refusal there returns the tie `loosen` kept
+        // (`loose_tie`). So the loss is of precision or cost, never of an answer: a run that
+        // the rewritten equality would have let answer may refuse instead. Not done: meeting
+        // the rewritten pair again when its equality has a unit coefficient on a variable no
+        // other variable is alike with, which would end as `equality` ends; test
+        // `a_tied_equality_rewritten_is_not_met_again` shows the case it must still stop on
+        // (the rewritten pair tied again, without end). The same holds for `write_lone`'s pair.
         for r in rows {
             if meter::spent() {
                 return;
@@ -35459,6 +35499,73 @@ mod probe_order {
         assert!(
             diffs.is_empty(),
             "seed {seed:#x}, {} of {asked}:\n{}",
+            diffs.len(),
+            diffs.first().map_or("", String::as_str)
+        );
+    }
+
+    /// As the test above, with disjunctions of one disjunct allowed, which `drop_by_bounds`
+    /// lifts into the round with their nested disjunctions, and the inner disjunctions and
+    /// their disjuncts shuffled: the probe's answer does not depend on the order of a nested
+    /// disjunction (PROOF-probe-order-independent). A run of 787 such cases found no
+    /// difference (b30-pres4, 2026-11-28, seed 0xf98cedc861459be6); 200 cases take about 10 s
+    /// on one core.
+    #[test]
+    fn the_order_of_a_nested_disjunction_does_not_change_the_probe() {
+        let (mut rng, seed) =
+            Rng::fresh("the_order_of_a_nested_disjunction_does_not_change_the_probe");
+        let mut diffs = Vec::new();
+        let mut asked = 0;
+        for case in 0..200 {
+            let n = 2 + rng.below(4);
+            let b = 2 + rng.int_i128(0, 6);
+            let base = Parts::of(nnf(&rows_in(&mut rng, n, b), true));
+            let mut ors = base.ors.clone();
+            for _ in 0..1 + rng.below(3) {
+                let ds = (0..1 + rng.below(3))
+                    .map(|_| Rc::new(Parts::of(nnf(&rows_in(&mut rng, n, b), true))))
+                    .collect();
+                ors.push(ds);
+            }
+            let p = Parts::by_hand(base.cons.clone(), ors);
+            if !p.ors.iter().flatten().any(|d| d.ors.len() >= 2) {
+                continue;
+            }
+            asked += 1;
+            for _ in 0..3 {
+                let ors = (p.ors.iter())
+                    .map(|o| {
+                        (o.iter())
+                            .map(|d| {
+                                let mut inner = d.ors.clone();
+                                rng.shuffle(&mut inner);
+                                for e in &mut inner {
+                                    rng.shuffle(e);
+                                }
+                                part(d.cons.clone(), inner)
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let q = Parts::by_hand(p.cons.clone(), ors);
+                let run = |q: Parts| match probe(q, &HashSet::new()) {
+                    Ok(Some(q)) => format!("{:?}", key(&q)),
+                    other => format!("{:?}", other.map(|o| o.is_some())),
+                };
+                let first = run(p.clone());
+                let other = run(q.clone());
+                if first != other {
+                    diffs.push(format!(
+                        "case {case}:\n  p {:?}\n  as written {first}\n  shuffled {other}",
+                        key(&p)
+                    ));
+                }
+            }
+        }
+        assert!(asked > 0, "no case held a nested disjunction");
+        assert!(
+            diffs.is_empty(),
+            "seed {seed:#x}: {} of {asked}:\n{}",
             diffs.len(),
             diffs.first().map_or("", String::as_str)
         );
