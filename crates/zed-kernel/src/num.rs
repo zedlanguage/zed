@@ -3518,11 +3518,16 @@ impl Rat {
 
     /// At least `|log2 |x||` for the value `x` of its coefficients and powers (its `Ten` left
     /// out): the bits of `num` and `den`, and `|e| (floor(log2 p) + 1)` for each power, since
-    /// `p < 2^(floor(log2 p) + 1)`. O(the count of words of the exponents).
+    /// `p < 2^(floor(log2 p) + 1)`, the wide atoms included (FAIL-ten-pair-wide-span: they
+    /// were left out, so `(2^64 + 13)^(2^64)` spanned 2 and [`Rat::ten_pair`] answered `Apart`
+    /// in the wrong order against `1e(10^19)`). O(the count of words of the exponents).
     fn log2_span(&self) -> BigInt {
         let mut s = BigInt::from(self.num.bits() + self.den.bits());
         for (p, e) in self.pows.iter() {
             s += e.abs() * p.bit_len();
+        }
+        for (q, f) in self.wide.iter() {
+            s += f.abs() * q.bits();
         }
         s
     }
@@ -4321,6 +4326,50 @@ mod tests {
         // A power with an exponent below 2^64 still prints its digits.
         assert_eq!(power(2, 64).integer_digits(), "18446744073709551616");
         assert_eq!(power(10, 3).to_string(), "1000r");
+    }
+
+    /// A decimal whose exponent does not fit an `i64` against a power of a wide atom orders and
+    /// compares as its binary form does (row FAIL-ten-pair-wide-span): [`Rat::ten_pair`]'s
+    /// `Apart` bound counts the wide atoms' bits too. The pairs are the two counterexamples of
+    /// XR-KEPT-form-kernel-plan round 1: `1e(10^19)` against `(2^64 + 13)^(2^64)` (log2 about
+    /// 3.3e19 against 1.2e21), and `1e(2^63)` against `(257 * 263^8)^(2^63)` (log2 about 3.1e19
+    /// against 6.7e20), whose reverse takes the `i64::MIN` branch. Each is tried in both
+    /// orders and with both signs, and the oracle is the order of [`Rat::bin`], which holds no
+    /// [`Ten`], so `ten_pair` is not on its path. Before the fix the first order of each pair
+    /// gave `Greater`.
+    #[test]
+    fn a_decimal_against_a_wide_power_orders_as_its_binary_form() {
+        let q1 = (BigInt::one() << 64u32) + 13;
+        let q2 = BigInt::from(257) * BigInt::from(263).pow(8u32);
+        let pairs = [
+            (
+                "1e10000000000000000000",
+                Rat::int(q1).pow(&(BigUint::one() << 64u32)).unwrap(),
+            ),
+            (
+                "1e9223372036854775808",
+                Rat::int(q2).pow(&(BigUint::one() << 63u32)).unwrap(),
+            ),
+        ];
+        for (text, w) in pairs {
+            let d = Rat::decimal(text).unwrap().unwrap();
+            assert!(d.ten.is_some() && w.ten.is_none() && w.has_wide(), "{text}");
+            for (x, y) in [(d.clone(), w.clone()), (d.neg(), w.neg())] {
+                let want = x.bin().cmp(y.bin());
+                // The magnitudes: the wide power is the larger.
+                assert_eq!(
+                    want,
+                    match x.is_negative() {
+                        true => Ordering::Greater,
+                        false => Ordering::Less,
+                    },
+                    "{text}"
+                );
+                assert_eq!(x.cmp(&y), want, "{text}");
+                assert_eq!(y.cmp(&x), want.reverse(), "{text}");
+                assert!(x != y && y != x, "{text}");
+            }
+        }
     }
 
     #[test]
