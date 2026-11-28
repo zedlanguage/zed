@@ -15,7 +15,8 @@ fn a_local_part_nests_around_the_type_it_names_a_part_of() {
     check(&[
         (
             "type Pair2 = A -> (Part1, Part1) with type Part1 = (A, A) for A in int | rat;",
-            "(type Pair2 (for (local (-> (A) (tuple Part1 Part1)) (Part1 (tuple A A))) (A (| int rat))))",
+            "(type Pair2 (for (local (-> (A) (tuple Part1 Part1)) (Part1 (tuple A A))) \
+             (A (| int rat))))",
         ),
         (
             "type Q = (Part1, Part2) with { type Part1 = int, type Part2 = (Part1, Part1) };",
@@ -66,7 +67,7 @@ fn local_parts_format_to_one_layout() {
         ),
         (
             "type H = Part1 with type Part1 = ((T) -> T for T in int | rat);",
-            "type H = Part1 with type Part1 = ((T) -> T for T in int | rat);\n",
+            "type H = Part1 with type Part1 = (T -> T for T in int | rat);\n",
         ),
         // A tuple's item followed by a comma is not parenthesized: the comma ends the part.
         (
@@ -87,8 +88,8 @@ fn name_resolution_refuses_a_local_part_and_reads_its_scope() {
     let cases: Vec<(&str, Vec<String>)> = vec![
         // The type before `with`, a later part and the bound variables see a part.
         {
-            let t = "type T = A -> Part2 with { type Part1 = (A, A), type Part2 = (Part1, Part1) } \
-                     for A in int | rat;";
+            let t = "type Two = A -> Part2 with { type Part1 = (A, A), \
+                     type Part2 = (Part1, Part1) } for A in int | rat;";
             (
                 t,
                 vec![
@@ -97,9 +98,38 @@ fn name_resolution_refuses_a_local_part_and_reads_its_scope() {
                 ],
             )
         },
+        // In a chain of clauses each part stands in the function type under them all.
+        {
+            let t = "type Two = A -> Part1 with type Part1 = (A, Part2) with type Part2 = (A, A) \
+                     for A in int | rat;";
+            (
+                t,
+                vec![
+                    whole(t),
+                    at("A -> Part1 with type Part1 = (A, Part2)"),
+                    at("A -> Part1 with type Part1 = (A, Part2) with type Part2 = (A, A)"),
+                ],
+            )
+        },
+        // A part of a type that is not a function type stands in none, so a bounded variable
+        // in it stands outside one.
+        {
+            let t = "type Two = (Part1, int) with type Part1 = (A, A) for A in int | rat;";
+            let outside = "the bounded variable `A` stands outside a function type: its bound is \
+                           a function type's, which a call binds [A]";
+            (
+                t,
+                vec![
+                    whole(t),
+                    at("(Part1, int) with type Part1 = (A, A)"),
+                    outside.to_string(),
+                    outside.to_string(),
+                ],
+            )
+        },
         // An earlier part, the part's own type and the text outside do not.
         {
-            let t = "type T = Part1 with { type Part1 = Part2, type Part2 = int };";
+            let t = "type Two = Part1 with { type Part1 = Part2, type Part2 = int };";
             (
                 t,
                 vec![
@@ -110,7 +140,7 @@ fn name_resolution_refuses_a_local_part_and_reads_its_scope() {
             )
         },
         {
-            let t = "type T = Part1 with type Part1 = (Part1, int);";
+            let t = "type Two = Part1 with type Part1 = (Part1, int);";
             (
                 t,
                 vec![
@@ -121,7 +151,7 @@ fn name_resolution_refuses_a_local_part_and_reads_its_scope() {
             )
         },
         {
-            let t = "type T = (Part1 with type Part1 = int, Part1);";
+            let t = "type Two = (Part1 with type Part1 = int, Part1);";
             (
                 t,
                 vec![
@@ -134,18 +164,18 @@ fn name_resolution_refuses_a_local_part_and_reads_its_scope() {
         // A part shadows a type of its name from outside; two parts of one name in one list
         // are a rebinding.
         {
-            let t = "type Part1 = int;\ntype T = Part1 with type Part1 = rat;";
+            let t = "type Part1 = int;\ntype Two = Part1 with type Part1 = rat;";
             (
                 t,
                 vec![
                     whole("type Part1 = int;"),
-                    whole("type T = Part1 with type Part1 = rat;"),
+                    whole("type Two = Part1 with type Part1 = rat;"),
                     at("Part1 with type Part1 = rat"),
                 ],
             )
         },
         {
-            let t = "type T = Part1 with { type Part1 = int, type Part1 = rat };";
+            let t = "type Two = Part1 with { type Part1 = int, type Part1 = rat };";
             (
                 t,
                 vec![
