@@ -646,9 +646,11 @@ fn scaled(q: &[(u64, BigInt)], x: &BigInt, s: u64) -> BigInt {
 /// counted that work. So once the units spent reach [`HORNER_COST`]` D^2 / t`, the cost of one
 /// test of [`positive_from`] in units, the least power of 2 past every root and then the least
 /// integer `u` past them are found by that test ([`BoundSearch`]), and the intervals are cut to
-/// `u - 1`. Ski rental: the test is bought once the branch and bound has spent what one test
-/// costs, so the whole is at most about twice the cheaper of the two on every input whose
-/// bound search runs a few tests. Sparse inputs of high degree are left as they were: the
+/// `u - 1`. Each test runs only once the branch and bound has spent its units, so the units of
+/// the tests are at most those of the branch and bound as built, and the whole at most twice
+/// them (proof at [`positive_roots_by`]); this bounds the whole by the branch and bound with the
+/// cut, not by the cheaper of the branch and bound without it and the search run at the start.
+/// Sparse inputs of high degree are left as they were: the
 /// trigger needs `spent t >= HORNER_COST D^2` and the cap of [`BoundSearch`] `D <= B`, and
 /// `roots_are_linear_in_the_number_of_terms` (`t = D = 8192`) finishes in 34 units (test
 /// `the_bound_from_above_leaves_sparse_inputs_as_they_were`).
@@ -673,8 +675,8 @@ pub(super) enum Horner {
 /// of the trigger `spent t >= C D^2`. Measured by `crossover roots-horner` (zed-benches), on
 /// the clusters `(x - 2) … (x - k - 1)`, `k` from 8 to 128: every `C` from 0 to 6.56 gives a
 /// worst ratio of 1.00 to the cheaper of the two, and the worst ratio rises past it (2.08 at
-/// 6.6, 9.9 past 33.6; local, load 12.5 to 14.7, 2026-11-27). 1, the value of the ski-rental
-/// argument at [`positive_roots`], is inside that range.
+/// 6.6, 9.9 past 33.6; local, load 12.5 to 14.7, 2026-11-27). 1, the value the factor-2
+/// argument at [`positive_roots`] uses, is inside that range.
 const HORNER_COST: f64 = 1.0;
 
 /// The units [`BoundSearch`] charges for one test of [`positive_from`]: `D (D + 1) / 2`
@@ -960,7 +962,8 @@ pub(super) fn positive_roots_by(
         //    invariant holds after it.
         // 2. At the end of the loop over `open`, the units returned are `spent + rented <= 2
         //    spent` by 1.
-        // 3. At the switch to the chain, `spent > budget` for the first time. The tests of
+        // 3. At the switch to the chain, this check sees `spent > budget` for the first time
+        //    (`spent` may have passed `budget` inside a `search` of the pass before). The tests of
         //    earlier passes ran with `spent <= budget` (each pass checks the budget before its
         //    tests), so by 1 at the last of them `rented <= spent <= budget`, and no test ran
         //    since. The units returned are `budget + rented <= 2 budget`.
