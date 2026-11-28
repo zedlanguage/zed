@@ -25208,9 +25208,13 @@ struct PrintNode {
 struct Local {
     /// Its place in the order of [`Shared::of`], each tuple after those inside it.
     rank: usize,
-    /// Each place it stands in the text, its first included: the tuple written once whose
-    /// text holds that place, innermost, if any.
-    uses: Vec<Option<usize>>,
+    /// Each place it stands in the text, its first included: the type whose union holds it.
+    /// That type's [`PrintNode::local`] is the tuple written once whose text holds the place.
+    places: Vec<usize>,
+    /// The numbers of the types of its text on the first pass, which writes the text at its
+    /// first place: `start..end`.
+    start: usize,
+    end: usize,
 }
 
 /// The walks of one text by [`write_parts`]. The first writes it as if every unbounded
@@ -25236,20 +25240,17 @@ struct Walk {
     /// variable. `None` on a walk that prints, which keeps no such places.
     named: Option<Vec<(usize, Arc<str>)>>,
     /// The tuples written once ([`Shared::local`]), numbered in the order the first pass
-    /// first meets them, as each pass meets them, since the passes enter the same parts in the
-    /// same order.
+    /// first meets them. The second pass keeps the numbers, though it may write a tuple's text
+    /// at a later place ([`Walk::local`]).
     locals: Vec<Local>,
-    /// The tuples written once whose text is being written, innermost last.
-    local_open: Vec<usize>,
-    /// The number of each tuple written once that this pass has met.
+    /// The tuples written once whose text is being written, innermost last, each with the
+    /// number of the type the second pass enters after it, where that pass writes the text at
+    /// another place than the first pass did.
+    local_open: Vec<(usize, Option<usize>)>,
+    /// The number of each tuple written once that the first pass met.
     local_seen: HashMap<NodeId, usize>,
-    /// Whether the tuples of [`Shared::local`] are written in full at each place, as any
-    /// other tuple with variables: after a first pass whose plan writes a union `_`
-    /// ([`Walk::plan`]).
-    no_local: bool,
-    /// Whether the plan of a first pass that wrote a tuple once would write a union `_`, so
-    /// that the text is written again with no tuple written once ([`write_text`]).
-    retry: bool,
+    /// For each tuple written once, whether the second pass has written its text.
+    local_written: Vec<bool>,
     /// Each variable of [`Scope::marked`] the first pass met, with its number in
     /// [`Scope::same`] where first met.
     marked: HashMap<Arc<str>, usize>,
@@ -25281,8 +25282,9 @@ struct Plan {
     /// For each unbounded variable, the root of its tree.
     root: Vec<usize>,
     /// For each root, the number of types whose union it stands in, outside the unions
-    /// written `_`.
-    count: Vec<usize>,
+    /// written `_`, each tuple written once counted at each of its places, capped at two
+    /// ([`Weights`]).
+    count: Vec<u8>,
 }
 
 impl Walk {
@@ -25296,9 +25298,25 @@ impl Walk {
     }
 
     /// Writes the tuple `r`, standing at `at`, which [`Shared::local`] gives the place `rank`:
-    /// in full at the first place this pass meets it, between the marks of [`defs::local_open`]
-    /// and [`defs::local_close`], and by [`defs::local_ref`] at the others. The first pass
-    /// records each place with the tuple written once whose text holds it ([`Local::uses`]).
+    /// in full at one place, between the marks of [`defs::local_open`] and
+    /// [`defs::local_close`], and by [`defs::local_ref`] at the others. The first pass writes
+    /// the text at the first place it meets and records each place with the type whose union
+    /// holds it ([`Local::places`]). The second writes it at the first place it meets, which
+    /// is a later one where the first lies inside a union written `_` ([`Walk::plan`]): there
+    /// it enters the types of the text by the numbers the first pass gave them, from
+    /// [`Local::start`], and after the text goes back to the number it had reached
+    /// ([`Walk::local_end`]); where it writes a reference at the place the first pass wrote
+    /// the text, it steps over those numbers. So each type keeps its number from the first
+    /// pass, which [`Plan::absorbed`] is read by.
+    ///
+    /// Why the steps agree: the second pass meets the same places in the same order as the
+    /// first, but for those inside a union written `_`, which it steps over, and those inside
+    /// the text of a tuple, which it meets where it writes that text. So at each place it meets,
+    /// [`Walk::next`] is the number of types the first pass had entered at that place, and the
+    /// first pass met the tuple's first place exactly where that number is [`Local::start`]:
+    /// before it, no type of the text had been entered, and after it, [`Local::start`] had.
+    /// Inside a tuple's text no signature opens a variable (the text holds no function,
+    /// [`Shared::local`]), so [`Scope::same`] is opened in the order of the first pass too.
     fn local<'a>(
         &mut self,
         r: &'a Row,
@@ -25307,51 +25325,70 @@ impl Walk {
         out: &mut String,
         stack: &mut Vec<Print<'a>>,
     ) {
-        let within = self.local_open.last().copied();
-        let first = self.plan.is_none();
-        if let Some(&id) = self.local_seen.get(&r.node()) {
-            if first {
-                self.locals[id].uses.push(within);
+        let wrap = r.wraps(at);
+        let resume = match self.plan {
+            None => {
+                let holder = *self.open.last().expect("a tuple stands in a union");
+                if let Some(&id) = self.local_seen.get(&r.node()) {
+                    self.locals[id].places.push(holder);
+                    defs::local_ref(out, id, wrap);
+                    return;
+                }
+                let id = self.local_seen.len();
+                self.local_seen.insert(r.node(), id);
+                self.locals.push(Local {
+                    rank,
+                    places: vec![holder],
+                    start: self.nodes.len(),
+                    end: self.nodes.len(),
+                });
+                (id, None)
             }
-            defs::local_ref(out, id, r.wraps(at));
-            return;
-        }
-        let id = self.local_seen.len();
-        self.local_seen.insert(r.node(), id);
-        if first {
-            self.locals.push(Local {
-                rank,
-                uses: vec![within],
-            });
-        }
-        defs::local_open(out, id, r.wraps(at));
-        self.local_open.push(id);
+            Some(_) => {
+                let id = self.local_seen[&r.node()];
+                let Local { start, end, .. } = self.locals[id];
+                if self.local_written[id] {
+                    defs::local_ref(out, id, wrap);
+                    if self.next == start {
+                        self.next = end;
+                    }
+                    return;
+                }
+                self.local_written[id] = true;
+                let back = (self.next != start).then_some(self.next);
+                self.next = start;
+                (id, back)
+            }
+        };
+        defs::local_open(out, resume.0, wrap);
+        self.local_open.push(resume);
         // Pushed in reading order: [`walk_parts`] reverses what a part pushes, so the end,
         // pushed last, is popped after the tuple's parts.
         r.parts(PrintAt::Any, stack);
         stack.push(Print::LocalEnd);
     }
 
-    /// How many times the text of each tuple written once stands in the text once each is
-    /// written in full at each place: the sum over its places of 1 for a place in the text
-    /// outside such tuples, and of the count of the innermost one around it for a place
-    /// inside one. Counted in one pass from the outermost: a tuple whose text holds a place of
-    /// another holds that other at some depth, so it comes after it in the order of
-    /// [`Shared::of`] ([`Local::rank`]). Saturating: a count past `usize::MAX` is two or more
-    /// all the same, which is all [`Walk::plan`] reads. O(k log k + p) for k tuples and p
-    /// places, where writing each in full at each place, as the text read back stands for, is
-    /// exponential in the depth.
-    fn local_counts(&self) -> Vec<usize> {
-        let mut by_rank: Vec<usize> = (0..self.locals.len()).collect();
-        by_rank.sort_unstable_by_key(|&d| std::cmp::Reverse(self.locals[d].rank));
-        let mut count = vec![0usize; self.locals.len()];
-        for d in by_rank {
-            count[d] = (self.locals[d].uses.iter()).fold(0usize, |n, u| {
-                debug_assert!(u.is_none_or(|e| self.locals[e].rank > self.locals[d].rank));
-                n.saturating_add(u.map_or(1, |e| count[e]))
-            });
+    /// Ends the text of the tuple written once that [`Walk::local`] opened last: on the first
+    /// pass records where it ends, on the second goes back to the number of the type after the
+    /// place where it was written, if that was not the first pass's place.
+    fn local_end(&mut self, out: &mut String) {
+        defs::local_close(out);
+        let (id, back) = self
+            .local_open
+            .pop()
+            .expect("a tuple's text ends after it opens");
+        match self.plan {
+            None => self.locals[id].end = self.nodes.len(),
+            Some(_) => {
+                debug_assert_eq!(
+                    self.next, self.locals[id].end,
+                    "the text's types are entered"
+                );
+                if let Some(next) = back {
+                    self.next = next;
+                }
+            }
         }
-        count
     }
 
     /// Enters a type at `out`: whether its parts are to be written. On the second pass a type
@@ -25361,7 +25398,7 @@ impl Walk {
         let Some(plan) = &self.plan else {
             self.open.push(self.nodes.len());
             self.nodes.push(PrintNode {
-                local: self.local_open.last().copied(),
+                local: self.local_open.last().map(|&(d, _)| d),
                 ..PrintNode::default()
             });
             self.ends.push(OpenEnd::default());
@@ -25390,7 +25427,14 @@ impl Walk {
     /// it. A variable that stood in two places then may stand in one, which makes it `_`, so
     /// the unions are written `_` from a work list: each type is taken out once, by the
     /// outermost union that takes it, and each variable's count reaches one at most once,
-    /// when the unions it is left in are looked at again.
+    /// when the unions it is left in are looked at again. A tuple written once
+    /// ([`Shared::local`]) stands in full at each of its places in the text read back, so its
+    /// types and variables count once for each place left outside the unions written `_`
+    /// ([`Weights`]), and a union inside its text is written `_` at all its places at once.
+    /// Taking out a union whose text holds a place of such a tuple takes out that place, not
+    /// the tuple's types, which the second pass writes at its first place left
+    /// ([`Walk::local`]); a tuple with no place left is not written (row
+    /// PRINT-shared-underscore-union-tuple).
     // Complexity tradeoff: naive, a variable's places counted again after each union written
     // `_`, and the variables named by scanning the text once per name, O(n²) in the size n of
     // the type; used, one count per variable, lowered as the types inside a union written `_`
@@ -25420,79 +25464,216 @@ impl Walk {
             node.occ = start..kept;
         }
         self.occ = occ;
-        // A type inside a tuple written once stands once for each place of that tuple
-        // ([`Walk::local_counts`]), and its variables with it.
-        let weight = self.local_counts();
-        let mut count: Vec<usize> = vec![0; root.len()];
-        let mut places: Vec<Vec<usize>> = vec![Vec::new(); root.len()];
-        for (k, node) in self.nodes.iter().enumerate() {
-            let w = node.local.map_or(1, |d| weight[d]);
-            for &r in &self.occ[node.occ.clone()] {
-                count[r] = count[r].saturating_add(w);
-                places[r].push(k);
-            }
-        }
+        let mut weights = Weights::new(self, root.len());
         // A variable of [`Scope::marked`] counts as standing in two more places, so it prints
-        // as a mark however many places it has, and taking types out below, each one place,
-        // leaves its count at 2 or more: a union holding it is written `_` alone only where it
-        // holds `_` whatever the names ([`PrintNode::blank`]), which `_ | T` is.
+        // as a mark however many places it has: one term of weight two that no type holds, so
+        // that taking types out below never lowers its count under 2 ([`Weights::settle`]
+        // takes out only the terms of types). A union holding it is written `_` alone only
+        // where it holds `_` whatever the names ([`PrintNode::blank`]), which `_ | T` is.
         for &k in self.marked.values() {
-            count[root[k]] += 2;
+            Weights::add(&mut weights.vars[root[k]], 2, 1);
         }
-        let absorbs = |node: &PrintNode, count: &[usize]| {
+        let absorbs = |node: &PrintNode, weights: &Weights| {
             let vars = &self.occ[node.occ.clone()];
-            (node.blank || vars.iter().any(|&r| count[r] == 1))
-                && (node.others || vars.iter().any(|&r| count[r] >= 2))
+            (node.blank || vars.iter().any(|&r| weights.var(r) == 1))
+                && (node.others || vars.iter().any(|&r| weights.var(r) >= 2))
         };
         let mut work: Vec<usize> = (0..self.nodes.len())
-            .filter(|&k| absorbs(&self.nodes[k], &count))
+            .filter(|&k| weights.node[k] > 0 && absorbs(&self.nodes[k], &weights))
             .collect();
-        if work.is_empty() && count.iter().all(|&c| c < 2) {
+        if work.is_empty() && (0..root.len()).all(|r| weights.var(r) < 2) {
             return None;
         }
-        // A union written `_` that holds or stands in a tuple written once would drop a
-        // place the counts above give that tuple's variables, or the first place of the tuple
-        // with the text the others refer to: the text is written again with every tuple in
-        // full ([`write_text`]). Tradeoff: such a text is as long as before this row, each
-        // shared tuple in full at each place; writing it once there would need the work list
-        // to take off a tuple's weight per place and to move its first place when that one is
-        // written `_`, which is not built.
-        if !self.locals.is_empty() && !work.is_empty() {
-            self.retry = true;
-            return None;
-        }
-        let mut gone = vec![false; self.nodes.len()];
         let mut absorbed = vec![false; self.nodes.len()];
         while let Some(k) = work.pop() {
-            if gone[k] || !absorbs(&self.nodes[k], &count) {
+            if weights.gone[k] || weights.node[k] == 0 || !absorbs(&self.nodes[k], &weights) {
                 continue;
             }
             absorbed[k] = true;
-            let mut m = k;
-            while m < self.nodes[k].end {
-                // A type already taken out is the outermost of a union written `_` before,
-                // so the types inside it are taken out too.
-                if gone[m] {
-                    m = self.nodes[m].end;
+            // The types of its own text inside it, in order: those of the texts of the tuples
+            // written once that stand inside it keep their weight but for this place, which
+            // their tuple's weight loses.
+            let text = self.nodes[k].local.map_or(0, |d| d + 1);
+            let end = self.nodes[k].end;
+            let mut i = weights.texts[text].partition_point(|&m| m < k);
+            while let Some(&m) = weights.texts[text].get(i).filter(|&&m| m < end) {
+                // A type already taken out is the outermost of a union written `_` before, in
+                // the same text, so the types of that text inside it are taken out too.
+                if weights.gone[m] {
+                    let skip = self.nodes[m].end;
+                    i += weights.texts[text][i..].partition_point(|&j| j < skip);
                     continue;
                 }
-                gone[m] = true;
-                for &r in &self.occ[self.nodes[m].occ.clone()] {
-                    count[r] -= 1;
-                    if count[r] == 1 {
-                        work.extend(places[r].iter().filter(|&&j| !gone[j]));
-                    }
-                }
-                m += 1;
+                weights.gone[m] = true;
+                weights.settle(self, m, &mut work);
+                i += 1;
             }
         }
         // A union written `_` inside another is marked too, but the second pass never enters
         // it: it steps over the outer one whole.
         Some(Plan {
             absorbed,
+            count: (0..root.len()).map(|r| weights.var(r)).collect(),
             root,
-            count,
         })
+    }
+}
+
+/// How many times each type and each variable of a first pass's text stands in the text read
+/// back, with each tuple written once ([`Shared::local`]) in full at each of its places, as
+/// [`Walk::plan`] writes unions `_`: each count capped at two, all the plan reads (once, or
+/// twice or more). A type of the text outside such tuples stands once, a type of a tuple's
+/// text as many times as the tuple stands, and a tuple as many times as the types whose
+/// unions hold its places stand, summed; a type taken out, inside a union written `_`, stands
+/// no times, and so its variables and the tuples whose places it holds stand that many fewer.
+///
+/// Why capping is exact: for counts a, b ≥ 0, min(2, a + b) = min(2, min(2, a) + min(2, b)),
+/// so each sum may cap its terms; and a count only falls, so a capped count falls exactly
+/// when the full one falls to one or none. Each count is kept as the number of terms of
+/// weight one and of weight two in its sum, so a change of one term costs O(1).
+// Complexity tradeoff: naive, the counts computed again from the tuples' places after each
+// union written `_`, O(n²) in the size n of the text; used, each type's weight falls at most
+// twice (two to one to none, the capped values), and each fall moves O(1) counts per variable
+// of the type and per place it holds, and when a tuple's weight falls, the weight of each type
+// of its text is looked at again, so O(n) in all after the O(n log n) of [`Walk::plan`]. The
+// full counts would grow exponentially in the depth of tuples inside tuples, the case that
+// writing a tuple once is for. Memory: one entry per type, per variable, per place of a tuple
+// and per type of a tuple's text. Prior work: the reference counts of Collins, "A method for
+// overlapping and erasure of lists" (CACM 3(12), 1960, doi:10.1145/367487.367501), kept on the
+// shared parts and lowered as a part is erased, freeing what falls to none; the counts capped
+// at "used once" and "used more" are those of Turner, Wadler and Mossin, "Once upon a type"
+// (FPCA 1995, doi:10.1145/224164.224168), whose uses are 1 and ω. Quotes and checks are in
+// verification/bib.md.
+struct Weights {
+    /// For each type, how many times it stands, capped at two.
+    node: Vec<u8>,
+    /// For each type, whether it is taken out, inside a union written `_`.
+    gone: Vec<bool>,
+    /// For each variable, the number of types it stands in of weight one and of weight two.
+    vars: Vec<[usize; 2]>,
+    /// For each tuple written once, the number of its places held by types of weight one and
+    /// of weight two.
+    tuples: Vec<[usize; 2]>,
+    /// For each type, the tuples written once whose places its union holds, once per place.
+    holds: Vec<Vec<usize>>,
+    /// The types of each text in order: first those outside every tuple written once, then
+    /// those of each tuple's text ([`PrintNode::local`]).
+    texts: Vec<Vec<usize>>,
+    /// For each variable, the types it stands in.
+    places: Vec<Vec<usize>>,
+}
+
+impl Weights {
+    /// The weights of the first pass of `walk`, with `vars` variables, before any union is
+    /// written `_`. A tuple's places are held by types of the texts around it, of tuples later
+    /// in the order of [`Shared::of`] ([`Local::rank`]), so the tuples are weighed from the
+    /// last.
+    fn new(walk: &Walk, vars: usize) -> Self {
+        let n = walk.nodes.len();
+        let mut holds = vec![Vec::new(); n];
+        for (d, local) in walk.locals.iter().enumerate() {
+            for &u in &local.places {
+                holds[u].push(d);
+            }
+        }
+        let mut texts = vec![Vec::new(); walk.locals.len() + 1];
+        for (k, node) in walk.nodes.iter().enumerate() {
+            texts[node.local.map_or(0, |d| d + 1)].push(k);
+        }
+        let mut by_rank: Vec<usize> = (0..walk.locals.len()).collect();
+        by_rank.sort_unstable_by_key(|&d| std::cmp::Reverse(walk.locals[d].rank));
+        let mut tuples = vec![[0usize; 2]; walk.locals.len()];
+        let mut weight = vec![0u8; walk.locals.len()];
+        let of = |local: Option<usize>, weight: &[u8]| local.map_or(1, |d| weight[d]);
+        for d in by_rank {
+            for &u in &walk.locals[d].places {
+                let e = walk.nodes[u].local;
+                debug_assert!(e.is_none_or(|e| walk.locals[e].rank > walk.locals[d].rank));
+                Self::add(&mut tuples[d], of(e, &weight), 1);
+            }
+            weight[d] = Self::capped(tuples[d]);
+        }
+        let node: Vec<u8> = (walk.nodes.iter()).map(|m| of(m.local, &weight)).collect();
+        let mut counts = vec![[0usize; 2]; vars];
+        let mut places = vec![Vec::new(); vars];
+        for (k, m) in walk.nodes.iter().enumerate() {
+            for &r in &walk.occ[m.occ.clone()] {
+                Self::add(&mut counts[r], node[k], 1);
+                places[r].push(k);
+            }
+        }
+        Weights {
+            node,
+            gone: vec![false; n],
+            vars: counts,
+            tuples,
+            holds,
+            texts,
+            places,
+        }
+    }
+
+    /// Adds `by` terms of weight `w` to a count kept as the numbers of terms of weight one
+    /// and two; a term of weight none counts nothing.
+    fn add(count: &mut [usize; 2], w: u8, by: isize) {
+        if w > 0 {
+            let c = &mut count[usize::from(w) - 1];
+            *c = c
+                .checked_add_signed(by)
+                .expect("a count holds the terms taken from it");
+        }
+    }
+
+    /// The count, capped at two, of the numbers of terms of weight one and two.
+    fn capped(count: [usize; 2]) -> u8 {
+        match count {
+            [0, 0] => 0,
+            [1, 0] => 1,
+            _ => 2,
+        }
+    }
+
+    /// How many times variable `r` stands, capped at two.
+    fn var(&self, r: usize) -> u8 {
+        Self::capped(self.vars[r])
+    }
+
+    /// Brings the weight of type `k` to what its text and [`Weights::gone`] give it, and the
+    /// counts that follow from it, from each variable whose count falls to one pushing to
+    /// `work` the types it stands in, which may now be written `_`. A tuple whose weight falls
+    /// brings each type of its text along, by a stack, not by recursion, since tuples nest as
+    /// deep as the type.
+    fn settle(&mut self, walk: &Walk, k: usize, work: &mut Vec<usize>) {
+        let mut stack = vec![k];
+        while let Some(m) = stack.pop() {
+            let new = match walk.nodes[m].local {
+                _ if self.gone[m] => 0,
+                None => 1,
+                Some(d) => Self::capped(self.tuples[d]),
+            };
+            let old = self.node[m];
+            if new == old {
+                continue;
+            }
+            debug_assert!(new < old, "weights only fall");
+            self.node[m] = new;
+            for &r in &walk.occ[walk.nodes[m].occ.clone()] {
+                let before = self.var(r);
+                Self::add(&mut self.vars[r], old, -1);
+                Self::add(&mut self.vars[r], new, 1);
+                if before != 1 && self.var(r) == 1 {
+                    work.extend(self.places[r].iter().filter(|&&j| !self.gone[j]));
+                }
+            }
+            for &d in &self.holds[m] {
+                let before = Self::capped(self.tuples[d]);
+                Self::add(&mut self.tuples[d], old, -1);
+                Self::add(&mut self.tuples[d], new, 1);
+                if Self::capped(self.tuples[d]) != before {
+                    stack.extend(self.texts[d + 1].iter().filter(|&&j| !self.gone[j]));
+                }
+            }
+        }
     }
 }
 
@@ -25711,7 +25892,7 @@ fn write_parts<'a>(
 /// but one placed as [`Shared::local`] says (row PRINT-shared-part-exponential): a tuple held
 /// in two places or more, below a part, whose variables are all bound by the one function the
 /// text writes, and that holds no function, no payload and no variable bounded by carriers, is
-/// written in full at its first place only, marked so that [`defs::lift`] takes that text as a
+/// written in full at its first place outside the unions written `_` only, marked so that [`defs::lift`] takes that text as a
 /// soft part's body once its variables are named, and by reference at the others. Its
 /// variables then stand once in the text for each place, as [`Walk::plan`] counts them; the
 /// reader counts each name in a definition's body once for each use of the definition
@@ -26014,19 +26195,7 @@ fn write_text<'a>(
     let mut walk = Walk::default();
     let mut kernel = walk_parts(start.clone(), out, scope, &mut walk, shared);
     let mut marked = false;
-    let mut plan = walk.plan(scope);
-    if walk.retry {
-        out.truncate(base);
-        scope.fresh = fresh;
-        scope.same.truncate(opened);
-        walk = Walk {
-            no_local: true,
-            ..Walk::default()
-        };
-        kernel = walk_parts(start.clone(), out, scope, &mut walk, shared);
-        plan = walk.plan(scope);
-    }
-    if let Some(plan) = plan {
+    if let Some(plan) = walk.plan(scope) {
         out.truncate(base);
         scope.fresh = fresh;
         scope.same.truncate(opened);
@@ -26035,6 +26204,7 @@ fn write_text<'a>(
             out.push(defs::VARS);
         }
         walk.plan = Some(plan);
+        walk.local_written = vec![false; walk.locals.len()];
         kernel = walk_parts(start, out, scope, &mut walk, shared);
         if marked {
             out.push(defs::VARS_END);
@@ -26096,7 +26266,6 @@ fn walk_parts<'a>(
     let mut kernel = Kernel::default();
     let mut stack = vec![start];
     let mut first = true;
-    walk.local_seen.clear();
     // Where each signature begins whose pair its bounds clause decides ([`Print::Begin`]),
     // innermost last.
     let mut begins = Vec::new();
@@ -26108,16 +26277,11 @@ fn walk_parts<'a>(
                 Some(name) if r.wraps(at) => out.push_str(&defs::wrapped(name)),
                 Some(name) => out.push_str(name),
                 None => match shared.local.get(&r.node()) {
-                    Some(&rank) if !root && !walk.no_local => {
-                        walk.local(r, at, rank, out, &mut stack)
-                    }
+                    Some(&rank) if !root => walk.local(r, at, rank, out, &mut stack),
                     _ => r.parts(at, &mut stack),
                 },
             },
-            Print::LocalEnd => {
-                defs::local_close(out);
-                walk.local_open.pop();
-            }
+            Print::LocalEnd => walk.local_end(out),
             Print::Sig(s, at) => match shared.sig(s).filter(|_| !root) {
                 // As [`Sig::parts`] writes it, with no variables to open: a closed part has
                 // no bounds clause, and one left to the end of its union is empty.
