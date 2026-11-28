@@ -39229,8 +39229,9 @@ mod r5_hull_tests {
     /// Subset Sum reduces to the chain's target question (PRES-hull-random-refusals,
     /// LIT-hull-random-refusals). Derivation, checked by this test on the instances below:
     /// 1. Take items `a_0..a_{m-1} >= 0` and targets `0 <= t <= T`. Let `A = Σ a_p`,
-    ///    `M = T + A + 1`, `B = M` (the test takes `T = A + 1`). Set `r = 0` (so `i = 0`) and every guard `g = h = 0`, so both arms hold at
-    ///    every step: each step independently keeps `v` or replaces it by `k - v`.
+    ///    `M = T + A + 1`, `B = M` (the test takes `T = A + 1`). Set `r = 0` (so `i = 0`) and
+    ///    every guard `g = h = 0`, so both arms hold at every step: each step independently
+    ///    keeps `v` or replaces it by `k - v`.
     /// 2. For item `p` add two steps with `k = B + p·M` and `k = B + p·M + a_p`. The 2m constants
     ///    increase strictly along the chain (`a_p < M`).
     /// 3. Reflecting at constants `c_1 < c_2 < … < c_s` (the chosen steps, in chain order) from
@@ -39247,9 +39248,10 @@ mod r5_hull_tests {
     ///    (Subset Sum is NP-hard, KarlBringmann2016near), so an exact method within n log n of
     ///    the binary size would give a polynomial Subset Sum algorithm. NP-hard is not a stop:
     ///    the walk in [`steps_reach`] is exact and pseudopolynomial.
-    /// The test checks steps 1-7 on two items against the walk for every target in 0..=A+1, and
-    /// that `decide` is never wrong on them (a refusal is counted and printed, not accepted as
-    /// an answer).
+    ///
+    /// The test checks steps 1-7 on the items {3, 5} and {2, 7, 11} against the walk for every
+    /// target in 0..=A+1, and that `decide` is never wrong on them (a refusal is counted and
+    /// printed, not accepted as an answer).
     #[test]
     fn subset_sum_reduces_to_the_reflection_chain_target() {
         for items in [&[3i128, 5][..], &[2, 7, 11][..]] {
