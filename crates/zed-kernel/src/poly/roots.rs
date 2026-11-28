@@ -720,8 +720,9 @@ fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
     true
 }
 
-/// The search for the least integer `u >= 2` with [`positive_from`]`(p, u)`, below `hi` and
-/// under the cap, one test at a time ([`BoundSearch::next`] gives the point to test and
+/// The search for the least integer `u >= 2` with [`positive_from`]`(p, u)`, among the points
+/// up to `2^top` (`top` the largest exponent under the cap with `2^top < hi`), one test at a
+/// time ([`BoundSearch::next`] gives the point to test and
 /// [`BoundSearch::record`] its outcome), so that [`positive_roots_by`] can run each test only
 /// once its branch and bound has spent the test's units. The test passes at every point above
 /// one where it passes (`p(u' + y) = p(u + ((u' - u) + y))`, a polynomial of coefficients of one
@@ -731,22 +732,33 @@ fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
 /// 1. the exponents `m` of `2^m` from 1, doubled until a test passes, the last clamped to
 ///    `top`, the largest exponent under the cap and with `2^m < hi`;
 /// 2. a bisection of the exponents between the last that failed and the one that passed, which
-///    gives the least `m` whose power passes: stages 1 and 2 are Bentley and Yao's algorithm B2
-///    on `m` (Bentley and Yao, "An Almost Optimal Algorithm for Unbounded Searching",
-///    Information Processing Letters 5(3), 1976, doi:10.1016/0020-0190(76)90071-5; read in the
-///    report SLAC-PUB-1679, p. 5: "so the total cost of the algorithm (substituting
-///    m = ⌊lg n⌋ + 1) is C_B2(n) = ⌊lg n⌋ + 2⌊lg(⌊lg n⌋ + 1)⌋ + 1"; spec verification/bib.md,
-///    Bentley_1976), so at most `2 bits(m) + 1` tests, where the powers of 2 from 2 up took `m`
-///    tests;
+///    gives the least `m` whose power passes. Stages 1 and 2 are a variant of Bentley and Yao's
+///    algorithm B1 on `m` (Bentley and Yao, "An Almost Optimal Algorithm for Unbounded
+///    Searching", Information Processing Letters 5(3), 1976, doi:10.1016/0020-0190(76)90071-5;
+///    read in the report SLAC-PUB-1679, p. 5: "the first stage of the algorithm determines
+///    m = ⌊lg n⌋ + 1 by successively evaluating F(2^i-1) for i = 1,2,..."; spec
+///    verification/bib.md, Bentley_1976): B1 tests `2^i - 1`, these the exponents `2^i` and
+///    `top`, and at most `2 bits(m)` tests (1 at `m = 1`): with `2^(j-1) < m <= 2^j`, `j + 1`
+///    tests to the first power past `m` and `j - 1` to bisect the `2^(j-1)` exponents below it,
+///    and where `top` clamps the last, `k + 1` and fewer than `k` with `2^(k-1) < m`;
 /// 3. a bisection of the integers between `2^(m - 1)` and `2^m`, `m - 1` tests, which gives the
-///    least `u`.
+///    least `u`. This is the second stage of B2, so the three stages are a bounded variant of
+///    B2 on `u` (p. 5: "so the total cost of the algorithm (substituting m = ⌊lg n⌋ + 1) is
+///    C_B2(n) = ⌊lg n⌋ + 2⌊lg(⌊lg n⌋ + 1)⌋ + 1", that is `bits(n) + 2 bits(bits(n)) - 2`). As
+///    `m <= bits(u)`, they take at most `m - 1 + 2 bits(m) <= bits(u) + 2 bits(bits(u)) - 1`
+///    tests, one more than C_B2(u), so B2 itself would save at most one test.
 ///
-/// Run to the end the search gives the `u` the search through every power of 2 gave before
-/// (plan row FAIL-l01_39-roots-benches-bytes), the least power that passes and the bisection
-/// below it, or none where no power up to `top` passes. Stage 3 alone takes about `bits(u)`
-/// tests, and by Bentley and Yao's lower bound no search of a monotone predicate finds `u` in
-/// fewer than about `lg u` tests (p. 11: "Theorem A: For infinitely many n, f(n) > lg n +
-/// lg^(2) n + ... + lg^(lg* n) n - 2(lg* n)", `f(n)` bounding the tests by p. 10), so the cost
+/// Run to the end, the search covers the points `[2, 2^top]`, not every integer below `hi`
+/// under the cap: it gives the least integer `u >= 2` whose test passes where some power `2^m`,
+/// `1 <= m <= top`, passes, which is the `u` the search through every power of 2 gave before
+/// (plan row FAIL-l01_39-roots-benches-bytes), and none where none of them passes, even where a
+/// larger integer below `hi` would pass (`(x - 2)^2` with `hi = 4`: `top = 1`, 2 fails, 3
+/// passes; test `the_bound_search_covers_the_powers_up_to_top`). None loses no root, as the
+/// cut is only an aid. Stage 3 alone takes about `bits(u)` tests, and Bentley and Yao's lower
+/// bound says that, for infinitely many `n`, every correct unbounded search that reads only
+/// the monotone predicate takes more than about `lg n` tests to find the least passing `n`
+/// (p. 11: "Theorem A: For infinitely many n, f(n) > lg n + lg^(2) n + ... + lg^(lg* n) n -
+/// 2(lg* n)", `f(n)` bounding the tests by p. 10); it does not bound every `n`. So the cost
 /// is kept by the schedule, not by the search.
 ///
 /// The cap: a test at `u` is run only where `D bits(u) <= 2 B`, `B` the most bits of a
@@ -856,7 +868,7 @@ impl BoundSearch {
 }
 
 /// The [`BoundSearch`] run to its end, each test charged [`horner_units`] to `spent`: the least
-/// integer `u >= 2` whose test passes, if one is found below `hi` under the cap.
+/// integer `u >= 2` whose test passes, if some power `2^m`, `1 <= m <= top`, passes.
 #[cfg(test)]
 fn horner_bound(p: &[(u64, BigInt)], hi: &BigInt, spent: &mut u64) -> Option<BigInt> {
     let mut search = BoundSearch::new(p, hi)?;
@@ -3041,6 +3053,23 @@ mod tests {
         assert!(BoundSearch::new(p.terms(), &(BigInt::one() << (2 * g))).is_none());
         assert_eq!(horner_units(u64::MAX, 1), u64::MAX);
         assert_eq!(horner_units(4_296_011_775, 4098), 2_251_795_653_396_128);
+    }
+
+    /// The search covers `[2, 2^top]`, not every integer below `hi` under the cap
+    /// (cross-review XR-roots-bound-search-schedule round 1, Codex Q1): on `(x - 2)^2` with `hi
+    /// = 4`, `top = 1`; the test at 2 fails (`p(2) = 0`) and the search gives none, though 3
+    /// passes (`(y + 1)^2`). No root is lost: each mode still finds 2.
+    #[test]
+    fn the_bound_search_covers_the_powers_up_to_top() {
+        let p = from_big_roots(&[BigInt::from(2), BigInt::from(2)]);
+        let p = p.terms();
+        let mut spent = 0;
+        assert_eq!(horner_bound(p, &BigInt::from(4), &mut spent), None);
+        assert!(positive_from(p, &BigInt::from(3)));
+        for horner in [Horner::Off, Horner::AtStart, Horner::Built] {
+            let roots = positive_roots_by(p, BigInt::from(2), Some(BigInt::from(4)), horner).0;
+            assert_eq!(roots, vec![BigInt::from(2)], "{horner:?}");
+        }
     }
 
     /// [`chain_ends`] is the sum it is written as, for every `t` up to 300.
