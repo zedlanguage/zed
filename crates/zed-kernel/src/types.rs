@@ -185,6 +185,10 @@ fn scalar(v: &Value) -> u64 {
 impl Elem for Value {
     fn priority(&self) -> u64 {
         static PRIORITIES: Priorities = Priorities::eight_wise(17).fixed_in_unit_tests(cfg!(test));
+        #[cfg(test)]
+        if TEST_ROOT.with_borrow(|r| r.as_ref().is_some_and(|r| r.held_cmp(self).is_eq())) {
+            return u64::MAX;
+        }
         match self {
             Value::Int(n) => PRIORITIES.of((*n as u64) ^ (1 << 63)),
             Value::Big(r) => PRIORITIES.hash(&(2u8, r.fingerprint())),
@@ -239,6 +243,14 @@ impl Elem for Value {
             _ => 64,
         }
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// In tests, a value given the top priority on this thread, so that it is the root of any
+    /// set of values made on the thread after it is set: the shape a draw could give, chosen
+    /// (FIX-rat-cmp-refusal-shape). Compared as held, so setting it builds nothing.
+    static TEST_ROOT: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
 impl Value {

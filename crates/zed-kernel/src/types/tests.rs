@@ -1514,3 +1514,61 @@ fn a_kept_and_a_built_form_of_one_integer_stay_two_literal_trees() {
     assert!(!lits(&k1).ptr_eq(&lits(&b)));
     assert_eq!(k1.cmp(&b), std::cmp::Ordering::Equal);
 }
+
+/// FIX-rat-cmp-refusal-shape (XR-set-tied-digest-proof META2 D7, R2_CODEX B4; PROOF r3 §7 test
+/// 14b): whether a rational literal is in a type, and the refusal a [`crate::num::Watch`]
+/// records, do not depend on the shape of the type's literal set, which follows the draw.
+/// `a = 3 * 2^100` (kept) and `b = 3 * 2^100 - 1` (built) are the pair of
+/// `a_refused_comparison_gives_the_forms_order_and_is_recorded_under_a_watch` (num/units.rs):
+/// with no memory (`fixed_room(0)`) their comparison is refused and `Ord` answers by the forms,
+/// `a < b`, the reverse of the values. The type `{a, b}` is built with memory, once with each
+/// literal as the root (`TEST_ROOT`), each on its own thread so that the thread's table of
+/// literal sets (`LITS`, TYPE-hashcons) cannot hand back the other shape; then `a` is looked up
+/// under a watch with no memory. Root `a` compares `a` with itself only; root `b` compares
+/// `(a, b)` first, which is refused. Red today: the two differ. Passing control: the same with
+/// memory, where no comparison is refused and both roots answer `(true, None)`.
+#[test]
+fn a_literal_is_in_a_type_alike_whatever_the_root_under_a_watch() {
+    use crate::num::{Rat, Test, Watch, fixed_room, refused};
+    use num_bigint::{BigInt, BigUint};
+    let a = || {
+        let p = Rat::int(BigInt::from(2))
+            .pow(&BigUint::from(100u32))
+            .unwrap();
+        Value::Rat(Arc::new(p.mul(&Rat::int(BigInt::from(3))).unwrap()))
+    };
+    let b = || Value::Rat(Arc::new(Rat::int((BigInt::from(3) << 100u32) - 1)));
+    let looked_up = |root_is_a: bool, room: Option<u64>| -> (bool, Option<Test>) {
+        std::thread::spawn(move || {
+            let root = if root_is_a { a() } else { b() };
+            TEST_ROOT.with_borrow_mut(|r| *r = Some(root));
+            let t = Type::union_all([Type::lit(&a()).unwrap(), Type::lit(&b()).unwrap()]);
+            let set = t.p().rats.values.clone();
+            assert_eq!(set.len(), 2);
+            let top = set.iter().max_by_key(|v| v.priority()).unwrap().clone();
+            assert!(
+                top.held_cmp(&if root_is_a { a() } else { b() }).is_eq(),
+                "the root is forced"
+            );
+            let query = a();
+            let look = || {
+                let _watch = Watch::start();
+                let member = t.contains(&query);
+                (member, refused().map(|(test, _)| test))
+            };
+            match room {
+                Some(bits) => fixed_room(bits, look),
+                None => look(),
+            }
+        })
+        .join()
+        .unwrap()
+    };
+    assert_eq!(looked_up(true, None), (true, None), "control, root a");
+    assert_eq!(looked_up(false, None), (true, None), "control, root b");
+    let (at_a, at_b) = (looked_up(true, Some(0)), looked_up(false, Some(0)));
+    assert_eq!(
+        at_a, at_b,
+        "a in {{a, b}} with no memory under a watch: root a gives {at_a:?}, root b gives {at_b:?}"
+    );
+}
