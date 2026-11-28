@@ -469,6 +469,18 @@ struct Prelinked {
     path: PathBuf,
 }
 
+/// The file name of the prelinked object of the runtime library named `library` whose hash and
+/// toolchain are in `identity`: `<library>.<library hash>.<prelink key>.o`.
+fn prelinked_name(library: &std::ffi::OsStr, identity: &Identity) -> OsString {
+    let mut name = library.to_owned();
+    name.push(format!(
+        ".{}.{}.o",
+        identity.runtime.to_hex(),
+        identity.prelink_key().to_hex()
+    ));
+    name
+}
+
 /// The prelinked runtime of `tools` for the build of `out`, made if it is not there; see
 /// [`Prelinked`].
 fn prelinked(
@@ -483,12 +495,7 @@ fn prelinked(
     let library = tools.runtime.file_name().unwrap_or_default().to_owned();
     let mut lock_name = library.clone();
     lock_name.push(".prelink.lock");
-    let mut name = library.clone();
-    name.push(format!(
-        ".{}.{}.o",
-        identity.runtime.to_hex(),
-        identity.prelink_key().to_hex()
-    ));
+    let name = prelinked_name(&library, identity);
     let mut refused = None;
     for dir in [dir_of(&tools.runtime), dir_of(out)] {
         let path = dir.join(&name);
@@ -1336,4 +1343,80 @@ fn holds(library: &Path, id: &[u8]) -> Result<bool, String> {
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A runtime library of this crate that Cargo left beside the running test, the first by
+    /// name of the files `libzed_native*.a` there. These unit tests are a build of their own,
+    /// with `cfg(test)`, so no library holds their [`BUILD`] and [`runtime_of`] finds none; a
+    /// prelink reads any of them.
+    fn a_runtime() -> PathBuf {
+        let exe = std::env::current_exe().unwrap();
+        let dir = exe.parent().unwrap();
+        let mut libraries: Vec<PathBuf> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                name.starts_with("libzed_native") && name.ends_with(".a")
+            })
+            .collect();
+        libraries.sort_unstable();
+        libraries.into_iter().next().unwrap_or_else(|| {
+            panic!(
+                "no runtime library libzed_native*.a in {}. Repair: build it with `cargo build \
+                 -p zed-native`",
+                dir.display()
+            )
+        })
+    }
+
+    /// A prelinked object made again from the same library with the same toolchain has the
+    /// same bytes, so that an executable linked from it does not change with which build made
+    /// it. [`prelink`] is called twice, each time into a directory of this test's own, where it
+    /// removes nothing but its own object; no lock is taken, since no other process writes there.
+    /// Before, `l01_36b_link_identity::prelink::a_prelinked_object_made_again_has_the_same_bytes`
+    /// made the object through two whole builds, each also compiling, linking and running a
+    /// program, and took up to 10.2 s on a loaded hm VM (FAIL-link-pieces-at-20s-limit).
+    #[test]
+    fn a_prelinked_object_made_again_has_the_same_bytes() {
+        let tools = Toolchain {
+            runtime: a_runtime(),
+            ..Toolchain::from_env()
+        };
+        let identity = Identity::of(&tools).unwrap_or_else(|(_, why)| panic!("{why}"));
+        let library = tools.runtime.file_name().unwrap().to_owned();
+        // The two prelinks at once, each in a directory of its own, since each removes the
+        // other objects and unfinished files of its directory: one prelink is most of the
+        // test's time, 2.1 s of it alone and 6.5-7.8 s beside eight busy loops on hm4 when they
+        // ran one after the other.
+        let made: Vec<Vec<u8>> = std::thread::scope(|s| {
+            let runs: Vec<_> = (0..2)
+                .map(|i| {
+                    let (tools, identity, library) = (&tools, &identity, &library);
+                    s.spawn(move || {
+                        let dir = std::env::temp_dir()
+                            .join(format!("zed_native-prelink-{}-{i}", std::process::id()));
+                        std::fs::create_dir_all(&dir).unwrap();
+                        let path = dir.join(prelinked_name(library, identity));
+                        // Named in messages alone.
+                        let out = dir.join("out");
+                        prelink(tools, identity, &dir, library, &path, &out)
+                            .and_then(|r| r)
+                            .unwrap_or_else(|(_, why)| panic!("{why}"));
+                        let bytes = std::fs::read(&path).unwrap();
+                        std::fs::remove_file(&path).unwrap();
+                        std::fs::remove_dir(&dir).unwrap();
+                        bytes
+                    })
+                })
+                .collect();
+            runs.into_iter().map(|r| r.join().unwrap()).collect()
+        });
+        assert!(!made[0].is_empty(), "the prelinked object is empty");
+        assert!(made[0] == made[1], "a prelink made again gives other bytes");
+    }
 }

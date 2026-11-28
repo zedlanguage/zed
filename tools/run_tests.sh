@@ -1148,8 +1148,11 @@ fi
 # and port_in_family's six forms 6.2-10.6 s; they are four, two and two tests over parts of
 # their corpus or forms, which took 5.1-7.2 s (damaged plans) and 6.0-7.0 s (forms) in three
 # runs at load 11-16 on hm4, beside eight busy loops. prelink's test of three builds took
-# 6.7-12.0 s in those runs; the check that a prelink made again has the same bytes is a test of
-# its own, of two builds (FAIL-link-pieces-at-20s-limit, b31-tools, 2026-11-27).
+# 6.7-12.0 s in those runs; the check that a prelink made again has the same bytes became a test
+# of its own, of two builds, which took up to 10.2 s in a merge check at load 15 and 5.9-8.6 s
+# beside eight busy loops on hm4. It is now a unit test of zed-native's link.rs that runs the two
+# prelinks alone and at once: 2.0 s alone and 3.6-4.1 s beside eight busy loops on hm2
+# (FAIL-link-pieces-at-20s-limit, b31-tools, 2026-11-27).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_groups_and_refusals l01_23_groups_and_refusals::r6_reduction
