@@ -163,16 +163,24 @@ fn an_integer_sum_past_two_to_the_53_compares_as_with_the_type_written() {
 }
 
 #[test]
-fn an_operation_with_a_need_of_its_own_keeps_its_carrier() {
-    // The base of `2^-1` needs a carrier other than `int`; nothing at a call gives the base
-    // the parameter's carrier, so it is read at `int` and rejected, with the repair checked.
-    let src = program("g(positional x) = x == 2^-1;", &["g(0.5f64)"]);
+fn an_operation_with_a_need_of_its_own_follows_the_parameter_at_each_call() {
+    // Row LIT-generic-class-follows-needs. The base of `2^-1` needs a carrier other than
+    // `int`; it follows `x`, so each call reads the need at the carrier it gives `x`: true at
+    // `f64`, `f32` and `rat`, as `h(x: f64)` is. Before, every call was refused with "Int
+    // power with a negative exponent: `2 : int ^ -1 : int`."
+    let def = "g(positional x) = x == 2^-1;\nh(x: f64) = x == 2^-1;";
+    let calls = ["g(0.5f64)", "g(0.5f32)", "g(1r / 2r)", "h(x: 0.5f64)", "g(0.25f64)"];
+    let out = prints("l01_26a_param_follows_power", def, &calls);
+    assert_eq!(out, "true true true true false\n");
+    // At an `int` the exponent `-1` lies outside the ints `^` on an int takes: refused, with
+    // the repair of a value outside the ints its use takes (DESIGN.md, QUESTIONS A174).
+    let src = program("g(positional x) = x == 2^-1;", &["g(1)"]);
     let errs = type_errors(&src);
     assert!(
-        errs.iter()
-            .any(|e| e.contains("Int power with a negative exponent: `2 : int ^ -1 : int`.")),
+        errs.iter().any(|e| e.contains("negative exponent")),
         "{src}{errs:#?}"
     );
+    // The repair written in still runs.
     let def = "g(positional x) = x == 2.0f64^-1;";
     let out = prints("l01_26a_param_follows_power_repair", def, &["g(0.5f64)"]);
     assert_eq!(out, "true\n");

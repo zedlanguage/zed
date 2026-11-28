@@ -5,6 +5,7 @@ use super::x;
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::step_helpers::l01_16_elaboration::{Checked, checked, errors, value};
 use zed_tests::step_helpers::l01_26_type_resolution::sig;
+use zed_tests::step_helpers::l01_29_diagnostics::rejected_with_main;
 
 #[test]
 fn the_first_component_that_differs_decides() {
@@ -302,16 +303,10 @@ fn a_parameter_met_with_a_tuple_refuses_what_min_refuses() {
             "`min` does not order #red in a tuple: it compares tuples component by component, and an atom has no order among the numbers; handle it before `min`. [g((#red, 9))]"
         ]
     );
-    // DESIGN.md sec:reduction, item 5, makes this `(0.5, 1.0)`: the literals of `(1, 2)` in the
-    // body follow the carriers of the components a call gives. zedc reads them at `int` once,
-    // so the call is refused; row MINMAX-param-literal-follow.
-    assert_eq!(
-        e("g((0.5, 1.0))"),
-        [
-            "`min` does not take (0.5, 1): no arrow of `min` takes these types. [g((0.5, 1.0))]",
-            "`min` does not take (1.0, 2): no arrow of `min` takes these types. [g((0.5, 1.0))]"
-        ]
-    );
+    // DESIGN.md sec:reduction, item 5: the literals of `(1, 2)` in the body follow the carriers
+    // of the components a call gives (row MINMAX-param-literal-follow; before, they were read
+    // at `int` once and this call was refused with "`min` does not take (0.5, 1)").
+    assert_eq!(e("g((0.5, 1.0))"), Vec::<String>::new());
     // A number is not a tuple: the parameter keeps no number carrier.
     assert_eq!(
         e("g(3)"),
@@ -326,6 +321,53 @@ fn a_parameter_met_with_a_tuple_refuses_what_min_refuses() {
         errors("g(positional a) = min(a + 1, (1, 2));\n"),
         ["`min` does not take _ and (1, 2), only two tuples or two numbers. [min(a + 1, (1, 2))]"]
     );
+}
+
+/// Plan row MINMAX-param-literal-follow (DESIGN.md sec:reduction, item 5): with `g(positional
+/// a) = min(a, (1, 2))`, each literal of `(1, 2)` takes, at each call, the carrier of the
+/// component of `a` at its position, at check time and at run time; at `int` it keeps its
+/// own value. Before, the literals were read at `int` once and each call below but the
+/// `int` one was refused.
+#[test]
+fn the_literals_of_a_tuple_met_with_a_parameter_follow_its_components_at_each_call() {
+    let v = |text: &str| value(text, "x");
+    let g = "g(positional a) = min(a, (1, 2));\n";
+    for (call, want) in [
+        ("g((0.5, 1.0))", "(0.5, 1.0)"),
+        ("g((2.0f64, 0.5f64))", "(1.0, 2.0)"),
+        ("g((1r, 3r))", "(1r, 2r)"),
+        ("g((1, 3.0f32))", "(1, 2.0)"),
+        ("g((0, 9))", "(0, 9)"),
+    ] {
+        assert_eq!(v(&format!("{g}x = {call};\n")), want, "{call}");
+    }
+    let m = "g(positional a) = max((1, 2), a);\n";
+    assert_eq!(v(&format!("{m}x = g((0.5, 1.0));\n")), "(1.0, 2.0)");
+    // Through a function that passes its own parameter on, the use reaches the outer call.
+    let h = "h(positional b) = g(b);\n";
+    assert_eq!(v(&format!("{g}{h}x = h((0.5, 1.0));\n")), "(0.5, 1.0)");
+    assert_eq!(v(&format!("{g}{h}x = h((0, 9));\n")), "(0, 9)");
+    // A component of no number is still refused.
+    assert!(!errors(&format!("{g}x = g((\"a\", 1.0));\n")).is_empty());
+}
+
+/// Plan rows MSG-types-as-literals and MINMAX-param-literal-follow: the refusal of a pair of
+/// components printed only that pair, `` `min` does not take ("a", 1) ``, which reads as one
+/// tuple; a note now names both operands whole and the component, as an index.
+#[test]
+fn a_misfit_of_two_components_names_both_tuples_and_the_component() {
+    let note = |src: &str, at: &str| {
+        let out = rejected_with_main(src);
+        assert!(
+            out.contains(&format!("component by component, and these are their components {at}")),
+            "{out}"
+        );
+        out
+    };
+    let out = note("x = min((0.5f64, \"a\"), (1.0f64, 2));\n", "[1]");
+    assert!(out.contains("`min` compares (0.5, \"a\") and (1.0, 2)"), "{out}");
+    note("x = min((1, (2, \"a\")), (1, (2, 3)));\n", "[1][1]");
+    note("g(positional a) = min(a, (1, 2));\nx = g((\"a\", 1.0));\n", "[0]");
 }
 
 #[test]

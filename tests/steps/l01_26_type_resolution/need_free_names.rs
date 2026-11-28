@@ -62,8 +62,8 @@ fn a_group_need_reading_another_parameter_is_met_at_each_call() {
         "group_y_bad",
         y,
         "g([\"a\"], 1)",
-        "`g` gives each entry of its argument to a function that requires a value of int, and an \
-         entry here is \"a\"",
+        "`g` gives each entry of its argument to a function whose `x mod y` requires a value of \
+         int, and an entry here is \"a\"",
     );
     runs(
         "group_y_good",
