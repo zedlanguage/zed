@@ -16,6 +16,7 @@
 //!   `.zed` or `.md` file other than the plan (docs/plan_dag.md quotes the forms refused);
 //! - no session line of the assistant that wrote a change (the author's standing order: no
 //!   session id or session link in commits, code or docs) in any text file.
+//!
 //! The ASCII rule for names is checked by the lexer itself (l01_02_lexer_names/ascii.rs). No
 //! standing rule names a method or a type to refuse, which is what clippy's disallowed-methods
 //! and disallowed-types check, so clippy.toml gains none. Rules that need the structure of the
