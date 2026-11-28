@@ -10166,6 +10166,34 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Forces open forward `fid`: pure leaf copy that materializes `I(F)`, fills `PendingSlot`,
     /// and writes `uses`, `known`, and deferred `call_written` in exact sequence order.
     /// Calls NO checker methods (`merge`, `flow`, `need`, `meet`, `touch`, `lower`, `resolve`).
+    ///
+    /// Proof that no use written here needs a check against what flowed into its class (row
+    /// CHECK-r10-force-forward-unchecked-uses): every root this writes a use on has nothing
+    /// flowed in, so [`Ck::need`]'s loop over `flowed` would check nothing.
+    ///
+    /// (1) Where the uses go. A decoded need's class is a parameter's or a result's of the
+    ///     callee: `#4` refuses a mentioned class not own to the callee, and `#6` an own one
+    ///     that is neither a parameter nor a result (`r10_get_or_build_summary`). A parameter's
+    ///     class is the root of the argument's one class (`#14`) at admission, which
+    ///     `r10_try_admit` puts in `watched_roots`. A result's is an id in `lo..hi`: an exit,
+    ///     also put in `watched_roots`, or an internal id no class outside the forward names,
+    ///     created fresh by the loop below (nothing flowed) unless already made.
+    /// (2) Invariant: while `F` is open, each `w` in its `watched_roots` is a root with nothing
+    ///     flowed in. At admission: `#15` refuses an argument root with `flowed` not empty, and
+    ///     an exit is fresh. Kept: `flowed` is written in two places only. `flow` pushes on root
+    ///     `r` (walk.rs, a tuple or function piece) right after `r10_force_root(r, "f4")`, which
+    ///     forces every open forward watching `r`, with no call between. `merge` moves `flowed`
+    ///     to the new root after `r10_force_root` on both roots (`"f3"`), and it is also the
+    ///     only link but [`Ck::join_results`], which runs in `generalize` after
+    ///     `r10_after_resolve_and_detach` has made every forward of the level `KeptInSig` (not
+    ///     open) and links only classes of that level, while an open forward of a level below
+    ///     watches roots of its own level or lower (`#16`; a level only falls). So a watched
+    ///     root stays a root while its forward is open, and `flowed` stays empty there.
+    /// (3) So by (1) and (2) every root written below has `flowed` empty when it is written.
+    ///
+    /// The probe configurations `skip_barrier` and `force_skip_second_on_merge` (negative
+    /// controls only, both off by default in `probe::R10Config`) remove a force of (2); they
+    /// are how the tests show the forces are needed.
     pub(in crate::check) fn r10_force_forward(&mut self, fid: usize, why: &str) {
         if self.r10.forwards[fid].status != probe::ForwardStatus::Open {
             return;

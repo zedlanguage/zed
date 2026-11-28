@@ -17097,6 +17097,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             self.lowered_epoch += 1;
         }
+        // What flowed into the child moves to the root, as [`Self::merge`] moves it, so a
+        // later use of the root is checked on it too (row CHECK-join-results-flowed-not-moved).
+        // Nothing needs checking now: `generalize` took the uses of every class of this level
+        // before `share_alike`, so neither class has a use for the other's values to meet, and
+        // the two masks are equal, so the root keeps Invariant I ([`Self::join_narrowed`]). Both
+        // classes were touched above, so a trial's undo restores both lists.
+        // Complexity tradeoff: the shorter list is moved into the longer, O(min) per link and
+        // O(f log f) over all links for f values that flowed in, as in `merge`; the naive
+        // way, appending the child's list whatever its length, is O(f^2) over a chain.
+        let mut flowed = std::mem::take(&mut self.classes[child].flowed);
+        let into = &mut self.classes[root].flowed;
+        if into.len() < flowed.len() {
+            std::mem::swap(into, &mut flowed);
+        }
+        into.extend(flowed);
         self.classes[child].parent = root;
         self.log_class(child, root);
         self.classes[root].size += self.classes[child].size;
@@ -17314,8 +17329,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the root the `flowed` of both classes and the mask m = a & b, and returns false before
     /// writing if m = 0; if either class had `flowed` not empty, its mask is within `OTHER`, so
     /// m is too. So masks only lose bits and are never 0.
-    /// (I4) The other place a root gets a parent, [`Self::join_results`], writes neither the
-    /// mask nor the `flowed` of the root it keeps.
+    /// (I4) The other place a root gets a parent, [`Self::join_results`], writes no mask and
+    /// links two classes of equal masks only, moving the child's `flowed` to the root: if
+    /// either list is not empty, that class's mask, which is the root's, is within `OTHER`.
     /// (I5) A dropped layer gives back the whole entry of each class written in it
     /// (`probe::Classes`: a write in an open layer goes to the layer's copy of the entry, and
     /// `drop_layer` puts back the entry from before the layer), so the state after the drop is
