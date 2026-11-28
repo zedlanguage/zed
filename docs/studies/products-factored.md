@@ -34,7 +34,9 @@ L is the set of pairs pass 1 lists, and W_listed = Σ |a||b| over the pairs the 
 5. **Cost.** At n and 8n, 42 of 49 families have a work ratio ≤ 10.5, all but two ≤ 9 [computed,
    run14]. The other seven are under exceptions of sec. 5.3, each tested at its bound: pass-1 OV
    (1), moment_curve and o2_distinct (2), the peel on sum_no_count, wlgrow, p4_open (3), P4 (3b),
-   the worklist on wlgrow_g (4). Exception 4 has no method within O(n log n); its test fails.
+   the worklist on wlgrow_g (4). Exception 4 had no method within O(n log n) in the prototype;
+   the crate's sign events (2026-11-28) bring wlgrow_g to 7.50 with an O(N log N) proof at
+   `the_worklist_of_wlgrow_g_scales` (sec. 5.3 item 4).
 
 ## 1. The question
 
@@ -378,6 +380,14 @@ a cost, not a refusal, with its bound, reason and a scaling test at that bound, 
    decompositions" (conclusion.tex:8). Here a bag must hold A and C, covered only by R and S, so
    the width is 2 and the bound O(N²) [inferred], no better. Test `wlgrowg` asserts the worklist
    ratio ≤ 10.5 and fails (34.00): A225, exception 4.
+   *Resolved for this family (FAIL-factored-wlgrow-g-worklist, 2026-11-28).* The crate's step 5
+   (`Joint::gain`, factored.rs) processes each (variable, kind) gain once, lists the partner
+   rows of its holders through a trie over row ids whose nodes are shared between variables,
+   and tests each partner row's Def set once per event by a memoized subset test. It never
+   lists the pairs of an event, so W_listed' does not bound it from below. On wlgrow_g the
+   worklist grows 7.50 times at k ratio 6.97, and the test proves O(N log N) for the family
+   step by step; the pairs left equal those of the row rechecks. The path query above and the
+   reduction below still bound the general worklist.
    *Reduction from Boolean matrix multiplication (O8) [proved; test `bmm`].* Input: n×n Boolean
    A, F. Variables w_x, y_x, z_v (x, v < n), g, r₁, r₂. One wanted product; side A holds
    s_u = Σ_{A[u][x]=1} w_x and b_x = y_x − w_x; side B holds t_v = z_v + (−1)^v g, t₊ = r₁ + g,
@@ -406,7 +416,7 @@ a cost, not a refusal, with its bound, reason and a scaling test at that bound, 
    The worklist gets A and F at once; offline, OMv is one matrix product, so OMv gives no bound
    here, and the method it points to is fast matrix multiplication per round of deaths, still
    above 10.5 by the count above. The reduction bounds the general worklist; it does not show
-   that wlgrow_g's own family is hard, so a method for that family stays open (O8).
+   that wlgrow_g's own family is hard; the sign events above are O(N log N) on it (O8).
 
 ### 5.4 A conditional lower bound for pass 1 [proved reduction]
 
@@ -563,9 +573,9 @@ Each test has a negative control that it is shown to detect.
 - **O3.** Whether a weaker near-linear stage followed by a larger R is better in total is open.
 - **O7.** A backend that keeps s definitions unexpanded (R2-5, for the author).
 - **O8.** Exception 4. The reduction from BMM is written and tested (sec. 5.3); the OMv route
-  fails because the worklist is offline. Open: a method within O(n log n) for wlgrow_g's family,
-  which the reduction does not cover; for the general worklist none exists unless BMM is in
-  O(n² log n).
+  fails because the worklist is offline. wlgrow_g's family, which the reduction does not
+  cover, is O(N log N) by the crate's sign events (2026-11-28, sec. 5.3 item 4); for the
+  general worklist no such method exists unless BMM is in O(n² log n).
 - **O9.** A grouped form of P4 (exception 3b), over Def groups as in step 4.
 - **O10.** Gemini's folded form of moment_curve, measured through Omega in phase 2.
 - **O11.** How Proved(ps) carries R's pairs without s and without expanding them (sec. 6).
@@ -591,8 +601,9 @@ Lines are of this file; the R2 map is in `$S/design-1c.md` sec. 11.
 | R3-8 | first-use definitions; rational t; Π and step-4 text match the code; sorted output; `feas_left` by content; Aux | 18-21, 73, 172-178, 211-213, 266-269, 459-462, 424-426 | met |
 
 **Not met, and why:**
-- **Exception 4 has no method within O(n log n)** (wlgrow_g 34.00); BMM reduces to the
-  worklist (sec. 5.3, O8). Seven families are above 10.5, each under sec. 5.3.
+- **Exception 4 had no method within O(n log n)** in the prototype (wlgrow_g 34.00); BMM
+  reduces to the general worklist (sec. 5.3, O8). The crate's sign events (2026-11-28) bring
+  wlgrow_g to 7.50, O(N log N) proved at its test. Seven families are above 10.5, each under sec. 5.3.
 - **A correction.** I first wrote that P4 was not superlinear, from a run with `no_single`, which
   switches P4 off with the peel. With `no_peel`, P2/P3/P4 grow 19.71: Gemini was right (exc. 3b).
 - wl_seq_chain 10.46 and p4_open with the peel off 9.97 pass, above the preferred 9.

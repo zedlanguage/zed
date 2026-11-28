@@ -636,6 +636,30 @@ fn rows_shared_on_many_paths_scale_in_its_call() {
     rows_shared_on_many_paths("its call", true);
 }
 
+/// Row PRINT-shared-part-exponential: the signature of `f` in `shared_rows(n)`, whose result
+/// holds the row of each level twice at the next, each row with variables, prints in time and
+/// text linear in `n`, each row once as a definition. The signatures are checked before the
+/// timing, so the runs time the print alone. Besides its ratio: the text is at most 64 bytes a
+/// level. Small instance, read back:
+/// `scaling::a_function_of_forty_shared_rows_prints_in_linear_text`.
+#[test]
+fn a_function_of_n_shared_rows_prints_in_linear_time() {
+    let n = 3200;
+    let sigs = scaling::inputs(n, |m| super::super::sig_of(&shared_rows(m, false), "f"));
+    scaling::check(
+        "the signature of a function of n shared rows, printed",
+        n,
+        |m| {
+            let text = sigs[&m].to_string();
+            assert!(
+                text.len() <= 64 * (m + 1),
+                "{} bytes at {m} levels",
+                text.len()
+            );
+        },
+    );
+}
+
 #[test]
 fn sums_of_a_line_or_a_count_check_in_linear_time() {
     let units = resolved(5000, sums_of_a_line_or_a_count);

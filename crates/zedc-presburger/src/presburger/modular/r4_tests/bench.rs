@@ -38,9 +38,12 @@ fn pncx_pure_residues_scale() {
     );
 }
 
+/// At n = 2,048,000 the piece took 9.95 s on one core of a host at load ~14, ratio 8.84 in
+/// instructions, the nearest of this crate's benchmarks to its limit
+/// (FAIL-colab-presburger-bench-piece-time, b30-pres4, 2026-11-28), so n is 1,024,000.
 #[test]
 fn pncx_domain_membership_scale() {
-    let inputs = scaling::inputs(2_048_000, |n| {
+    let inputs = scaling::inputs(1_024_000, |n| {
         Domain::from_pieces(
             (0..n)
                 .map(|i| (Some(Int::from(3 * i as i64)), Some(Int::from(3 * i as i64))))
@@ -49,7 +52,7 @@ fn pncx_domain_membership_scale() {
     });
     scaling::check_instructions_only(
         "membership in disjoint bound intervals",
-        2_048_000,
+        1_024_000,
         1,
         |n| {
             for i in 0..n {

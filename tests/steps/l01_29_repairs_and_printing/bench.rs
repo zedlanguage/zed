@@ -2,6 +2,7 @@
 //! --bench`). The correctness tests of the same code, at small sizes, are in the file of
 //! the same name one level up.
 
+mod argument_rows;
 mod casts;
 mod domain_repairs;
 mod order;

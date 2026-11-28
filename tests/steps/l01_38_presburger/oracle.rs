@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use zed_tests::instances::Rng;
+use zed_tests::instances::{Rng, each_permutation};
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, decide, satisfiable};
 
 /// A row `Σ c·x + k >= 0` over the variables by place.
@@ -496,29 +496,6 @@ fn named(rows: &[Row], half: i64, names: &[Arc<str>], order: &[usize]) -> Formul
         })
         .collect();
     Formula::and(fs)
-}
-
-/// Calls `visit` with every permutation of `0..n`, by Heap's algorithm, and returns how many
-/// there were.
-fn each_permutation(n: usize, mut visit: impl FnMut(&[usize])) -> usize {
-    let mut perm: Vec<usize> = (0..n).collect();
-    visit(&perm);
-    let mut count = 1;
-    let mut c = vec![0; n];
-    let mut i = 1;
-    while i < n {
-        if c[i] < i {
-            perm.swap(if i % 2 == 0 { 0 } else { c[i] }, i);
-            visit(&perm);
-            count += 1;
-            c[i] += 1;
-            i = 1;
-        } else {
-            c[i] = 0;
-            i += 1;
-        }
-    }
-    count
 }
 
 /// Decides `count` systems from `make`, drawn from `rng`, over `n` variables in the box

@@ -188,3 +188,37 @@ fn the_big_heads_family_reads_its_cells_in_its_size() {
         assert_eq!(counts[0], ((m - 1) + (m - 1) / 2, 0), "m = {m}");
     }
 }
+
+/// REFUSAL-front-u6-subset: the crossing fallback of the escape solve
+/// ([`super::crossing::crossing_witness`], COMPLEXITY.md K145) on the selector reduction of a
+/// satisfiable 2-SAT chain of n variables, `(!x_i | x_(i+1))` with the tautology
+/// `(x_i | !x_i | x_(i+1))` beside each link: t04 of the prototype at n variables, whose small
+/// instance is `crossing::tests::a_selector_reduction_of_2_sat_is_answered_with_a_list`. Each
+/// variable is in four clauses at most and each selector has three values, so `deg_max` and `d`
+/// are bounded and the bound `O((V d + E) deg_max^2 d^2)` is O(n); the network is built through
+/// ordered maps, so O(n log n) in all. The clauses are built before timing; the places and atoms
+/// (`Ints`, which holds an `Rc` and may not be shared between threads) are built from them in the
+/// run, O(n), below the solve.
+#[test]
+fn the_crossing_fallback_on_a_2_sat_chain_scales() {
+    let n = 2048;
+    let inputs = crate::scaling::inputs(n, |n| {
+        let mut cls = Vec::with_capacity(2 * n);
+        for i in 0..n - 1 {
+            cls.push([(i, false), (i + 1, true), (i + 1, true)]);
+            cls.push([(i, true), (i, false), (i + 1, true)]);
+        }
+        cls
+    });
+    crate::scaling::check_order(
+        "the crossing fallback on the selector reduction of a 2-SAT chain of n variables",
+        n,
+        1,
+        |n| {
+            let (pl, atom, clause) = super::crossing::tests::selector(n, &inputs[&n]);
+            let x = super::crossing::crossing_witness(&pl, &atom, &clause).expect("a list");
+            let holds = |c: &[usize; 2]| c.iter().any(|&i| atom[i].1.contains(&x[atom[i].0]));
+            assert!(clause.iter().all(holds), "n = {n}: a clause missed");
+        },
+    );
+}

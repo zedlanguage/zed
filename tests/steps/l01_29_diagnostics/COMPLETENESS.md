@@ -44,7 +44,7 @@ outside linear arithmetic, tested in `l01_38_presburger`.
 | A definition whose type comes from an error already reported (`t() = 1.e;` used in `main`) gives no second error, before or after its cause | follow_on.rs (either order; arithmetic, comparison, `if`, negation, tuple index; a field read) | Row FAIL-diagnostics-follow-on, fixed |
 | The headline of a member call of a name in no scope (`1.e`) is as short as `` `e` is not defined. `` | member_headline.rs (each kind of literal; a parameter keeps the field-read clause; a function in scope is accepted) | Row FAIL-diagnostics-member-headline, fixed |
 | The ✗ fence variants of the spec | `variants.rs` | |
-| L1.29c: the four argument rows and their menus | none | Row L1.29c is open; its tests come with it. |
+| L1.29c: the four argument rows and their menus | `l01_29_repairs_and_printing/argument_rows.rs`; bench `bench/argument_rows.rs` | Row L1.29c, done. |
 | L1.29e: the spelling index; L1.14a | none | Rows L1.29e and L1.14a are open. |
 | The refusal of a question outside linear arithmetic (`Row::NonLinearQuestion`, `conjuncts` in `front.rs`) | none in this group | Covered by `l01_38_presburger` (step L1.38). |
 | `front::syntax`, read only by `zedc fmt` | `commands_binary.rs`; `l01_19a_command_line/binary.rs` | Run through the `zedc` executable, which llvm-cov of the test executable does not count. |

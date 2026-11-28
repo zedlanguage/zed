@@ -1,14 +1,17 @@
 //! The representation of a string's text ([`Text`]): the finger tree of blocks that the
 //! parent module `text` builds, reads and joins, and that `names` summarizes. The types are
 //! here, apart from their methods in `text.rs`, so that both files import this one and neither
-//! imports the other.
+//! imports the other. The tree and its operations are zed-collections' [`finger`] tree, whose
+//! leaves here are blocks ([`Block`]) measured by their [`Size`].
 
 use std::ops::Add;
 use std::sync::Arc;
 
+use zed_collections::finger::{self, Leaf};
+
 /// A string's text, shared.
 #[derive(Clone)]
-pub struct Text(pub(super) Arc<Tree>);
+pub struct Text(pub(super) finger::Tree<Block>);
 
 /// A length in bytes and in characters (Unicode scalar values).
 // Complexity tradeoff: the naive `len` counts the characters of the text at each call
@@ -38,25 +41,42 @@ impl Add for Size {
 }
 
 /// One to four parts of one height, in order, the first `Some` and no `Some` after a `None`.
-pub(super) type Digit = [Option<Text>; 4];
+pub(super) type Digit = finger::Digit<Block>;
 
-pub(super) enum Tree {
-    /// The empty text, and the middle of a deep tree that has nothing between its ends.
-    Empty,
-    /// A block of text, not empty, and its number of characters: a part of height 0.
-    Block { block: Arc<str>, chars: usize },
-    /// Two or three parts of one height `h`, in order, the third `None` when there are two: a
-    /// part of height `h + 1`.
-    Node {
-        size: Size,
-        parts: [Option<Text>; 3],
-    },
-    /// A tree of parts of height `h`: `front`, then the parts of the nodes of height `h + 1`
-    /// that `middle` holds, then `back`. A tree of one part is that part itself.
-    Deep {
-        size: Size,
-        front: Digit,
-        middle: Text,
-        back: Digit,
-    },
+/// What a text's tree is ([`finger::Shape`]): `Empty` (the empty text, and the middle of a deep
+/// tree that has nothing between its ends), `Leaf` (a [`Block`], a part of height 0), `Node`
+/// (two or three parts of one height and their size) or `Deep` (`front`, the nodes `middle`
+/// holds, then `back`, and their size).
+pub(super) type Tree = finger::Shape<Block>;
+
+/// A block of text, not empty, and its number of characters: a leaf of a text's tree.
+pub(super) struct Block {
+    pub(super) block: Arc<str>,
+    pub(super) chars: usize,
+}
+
+impl Leaf for Block {
+    type Measure = Size;
+    type Cache = ();
+    type Part = Text;
+
+    // `#[inline]`, as every function of `finger` is (its comment at `Clone for Tree`): these
+    // run at every node a read or a push of a text visits.
+    #[inline]
+    fn measure(&self) -> Size {
+        Size {
+            len: self.block.len(),
+            chars: self.chars,
+        }
+    }
+
+    #[inline]
+    fn tree(part: &Text) -> &finger::Tree<Block> {
+        &part.0
+    }
+
+    #[inline]
+    fn part(tree: finger::Tree<Block>) -> Text {
+        Text(tree)
+    }
 }

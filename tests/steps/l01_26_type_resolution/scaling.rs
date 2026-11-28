@@ -556,6 +556,51 @@ fn rows_shared_on_many_paths_are_replaced_once() {
     );
 }
 
+/// Row PRINT-shared-part-exponential: the result of `f` in `shared_rows(n)` holds the row of
+/// each level twice at the next, and each row holds variables. Before the row the printer wrote
+/// such a row in full at each place, so the text held `2^n` copies of the innermost row; now
+/// each is written once, as a definition, and the text grows linearly in `n`. The print runs
+/// on a thread of its own with a time limit, so that the old path fails at the limit and does
+/// not run on. Each text reads back as the signature it prints (`read::parse_type`, which
+/// counts each name in a definition once for each use of the definition): for small `n`
+/// compared both ways, and at 40 levels printed again to the same text. The benchmark is
+/// `bench::scaling::a_function_of_n_shared_rows_prints_in_linear_time`.
+#[test]
+fn a_function_of_forty_shared_rows_prints_in_linear_text() {
+    let (sent, got) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let read = |n: usize| -> Result<String, String> {
+            let s = sig_of(&shared_rows(n, false), "f");
+            let text = s.to_string();
+            let back = zedc::check::read::parse_type(&text).map_err(|e| format!("{text}: {e}"))?;
+            if n <= 6 {
+                let want = Ty::func(s);
+                if !(back.subtype(&want) && want.subtype(&back)) {
+                    return Err(format!("{text} reads back as another type: {back}"));
+                }
+            }
+            match back.to_string() == text {
+                true => Ok(text),
+                false => Err(format!("{text} reads back as {back}")),
+            }
+        };
+        let texts: Result<Vec<String>, String> = [2, 3, 6, 40].into_iter().map(read).collect();
+        let _ = sent.send(texts);
+    });
+    let texts = got
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the signature of 40 shared rows prints within 10 s")
+        .unwrap_or_else(|e| panic!("{e}"));
+    for (n, text) in [2, 3, 6, 40].into_iter().zip(&texts) {
+        assert!(
+            text.len() <= 64 * (n + 1),
+            "{} bytes at {n} levels:\n{text}",
+            text.len()
+        );
+    }
+    assert_eq!(texts[0], "(T, U, V) -> ((T, (T, U)), ((T, (T, U)), V))");
+}
+
 /// `r(positional line, bump = 1) = { a1 = (line else #none -> 0) + bump; a2 = (line else
 /// #none -> a1) + bump; … an }`: each sum meets the parameter's class beside an int on one
 /// path and an int alone on another, so each keeps two states where it kept one

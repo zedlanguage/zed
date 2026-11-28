@@ -37,7 +37,7 @@
 
 use std::ops::Add;
 
-use super::tree::{Digit, Size, Text, Tree};
+use super::tree::{Block, Digit, Size, Text, Tree};
 use super::{block_of, count, deep, empty, push_back};
 
 impl Text {
@@ -65,7 +65,7 @@ impl Text {
         // 0 < k < chars, so the code point ranked `k` exists, and `split_tree` gives the block
         // `x` holding it with `l` the blocks before: `l.chars ≤ k < l.chars + x.chars`.
         let (l, x, r) = split_tree(self, k);
-        let Tree::Block { block, chars } = &*x.0 else {
+        let Tree::Leaf(Block { block, chars }) = &*x.0 else {
             unreachable!("the parts of a text's own tree are blocks")
         };
         let j = k - l.char_count();
@@ -169,7 +169,7 @@ fn tree_of(parts: &[Option<Text>]) -> Text {
 fn split_tree(t: &Text, i: usize) -> (Text, Text, Text) {
     match &*t.0 {
         Tree::Empty => unreachable!("a split of the empty tree, which holds no code point"),
-        Tree::Block { .. } | Tree::Node { .. } => (empty(), t.clone(), empty()),
+        Tree::Leaf(_) | Tree::Node { .. } => (empty(), t.clone(), empty()),
         Tree::Deep {
             front,
             middle,
@@ -273,7 +273,7 @@ fn deep_r(pr: &Digit, m: &Text, sf: &[Option<Text>]) -> Text {
 fn view_l(t: &Text) -> Option<(Text, Text)> {
     match &*t.0 {
         Tree::Empty => None,
-        Tree::Block { .. } | Tree::Node { .. } => Some((t.clone(), empty())),
+        Tree::Leaf(_) | Tree::Node { .. } => Some((t.clone(), empty())),
         Tree::Deep {
             front,
             middle,
@@ -290,7 +290,7 @@ fn view_l(t: &Text) -> Option<(Text, Text)> {
 fn view_r(t: &Text) -> Option<(Text, Text)> {
     match &*t.0 {
         Tree::Empty => None,
-        Tree::Block { .. } | Tree::Node { .. } => Some((empty(), t.clone())),
+        Tree::Leaf(_) | Tree::Node { .. } => Some((empty(), t.clone())),
         Tree::Deep {
             front,
             middle,

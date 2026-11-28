@@ -349,4 +349,139 @@ fn an_else_chain_reads_every_link_once_in_each_arm() {
     }
 }
 
+/// A binding with a summary read inside a term with none (PA-let-followups part 2):
+/// `w = x + 1; z = w div 2; if z == 3 { 1 } else { 2 }`. The test reads `z` through its term,
+/// which gives `w` the integers `6..=7`, and `w`, summarized over `x`, must narrow `x` in turn.
+#[test]
+fn a_summarized_binding_read_inside_a_term_narrows_its_input() {
+    let body = let_(
+        "w",
+        prim(Prim::Add, vec![var("x"), int(1)]),
+        let_(
+            "z",
+            prim(Prim::IntDiv, vec![var("w"), int(2)]),
+            test(prim(Prim::Eq, vec![var("z"), int(3)])),
+        ),
+    );
+    let a = checked_arms(&body);
+    assert_eq!(ints_of(&a, "(z == 3)", true, "w"), "[6..=7]");
+    assert_eq!(ints_of(&a, "(z == 3)", true, "x"), "[5..=6]");
+}
+
+/// The same over two inputs (PA-let-followups part 2 for a summary over k > 1 inputs):
+/// `if 0 <= x <= 6 && 0 <= y <= 1 { w = x + y; z = w div 2; if z == 3 { 1 } else { 2 } }`.
+/// The test reads `z` through its term, which gives `w` the integers `6..=7` and narrows `x`
+/// to `5..=6`; `w`, summarized over `x` and `y`, must then lie in its summary's image over
+/// them, `5..=7`, where it was `0..=7`. The image is the hull of the sum of the inputs' bounds,
+/// so `6..=7`, which the inversion found, is not reached this way.
+#[test]
+fn a_binding_summarized_over_two_inputs_read_inside_a_term_narrows_by_its_inputs() {
+    let within = |n: &str, hi: i64| {
+        prim(
+            Prim::And,
+            vec![
+                prim(Prim::Ge, vec![var(n), int(0)]),
+                prim(Prim::Le, vec![var(n), int(hi)]),
+            ],
+        )
+    };
+    let body = if_(
+        prim(Prim::And, vec![within("x", 6), within("y", 1)]),
+        let_(
+            "w",
+            prim(Prim::Add, vec![var("x"), var("y")]),
+            let_(
+                "z",
+                prim(Prim::IntDiv, vec![var("w"), int(2)]),
+                test(prim(Prim::Eq, vec![var("z"), int(3)])),
+            ),
+        ),
+        int(3),
+    );
+    let a = checked_arms(&body);
+    assert_eq!(ints_of(&a, "(z == 3)", true, "x"), "[5..=6]");
+    assert_eq!(ints_of(&a, "(z == 3)", true, "y"), "[0..=1]");
+    assert_eq!(ints_of(&a, "(z == 3)", true, "w"), "[5..=7]");
+}
+
+/// A summary of `n` pieces over `x`: the `if` chain whose piece `j` holds the inputs below
+/// `10 (j + 1)` (and from `10 j`, but for the first) and is `x - (10 j + 5)` for an even `j`
+/// and `(10 j + 5) - x` for an odd one, so it is 0 at `10 j + 5` and slopes up and down.
+fn sawtooth(n: usize) -> Term {
+    let piece = |j: usize| {
+        let c = int(10 * j as i64 + 5);
+        if j % 2 == 0 {
+            prim(Prim::Sub, vec![var("x"), c])
+        } else {
+            prim(Prim::Sub, vec![c, var("x")])
+        }
+    };
+    (0..n - 1).rev().fold(piece(n - 1), |rest, j| {
+        let below = prim(Prim::Lt, vec![var("x"), int(10 * (j as i64 + 1))]);
+        if_(below, piece(j), rest)
+    })
+}
+
+/// One choice of [`choices`]: its name, the function of `w` and the sign of `y`.
+type Choice = (&'static str, fn(Term) -> Term, i64);
+
+/// `abs(w)`, `max(w, -w)` and `min(w, -w)`, each with the test of [`over_a_sawtooth`] that
+/// bounds `y` by 2 where the choice keeps the summary's bound 0: `f(w) + y <= 2` for the first
+/// two, `f(w) - y >= -2` for the third.
+fn choices() -> [Choice; 3] {
+    fn neg(w: Term) -> Term {
+        prim(Prim::Neg, vec![w])
+    }
+    [
+        ("abs(w) + y", |w| prim(Prim::Abs, vec![w]), 1),
+        (
+            "max(w, -w) + y",
+            |w| prim(Prim::Max, vec![w.clone(), neg(w)]),
+            1,
+        ),
+        (
+            "min(w, -w) - y",
+            |w| prim(Prim::Min, vec![w.clone(), neg(w)]),
+            -1,
+        ),
+    ]
+}
+
+/// `if y >= 0 { w = sawtooth(n); z = f(w) + sign * y; if test { 1 } else { 2 } } else { 3 }`,
+/// the test `z <= 2` for `sign` 1 and `z >= -2` for -1.
+fn over_a_sawtooth(n: usize, f: fn(Term) -> Term, sign: i64) -> Term {
+    let (z, t) = if sign > 0 {
+        let z = prim(Prim::Add, vec![f(var("w")), var("y")]);
+        (z, prim(Prim::Le, vec![var("z"), int(2)]))
+    } else {
+        let z = prim(Prim::Sub, vec![f(var("w")), var("y")]);
+        (z, prim(Prim::Ge, vec![var("z"), int(-2)]))
+    };
+    if_(
+        prim(Prim::Ge, vec![var("y"), int(0)]),
+        let_("w", sawtooth(n), let_("z", z, test(t))),
+        int(3),
+    )
+}
+
+/// `abs`, `min` and `max` of a summary of several pieces keep its exact bounds at the root
+/// (PA-let-followups part 3): `abs(w) >= 0`, `max(w, -w) >= 0` and `min(w, -w) <= 0` hold over
+/// all of `x`, so a test of the value plus or minus `y` bounds `y` on both sides, and `x` is
+/// narrowed to the inputs where `|w| <= 2`. Made as a clamp plus the summary (`Pa::plus` of two
+/// summaries), the bounds were those of a line added over unbounded pieces, which are infinite,
+/// and `y` was read with no upper bound.
+#[test]
+fn abs_min_and_max_of_a_summary_of_several_pieces_keep_exact_bounds() {
+    for (name, f, sign) in choices() {
+        let a = checked_arms(&over_a_sawtooth(3, f, sign));
+        let guard = if sign > 0 { "(z <= 2)" } else { "(z >= -2)" };
+        assert_eq!(ints_of(&a, guard, true, "y"), "[0..=2]", "{name}");
+        assert_eq!(
+            ints_of(&a, guard, true, "x"),
+            "[3..=7, 13..=17, 23..=27]",
+            "{name}"
+        );
+    }
+}
+
 mod bench;

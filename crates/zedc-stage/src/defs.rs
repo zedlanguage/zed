@@ -40,6 +40,11 @@ pub struct Test {
     /// `zedc_elab::MAIN_KEY` writes it: a field of `MainArgs`, or `main::files`, the one a row
     /// of another function's table may be given.
     pub ports: Vec<&'static str>,
+    /// For a row of a function with output port parameters, each of them, in order, by name,
+    /// with the output port the key gives it; empty for any other row. The row runs the call in
+    /// a world with these outputs, and `want` is then the tuple of the result and of each
+    /// port's lines (DESIGN.md sec:ports, "A test table gives a port its values").
+    pub pushed: Vec<(Arc<str>, Arc<str>)>,
     /// The expected value.
     pub want: Term,
     /// The case's text.

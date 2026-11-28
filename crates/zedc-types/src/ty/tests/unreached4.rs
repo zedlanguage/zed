@@ -261,7 +261,13 @@ fn the_reason_shapes_are_not_told_apart_names_fields_and_the_bucket_held_anywher
         vec![int.clone(), bool.clone()],
         vec![int.clone(), bool.clone()],
     ];
-    let choices = Choices::new(shapes.iter().enumerate().map(|(i, k)| (i, &k[..])));
+    let comps = [Ty::carrier(Carrier::Int), Ty::carrier(Carrier::Bool)];
+    let choices = Choices::new(
+        shapes
+            .iter()
+            .enumerate()
+            .map(|(i, k)| (i, &k[..], comps.iter().collect())),
+    );
     let k: Arc<str> = "k".into();
     assert_eq!(
         choices.apart(0, &None, 1, &[&k]),

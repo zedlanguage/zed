@@ -76,14 +76,26 @@ fn arcs_and_sums_on_five_variables_7() {
 }
 
 /// Every system of six variables whose pairs each hold no row or `x[i] + x[j] >= 1`: the
-/// graphs, among them three disjoint pairs, which fixing two variables does not tell apart.
-#[test]
-fn graphs_on_six_variables() {
-    let seen = check(&Family::new(6, 2, pair_kinds(&[0, 3])));
+/// graphs, among them three disjoint pairs, which fixing two variables does not tell apart. In
+/// two pieces, every other class each (FAIL-colab-presburger-bench-piece-time: the whole took
+/// 11.7 s on one core at load 22, b30-pres4, 2026-11-28; each piece 3.8 to 4.0 s on one core
+/// in the release build).
+fn graphs_on_six_variables(part: usize) {
+    let seen = check_part(&Family::new(6, 2, pair_kinds(&[0, 3])), part, 2);
     eprintln!("{seen:?}");
-    // The number of graphs on six vertices (OEIS A000088).
-    assert_eq!(seen.classes, 156);
+    // The number of graphs on six vertices is 156 (OEIS A000088): 78 in each piece.
+    assert_eq!(seen.classes, 78);
     assert!(seen.answered_with_cell > 0 && seen.refused_symmetric > 0);
+}
+
+#[test]
+fn graphs_on_six_variables_0() {
+    graphs_on_six_variables(0);
+}
+
+#[test]
+fn graphs_on_six_variables_1() {
+    graphs_on_six_variables(1);
 }
 
 /// Every system of six variables whose pairs each hold `x[i] >= x[j]` or the reverse: the

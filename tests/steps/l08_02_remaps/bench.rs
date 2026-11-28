@@ -1120,6 +1120,27 @@ fn map_of_a_parameter_by_a_lambda_calling_a_parameter_runs_in_linear_time() {
     );
 }
 
+/// Row FAIL-fold-lambda-calls-param-entry: `foldl` of n entries of a parameter by a lambda
+/// calling a parameter on the entry, as `map` above: the lambda's entry slot is tied to the
+/// receiver's entries, met once at the call, and the kernel folds the n entries. Small
+/// instances: `l01_26_type_resolution::need_free_names::
+/// a_fold_need_reading_another_parameter_is_met_at_each_call`.
+#[test]
+fn foldl_of_a_parameter_by_a_lambda_calling_a_parameter_runs_in_linear_time() {
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "h(positional f, positional m) = m.foldl(0, (a, x) -> a + f(x));\na = h(x -> x + 1, {});\n",
+            list(n)
+        )
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), (n * (n + 1) / 2).to_string());
+    scaling::check(
+        "foldl of n entries of a parameter by a lambda calling a parameter, whole path",
+        N_ENTRIES,
+        run,
+    );
+}
+
 /// Row FAIL-any-lambda-calls-param: `any` of n entries of a parameter by a lambda calling a
 /// parameter, as `map` above. Small instances:
 /// `empty::the_quantifiers_by_a_lambda_calling_a_parameter_run`.
@@ -1465,6 +1486,42 @@ fn n_maps_by_a_function_whose_held_name_clashes_check_in_linear_time() {
     scaling::check(
         "n functions chained, each mapping by `id` beside a parameter named as `id`'s, whole path",
         n_links,
+        run,
+    );
+}
+
+/// The sum of `n` squares `k * k`, parenthesized as a balanced tree, so the key nests about
+/// log2(n) deep however many terms it has.
+fn balanced_squares(n: usize) -> String {
+    match n {
+        1 => "k * k".to_string(),
+        _ => format!(
+            "({} + {})",
+            balanced_squares(n / 2),
+            balanced_squares(n - n / 2)
+        ),
+    }
+}
+
+#[test]
+fn a_strictly_monotone_key_of_n_terms_is_checked_in_linear_time() {
+    // The witness "strictly monotone arithmetic" (row TONIC-remap-witness) on a key of n
+    // squares on `int[0..]`: one walk of the key to a kernel term and one grade, each linear,
+    // and the run of the remap over two entries.
+    let n_terms = 2000;
+    let srcs = scaling::inputs(n_terms, |n| {
+        format!(
+            "f(positional m: int[0..] ->? int) = m as (k -> v) into ({} -> v);\n\
+             x = f({{ 0 -> 1, 2 -> 2 }});\n",
+            balanced_squares(n)
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "x"), format!("{{0 -> 1, {} -> 2}}", 4 * n));
+    };
+    scaling::check(
+        "a remap whose key is a sum of n squares of its binder, whole path",
+        n_terms,
         run,
     );
 }

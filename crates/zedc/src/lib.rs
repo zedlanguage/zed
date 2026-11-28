@@ -41,3 +41,4 @@ pub mod testing;
 pub mod unit;
 pub use zedc_base::work;
 pub use zedc_zir::zir;
+pub mod source_map;

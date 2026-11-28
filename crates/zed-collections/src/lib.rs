@@ -36,10 +36,18 @@
 //! operation `O(log n)` expected (Blelloch, Ferizovic and Sun 2016; the full comment is at the
 //! head of `treap.rs`).
 //!
+//! [`finger`]: a persistent 2-3 finger tree of leaves with a measure on each node, and its push
+//! at either end and join, the tree of strings and of lists made by `++` (Hinze and Paterson
+//! 2006; the full comment is at the head of `finger.rs`).
+//!
 //! [`by_address`]: a map key that is the address of an `Arc` and holds it, so no address in a
 //! memo is freed and given to another value while the memo lives.
 //!
 //! [`ext`]: a totally ordered set with the two infinities added, for the ends of intervals.
+//!
+//! [`patricia`]: the prefix of a key at a branching bit and the highest bit in which two keys
+//! differ, the two bit operations of a big-endian Patricia trie over `u32` keys (Okasaki and Gill
+//! 1998, §5).
 //!
 //! [`period`]: the least period of a sequence that is a whole number of copies of a block, by
 //! the prefix function, O(n).
@@ -47,19 +55,26 @@
 //! [`spelling`]: the spelling index of step L1.29e, the name near in spelling to each written
 //! name of a unit and visible at its site, for all of them together in `O(n log n)`.
 
+// A `#[thread_local]` static for the level count of the treap's drop (`treap.rs`, DROPPING),
+// which this nightly-pinned workspace (rust-toolchain.toml) can enable; the only feature here.
+#![feature(thread_local)]
+
 // Loaded for its num-bigint only (see Cargo.toml): nothing here names it, and a crate never named
 // is never loaded, so this dylib would carry its own copy of num-bigint beside zed-numtheory's.
 extern crate zed_numtheory as _;
 
+pub mod avl;
 pub mod by_address;
 pub mod cartesian;
 pub mod ext;
 pub mod fenwick;
+pub mod finger;
 pub mod held;
 pub mod index;
 pub mod intern;
 pub mod intervals;
 pub mod min_add;
+pub mod patricia;
 pub mod period;
 pub mod priority;
 pub mod search;

@@ -921,3 +921,44 @@ fn fits_to_every_member_and_literals_through_several_functions_scale() {
         assert!(u.get(&format!("c{}", m - 1)).is_some(), "{what} at {m}");
     });
 }
+
+/// n generic functions, each passing its parameter `f` to a call inside a lambda passed at an
+/// intersection of two arrows inside another, and a chain of n such functions, each calling the
+/// one before inside its two nested lambdas (row MSG-arrow-lambda-nested-cause, decision (c) of
+/// 2026-11-23): each need made inside such a lambda keeps the trail of arrows current then, one
+/// shared `Arc` clone, O(1) (`Ck::passed_on`), and `Ck::meet` makes it current while the need
+/// is met, O(1); needs that differ only in their trails are one need, so the chain keeps one
+/// need per function, and checking and elaborating the whole stays linear. Besides its ratio:
+/// the program elaborates at each size. Small instance:
+/// `function_variance::the_outer_arrow_lambda_whose_arrows_differ_is_named`.
+#[test]
+fn needs_made_inside_nested_arrow_lambdas_scale() {
+    let what = "n needs made inside nested arrow lambdas, and a chain of n through them";
+    let make = |n: usize| {
+        let mut src = String::from(
+            "both(h: ((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> int)) = h(g: x -> 1) + h(g: x -> 2);\n\
+             bothK(h: ((k: (x: int) -> int) -> int) & ((k: (x: f64) -> int) -> int)) = h(k: x -> 3) + h(k: x -> 4);\n\
+             inc(y) = y + 1;\n\
+             c0(f) = f(y: 1);\n",
+        );
+        // `inc`, not a lambda: a lambda's parameter is positional, and `f` is called by name.
+        // `(call, 1)[1]`: the lambda must return `int`, and the call's result is not known
+        // until its need is met (as in `an_arrow_lambda_refused_through_a_call_s_needs_is_named`).
+        for i in 0..n {
+            let j = i + 1;
+            src.push_str(&format!(
+                "o{i}(f) = both(h: g -> bothK(h: k -> (f(y: {i}), 1)[1]));\na{i} = o{i}(f: inc);\n\
+                 c{j}(f) = both(h: g -> bothK(h: k -> (c{i}(f: f), 1)[1]));\n"
+            ));
+        }
+        src.push_str(&format!("d = c{n}(f: inc);\n"));
+        src
+    };
+    let n = 200;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        assert!(u.get("d").is_some(), "{what} at {m}");
+        assert!(u.get(&format!("a{}", m - 1)).is_some(), "{what} at {m}");
+    });
+}

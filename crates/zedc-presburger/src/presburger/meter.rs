@@ -297,6 +297,37 @@ pub(super) const LISTED: u64 = 7;
 /// question but the cover's, it does nothing. A unit is one constraint, term or disjunct read
 /// by a step of the solver (each site says what it charges), and the units charged are a
 /// count, the same on every run.
+///
+/// The meter changes no answer but by refusing it (PROOF-probe-order-independent,
+/// PROOF-solve-omega-path-renaming). Take a run under a meter of limit `L` ([`Work::metered`],
+/// [`Work::ask`] or [`metered_alone`], the only places that set one), and the same run under a
+/// meter of no limit (`L` = `u64::MAX`, never passed). The run reads the meter in three ways
+/// only: the `Err` of [`charge`] and [`charge_pieces`], given only when `used > limit`;
+/// [`spent`], true only then; and [`running`], which is true in both runs. Let `c_1, c_2, ..`
+/// be the charges of the run with no limit and `s_k` their sums (saturating, so
+/// `min(c_1 + .. + c_k, u64::MAX)`, which only grow with `k`). While `s_k <= L` the two runs
+/// read the same at every read, so by induction on the charges they take the same steps and
+/// make the same charges. Hence: (1) if the run with no limit ends with `T = s_last <= L`, the
+/// run under `L` is the same run, with the same answer; (2) if `T > L`, the run under `L`
+/// agrees until the first `k` with `s_k > L`, its `used` is past `L` from then on, and it ends
+/// with `used > L`, which [`Work::metered`] and [`Work::ask`] turn into
+/// [`Refusal::Questions`] and [`metered_alone`] into `None`, whatever the run returned. So the
+/// outcome under `L` is a function of two things alone: the answer of the run with no limit,
+/// and its total charge `T` against `L`. Which refusal the solver met inside a spent run, and
+/// in what order its charges came, change nothing: the sum of the charges does not depend on
+/// their order. A meter open around another adds what the inner one used ([`Work::metered`]),
+/// and [`Work::exempt`] moves the limit up by exactly what its step charged, so `used > limit`
+/// after it holds exactly when it held before; [`Work::credit`] adds a fixed amount. Neither
+/// reads the order of charges.
+///
+/// Consequence: two runs whose runs with no limit give the same answer and charge the same
+/// total, under meters with the same units left, give the same outcome under any limit. A
+/// claim that a step of the solver gives the same answer in every order of its parts, or under
+/// every renaming, and makes the same charges (a charge counts rows, terms and pieces, so the
+/// same steps on the image charge the same), holds under the meter too. What it does not give:
+/// that the work before that step in the same question is the same in both, which is the
+/// claim of the caller. The cover (`exact.rs`) also reads `Work::used` itself (its caches of
+/// work used); the lemma is about the solver's meter, not those reads.
 pub(super) fn charge(units: u64) -> Result<(), Refusal> {
     charge_units(units.saturating_mul(SOLVER_STEP))
 }

@@ -415,6 +415,44 @@ fn literal_types_of_one_sum_scale() {
     );
 }
 
+/// SCALE-tuple-mins-chain at the table: the sets `{0, ..., i}` for `i` below `n`, each made
+/// twice apart by one insert into the shared set of `i - 1`, as `min` of a chain of tuples
+/// `(i, _, i)` makes the literals of the first and last components, and each put in the table.
+/// The second set of each pair meets the first, equal, in the bucket of their seeded sum.
+///
+/// Cost model. Instructions: an insert is `O(log n)` expected, and the two sets of a pair share
+/// every node but the `O(log n)` nodes on the path to `i`, so a comparison that skips shared
+/// subtrees (`==`) is `O(log n)`: `O(n log n)` in all, ratio `8 ln 8n / ln n`, 9.99 at
+/// `n = 4000`; measured 8.54 (2026-11-28). A comparison that walks both sets key by key costs
+/// `i` at the `i`th pair, `O(n^2)`, ratio 64, measured 61.84 before the fix. On the chain of
+/// 12,800 links against 1600, the sizes of l01_18's `checking_a_chain_of_n_tuple_mins_scales`,
+/// the check phase of `zedc` took 12.86 times the instructions before the fix and 8.02 times
+/// after it (`zedc --report`, 2026-11-28, b31-tools). Bytes: two new paths a pair and one
+/// bucket a set, `O(n log n)`.
+#[test]
+fn sharing_equal_sets_made_apart_from_one_set_scales() {
+    crate::scaling::check_order_fresh(
+        "HashConsTable::share of the sets {0..=i} made twice by one insert, i below n",
+        4_000,
+        1,
+        |_, _| (),
+        |n, ()| {
+            let mut table = HashConsTable::default();
+            let mut shared: TreapSet<i64> = TreapSet::new();
+            for i in 0..n as i64 {
+                let (mut a, mut b) = (shared.clone(), shared.clone());
+                a.insert(i);
+                b.insert(i);
+                table.share(&mut a);
+                table.share(&mut b);
+                assert!(a.ptr_eq(&b), "the second set of {i} takes the first's tree");
+                shared = b;
+            }
+            (table, shared)
+        },
+    );
+}
+
 /// The big integers `2^64 + k (2^61 - 1)` for `k` in `1..=n`: one residue modulo `2^61 - 1`, so
 /// one digest, which the priorities of big integers read before PERF-fingerprint-montgomery.
 fn tied_bigs(n: usize) -> Vec<crate::value::Value> {

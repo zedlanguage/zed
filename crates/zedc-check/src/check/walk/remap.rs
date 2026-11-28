@@ -11,8 +11,16 @@ use num_integer::Integer;
 use num_traits::{One, Signed, Zero};
 
 use crate::check::*;
+use zed_kernel::{Prim, Term};
+use zedc_base::axioms::Tonicity;
 use zedc_base::rejection::Row;
+use zedc_lattice::grade::{Arith, grade};
+use zedc_lattice::interval::IntervalSet;
 use zedc_syntax::ast::{Blocks, RemapLevel, Target};
+
+/// The name the key binder takes in the term [`Ck::arith_term`] makes for `grade`; the
+/// term holds no other name, so any name serves.
+const KEY: &str = "k";
 
 /// The step `[k]` of a bracket holding the int literal `k`, or `None` for any other bracket.
 fn index_step(k: &Expr) -> Option<PathStep> {
@@ -928,8 +936,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The entries read here: literal key occurrence; tupling and permutation, a tuple key's
     /// components each recovered; integer affine maps of full column rank, which include the
     /// strictly monotone `k + 1` and `2*k`, the skew `(i, i + j)` and componentwise maps; `k mod
-    /// p` on at most `p` contiguous integers; the pair `(k div s, k mod s)`; and affine packing
-    /// `k1*s + k2` with each stride above the span of the keys beneath it. An exact-number key
+    /// p` on at most `p` contiguous integers; the pair `(k div s, k mod s)`; affine packing
+    /// `k1*s + k2` with each stride above the span of the keys beneath it; and strictly
+    /// monotone arithmetic in one binder ([`Self::monotone`]). An exact-number key
     /// is read as an affine atom; a float key only where it occurs whole, since float arithmetic
     /// rounds. Any other key expression, and the value binder, recover no key (widening).
     // Complexity tradeoff: the affine entries are decided together by Gaussian elimination
@@ -952,6 +961,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     // earlier term's span is 0, since its |v|·w counts in the later one's sum.
     // (4) Affine: an atom whose unit row lies in the rows' span over Q is a rational
     // combination of the components less known constants ([`recovered`]).
+    // (5) Strictly monotone (`monotone`): the component reads one binder k alone, and its
+    // grade over k's domain is ↑s or ↓s, which zedc-lattice `grade` gives only for a term that
+    // evaluates at every point of the domain. For keys k < k' of the domain the component's
+    // values then differ (< for ↑s, > for ↓s), so the component determines k, as a unit row.
     // Tests: `l08_02_remaps::rules::modulo_on_keys_within_the_modulus`,
     // `modulo_one_wider_is_rejected`, `affine_packing_and_one_stride_short`,
     // `div_and_mod_together_recover_the_key`, `a_float_key_is_read_only_whole`. Each tries one
@@ -1008,6 +1021,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             }
             let Some(lin) = self.linear(s, c, src) else {
+                if let Some(i) = self.monotone(s, c, src) {
+                    rows.push(Lin::from([((i, None), BigInt::one())]));
+                    note(&mut entries, "monotone");
+                }
                 continue;
             };
             if lin.is_empty() {
@@ -1109,6 +1126,107 @@ impl<'t, 'a> Ck<'t, 'a> {
                     (_, true) => Some((scale(l, &d), c * d)),
                     _ => None,
                 }
+            }
+            _ => None,
+        }
+    }
+
+    /// The key binder of `s` whose keys the component `e` keeps apart as strictly monotone
+    /// arithmetic (DESIGN.md sec:grouping): `e` reads that one binder, of type `int` or `rat`,
+    /// and integer literals, under `+`, `-`, `*`, `^`, `div`, `mod`, negation and the prelude's
+    /// `min` and `max`, and zedc-lattice's [`grade`] gives it ↑s or ↓s over the binder's
+    /// domain: the range written on the key ([`Self::key_range`]), else the ints its type
+    /// lists, else every value. A strict grade there also says the term evaluates at every
+    /// point of the domain, the entry's "total on the binder's domain". A float binder has no
+    /// entry (`x + 1.0 == x` at `x = 1.0e16`).
+    // Not read: a `@checked` integer type, whose operations may give `#overflow`; this zedc
+    // has no such type yet (the annotation is only reserved in zedc-resolve), and `grade`
+    // reads `Arith::Checked` as never strict for when it has.
+    // Complexity: one walk of `e` to a kernel term and one `grade`, O(|e|) (zedc-lattice
+    // grade.rs gives its bound); recursion as deep as `e`, as `affine` before it on the same
+    // expression. Tests: `l08_02_remaps::collisions::witness_strictly_monotone_*`,
+    // `witness_strictly_decreasing_cube`, `witness_strict_plus_monotone_min`,
+    // `witness_square_*`, and the refusals `witness_square_on_int_is_rejected`,
+    // `witness_monotone_but_not_strict_is_rejected`, `witness_a_float_key_plus_one_is_rejected`.
+    fn monotone(&self, s: &RemapF<'a>, e: &Expr, src: &[Ty]) -> Option<usize> {
+        let mut binder = None;
+        let term = self.arith_term(s, e, &mut binder)?;
+        let i = binder?;
+        let arith = if self.subtype(&src[i], &Ty::carrier(Carrier::Int)) {
+            Arith::Int
+        } else if self.subtype(&src[i], &Ty::carrier(Carrier::Rat)) {
+            Arith::Rat
+        } else {
+            return None;
+        };
+        let domain = match self.key_range(s, (i, None)) {
+            Some(r) => Some(written_ints(r)),
+            None => src[i].set.ints_listed().map(|vs| {
+                IntervalSet::from_pieces(
+                    (vs.iter())
+                        .map(|v| int_end(v).expect("a listed int"))
+                        .map(|e| (e.clone(), e))
+                        .collect(),
+                )
+            }),
+        };
+        let inputs = domain
+            .map(|d| BTreeMap::from([(Arc::from(KEY), d)]))
+            .unwrap_or_default();
+        let strict = matches!(
+            grade(&term, KEY, &inputs, arith),
+            Some(Tonicity::StrictUp | Tonicity::StrictDown)
+        );
+        strict.then_some(i)
+    }
+
+    /// The kernel term of the arithmetic `e` of [`Self::monotone`], its key binder written
+    /// [`KEY`] and recorded in `binder`; `None` when `e` holds anything else or a second
+    /// binder.
+    fn arith_term(&self, s: &RemapF<'a>, e: &Expr, binder: &mut Option<usize>) -> Option<Term> {
+        if let Some(i) = self.key_binder(s, e) {
+            if binder.is_some_and(|b| b != i) {
+                return None;
+            }
+            *binder = Some(i);
+            return Some(Term::Var(KEY.into()));
+        }
+        match &e.kind {
+            ExprKind::Int { .. } => Some(Term::Lit(Value::int(int_literal(e)?))),
+            ExprKind::Unary(UnaryOp::Neg, x) => {
+                Some(Term::Prim(Prim::Neg, vec![self.arith_term(s, x, binder)?]))
+            }
+            ExprKind::Binary(
+                op @ (BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Mul
+                | BinaryOp::IntDiv
+                | BinaryOp::Mod
+                | BinaryOp::Pow),
+                x,
+                y,
+            ) => {
+                let (x, y) = (
+                    self.arith_term(s, x, binder)?,
+                    self.arith_term(s, y, binder)?,
+                );
+                Some(Term::Prim(op.prim(), vec![x, y]))
+            }
+            ExprKind::Call {
+                callee,
+                positional,
+                named,
+                ..
+            } if named.is_empty() && positional.len() == 2 => {
+                let prim = match self.t.res.uses.get(&callee.span) {
+                    Some(Ref::Prelude(w)) if w == "min" => Prim::Min,
+                    Some(Ref::Prelude(w)) if w == "max" => Prim::Max,
+                    _ => return None,
+                };
+                let args = (positional.iter())
+                    .map(|a| self.arith_term(s, a, binder))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(Term::Prim(prim, args))
             }
             _ => None,
         }

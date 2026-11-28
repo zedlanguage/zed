@@ -50,8 +50,11 @@
 //! lemma holds and (every taken length is missing, or a row has no atom and no kill, or the
 //! 2-SAT has no model with every row's atoms all kept). A row with three or more atoms keeps its
 //! first two (by place) and then the solve may answer only `Inhabited`. Atoms that are not
-//! laminar at some place: `None` (two atoms per row with crossing atoms is NP-hard, by a
-//! reduction from 3-colouring). `None` sends the type to the search, as before this module.
+//! laminar at some place (two atoms per row with crossing atoms is NP-hard, by a reduction
+//! from 3-colouring): a list from the binary network of the clauses ([`crossing`], arc
+//! consistency, leaf and series elimination, then 2-SAT on the places left with two values),
+//! checked as above, so only `Inhabited`; else `None` (REFUSAL-front-u6-subset). `None` sends
+//! the type to the search, as before this module.
 //!
 //! The cost. Recognizing the class and the positive chain: O(size) set operations. The cells
 //! are found from the nodes' side: a node `v` at height `ht(v)` (links to its terminal) is at
@@ -83,266 +86,18 @@
 // `find_prefix_chains` returns `None` on a type of this class.
 
 use std::collections::{BTreeSet, HashMap};
-use std::hash::{Hash, Hasher};
-use std::rc::Rc;
 
 use zed_collections::index::to_u32_below;
 use zed_collections::intern::Interner;
 
-use super::super::{Lits, Parts, Row, Type};
+pub(super) use self::ints::Ints;
+use self::ints::only_ints;
+use super::super::{Row, Type};
 use super::shared::{
     ByType, ChainHint, ChainPlan, Digests, TwoSat, link_pairs, list_atoms, list_step,
 };
-use crate::digest::{Digest, TiedInterner, TiedMap};
+use crate::digest::{TiedInterner, TiedMap};
 use crate::value::Value;
-
-/// A set of integers: `vals` when not `cof`, else the integers less `vals`.
-// Complexity tradeoff: `n` rows sharing a width-`w` head `not_a` (`xr_bucket`) previously cloned,
-// hashed and compared `BTreeSet<Value>` of size `w` once per row in `Nodes::ints`, `orig_live`,
-// `U1` partner bucketing and `ids`, costing `Theta(n * w)`. Wrapping `vals` in `Rc` with a
-// precomputed 64-bit `Digest` makes `Clone` and `Hash` `O(1)`, and `PartialEq` `O(1)` whenever
-// hashes differ or `Rc::ptr_eq` holds (such as shared `Nodes::heads` and memoized place-1 cells).
-#[derive(Clone, Debug)]
-pub(super) struct Ints {
-    pub(super) cof: bool,
-    hash: u64,
-    pub(super) vals: Rc<BTreeSet<Value>>,
-}
-
-impl PartialEq for Ints {
-    #[inline]
-    fn eq(&self, o: &Ints) -> bool {
-        self.cof == o.cof
-            && self.hash == o.hash
-            && (Rc::ptr_eq(&self.vals, &o.vals) || *self.vals == *o.vals)
-    }
-}
-
-impl Eq for Ints {}
-
-/// By `cof`, the hash, then the values, so that a [`crate::digest::TiedMap`] can keep sets of
-/// one hash in order (PERF-typeset-tied-digest). It agrees with `==`: `hash` is a function of
-/// `cof` and the values ([`Ints::new`]), so sets equal by `==` compare `Equal`, and sets that
-/// compare `Equal` have equal `cof` and values, so are equal by `==`.
-impl Ord for Ints {
-    fn cmp(&self, o: &Ints) -> std::cmp::Ordering {
-        let head = (self.cof, self.hash).cmp(&(o.cof, o.hash));
-        if head.is_ne() || Rc::ptr_eq(&self.vals, &o.vals) {
-            return head;
-        }
-        self.vals.cmp(&o.vals)
-    }
-}
-
-impl PartialOrd for Ints {
-    fn partial_cmp(&self, o: &Ints) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(o))
-    }
-}
-
-impl Hash for Ints {
-    #[inline]
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.hash.hash(state);
-    }
-}
-
-impl Ints {
-    fn new(cof: bool, vals: BTreeSet<Value>) -> Ints {
-        let mut d = Digest::default();
-        cof.hash(&mut d);
-        vals.hash(&mut d);
-        Ints {
-            cof,
-            hash: d.finish(),
-            vals: Rc::new(vals),
-        }
-    }
-
-    /// The integer set of `t`, if `t` holds integers and nothing else. Wide integers
-    /// (`Value::Big`) are kept as values too: the escape only compares and hashes them (round 10).
-    pub(super) fn of(t: &Type) -> Option<Ints> {
-        let p = t.p();
-        if !only_ints(&p) {
-            return None;
-        }
-        let mut vals = BTreeSet::new();
-        for v in p.ints.values.iter() {
-            match v {
-                v @ (Value::Int(_) | Value::Big(_)) => {
-                    vals.insert(v.clone());
-                }
-                // The integers of a type hold `Value::Int` and `Value::Big` alone: they are
-                // made by `Type::lit` of an integer, `Type::ints_of` (which asserts it) and the
-                // universe (cofinite, no values), and changed only by `Lits::zip` and
-                // `Lits::not` with other integer sets, which keep values from their operands
-                // (TEST-kernel-unreached-paths-4, kernel12). Checked again by kernel13 over every
-                // write of a `Parts`'s `ints` in the crate: besides those, `Parts::join_literals`
-                // inserts the values of another type's `ints`, and `Type::split`
-                // (`types/empty.rs`) and the clones `q.ints = p.ints.clone()` copy one type's
-                // `ints` whole; none moves a value between the kinds of literal.
-                _ => unreachable!("a value in a type's integers that is no integer"),
-            }
-        }
-        Some(Ints::new(p.ints.cofinite, vals))
-    }
-
-    pub(super) fn is_empty(&self) -> bool {
-        !self.cof && self.vals.is_empty()
-    }
-
-    /// Whether `self ⊆ o`.
-    fn subset(&self, o: &Ints) -> bool {
-        match (self.cof, o.cof) {
-            (false, false) => {
-                self.vals.len() <= o.vals.len() && self.vals.iter().all(|x| o.vals.contains(x))
-            }
-            (false, true) => {
-                if self.vals.len() <= o.vals.len() {
-                    self.vals.iter().all(|x| !o.vals.contains(x))
-                } else {
-                    o.vals.iter().all(|x| !self.vals.contains(x))
-                }
-            }
-            (true, false) => false,
-            (true, true) => {
-                o.vals.len() <= self.vals.len() && o.vals.iter().all(|x| self.vals.contains(x))
-            }
-        }
-    }
-
-    /// Whether `self ∩ o` is empty.
-    fn disjoint(&self, o: &Ints) -> bool {
-        match (self.cof, o.cof) {
-            (false, _) => self.vals.iter().all(|x| o.cof == o.vals.contains(x)),
-            (true, false) => o.disjoint(self),
-            (true, true) => false,
-        }
-    }
-
-    pub(super) fn meet(&self, o: &Ints) -> Ints {
-        match (self.cof, o.cof) {
-            (false, _) => Ints::new(
-                false,
-                self.vals
-                    .iter()
-                    .filter(|x| o.cof != o.vals.contains(x))
-                    .cloned()
-                    .collect(),
-            ),
-            (true, false) => o.meet(self),
-            (true, true) => Ints::new(true, self.vals.union(&o.vals).cloned().collect()),
-        }
-    }
-
-    /// `self \ o`.
-    fn minus(&self, o: &Ints) -> Ints {
-        match (self.cof, o.cof) {
-            (false, _) => Ints::new(
-                false,
-                self.vals
-                    .iter()
-                    .filter(|x| o.cof == o.vals.contains(x))
-                    .cloned()
-                    .collect(),
-            ),
-            (true, false) => Ints::new(true, self.vals.union(&o.vals).cloned().collect()),
-            (true, true) => Ints::new(false, o.vals.difference(&self.vals).cloned().collect()),
-        }
-    }
-
-    /// One value of a set that is not empty: its least value, or the least natural number
-    /// not excluded.
-    fn pick(&self) -> Value {
-        if !self.cof {
-            return self.vals.iter().next().expect("not empty").clone();
-        }
-        (0..)
-            .map(Value::Int)
-            .find(|x| !self.vals.contains(x))
-            .expect("a cofinite set has a natural number")
-    }
-
-    pub(super) fn contains(&self, v: &Value) -> bool {
-        self.cof != self.vals.contains(v)
-    }
-
-    fn pick_in(&self, dom: &Ints) -> Value {
-        if !self.cof {
-            return self.vals.iter().next().expect("not empty").clone();
-        }
-        (0..)
-            .map(Value::Int)
-            .find(|x| !self.vals.contains(x) && dom.contains(x))
-            .expect("an intersection of two cofinite sets has a natural number")
-    }
-
-    /// Intersects a non-empty slice of `Ints` in `O(S log S)` time where
-    /// `S = \sum_r (1 + |s_r.vals|)`.
-    // Complexity tradeoff: folding `Ints::meet` left-to-right across `k` cofinite partners in one
-    // `U1` bucket (`\bigcap_{q=1}^k (\mathbb{Z} \setminus \{q\})`) clones an excluded set of size
-    // `q` at step `q`, costing `Theta(k^2)` (`xr_r2_bench_escape_single_bucket_scales_n_log_n`).
-    // Cloning the smallest finite set once (or, when all sets are cofinite, the largest excluded
-    // set once) and mutating that single `BTreeSet` in place costs `O(S log S)`.
-    fn intersect_many(sets: &[&Ints]) -> Ints {
-        debug_assert!(!sets.is_empty());
-        // No shortcut for one set: both callers pass two or more (U1 merges a group of two
-        // clauses or more, U2 a place's set and one unit at least), and the two branches below
-        // give the set itself for one set (TEST-kernel-unreached-paths-4, kernel12).
-        if let Some((min_idx, min_fin)) = sets
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| !s.cof)
-            .min_by_key(|(_, s)| s.vals.len())
-        {
-            let mut vals: BTreeSet<Value> = (*min_fin.vals).clone();
-            for (idx, s) in sets.iter().enumerate() {
-                if idx == min_idx || vals.is_empty() {
-                    continue;
-                }
-                if s.cof {
-                    for v in s.vals.iter() {
-                        vals.remove(v);
-                    }
-                } else {
-                    vals.retain(|x| s.vals.contains(x));
-                }
-            }
-            Ints::new(false, vals)
-        } else {
-            let (max_idx, max_cof) = sets
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, s)| s.vals.len())
-                .expect("non-empty cofinite slice");
-            let mut vals = (*max_cof.vals).clone();
-            for (idx, s) in sets.iter().enumerate() {
-                if idx != max_idx {
-                    for v in s.vals.iter() {
-                        vals.insert(v.clone());
-                    }
-                }
-            }
-            Ints::new(true, vals)
-        }
-    }
-}
-
-/// Whether `p` holds integers only (or nothing).
-fn only_ints(p: &Parts) -> bool {
-    p.bools == 0
-        && [&p.rats, &p.floats, &p.f32s, &p.strings]
-            .iter()
-            .all(|l: &&Lits| !l.cofinite && l.values.is_empty())
-        && !p.structs
-        && p.morphisms.is_leaf() == Some(false)
-        && p.tuples.is_default()
-        && !p.atoms.cofinite()
-        && p.atoms
-            .names()
-            .values()
-            .all(|a| !a.bare && a.payload == Type::empty())
-}
 
 /// A node of the class: `next` is `None` at a terminal (the end, or the carrier).
 struct Node {
@@ -1163,89 +918,99 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
             at_place.entry(*j).or_default().push(i);
         }
         let mut parent: Vec<Option<usize>> = vec![None; atom.len()];
-        for list in at_place.values() {
-            forest(list, &atom, &mut parent)?;
-        }
-
-        let mut sat = TwoSat {
-            vars: 0,
-            clauses: Vec::new(),
-            meets: HashMap::new(),
-        };
-        let z: Vec<usize> = atom.iter().map(|_| sat.fresh()).collect();
-        let mut kids: HashMap<(usize, Option<usize>), Vec<usize>> = HashMap::new();
-        for (i, (j, _)) in atom.iter().enumerate() {
-            if let Some(pa) = parent[i] {
-                sat.clauses.push((z[i] ^ 1, z[pa]));
-            }
-            kids.entry((*j, parent[i])).or_default().push(i);
-        }
-        let mut groups: Vec<Vec<usize>> = kids.into_values().collect();
-        groups.sort_unstable();
-        for g in groups {
-            // At most one: the ladder `s_i` = "one of the first i is true". The clauses are
-            // `z_a -> s_a`, `s_prev -> s_a` and `s_prev -> !z_a`. Two true, `z_a` before `z_b`:
-            // `z_a` gives `s_a`, the chain of `s_prev -> s` gives the `s` before `b`, and that
-            // gives `!z_b`, a contradiction. At most one true, at index `k` or none: `s_i` true
-            // exactly from `k` on meets every clause. Three clauses per atom, linear.
-            let mut prev: Option<usize> = None;
-            for &a in &g {
-                let s = sat.fresh();
-                sat.clauses.push((z[a] ^ 1, s));
-                if let Some(ps) = prev {
-                    sat.clauses.push((ps ^ 1, s));
-                    sat.clauses.push((ps ^ 1, z[a] ^ 1));
+        let laminar = at_place
+            .values()
+            .all(|list| forest(list, &atom, &mut parent).is_some());
+        // Crossing atoms at some place (REFUSAL-front-u6-subset): a list only, from the binary
+        // network of the clauses (`crossing`), checked below against every refused row written
+        // as the laminar list is; never an `Empty`, so `None` when it finds none.
+        let vals_picked: Vec<Value> = if !laminar {
+            crossing::crossing_witness(&pl, &atom, &clause)?
+        } else {
+            let mut sat = TwoSat {
+                vars: 0,
+                clauses: Vec::new(),
+                meets: HashMap::new(),
+            };
+            let z: Vec<usize> = atom.iter().map(|_| sat.fresh()).collect();
+            let mut kids: HashMap<(usize, Option<usize>), Vec<usize>> = HashMap::new();
+            for (i, (j, _)) in atom.iter().enumerate() {
+                if let Some(pa) = parent[i] {
+                    sat.clauses.push((z[i] ^ 1, z[pa]));
                 }
-                prev = Some(s);
+                kids.entry((*j, parent[i])).or_default().push(i);
             }
-        }
-        for c in &clause {
-            sat.clauses.push((z[c[0]], z[c[1]]));
-        }
-        // No model means no list of length `target_len` escapes every clause, the direction an
-        // `Empty` rests on: from such a list `x`, set `z_A` true exactly when `x_j` is in `A`
-        // (`A` at place `j`). A child atom lies in its parent (`forest`), so `z_A -> z_parent`
-        // holds; siblings, and the roots of one place, are disjoint, so `x_j` is in at most one
-        // of them and each ladder holds; and each clause holds, since `x` escapes its row at one
-        // of its two atoms. Each place's `p_j` is not empty (checked when `pl` is built). The
-        // other way (a model gives the list built below) is checked by `check_chain_witness`.
-        let Some(model) = sat.solve() else {
-            return (exact && !wide).then_some(ChainPlan::Empty);
-        };
-
-        // The list: at each place a value of the deepest true atom, else any value of `pl[j]`.
-        // Cost of `depth`: at most the number of atoms at the place for each atom, so k^2 for
-        // k atoms at one place, which is within their written size: the atoms are distinct
-        // (`ids`) and a chain of d nested distinct sets has finite sets of sizes at least
-        // 1, 2, .., d, or excluded sets of sizes at least 0, 1, .., d - 1, so d^2 / 2 values
-        // written in all, and the depth is at most such a chain's length.
-        let depth = |mut a: usize| {
-            let mut d = 0;
-            while let Some(pa) = parent[a] {
-                d += 1;
-                a = pa;
-            }
-            d
-        };
-        let mut deepest: HashMap<usize, (usize, usize)> = HashMap::new();
-        for (i, (j, _)) in atom.iter().enumerate() {
-            if model[z[i] / 2] {
-                let d = depth(i);
-                let e = deepest.entry(*j).or_insert((d, i));
-                if d >= e.0 {
-                    *e = (d, i);
+            let mut groups: Vec<Vec<usize>> = kids.into_values().collect();
+            groups.sort_unstable();
+            for g in groups {
+                // At most one: the ladder `s_i` = "one of the first i is true". The clauses are
+                // `z_a -> s_a`, `s_prev -> s_a` and `s_prev -> !z_a`. Two true, `z_a` before `z_b`:
+                // `z_a` gives `s_a`, the chain of `s_prev -> s` gives the `s` before `b`, and that
+                // gives `!z_b`, a contradiction. At most one true, at index `k` or none: `s_i` true
+                // exactly from `k` on meets every clause. Three clauses per atom, linear.
+                let mut prev: Option<usize> = None;
+                for &a in &g {
+                    let s = sat.fresh();
+                    sat.clauses.push((z[a] ^ 1, s));
+                    if let Some(ps) = prev {
+                        sat.clauses.push((ps ^ 1, s));
+                        sat.clauses.push((ps ^ 1, z[a] ^ 1));
+                    }
+                    prev = Some(s);
                 }
             }
-        }
-        let mut vals_picked = Vec::with_capacity(target_len + 1);
-        vals_picked.push(Value::Int(0)); // unused index 0
+            for c in &clause {
+                sat.clauses.push((z[c[0]], z[c[1]]));
+            }
+            // No model means no list of length `target_len` escapes every clause, the direction an
+            // `Empty` rests on: from such a list `x`, set `z_A` true exactly when `x_j` is in `A`
+            // (`A` at place `j`). A child atom lies in its parent (`forest`), so `z_A -> z_parent`
+            // holds; siblings, and the roots of one place, are disjoint, so `x_j` is in at most
+            // one of them and each ladder holds; and each clause holds, since `x` escapes its row
+            // at one of its two atoms. Each place's `p_j` is not empty (checked when `pl` is
+            // built). The other way (a model gives the list built below) is checked by
+            // `check_chain_witness`.
+            let Some(model) = sat.solve() else {
+                return (exact && !wide).then_some(ChainPlan::Empty);
+            };
+
+            // The list: at each place a value of the deepest true atom, else any value of `pl[j]`.
+            // Cost of `depth`: at most the number of atoms at the place for each atom, so k^2 for
+            // k atoms at one place, which is within their written size: the atoms are distinct
+            // (`ids`) and a chain of d nested distinct sets has finite sets of sizes at least
+            // 1, 2, .., d, or excluded sets of sizes at least 0, 1, .., d - 1, so d^2 / 2 values
+            // written in all, and the depth is at most such a chain's length.
+            let depth = |mut a: usize| {
+                let mut d = 0;
+                while let Some(pa) = parent[a] {
+                    d += 1;
+                    a = pa;
+                }
+                d
+            };
+            let mut deepest: HashMap<usize, (usize, usize)> = HashMap::new();
+            for (i, (j, _)) in atom.iter().enumerate() {
+                if model[z[i] / 2] {
+                    let d = depth(i);
+                    let e = deepest.entry(*j).or_insert((d, i));
+                    if d >= e.0 {
+                        *e = (d, i);
+                    }
+                }
+            }
+            let mut vals_picked = Vec::with_capacity(target_len + 1);
+            vals_picked.push(Value::Int(0)); // unused index 0
+            for (j, x) in pl.iter().enumerate().skip(1) {
+                let v = deepest
+                    .get(&j)
+                    .map_or_else(|| x.pick(), |&(_, i)| atom[i].1.pick_in(x));
+                vals_picked.push(v);
+            }
+            vals_picked
+        };
         let mut heads = Vec::with_capacity(target_len);
-        for (j, x) in pl.iter().enumerate().skip(1) {
-            let v = deepest
-                .get(&j)
-                .map_or_else(|| x.pick(), |&(_, i)| atom[i].1.pick_in(x));
-            heads.push(Type::lit(&v)?);
-            vals_picked.push(v);
+        for v in &vals_picked[1..] {
+            heads.push(Type::lit(v)?);
         }
         for (row, orig_atoms) in orig_live {
             let mut missed_at = None;
@@ -2316,6 +2081,9 @@ fn cells_windows(
     counts.1 += bl.empty;
 }
 
+mod crossing;
+mod ints;
+
 #[cfg(test)]
 mod bench;
 
@@ -2325,15 +2093,21 @@ mod bench;
 mod forest_tests {
     use num_bigint::BigInt;
 
+    pub(super) use super::ints::{cofinite, finite};
     use super::*;
     use crate::num::Rat;
 
-    pub(super) fn finite(vals: impl IntoIterator<Item = Value>) -> Ints {
-        Ints::new(false, vals.into_iter().collect())
-    }
-
-    pub(super) fn cofinite(vals: impl IntoIterator<Item = Value>) -> Ints {
-        Ints::new(true, vals.into_iter().collect())
+    /// The selector atoms `{2, 3}`, `{1, 3}`, `{1, 2}` of a clause cross, so `forest` refuses
+    /// them and the escape solve goes to `crossing` (`crossing::tests::selector`; the test is
+    /// here, as `crossing.rs` may not import `escape.rs`, which imports it).
+    #[test]
+    fn the_selector_atoms_cross() {
+        let clause = [[(0, false), (1, true), (2, true)]];
+        let (_, atom, _) = super::crossing::tests::selector(3, &clause);
+        let at_sel: Vec<usize> = (0..atom.len()).filter(|&i| atom[i].0 == 4).collect();
+        assert_eq!(at_sel.len(), 3);
+        let mut parent = vec![None; atom.len()];
+        assert_eq!(forest(&at_sel, &atom, &mut parent), None);
     }
 
     /// 10^19, past 64 bits, from its digits and from a decimal exponent, and 10^19 + 1.

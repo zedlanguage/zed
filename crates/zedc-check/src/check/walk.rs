@@ -146,6 +146,16 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
         (a.span, &a.message, &a.menu).cmp(&(b.span, &b.message, &b.menu))
     });
     ck.info.blocking = blocking;
+    ck.info.port_params = std::mem::take(&mut ck.port_params);
+    #[cfg(feature = "printed-types")]
+    ty::printed::record_checked(|| ty::printed::Checked {
+        tops: (ck.info.tops.iter())
+            .map(|(name, top)| (name.clone(), top.clone()))
+            .collect(),
+        sigs: (ck.info.sigs.iter())
+            .map(|(&binder, sig)| (t.res.binders[binder].name.clone(), sig.clone()))
+            .collect(),
+    });
     ck.info
 }
 
@@ -473,6 +483,10 @@ pub(super) enum Frame<'a> {
     ),
     TestArgs(Box<TestF<'a>>),
     TestWant(Box<TestF<'a>>, Ty),
+    /// Field `usize` of the record a row of a function with output port parameters expects,
+    /// the lines the row pushes to the port of its name, checked as a family of Strings, with
+    /// the number of errors before it ([`Ck::test_pushed`]).
+    TestLines(Box<TestF<'a>>, usize, Ty, usize),
     /// A binding, with the number of errors before its value is checked.
     Bind(&'a Stmt, usize),
     /// An expression statement, `say("hi", out: m.stdout);`.
@@ -567,8 +581,9 @@ pub(super) enum Frame<'a> {
     /// `flat_map_end`), and the receiver where it is a call of `flatMap` too.
     FlatMap(Ty, Span, Option<&'a Expr>),
     /// `x.foldl(init, f)` or, with `true`, `x.foldr(f, init)`, waiting for `init`: `x`'s type,
-    /// `f`, and the call's span (step L3.3; `fold_dir_end`).
-    FoldInit(Ty, &'a Expr, Span, bool),
+    /// `f`, the call's span (step L3.3; `fold_dir_end`), and the entry slot and type `f` is
+    /// checked at ([`Ck::word_fn`]).
+    FoldInit(Ty, &'a Expr, Span, bool, Option<(usize, Ty)>),
     /// The same, waiting for `f`: `x`'s type, `init`'s type, and the call's span.
     FoldFn(Ty, Ty, Span, bool),
     /// `x.any(p)`, `x.all(p)` or `x.find(p)`, waiting for `p`: `x`'s type, the quantifier
@@ -684,6 +699,9 @@ pub(super) struct TestF<'a> {
     exprs: Vec<&'a Expr>,
     got: Vec<Option<Arg<'a>>>,
     waiting: bool,
+    /// The places of the output port parameters among `f`'s, in order: the key gives each
+    /// as `[]`, which is not walked, and the call is given the port's declared type there.
+    ports: Vec<usize>,
 }
 
 pub(super) struct InferF<'a> {
@@ -1087,6 +1105,10 @@ pub(super) struct FitF<'a> {
     /// arrow, checked outside a trial. Its bare `else`s are refused once, when the outermost
     /// such fit ends ([`Ck::else_unnamed`]).
     joined: bool,
+    /// While the body is checked at an arrow of an intersection of more than one arrow, the
+    /// trail [`Ck::arrow_now`] held before this lambda's frame was pushed, put back when the
+    /// body ends.
+    outer: ty::ArrowTrail,
 }
 
 #[derive(Clone, Copy)]
@@ -1478,10 +1500,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.flat_map_end(t, at, false);
                 m.ty(t);
             }
-            Frame::FoldInit(x, f, span, right) => {
+            Frame::FoldInit(x, f, span, right, first) => {
                 let init = m.take_arg();
                 m.k(Frame::FoldFn(x, init.ty, span, right));
-                m.job(Job::Arg(f, Want::default()));
+                self.word_fn(m, f, first);
             }
             Frame::FoldFn(x, init, span, right) => {
                 let f = m.take_arg();
@@ -2055,8 +2077,19 @@ impl<'t, 'a> Ck<'t, 'a> {
             Frame::TestWant(s, result) => {
                 let want = m.take_arg();
                 self.equal(&Arg::of(result), &want);
-                let TestF { f, sig, case, .. } = *s;
-                self.test_case(m, f, sig, case + 1);
+                self.test_pushed(m, s, 0);
+            }
+            Frame::TestLines(s, k, ty, before) => {
+                let a = m.take_arg();
+                // A lambda refused while it was fitted is not refused again, as at a clause
+                // (`Frame::TestPort`).
+                if self.errors.len() == before
+                    && let ExprKind::Record(fields) = &s.f.tests[s.case].1.kind
+                {
+                    let (name, e) = &fields[k];
+                    self.passes_into(&a.ty, &ty, &format!("`{name}`"), None, e.span);
+                }
+                self.test_pushed(m, s, k + 1);
             }
             Frame::Bind(s, before) => {
                 let v = m.take_ty();
@@ -2601,6 +2634,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 (ExprKind::Tuple(items), n) if items.len() == n => items.iter().collect(),
                 _ => continue,
             };
+            let ports = (f.params.iter().enumerate())
+                .filter(|(_, p)| self.port_params.contains(&self.id(p.span, &p.name)))
+                .map(|(i, _)| i)
+                .collect();
             let s = TestF {
                 f,
                 sig,
@@ -2608,6 +2645,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 exprs,
                 got: Vec::new(),
                 waiting: false,
+                ports,
             };
             return self.test_args(m, Box::new(s));
         }
@@ -2619,17 +2657,74 @@ impl<'t, 'a> Ck<'t, 'a> {
             let x = m.take_arg();
             s.got.push(Some(x));
         }
-        if let Some(&a) = s.exprs.get(s.got.len()) {
+        while let Some(&a) = s.exprs.get(s.got.len()) {
+            // A port the key gives as `[]` (`ports::table_rows` refused any other component)
+            // is passed as a call passes one: a value of the parameter's declared type.
+            let i = s.got.len();
+            if s.ports.contains(&i)
+                && let Some(ty) = s.sig.arrows.first().and_then(|r| r.params.get(i))
+            {
+                s.got.push(Some(Arg::of(ty.clone())));
+                continue;
+            }
             s.waiting = true;
             m.k(Frame::TestArgs(s));
             return m.job(Job::Arg(a, Want::default()));
         }
-        let (input, expected) = &s.f.tests[s.case];
+        let f = s.f;
+        let (input, expected) = &f.tests[s.case];
+        // A row of a function with output ports expects the record `{ result:, <port>: … }`
+        // (`ports::table_rows` refused any other value, and a record with no `result`): its
+        // result is compared as a row's value is, then each port's lines ([`Self::test_pushed`]).
+        let expected = match &expected.kind {
+            ExprKind::Record(fields) if !s.ports.is_empty() => (fields.iter())
+                .find(|(n, _)| n == "result")
+                .map_or(expected, |(_, e)| e),
+            // The resolver lets a record value through for a function with a `Lines`
+            // parameter, which may be an output port; where none is, the value is a record
+            // display, of a later step, which the walk of expressions does not take.
+            ExprKind::Record(_) => {
+                self.error_with(
+                    expected.span,
+                    "a record display is part of the Zed language but is not supported by this \
+                     version of zedc",
+                    Vec::new(),
+                );
+                let TestF { f, sig, case, .. } = *s;
+                return self.test_case(m, f, sig, case + 1);
+            }
+            _ => expected,
+        };
         let args = std::mem::take(&mut s.got);
-        let what = format!("`{}`", s.f.name);
+        let what = format!("`{}`", f.name);
         let (result, _) = self.apply(Label::Text(&what), &s.sig, args, false, input.span);
         m.k(Frame::TestWant(s, result));
         m.job(Job::Arg(expected, Want::default()));
+    }
+
+    /// The fields of the record row `s.case` expects from field `k` on, but `result`: each the
+    /// lines the row pushes to the output port of its name, checked as the family of Strings
+    /// the port's writes are, `int ->? Utf8String` (DESIGN.md sec:ports, "for a port that is
+    /// only written, an output stream …, it is the list of the values written, in order").
+    /// Then the next row. Cost: one check of each field, as of an argument.
+    fn test_pushed(&mut self, m: &mut M<'a>, s: Box<TestF<'a>>, mut k: usize) {
+        if let ExprKind::Record(fields) = &s.f.tests[s.case].1.kind
+            && !s.ports.is_empty()
+        {
+            while let Some((name, e)) = fields.get(k) {
+                if name == "result" {
+                    k += 1;
+                    continue;
+                }
+                let ty = port(Carrier::Int, false);
+                let want = Want::of(&ty);
+                let before = self.errors.len();
+                m.k(Frame::TestLines(s, k, ty, before));
+                return m.job(Job::Arg(e, want));
+            }
+        }
+        let TestF { f, sig, case, .. } = *s;
+        self.test_case(m, f, sig, case + 1);
     }
 
     fn stmt(&mut self, m: &mut M<'a>, s: &'a Stmt) {
@@ -4993,15 +5088,19 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// headline (DESIGN sec:type_language, the `m >< op` row: "`[] >< max` is rejected"),
     /// where a generic lambda, fitted to the entries by its signature alone, was refused by
     /// the word (plan row MSG-map-display-row-fold-headline).
+    ///
+    /// `slot` is the parameter that takes the entries: 0 for those words, 1 for `foldl` and 0
+    /// for `foldr` (the order [`Self::fold_dir_end`] applies the function in); the result
+    /// carries it for [`Self::word_fn`].
     // Complexity tradeoff: a scan of `x`'s pieces, O(pieces), and `word_entries` where the
     // first parameter has no written type, O(arrows of `x`), as `map_end` pays at the same
     // call site, recorded once per call site of the word; `proved_no_entries` is O(arrows of
     // the entries), which the union bounds.
-    fn lambda_entries(&mut self, x: &Ty, f: &Expr, span: Span) -> Option<Ty> {
+    fn lambda_entries(&mut self, x: &Ty, f: &Expr, span: Span, slot: usize) -> Option<(usize, Ty)> {
         let ExprKind::Lambda { params, .. } = &f.kind else {
             return None;
         };
-        if !params.first().is_some_and(|p| p.ty.is_none()) {
+        if !params.get(slot).is_some_and(|p| p.ty.is_none()) {
             return None;
         }
         let open = x.pieces().into_iter().any(|p| match p {
@@ -5013,7 +5112,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // With no open class in `x`, `word_entries` records no need: each variable is read as
         // its resolved type, or as `_` where it has no class.
         let entries = self.word_entries(x, span);
-        (open || self.proved_no_entries(&entries)).then_some(entries)
+        (open || self.proved_no_entries(&entries)).then_some((slot, entries))
     }
 
     /// Whether the lambda `f` reads, at any depth, a name bound outside it that is not a
@@ -5068,10 +5167,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// The function `f` given to `map`, `where`, `flatMap` or `group`, as an argument: a lambda
-    /// with its first parameter of type `first` where [`Self::lambda_entries`] gives one, else
-    /// as any argument.
-    fn word_fn(&mut self, m: &mut M<'a>, f: &'a Expr, first: Option<Ty>) {
+    /// The function `f` given to `map`, `where`, `flatMap`, `group` or a fold, as an argument:
+    /// a lambda with its parameter of the slot in `first` of the type in it where
+    /// [`Self::lambda_entries`] gives one, else as any argument.
+    fn word_fn(&mut self, m: &mut M<'a>, f: &'a Expr, first: Option<(usize, Ty)>) {
         match (&f.kind, first) {
             (ExprKind::Lambda { params, body }, Some(t)) => {
                 m.k(Frame::ArgOf(f));
@@ -11792,7 +11891,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         let at = receiver.as_ref().map(|r| r.expr.map_or(span, |e| e.span));
         let (slots, missing) = match fit(&sig, declared, at, &args, curry, span, self.t.text) {
             Ok(fitted) => fitted,
-            Err(misfits) => return self.unfit(m, &sig, declared, &args, span, &what, misfits),
+            Err(misfits) => {
+                if declared && receiver.is_none() && !curry && !self.trying {
+                    self.moved_parenthesis(&sig, &args, span, &what);
+                }
+                return self.unfit(m, &sig, declared, &args, span, &what, misfits);
+            }
         };
         let s = CallSigF {
             receiver,
@@ -12206,10 +12310,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             for (at, misfit) in misfits {
                 let message = misfit.message(&who);
-                let menu = misfit.menu(&who, called).into_iter().map(|text| Note {
-                    span: at,
-                    text: text.into(),
-                });
+                // The repair naming the nearest parameter, the first entry, rewrites the whole
+                // argument `name: value`; every other entry is at the argument's value.
+                let first = match misfit {
+                    Misfit::NoParam(_, Some((_, _, whole))) => whole,
+                    _ => at,
+                };
+                let menu =
+                    (misfit.menu(&who, called).into_iter().enumerate()).map(|(k, text)| Note {
+                        span: if k == 0 { first } else { at },
+                        text: text.into(),
+                    });
                 let menu = misfit.first_site().into_iter().chain(menu);
                 match misfit.row() {
                     Some(row) => self.rejects_with(row, at, message, menu.collect()),
@@ -12233,6 +12344,153 @@ impl<'t, 'a> Ck<'t, 'a> {
         let menu = misfit.menu(what, CalledKind::Value);
         m.k(Frame::Fail(Some((at, message, menu))));
         m.each(args.exprs());
+    }
+
+    /// For a call `f(…, g(x, y), …)` of the declared `f`, `fsig`, whose arguments `args` do
+    /// not fit, where a positional argument is a call of the declared `g` with more
+    /// positional arguments than `g` takes: the error at `g`'s first argument beyond its
+    /// parameters, with the repair that moves `g`'s closing parenthesis to before it,
+    /// `f(g(x), y)`, offered only when both calls then check (DESIGN.md sec:diagnostics, row
+    /// "Argument beyond the parameters"; step L1.29c). Elaboration reports the same error
+    /// without the repair, and the merge keeps this copy. The first such argument of `f` is
+    /// tried; the repair is not offered where the call's code runs over more than one line.
+    ///
+    /// Complexity tradeoff: the step's text has the check read the argument types already
+    /// recorded, O(k) for k arguments. On this path none is recorded: `f`'s arguments are not
+    /// walked once they do not fit ([`Self::unfit`]). So the two calls are checked as a trial
+    /// that is undone ([`Self::tried`]), `g` on its kept arguments and `f` on `g`'s result and
+    /// the moved ones, which walks each of the k arguments once: O(k) walks, each costing what
+    /// the argument's own check costs, made only at a call that is already rejected, at most
+    /// one trial per such call, and never a re-check of the unit.
+    fn moved_parenthesis(&mut self, fsig: &Arc<Sig>, args: &Args<'a>, span: Span, what: &Rc<str>) {
+        let Some(text) = self.t.text else {
+            return;
+        };
+        // The first positional argument that is a call of a declared function by position
+        // alone, with more arguments than its parameters.
+        let found = args.positional.iter().enumerate().find_map(|(k, a)| {
+            let ArgSrc::Expr(e) = a else { return None };
+            let ExprKind::Call {
+                callee,
+                positional,
+                named,
+                curry: false,
+                infix: false,
+            } = &e.kind
+            else {
+                return None;
+            };
+            let id = self.declared(callee)?;
+            let gsig = only_fn(self.env.get(&id)?)?;
+            let np = gsig.params.len();
+            let cend = callee.span.end;
+            (named.is_empty() && positional.len() > np)
+                .then_some((k, e, cend, positional, id, gsig))
+        });
+        let Some((k, e, cend, gp, id, gsig)) = found else {
+            return;
+        };
+        let np = gsig.params.len();
+        let gname: Rc<str> = self.t.funcs[&id].name.as_str().into();
+        let kept = Args {
+            positional: gp[..np].iter().map(ArgSrc::Expr).collect(),
+            named: Vec::new(),
+        };
+        let mut moved = Args {
+            positional: Vec::with_capacity(args.positional.len() + gp.len() - np),
+            named: args.named.clone(),
+        };
+        moved
+            .positional
+            .extend(args.positional[..k].iter().cloned());
+        moved
+            .positional
+            .push(ArgSrc::Got(Box::new(Arg::of(Ty::empty()))));
+        moved.positional.extend(gp[np..].iter().map(ArgSrc::Expr));
+        moved
+            .positional
+            .extend(args.positional[k + 1..].iter().cloned());
+        // Both calls fit by count and form before either is checked.
+        let fits =
+            |sig: &Sig, a: &Args<'_>, at: Span| fit(sig, true, None, a, false, at, None).is_ok();
+        if !fits(&gsig, &kept, e.span) || !fits(fsig, &moved, span) {
+            return;
+        }
+        // The code of `f`'s call with `g`'s closing parenthesis after its last kept argument,
+        // or right after its opening one when it takes none: `f(g(x), y)`, `f(g(), x)`.
+        let Some(code) = (|| {
+            let call = text.get(span.start..span.end)?;
+            let close = e.span.end.checked_sub(1)?;
+            (!call.contains('\n') && text.get(close..e.span.end)? == ")").then_some(())?;
+            let (cut, insert) = match np {
+                0 => (text.get(cend..close)?.find('(')? + cend + 1, "), "),
+                _ => (gp[np - 1].span.end, ")"),
+            };
+            let rest = match np {
+                0 => text[cut..close].trim_start(),
+                _ => &text[cut..close],
+            };
+            Some(format!(
+                "{}{insert}{rest}{}",
+                &text[span.start..cut],
+                &text[close + 1..span.end]
+            ))
+        })() else {
+            return;
+        };
+        let checks = self.tried(|ck| {
+            let mut m = M::new();
+            let kept = Rc::new(kept);
+            ck.call_sig(
+                &mut m,
+                gsig.clone(),
+                true,
+                None,
+                kept,
+                false,
+                None,
+                e.span,
+                gname.clone(),
+            );
+            ck.drive(&mut m);
+            let gt = m.take_ty();
+            moved.positional[k] = ArgSrc::Got(Box::new(Arg::of(gt)));
+            let mut m = M::new();
+            let moved = Rc::new(moved);
+            ck.call_sig(
+                &mut m,
+                fsig.clone(),
+                true,
+                None,
+                moved,
+                false,
+                None,
+                span,
+                what.clone(),
+            );
+            ck.drive(&mut m);
+            m.take_ty()
+        });
+        if checks.is_none() {
+            return;
+        }
+        let at = gp[np].span;
+        let misfit = Misfit::TooMany(np);
+        let mut menu: Vec<Note> = (misfit.menu(&gname, CalledKind::Declared).into_iter())
+            .map(|text| Note {
+                span: at,
+                text: text.into(),
+            })
+            .collect();
+        let entry = Note {
+            span,
+            text: format!("repair: write `{code}`").into(),
+        };
+        menu.insert(1.min(menu.len()), entry);
+        let row = misfit
+            .row()
+            .expect("an argument beyond the parameters has its row");
+        self.rejects_with(row, at, misfit.message(&gname), menu);
     }
 
     /// `x.f(args)` and `x?.f(args)`: the call `f(x, args)`; `?.` passes `x`'s atoms around it.
@@ -12372,7 +12630,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if name == "map" || name == "where" => match (positional, named, curry) {
                     ([f], [], false) => {
                         self.range_param(of, f, 1, 0);
-                        let first = self.lambda_entries(&x.ty, f, span);
+                        let first = self.lambda_entries(&x.ty, f, span, 0);
                         let word = match name {
                             "map" => MapWord::Map,
                             _ => MapWord::Where,
@@ -12404,8 +12662,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                             let (init, f) = if right { (b, a) } else { (a, b) };
                             // The entry is the function's first parameter for `foldr`, its
                             // second for `foldl` (the order `fold_dir_end` applies it in).
-                            self.range_param(of, f, 2, usize::from(!right));
-                            m.k(Frame::FoldInit(x.ty, f, span, right));
+                            let slot = usize::from(!right);
+                            self.range_param(of, f, 2, slot);
+                            // A lambda that reads a name bound outside it is tied to the
+                            // entries in its entry slot, as at `any` (row
+                            // FAIL-fold-lambda-calls-param-entry); one that reads only its own
+                            // names stays generic in both slots, so the accumulator rounds of
+                            // `fold_dir_end` apply it at each accumulator type.
+                            let first = match self.reads_outer_name(f) {
+                                true => self.lambda_entries(&x.ty, f, span, slot),
+                                false => None,
+                            };
+                            m.k(Frame::FoldInit(x.ty, f, span, right, first));
                             m.job(Job::Arg(init, Want::default()));
                         }
                         _ => {
@@ -12428,7 +12696,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if name == "flatMap" => match (positional, named, curry) {
                     ([f], [], false) => {
                         self.range_param(of, f, 1, 0);
-                        let first = self.lambda_entries(&x.ty, f, span);
+                        let first = self.lambda_entries(&x.ty, f, span, 0);
                         self.entry_param("flatMap", &x.ty, of, f);
                         m.k(Frame::FlatMap(x.ty, span, Self::flat_map_receiver(of)));
                         self.word_fn(m, f, first);
@@ -12451,7 +12719,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     ([f], [], false) => {
                         // `rekey` is refused whatever its arguments, so its lambda is generic.
                         let first = match name {
-                            "group" => self.lambda_entries(&x.ty, f, span),
+                            "group" => self.lambda_entries(&x.ty, f, span, 0),
                             _ => None,
                         };
                         if name == "group" {
@@ -12617,7 +12885,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // function, not the enclosing one.
                     ([f], [], false) => {
                         let first = match self.reads_outer_name(f) {
-                            true => self.lambda_entries(&x.ty, f, span),
+                            true => self.lambda_entries(&x.ty, f, span, 0),
                             false => None,
                         };
                         m.k(Frame::Quantify(x.ty, q, span));
@@ -12862,9 +13130,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// A lambda with no expected type: its parameters positional, typed by their
-    /// annotations; one without is generic, as a declared function's. With `first`, the first
-    /// parameter, when it has no written type, is of type `first` ([`Self::lambda_sig`]).
-    fn lambda(&mut self, m: &mut M<'a>, params: &'a [Param], body: &'a Expr, first: Option<Ty>) {
+    /// annotations; one without is generic, as a declared function's. With `first`, the
+    /// parameter of its slot, when it has no written type, is of its type ([`Self::lambda_sig`]).
+    fn lambda(
+        &mut self,
+        m: &mut M<'a>,
+        params: &'a [Param],
+        body: &'a Expr,
+        first: Option<(usize, Ty)>,
+    ) {
         let names = params
             .iter()
             .map(|p| SParam {
@@ -12895,9 +13169,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The signature of a lambda checked as a declared function's body is: each parameter of
     /// `slots` typed by its annotation, one without a type variable its uses constrain, and a
     /// slot no parameter takes a type variable nothing constrains; each parameter of `extra`
-    /// typed by its default; the signature's parameters are `names`. With `first`, the first
-    /// slot, when its parameter has no written type, is of type `first` in place of a new
-    /// variable. Its function type is the result of the jobs pushed.
+    /// typed by its default; the signature's parameters are `names`. With `first`, the slot it
+    /// names, when its parameter has no written type, is of the type it holds in place of a
+    /// new variable. Its function type is the result of the jobs pushed.
     fn lambda_sig(
         &mut self,
         m: &mut M<'a>,
@@ -12905,7 +13179,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         extra: &[&'a Param],
         names: Vec<SParam>,
         body: &'a Expr,
-        mut first: Option<Ty>,
+        mut first: Option<(usize, Ty)>,
     ) {
         self.level += 1;
         let level = self.level;
@@ -12913,10 +13187,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.open_type_vars(level);
         let (mut tys, mut ids) = (Vec::new(), Vec::new());
         let mut plain = extra.is_empty();
-        for p in slots {
+        for (i, p) in slots.enumerate() {
             plain &= p.is_some_and(|p| p.tuple.is_none() && p.default.is_none());
             let declared = p.and_then(|p| p.ty.as_ref());
-            let t = match (declared, first.take()) {
+            let given = first.take_if(|(s, _)| *s == i).map(|(_, t)| t);
+            let t = match (declared, given) {
                 (Some(t), _) => self.written(t, true),
                 (None, Some(t)) => t,
                 (None, None) => {
@@ -13165,6 +13440,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             x: 0,
             waiting: None,
             joined,
+            outer: ty::ArrowTrail::default(),
         };
         self.fit_step(m, Box::new(s));
     }
@@ -13183,6 +13459,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Some(FitWait::Body) => {
                 let r = m.take_ty();
+                // The body's check at this arrow ended: the frame pushed for it goes (an
+                // intersection of one arrow pushed none, and `outer` is the trail as it was).
+                if s.e.arrows.len() > 1 {
+                    self.arrow_now = std::mem::take(&mut s.outer);
+                }
                 // The answer must lie in the arrow's value type, not its lookup type: for a
                 // partial arrow `K ->? V` the lookup is `V | #notFound`, and the `#notFound`
                 // there is the mark of an absent key, while what a function answers is a value
@@ -13332,6 +13613,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             // the record by hand.
             if s.e.arrows.len() > 1 {
                 self.record_arrow_lambda(s.span, s.e.clone());
+                // The frame of this lambda at this arrow, current while the body is checked
+                // ([`Ck::arrow_now`], row MSG-arrow-lambda-nested-cause); taken off at
+                // `FitWait::Body`. O(1).
+                let frame = ty::ArrowFrame {
+                    lam: s.span,
+                    arrow: s.a,
+                    up: self.arrow_now.0.clone(),
+                };
+                let now = ty::ArrowTrail(Some(Arc::new(frame)));
+                s.outer = std::mem::replace(&mut self.arrow_now, now);
             }
             s.waiting = Some(FitWait::Body);
             m.k(Frame::FitLambda(s));
@@ -16948,28 +17239,104 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// partition). The arm `NeedKind::InDomain` writes nothing and gives the empty type, so it
     /// is monotone. Each other arm writes through the checker's walk of calls, reads and
     /// operators, which was not proved monotone here.
-    /// (b4) Where (b) fails as stated: `meet` makes classes. A use met on a class whose mask
-    /// names no single carrier is recorded on that class, and its result is a new class
-    /// ([`Self::need`], `let j = self.class()`), so `got(s')` can be the variable `$j` of a
-    /// class s' did not have, while at s, whose mask is the carrier `int`, `got(s)` is `int`
-    /// (inferred from `need` and the walk of operators, as for `x + 1` with x's class at
-    /// `int | f64` in s' and `int` in s; not run). Then `f(s')` joins k to `$j` and `f(s)`
-    /// cuts k to `int`: the two states are over different classes, and `f(s')` has a pair
-    /// `f(s)` lacks, so `f(s) <= f(s')` is not even defined on (partition, masks) over a fixed
-    /// set of classes, and the uses (`U`, which `need` adds to) are part of the state. The
-    /// claim that would close the proof, open: for s <= s', `f(s)` lies below `f(s')` with
-    /// each use `f(s')` left on a new class met at the masks of s, which is what the end of
-    /// the function does for a class that takes a type ([`Self::generalize`] meets each use
-    /// of such a class on that type); that is a statement about the fixpoint, not about one
-    /// operator, and the chaotic-iteration argument above must be redone over states that
-    /// carry the classes made and the uses recorded. A program whose end classes change with
-    /// the order of the roots would refute it. The test
-    /// `tests::join_narrowed_joins_a_chain_whatever_the_order_of_its_roots` checks the order
-    /// independence without use checks, and
+    /// (b4) The fixpoint claim with the classes a check makes. First, a correction to the
+    /// earlier form of this step, which said a use met on a class of mask `int | f64` gives a
+    /// new class while met on a class of mask `int` it gives `int`. By reading: [`Self::need`]
+    /// gives a new class for every use that gives one (`gives.then(|| … self.class() …)`),
+    /// whatever the mask; the choice between making a need and using the type at once is made
+    /// on the class's `resolved` (as in `word_entries`: `Some((_, Some(t)))` uses `t`,
+    /// `Some((r, None))` makes a need); and the `resolved` of a class of this level is set
+    /// only by `resolve`, inside [`Self::generalize`], which runs after this search (the two
+    /// call sites in this file run `join_narrowed(level)` and then `generalize(level, …)`).
+    /// So no check inside the search sees a `resolved` the search wrote. A check sees the
+    /// search's masks only where it reads a mask: by reading, `class_takes` (the carrier of a
+    /// literal from the one carrier of its class's mask, `LitsTake::Left`), reached from
+    /// `fix_bound` and `equal_classes`, and `resolve` (`single_carrier(mask)`).
+    ///
+    /// Claim (F): fix the state s0 and the links of one call of `join_narrowed`; assume
+    /// (H1) no check run inside the search reads the mask of a class of this level, and
+    /// (H2) a check of the pair (n, t) writes, at a state with partition P, the constraints
+    /// C(n, t, P) of (b1)'s form on the classes it was given and on the classes it makes, and
+    /// makes and checks at a coarser partition every class and nested pair it makes and checks
+    /// at a finer one ((b2), and (b3) for the arms of `meet`). Then of two fair runs X and Y,
+    /// if X has no failed merge, neither has Y, and the two end in the same partition and masks
+    /// of the classes that exist at s0, each class made in one run matching one made in the
+    /// other.
+    /// Proof. (F1) Name each class a check makes by its path: the pair checked, then the place
+    /// of the `need` call among those the check makes, then, for a nested check, its pair and
+    /// place, and so on; the checks nest finitely ((b2)). By (H2) the paths of the classes a
+    /// run makes at a finer partition are a subset of those it would make at a coarser one, so
+    /// "the class with path p" means one class in each run that makes it. (F2) Induction on
+    /// Y's steps, as in the proof of the order of the joins above, with classes named by
+    /// path: each class of Y lies within one class of X's end, its mask contains that class's
+    /// mask, and each link Y joins and pair Y checks, X joined and checked. Step, a link:
+    /// as in that proof. Step, a check of (n, t): n and t are in one class of Y, so by the
+    /// hypothesis in one class of X's end, so X checked (n, t) ((a): a pair is checked when its
+    /// use and its inflow first share a class, and they share one at X's end). Y's partition
+    /// is finer than X's end, so by (H2) the classes Y makes have paths X made, and the
+    /// constraints Y writes are among those X wrote, each a join of two classes in one class
+    /// of X's end or a cut to a mask that contains the mask of X's class there; by (b1) Y's
+    /// state after the step keeps the hypothesis. A merge of Y then meets a mask containing
+    /// X's, which is not empty, so Y fails nowhere. (F3) Both runs end, the states only moving
+    /// down over finitely many (classes are made only by checks, and the pairs are finitely
+    /// many, (a)). By (F2) with X and Y swapped, each end lies within the other: they are
+    /// equal, class for class by path. (H1) makes the masks of the search's classes no input
+    /// of any check, so C does not depend on them, which (F2) uses where it says Y's
+    /// constraints are among X's.
+    ///
+    /// (b5) No check runs inside the search, so (H1) holds and (H2) is never used (row
+    /// PROOF-join-narrowed-literal-carrier). The concern was that the check of a call need on
+    /// a function value walks that function's body (`check_on` → `meet` → `call_found` →
+    /// `drive` → `resume`) and reaches `class_takes` (`resume` → `bind` → `fix_bound` →
+    /// `fix_class` → `class_takes`, and `resume` → `binary_end` → `as_written` → `construct` →
+    /// `binary_op` → `equal_classes` → `class_takes`), which could choose a literal's carrier
+    /// at `int | f64` in one order and at `int` in another. Every such path starts at
+    /// `check_on`, as does the `NeedKind::Remap` arm of `meet`. Inside the search a check can
+    /// start only in [`Self::merge`], called from [`Self::join_link`], at its loop over `cross`:
+    /// the pairs of a use of one class and a tuple or function in the other's `flowed`. The
+    /// other calls in `merge` and `join_link` run no check: `r10_force_root` →
+    /// `r10_force_forward` calls `find` and `build_fwd_need_from_open` (no method of `self`)
+    /// and writes only uses and fresh classes; `touch` (`r10_force_root`), `link_proof`,
+    /// `log_class`, `lower_uses` (`lower`, `bound_levels`, `find`), `show`, `error_offering`
+    /// (`derive`, which only reads, and `error_with` → `reject`), and `push_carrier_groups`
+    /// (`find`).
+    /// Invariant I: a root whose `flowed` is not empty has a mask with no bit but `OTHER`.
+    /// (I1) A class is made with `flowed` empty (the two `Class` constructors in mod.rs and
+    /// `make_fresh_class`), so I holds for it.
+    /// (I2) `flowed` grows at one place outside the unit tests, [`Self::flow`], and only for a
+    /// tuple or function piece p. For p, `class_of(p)` is `None` (it is `Some` only for a
+    /// variable) and `p.carrier()` is `None` (it is `Some` only for a carrier piece), so `flow`
+    /// first ran `restrict(k, OTHER)`, which leaves the mask of k's root within `OTHER` or
+    /// fails, and then pushes onto that root (`r10_force_root` between the two writes no mask
+    /// and links no class).
+    /// (I3) A mask is written at two places. [`Ck::restrict_asking`] writes `old & mask` and
+    /// returns false before writing 0, so a mask within `OTHER` stays within it. `merge` gives
+    /// the root the `flowed` of both classes and the mask m = a & b, and returns false before
+    /// writing if m = 0; if either class had `flowed` not empty, its mask is within `OTHER`, so
+    /// m is too. So masks only lose bits and are never 0.
+    /// (I4) The other place a root gets a parent, [`Self::join_results`], writes neither the
+    /// mask nor the `flowed` of the root it keeps.
+    /// (I5) A dropped layer gives back the whole entry of each class written in it
+    /// (`probe::Classes`: a write in an open layer goes to the layer's copy of the entry, and
+    /// `drop_layer` puts back the entry from before the layer), so the state after the drop is
+    /// the state before the layer, where I held. The writes that go past a layer
+    /// (`begin_through`) are those of `r10_force_forward`, uses and fresh classes, which keep I.
+    /// So I holds at every step.
+    /// (C) The search calls `join_link(k, j)` on the roots k and j only if k = j, where `merge`
+    /// returns at once, or one of the two, say k, has a mask with no `OTHER` bit. If k's `flowed`
+    /// were not empty, by I its mask would be within `OTHER` with no `OTHER` bit, so 0, which
+    /// (I3) excludes. If j's `flowed` is not empty, its mask is within `OTHER`, so the two masks
+    /// share no bit and `merge` returns false before it writes or checks. Otherwise both are
+    /// empty, and `cross` is empty. So no check runs inside the search: no literal's carrier is
+    /// chosen there, no class is made there, and (F) is the claim without use checks proved
+    /// above. Checked: a trace in `merge` that printed any `cross` pair met while the search
+    /// ran fired on none of the l01_26 and l01_26a tests, run module by module and then test by
+    /// test, nor on 41 programs of this shape in every order of their statements, 2026-11-28,
+    /// b22-names2. Tests: `tests::join_narrowed_joins_a_chain_whatever_the_order_of_its_roots`,
     /// `l01_26_type_resolution::narrowing::the_tested_classes_end_alike_whatever_the_order_of_their_tests_and_uses`
-    /// with them: a chain of three tested classes and a use, in all 24 orders, gives one
-    /// signature and one set of errors (PROOF-join-narrowed-rescan-rounds part (b), evidence,
-    /// not proof).
+    /// (a chain of three tested classes and a use, in all 24 orders), and
+    /// `l01_26_type_resolution::narrowing::a_passed_function_comparing_a_narrowed_value_with_a_literal_ends_alike_in_every_order`
+    /// (six programs where a passed function compares a narrowed value with the literal `1`).
     // Complexity tradeoff (COMPLEXITY.md row F119): the naive version passes over the links
     // until no join changes a class, O(n²) for a chain of n links where each pass moves a
     // carrier one link (inferred). The two passes it was replaced with were O(n log n) but
@@ -17040,9 +17407,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut read = 0;
         loop {
             if stack.is_empty() {
-                // A merge checks the uses of each class on what flowed into the other
-                // ([`Self::merge`]), which may make a class of carriers outside the search:
-                // the groups not yet seen are looked at again once the search stops.
+                // Every class the search makes one of carriers is found through the log
+                // (`push_carrier_groups`), and no merge here runs a check that could make
+                // one elsewhere ((b5) above); this scan of the groups not yet seen, once the
+                // stack empties, finds nothing more, and is kept as a cheap second look.
                 stack.extend(
                     (0..roots.len()).filter(|&g| {
                         !seen[g] && self.classes[self.find(roots[g])].mask & OTHER == 0
@@ -17343,9 +17711,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The path of a need made now ([`Need::via`]): that of the callee's need being met at a
-    /// call, if one is ([`Ck::passing_on`]). O(1): one shared link is cloned.
+    /// call, if one is ([`Ck::passing_on`]), with the trail of arrows current now
+    /// ([`Ck::arrow_now`]), so that a refusal met when the need is met later names the lambda
+    /// by the arrows that held when it was made. O(1): one shared link and one frame cloned.
     fn passed_on(&self) -> CallPath {
-        self.passing_on.last().cloned().unwrap_or_default()
+        let mut path = self.passing_on.last().cloned().unwrap_or_default();
+        path.1 = self.arrow_now.clone();
+        path
     }
 
     /// Records that the use at `span` needs `kind` of each value of class `k`, and gives what
@@ -17747,6 +18119,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.need_chain.push(n.span);
         self.meet_alike.push((n.span, n.site(), n.alike.clone()));
         self.replaying += 1;
+        // The arrows that held where the need was made are current while it is met, so that
+        // a rebuilding it writes and a refusal it meets are placed under them
+        // ([`Self::arrow_lambda_twice`]); a need made under no such lambda keeps the trail of
+        // the walk around, as a call in a lambda's body meets its callee's needs there. A
+        // trail from the walk around is not joined to the need's own: a need's lambdas lie in
+        // the body of the function that made it, and `arrow_cause` (mod.rs) compares only the
+        // lambdas two trails share.
+        let around = match &n.via.1.0 {
+            Some(_) => Some(std::mem::replace(&mut self.arrow_now, n.via.1.clone())),
+            None => None,
+        };
         self.need_args = match &n.kind {
             NeedKind::Call { positional, .. } => {
                 Some(positional.iter().map(Ty::holds_vars).collect())
@@ -18067,6 +18450,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             frame.entries(&n.on, r);
         }
         self.replaying -= 1;
+        if let Some(t) = around {
+            self.arrow_now = t;
+        }
         self.need_chain.pop();
         self.meet_alike.pop();
         self.need_args = None;
@@ -24732,16 +25118,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         // the program records for [`Self::outside_of`] ([`Self::indexed_at`]).
         let passed = self.passing(v, "a call", span, of);
         // The atoms of the key a family takes, and those it passes through
-        // ([`Info::atom_keys`]), where every piece of `v` but its atoms is a data family, its
-        // keys not one interval, and the key's atoms are known: the elaborator writes a read
-        // that takes an atom as `GetAtomKey`, so the kernel reads it as the check did.
+        // ([`Info::atom_keys`]), where some piece of `v` is a data family, its keys not one
+        // interval, every other piece but its atoms is a family or a function of one
+        // parameter, and the key's atoms are known: the elaborator writes a read that takes an
+        // atom as `GetAtomKey`, so the kernel reads it as the check did. Only the families'
+        // arms record: `GetAtomKey` applies a function to the key, an atom too, as `apply`
+        // checks a function's arm, so a function's arrows that take the atom and those that
+        // refuse it, which the function then gives back, both run as checked (DESIGN.md:1783,
+        // rule 6). Before (CHECK-atom-key-mixed-receiver), a family or a function was read as
+        // an application, which passed the atom by where the value was the family.
         let pieces = v.pieces();
         let keyed = !dense
             && !x.ty.dynamic
             && x.ty.vars.is_empty()
-            && (pieces.iter()).any(|p| matches!(p, Piece::Fn(_)))
+            && (pieces.iter()).any(|p| matches!(p, Piece::Fn(sig) if sig.data))
             && (pieces.iter()).all(|p| match p {
-                Piece::Fn(sig) => sig.data,
+                Piece::Fn(sig) => sig.data || sig.params.len() == 1,
                 p => p.is_atoms(),
             });
         let mut atom_keys = keyed.then(|| (KType::empty(), KType::empty()));
@@ -24838,7 +25230,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                             r.union(&x.ty.of_piece(&Piece::Set(by.clone())))
                         }),
                     };
-                    if let Some((taken, passed_by)) = &mut atom_keys {
+                    if let Some((taken, passed_by)) = &mut atom_keys
+                        && sig.data
+                    {
                         *taken = &*taken | &(&x.ty.atoms() - &by);
                         *passed_by = &*passed_by | &by;
                     }
@@ -32390,15 +32784,26 @@ fn fit<'s>(
         }
         next = 1;
     }
+    // Whether a parameter takes an argument by name: a named one, or any of a value whose
+    // parameters are all positional.
+    let all_positional = sig.params.iter().all(|p| p.positional);
+    let by_name = |p: &SParam| !p.positional || !declared && all_positional;
+    // The first positional argument beyond the parameters, which is reported with the names
+    // no parameter has (step L1.29c: a call with both reports both); elaboration reports the
+    // first argument beyond them alone, and so does this.
+    let mut beyond = None;
     for i in 0..args.positional.len() {
         let misfit = match sig.params.get(next) {
-            Some(p) if p.positional || !declared && sig.params.iter().all(|p| p.positional) => {
+            Some(p) if p.positional || !declared && all_positional => {
                 slots[next] = Some(At::Pos(i));
                 next += 1;
                 continue;
             }
             Some(p) => Misfit::Named(&p.name),
-            None => Misfit::TooMany(n),
+            None => {
+                beyond = Some((args.span_at(At::Pos(i), span), Misfit::TooMany(n)));
+                break;
+            }
         };
         let misfits = vec![(args.span_at(At::Pos(i), span), misfit)];
         return Err(misfits);
@@ -32411,9 +32816,18 @@ fn fit<'s>(
         .rev()
         .map(|(j, p)| (&*p.name, j))
         .collect();
+    // The named arguments whose names no parameter has, by their place among the named ones,
+    // and the first other misfit of a named argument. The loop goes on past both, so that the
+    // parameters left without a value, among which the nearest name is sought, are those of
+    // the whole call: a parameter a later argument fills is not offered (step L1.29c).
+    let mut unknown = Vec::new();
+    let mut other = None;
     for (i, (name, _)) in args.named.iter().enumerate() {
         let misfit = match at.get(&**name).copied() {
-            None => Misfit::NoParam(name),
+            None => {
+                unknown.push(i);
+                continue;
+            }
             Some(j) if sig.params[j].positional => Misfit::Positional(name),
             Some(j) if slots[j].is_some() || has_receiver && j == 0 => {
                 // The value that filled the parameter, for the note at it: the argument
@@ -32435,7 +32849,50 @@ fn fit<'s>(
                 continue;
             }
         };
-        let misfits = vec![(args.span_at(At::Named(i), span), misfit)];
+        other = other.or(Some((args.span_at(At::Named(i), span), misfit)));
+    }
+    if beyond.is_some() || !unknown.is_empty() || other.is_some() {
+        // The open parameters, which take a value by name and have none: the receiver's
+        // parameter is filled.
+        let open: Vec<&str> = (sig.params.iter().enumerate())
+            .filter(|&(j, p)| slots[j].is_none() && !(has_receiver && j == 0) && by_name(p))
+            .map(|(_, p)| &*p.name)
+            .filter(|name| !name.is_empty())
+            .collect();
+        let written: Vec<(&str, usize)> =
+            (unknown.iter()).map(|&i| (&*args.named[i].0, 0)).collect();
+        // Complexity tradeoff: a test of each unknown name against each open parameter costs
+        // O(k·p·l) for k unknown names and p parameters of length up to l; used: the spelling
+        // index, O(n log n) in the total length n of the names (zed_collections::spelling,
+        // whose header has the proof), every parameter visible at the one place 0.
+        let near = match open.is_empty() || written.is_empty() {
+            true => vec![None; written.len()],
+            false => {
+                let names: Vec<(&str, std::ops::Range<usize>)> =
+                    open.iter().map(|&p| (p, 0..1)).collect();
+                zed_collections::spelling::nearest(&names, &written)
+            }
+        };
+        let mut misfits: Vec<(Span, Misfit)> = beyond.into_iter().collect();
+        for (&i, near) in unknown.iter().zip(near) {
+            let (name, value) = &args.named[i];
+            // The value as written, on one line, and the span of `name: value`, found by
+            // stepping back from the value over the `:` and the name; without the text, or
+            // where the step back does not meet them, no parameter is offered by name.
+            let whole = match (value, text) {
+                (ArgSrc::Expr(e), Some(t)) => named_arg_span(t, name, e.span),
+                _ => None,
+            };
+            let near = near.zip(whole).map(|(p, (code, at))| (p, code, at));
+            misfits.push((
+                args.span_at(At::Named(i), span),
+                Misfit::NoParam(name, near),
+            ));
+        }
+        misfits.extend(other);
+        // In the order of the text, as elaboration meets them: the first is the one a call
+        // through a value with no recorded signature reports ([`Ck::unfit`]).
+        misfits.sort_by_key(|&(at, _)| at.start);
         return Err(misfits);
     }
     let missing: Vec<usize> = (0..n)
@@ -32500,6 +32957,26 @@ fn fit<'s>(
         true => Ok((slots, missing)),
         false => Err(misfits),
     }
+}
+
+/// The code of a named argument's value at `value` in `text`, and the span of the whole
+/// argument `name: value`, where the text before the value is `name`, then `:`, with spaces
+/// between, and the argument lies on one line; else none. O(length of the argument).
+fn named_arg_span<'t>(text: &'t str, name: &str, value: Span) -> Option<(&'t str, Span)> {
+    let code = text.get(value.start..value.end)?;
+    let before = text.get(..value.start)?.trim_end_matches([' ', '\t']);
+    let before = before.strip_suffix(':')?.trim_end_matches([' ', '\t']);
+    let start = before.strip_suffix(name)?.len();
+    // The name is whole: no identifier character runs on before it.
+    let whole = !before[..start]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '\'');
+    let at = Span {
+        start,
+        end: value.end,
+    };
+    (whole && !text[start..value.end].contains('\n')).then_some((code, at))
 }
 
 /// The words that name a callee written as an expression when its code cannot be shown: the
@@ -34333,7 +34810,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// and its other values read at `rat`, or `None` where a decimal may come from elsewhere:
     /// a call or another branch whose type holds an `f64`, or a decimal with a suffix.
     // Complexity tradeoff: one walk over the `if`'s tree of branches, each visited once, an
-    // adoption per decimal literal (O(n^1.47) in its digits, COMPLEXITY.md K41, as any decimal
+    // adoption per decimal literal (O(n log^2 n) in its digits, COMPLEXITY.md K41, as any decimal
     // literal at `rat` costs), then the n singletons joined in pairs, O(n log n), and one
     // read of the result ([`read_at`]). The naive form, [`read_at`] alone, refuses the `if`,
     // since it does not know where its decimals come from.
@@ -36540,6 +37017,82 @@ mod tests {
         assert!(ck.arrow_lambdas.contains_key(&kept));
         ck.undo(&saved);
         assert!(ck.arrow_lambdas.contains_key(&kept));
+    }
+
+    /// The lambda `arrow_cause` names for two rebuildings at one span (row
+    /// MSG-arrow-lambda-nested-cause, decision (a) and (b) of 2026-11-23): the innermost shared
+    /// lambda whose arrow differs, compared from the outside in up to the first lambda the two
+    /// trails do not share; `None`, where the caller keeps its old choice, where no shared
+    /// lambda's arrow differs. Trails of different depths are compared over the lambdas they
+    /// share.
+    #[test]
+    fn the_lambda_named_for_two_rebuildings_is_the_innermost_whose_arrow_differs() {
+        let (outer, inner, other) = (
+            Span { start: 0, end: 40 },
+            Span { start: 10, end: 30 },
+            Span { start: 12, end: 28 },
+        );
+        // A trail from frames given outermost first.
+        let trail = |frames: &[(Span, usize)]| {
+            let mut up = None;
+            for &(lam, arrow) in frames {
+                up = Some(Arc::new(ty::ArrowFrame { lam, arrow, up }));
+            }
+            up.expect("a frame")
+        };
+        let cause = |a: &[(Span, usize)], b: &[(Span, usize)]| arrow_cause(&trail(a), &trail(b));
+        // The outer lambda's arrows differ, the inner one's agree: the outer one.
+        assert_eq!(
+            cause(&[(outer, 0), (inner, 0)], &[(outer, 1), (inner, 0)]),
+            Some(outer)
+        );
+        // The inner one's differ: the inner one.
+        assert_eq!(
+            cause(&[(outer, 0), (inner, 0)], &[(outer, 0), (inner, 1)]),
+            Some(inner)
+        );
+        // Both differ: the innermost.
+        assert_eq!(
+            cause(&[(outer, 0), (inner, 0)], &[(outer, 1), (inner, 1)]),
+            Some(inner)
+        );
+        // Different depths: the lambdas shared are compared.
+        assert_eq!(cause(&[(outer, 0)], &[(outer, 1), (inner, 0)]), Some(outer));
+        assert_eq!(cause(&[(outer, 0), (inner, 0)], &[(outer, 0)]), None);
+        // Past the first lambda the trails do not share, nothing is compared.
+        assert_eq!(
+            cause(&[(outer, 0), (inner, 0)], &[(outer, 0), (other, 1)]),
+            None
+        );
+        assert_eq!(cause(&[(inner, 0)], &[(other, 1)]), None);
+    }
+
+    /// The trail of a span's first fit is kept with it and goes when the fit is taken away,
+    /// so a trial that wrote the first fit at a span takes its trail back with its `undo`;
+    /// a later fit at the span keeps the first one's trail.
+    #[test]
+    fn the_trail_of_a_first_fit_goes_with_the_fit() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
+        let (at, lam) = (Span { start: 3, end: 4 }, Span { start: 0, end: 9 });
+        let frame = |arrow| {
+            ty::ArrowTrail(Some(Arc::new(ty::ArrowFrame {
+                lam,
+                arrow,
+                up: None,
+            })))
+        };
+        ck.arrow_now = frame(0);
+        let undo = ck.set(Undo::Fit(at, Some(Fit::Read(Carrier::Int))));
+        assert_eq!(ck.fit_arrows.get(&at).map(|f| f.arrow), Some(0));
+        ck.arrow_now = frame(1);
+        let again = ck.set(Undo::Fit(at, Some(Fit::Read(Carrier::F64))));
+        assert_eq!(ck.fit_arrows.get(&at).map(|f| f.arrow), Some(0));
+        ck.set(again);
+        assert_eq!(ck.fit_arrows.get(&at).map(|f| f.arrow), Some(0));
+        ck.set(undo);
+        assert!(!ck.fit_arrows.contains_key(&at));
     }
 
     /// The signature of a function of one positional parameter `x` of type `param` that gives

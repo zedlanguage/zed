@@ -1176,11 +1176,24 @@ fn a_payload_of_a_function_s_parameter_is_checked_at_each_way_of_calling_it() {
              g(positional y: [int]) = f(y, 1);",
             "`f` takes ([T], T) -> #errs(T), where T is not ",
         ),
+        // A chain of lookups: the variable is reached through the need of the parameter and
+        // then through the need of the entry's variable.
+        (
+            "f(positional s) = #errs(s[0][1]);\ng(positional y: [[int]]) = f(y);",
+            "`f` takes (0 -> 1 -> T) -> #errs(T), where T is not ",
+        ),
+        // A need other than a lookup: a call of the parameter.
+        (
+            "f(positional s) = #errs(s(1));\ng(positional y: int -> int) = f(y);",
+            "`f` takes (1 -> T) -> #errs(T), where T is not ",
+        ),
     ] {
         let e = rejected(defs, "\"x\"");
+        // A note's line, not the headline "no arrow of `f` takes these types", which holds
+        // ` -> ` where the argument is a function.
         let note = e
             .lines()
-            .find(|l| l.contains("`f` takes ") && l.contains(" -> "))
+            .find(|l| l.contains("] ") && l.contains("`f` takes ") && l.contains(" -> "))
             .unwrap_or_else(|| panic!("{e}"));
         assert!(note.contains(takes), "{defs}\n{e}");
         assert!(note.contains(", where T is not "), "{defs}\n{e}");

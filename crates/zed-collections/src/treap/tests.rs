@@ -147,7 +147,7 @@ fn union_and_meet_agree_with_ordered_maps() {
         for _ in 0..next(2 * span) {
             b.insert(next(span), next(1000) + 1000);
         }
-        let made = |m: &BTreeMap<u64, u64>| from_sorted(m.iter().map(|(&k, &v)| E(k, v)).collect());
+        let made = |m: &BTreeMap<u64, u64>| from_sorted(m.iter().map(|(&k, &v)| E(k, v)));
         let (x, y) = (made(&a), made(&b));
         // One set of keys has one shape, made from sorted items or an item at a time.
         let mut by_one = None;
@@ -333,8 +333,8 @@ impl Lazy<Sh> for Shifts {
             id: child.id,
         }
     }
-    fn cleared(&self, item: &Sh) -> Sh {
-        Sh { off: 0, ..*item }
+    fn clear(&self, item: &mut Sh) {
+        item.off = 0;
     }
 }
 
@@ -446,6 +446,33 @@ fn lazy_trees_agree_with_shifted_lists() {
     }
 }
 
+/// [`lazy::join`] of a right path and a left path of `M` nodes each, of priorities in turn, so
+/// that the merge walks all `2M` nodes, past [`DEEP`] calls and into its loop, with a shift
+/// pending at every node: the result holds the shifted keys in order, and its sizes, summaries
+/// and heap order hold. `M` is small enough for the paths' drop, which recurses, and the test's
+/// own recursive walk.
+#[test]
+fn a_lazy_join_of_two_paths_past_deep_calls() {
+    const M: i64 = 1000;
+    assert!(2 * M as usize > DEEP);
+    // Made from the bottom: node `d` of `a`, of key `2d` and priority `2(M - d) + 2`, over a
+    // right child, and node `d` of `b`, of key `10M - 2d` and priority `2(M - d) + 1`, over a
+    // left child. Each holds the shift 1, so the current key of node `d` is its key plus `d`.
+    let item = |key, id| Sh { key, off: 1, id };
+    let (mut a, mut b): (Tree<Sh>, Tree<Sh>) = (None, None);
+    for d in (0..M).rev() {
+        let p = 2 * (M - d) as u64;
+        a = Some(node(item(2 * d, d as u64), p + 2, None, a));
+        b = Some(node(item(10 * M - 2 * d, (M + d) as u64), p + 1, b, None));
+    }
+    let mut want: Vec<(i64, u64)> = (0..M).map(|d| (3 * d, d as u64)).collect();
+    want.extend((0..M).rev().map(|d| (10 * M - d, (M + d) as u64)));
+    let t = lazy::join(a, b, &Shifts);
+    let (got, sound) = shifted_entries(&t);
+    assert!(sound, "sizes, summaries and heap order");
+    assert_eq!(got, want);
+}
+
 /// An entry of a key and a priority the test chooses, to build paths; its summary is the sum of
 /// the keys of its subtree.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -514,6 +541,36 @@ fn dismantle(t: Tree<P>) {
             stack.push(n.right.take());
         }
     }
+}
+
+/// STACK-treap-drop-depth: a path of 100,000 nodes down the left children and one down the right
+/// children, each dropped whole on a thread of 64 KiB of stack, which a drop recursing one level a
+/// node overflows; and one dropped while a copy of its lower half is held, which is left whole.
+#[test]
+fn a_path_is_dropped_on_a_small_stack() {
+    const M: u64 = 100_000;
+    let path = |prio: fn(u64) -> u64| -> Tree<P> {
+        let items: Vec<P> = (0..M).map(|i| P(i, prio(i))).collect();
+        let prios: Vec<u64> = items.iter().map(|p| p.1).collect();
+        crate::cartesian::build(items, &prios, |_, p, l, r| node(p, p.1, l, r))
+    };
+    let left = path(|i| i + 1);
+    let right = path(|i| M - i);
+    assert_eq!(depth(&left, 0), M as usize);
+    assert_eq!(depth(&right, M - 1), M as usize);
+    let mut held = left.as_ref().map(|n| n.left.clone());
+    for _ in 0..M / 2 - 1 {
+        held = held.map(|t| t.and_then(|n| n.left.clone()));
+    }
+    let held = held.flatten();
+    assert_eq!(len(&held), (M / 2) as usize);
+    let kept = preorder(&held);
+    crate::scaling::on_a_stack(64 * 1024, move || {
+        drop(left);
+        drop(right);
+        assert_eq!(preorder(&held), kept);
+        drop(held);
+    });
 }
 
 /// FAIL-treap-inplace-recursion-depth: each in-place operation on paths of 100,000 nodes, in a

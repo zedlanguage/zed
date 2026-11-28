@@ -714,6 +714,13 @@ pub(crate) fn syntax(text: &str, lines: &source::Lines) -> Result<Syntax, Vec<Di
 /// The syntax of the unit `text` as [`syntax`] reads it, and the declarations that did not
 /// parse, which the statements leave out; or the errors of lexing, or of building the
 /// statements that parse, with the syntax errors.
+/// The top-level statements of the unit `text` that parse, as parsed, before resolution and
+/// the build's reads: what the map of step L1.33a names source nodes in
+/// ([`crate::source_map`]). None when the text does not lex or its statements cannot be built.
+pub(crate) fn parsed(text: &str) -> Vec<Stmt> {
+    recovered(text).map_or_else(|_| Vec::new(), |((_, _, stmts), _)| stmts)
+}
+
 fn recovered(text: &str) -> Result<(Syntax, Broken), Vec<ast::Error>> {
     let (tokens, docs) = work::stage(Stage::Lex, None, || lex::lex_with_docs(text))
         .map_err(|e| vec![lex_error(text, e)])?;

@@ -64,19 +64,19 @@ fn a_variable_whose_other_place_is_a_union_printed_blank_prints_as_its_bound() {
         "{APPLY}k(v, xs, c: bool) = (apply(f: v), if c {{ v }} else {{ xs[0] }});\na = k(v: 3, xs: [1], c: true);\n"
     );
     let out = report(&src);
-    // The note of what `k` takes names `v`'s variable `T` to say its bound (plan row
-    // MSG-takes-note-names-var), a word of the message, which the names the other notes'
-    // variables take skip (`lay_out`, check/mod.rs), so here they are `U` and `V`.
-    let takes = (out.lines())
-        .find(|l| l.contains("`k` takes ("))
-        .unwrap_or_else(|| panic!("{src}\n{out}"));
-    assert!(
-        takes.contains("`k` takes (v: T, ") && takes.contains(", where T is not "),
-        "{src}\n{out}"
-    );
     assert!(
         out.contains(
-            "the type the checker found for `k` is `(v: U, xs: 0 -> V, c: bool) -> (int, U | V)`"
+            "the type the checker found for `k` is `(v: T, xs: 0 -> U, c: bool) -> (int, T | U)`"
+        ),
+        "{src}\n{out}"
+    );
+    // The note of what `k` takes says `v`'s bound by the name of its variable (plan row
+    // MSG-takes-note-names-var), a name the message gives as it gives the other notes' names
+    // (MSG-takes-note-name-shared): the same variable is `T` in both notes, not `T` in this
+    // one and, the name a word the others skip, `U` in the other.
+    assert!(
+        out.contains(
+            "`k` takes (v: T, xs: 0 -> U, c: bool) -> (int, T | U), where T is not int | f32 | f64 | rat | bool | String"
         ),
         "{src}\n{out}"
     );
@@ -307,4 +307,42 @@ fn a_variable_bounded_by_carriers_stands_twice_where_the_text_writes_it_twice() 
         bad.len(),
         bad[..bad.len().min(30)].join("\n")
     );
+}
+
+/// Row TEST-takes-note-name-in-definition: the result of `k` holds tuples written once, as
+/// definitions (row PRINT-shared-part-exponential), whose variables are unbounded, beside a
+/// variable bounded by `apply`'s parameter. The note of what `k` takes and the type the
+/// checker found share the message's one block of definitions, and name each variable as it
+/// does, inside the definitions and out (MSG-takes-note-name-shared): the bounded one, last
+/// (`T6`) or first (`T`) among the parameters, and those of the definitions, which start at
+/// `U` when the bounded one is `T`. A tuple that holds a variable bounded by carriers is never
+/// written once (`Shared` in zedc-types), so the bounded variable stays outside them.
+#[test]
+fn the_takes_note_names_the_variables_of_a_definition_as_the_type_does() {
+    let p = "p(positional s, positional v) = (s, (s, v));\n";
+    let bound = "where T6 is not int | f32 | f64 | rat | bool | String";
+    let src = format!(
+        "{APPLY}{p}k(positional a0, positional a1, positional a2, positional a3, positional a4, positional a5) = (apply(f: a5), p(p(p(p(p(a0, a1), a2), a3), a4), a5));\na = k(1, 2, 4, 5, 6, 3);\n"
+    );
+    let out = report(&src);
+    for want in [
+        "  Part1, Part2 and Part3 stand for parts written more than once:\n    type Part1 = ((T, (T, U)), ((T, (T, U)), V));\n    type Part2 = (Part1, (Part1, W));\n    type Part3 = (Part2, (Part2, T5));\n",
+        format!("`k` takes (T, U, V, W, T5, T6) -> (int, (Part3, (Part3, T6))), {bound}\n")
+            .as_str(),
+        "the type the checker found for `k` is `(T, U, V, W, T5, T6) -> (int, (Part3, (Part3, T6)))`",
+    ] {
+        assert!(out.contains(want), "{src}\nwants {want}\n{out}");
+    }
+    let bound = "where T is not int | f32 | f64 | rat | bool | String";
+    let src = format!(
+        "{APPLY}{p}k(positional b, positional a0, positional a1, positional a2, positional a3) = (apply(f: b), p(p(p(p(a0, a1), a2), a3), b));\na = k(3, 1, 2, 4, 5);\n"
+    );
+    let out = report(&src);
+    for want in [
+        "  Part1 and Part2 stand for parts written more than once:\n    type Part1 = ((U, (U, V)), ((U, (U, V)), W));\n    type Part2 = (Part1, (Part1, T5));\n",
+        format!("`k` takes (T, U, V, W, T5) -> (int, (Part2, (Part2, T))), {bound}\n").as_str(),
+        "the type the checker found for `k` is `(T, U, V, W, T5) -> (int, (Part2, (Part2, T)))`",
+    ] {
+        assert!(out.contains(want), "{src}\nwants {want}\n{out}");
+    }
 }

@@ -337,6 +337,18 @@ check "a test of a split step's module piece is selected as <step>::<module>::<t
   "$(selected '^l01_26_type_resolution::random::a_wrong_claim_is_caught$')"
 check "a split step's module piece is still selected whole by its name" "l01_26_type_resolution::random" \
   "$(selected '^l01_26_type_resolution::random$')"
+# m0_03_grammar_tools is a step of one piece, named by its folder; its tests are selected as
+# <step>::<path>, each a piece of its own, as the header says (TOOLS-run-tests-only-double-colon:
+# a module's path and a test's full path both printed NO PIECE MATCHES).
+bin03=$(echo "$pieces" | awk '$1 == "m0_03_grammar_tools" { print $3; exit }')
+plan03=$("$bin03" --list --format terse --skip bench:: plan:: | sed -n 's/: test$//p' | sed 's/^/m0_03_grammar_tools::/' | sort)
+check "the module plan of m0_03 has more than one test" "yes" "$([ "$(echo "$plan03" | wc -l)" -gt 1 ] && echo yes)"
+check "a module of a step of one piece selects its tests, a piece each" "$plan03" \
+  "$(selected '^m0_03_grammar_tools::plan::')"
+check "a test of a step of one piece is selected by its full path" "$(echo "$plan03" | head -1)" \
+  "$(selected "^$(echo "$plan03" | head -1)\$")"
+check "the step of one piece is still selected whole by its name" "m0_03_grammar_tools" \
+  "$(selected '^m0_03_grammar_tools$')"
 check "zedc's unit tests are one piece" "$(by_binary zedc)" "$(selected '^zedc$')"
 check "a short-addresses piece is selected by its name" "short-l01_37_oracle" "$(selected '^short-l01_37_oracle$')"
 fresh=$(run --list --only '^l01_36_cranelift$' | sort)

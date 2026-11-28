@@ -548,7 +548,7 @@ fn a_read_of_an_output_port_is_still_rejected() {
 }
 
 /// What a parameter that is pushed to requires: an output port at every call, the declared
-/// type `Lines`, no default, no test table, and calls by name only.
+/// type `Lines`, no default, `[]` in a test key, and calls by name only.
 #[test]
 fn a_parameter_pushed_to_takes_an_output_port_at_each_call() {
     assert_eq!(
@@ -577,10 +577,12 @@ fn a_parameter_pushed_to_takes_an_output_port_at_each_call() {
     );
     let src = "say(positional s, positional out: Lines) { out <- s; 0 } test { (\"a\", 1) -> 0 }\n\
                main(m: MainArgs) {\n  _ = say(\"x\", m.stdout);\n}\n";
+    // A test table gives the port as `[]` (DESIGN.md sec:ports, "A test table gives a port its
+    // values"); the rows that do are in `a_test_table_gives_a_port_its_values`.
     assert_eq!(
         rejected("table", src),
-        "1:65: `say` pushes to its parameter `out`, and a test table gives a function values, \
-         never a port."
+        "1:71: A test key gives the output port `out` of `say` as `[]`, the port before the row \
+         pushes to it."
     );
     let src = with_say("g = say;\n  m.stdout <- \"b\";");
     assert_eq!(
@@ -595,6 +597,115 @@ fn a_parameter_pushed_to_takes_an_output_port_at_each_call() {
         rejected("int", src).starts_with("1:45: A `Lines` port takes a `String`"),
         "{src}"
     );
+}
+
+/// The failures of the rows of `src`, one per row, `None` for a row that passes.
+fn row_failures(src: &str) -> Vec<Option<String>> {
+    let outcomes = zedc::testing::test(src);
+    assert!(outcomes.iter().all(|o| o.not_run.is_none()), "{outcomes:?}");
+    outcomes.into_iter().map(|o| o.failure).collect()
+}
+
+/// A row of a function with an output port parameter gives the port as `[]` in its key and
+/// expects the record `{ result:, <port>: [lines] }` (DESIGN.md sec:ports, "A test table gives
+/// a port its values", whose example is the first row). Red before green: each table was
+/// refused, "a test table gives a function values, never a port"
+/// (PORT-table-param).
+#[test]
+fn a_test_table_gives_a_port_its_values() {
+    let main = "main(m: MainArgs) {\n  _ = greet(\"x\", out: m.stdout);\n}\n";
+    let src = format!(
+        "greet(positional name: String, out: Lines) {{ out <- \"hi ${{name}}\"; }}\n\
+         test {{\n  (\"a\", []) -> {{ result: (), out: [\"hi a\"] }},\n  \
+         (\"b\", []) -> {{ out: [\"hi b\"], result: () }},\n}}\n{main}"
+    );
+    assert_eq!(row_failures(&src), [None, None], "{src}");
+    // The lines are compared: a wrong line, a missing one, or a port left out of the record
+    // (expected to be pushed nothing) fails the row.
+    for want in [r#"["hi b"]"#, r#"["hi a", "hi a"]"#, "[]"] {
+        let src = format!(
+            "greet(positional name: String, out: Lines) {{ out <- \"hi ${{name}}\"; }}\n\
+             test {{\n  (\"a\", []) -> {{ result: (), out: {want} }},\n}}\n{main}"
+        );
+        let failures = row_failures(&src);
+        assert!(
+            failures.len() == 1 && failures[0].as_ref().is_some_and(|f| f.contains("hi a")),
+            "{want}: {failures:?}"
+        );
+    }
+    let src = format!(
+        "greet(positional name: String, out: Lines) {{ out <- \"hi ${{name}}\"; }}\n\
+         test {{\n  (\"a\", []) -> {{ result: () }},\n}}\n{main}"
+    );
+    assert!(row_failures(&src)[0].is_some(), "{src}");
+    // A result beside the push, and a family pushed: one line per entry, as `main` writes it.
+    let src = format!(
+        "greet(positional name: String, out: Lines) {{\n  out <- [\"hi\", name, name];\n  \
+         return 7;\n}}\n\
+         test {{\n  (\"a\", []) -> {{ result: 7, out: [\"hi\", \"a\", \"a\"] }},\n}}\n{main}"
+    );
+    assert_eq!(row_failures(&src), [None], "{src}");
+    // Two port parameters where `main` writes one output: each port parameter of a row has a
+    // port of its own (`row.out1` past `main`'s).
+    let src = "two(positional s: String, a: Lines, b: Lines) { a <- s; b <- [\"b\", s]; }\n\
+               test {\n  (\"x\", [], []) -> { result: (), a: [\"x\"], b: [\"b\", \"x\"] },\n  \
+               (\"y\", [], []) -> { result: (), b: [\"b\", \"y\"], a: [\"y\"] },\n}\n\
+               main(m: MainArgs) {\n  m.stdout <- \"z\";\n}\n";
+    let failures = row_failures(src);
+    assert_eq!(failures, [None, None], "{src}");
+    // The native back end runs the rows alike, its pushes landing in the row's world.
+    let native = zed_native::through(zedc::build::Mode::Debug, true);
+    let outcomes = zedc::testing::test_through(src, &native);
+    let failures: Vec<_> = outcomes.into_iter().map(|o| o.failure).collect();
+    assert_eq!(failures, [None, None], "{src}");
+}
+
+/// What a row of a function with an output port parameter must be: `[]` for the port in its
+/// key, and a record of `result` and the ports, each once.
+#[test]
+fn a_test_row_of_a_port_function_is_checked_for_its_shape() {
+    let src = |row: &str| {
+        format!(
+            "greet(positional name: String, out: Lines) {{ out <- \"hi ${{name}}\"; }}\n\
+             test {{\n  {row},\n}}\n\
+             main(m: MainArgs) {{\n  _ = greet(\"x\", out: m.stdout);\n}}\n"
+        )
+    };
+    let cases = [
+        (
+            "row_shape_key",
+            r#"("a", ["hi"]) -> { result: (), out: ["hi a"] }"#,
+            "3:9: A test key gives the output port `out` of `greet` as `[]`, the port before \
+             the row pushes to it.",
+        ),
+        (
+            "row_shape_not_record",
+            r#"("a", []) -> ()"#,
+            "3:16: A row of `greet`, which pushes to its parameter `out`, expects a record: \
+             `{ result: …, out: […] }`.",
+        ),
+        (
+            "row_shape_unknown",
+            r#"("a", []) -> { result: (), out: ["hi a"], err: [] }"#,
+            "3:50: `err` is not an output port of `greet`: the record of a row of it has the \
+             fields `result` and `out`.",
+        ),
+        (
+            "row_shape_twice",
+            r#"("a", []) -> { result: (), out: ["hi a"], out: [] }"#,
+            "3:45: the field `out` is given twice, and each field is given once. Remove one of \
+             the two.",
+        ),
+        (
+            "row_shape_no_result",
+            r#"("a", []) -> { out: ["hi a"] }"#,
+            "3:16: A row of `greet` gives its result as the field `result`: \
+             `{ result: …, out: […] }`.",
+        ),
+    ];
+    for (name, row, want) in cases {
+        assert_eq!(rejected(name, &src(row)), want, "{row}");
+    }
 }
 
 /// A push to a name that is no output port is rejected when the program is checked; before,

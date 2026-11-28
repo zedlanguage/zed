@@ -386,19 +386,20 @@ pub fn ports(t: &Tables<'_>) -> Ports {
         }
     }
 
-    // An output port parameter has no default and its function no test table: a call passes
-    // the port, and a test row gives values only.
+    // An output port parameter has no default: a call passes the port. A row of a test table
+    // gives it by its key and expects what the row pushed there in its value ([`table_rows`]).
     for (&f, &(_, p)) in &outs {
         let decl = t.funcs[&f];
         let name = &res.binders[f].name;
-        if let Some(d) = (decl.params.iter())
-            .filter(|q| {
+        let ports_at: Vec<(usize, &str)> = (decl.params.iter().enumerate())
+            .filter(|(_, q)| {
                 t.ids
                     .get(&(q.span, q.name.as_str()))
                     .is_some_and(|b| params.contains(b))
             })
-            .find_map(|q| q.default.as_ref())
-        {
+            .map(|(i, q)| (i, q.name.as_str()))
+            .collect();
+        if let Some(d) = (ports_at.iter()).find_map(|&(i, _)| decl.params[i].default.as_ref()) {
             errors.push((
                 d.span,
                 format!("An output port has no default: `{p}` of `{name}`, which it pushes to."),
@@ -408,22 +409,7 @@ pub fn ports(t: &Tables<'_>) -> Ports {
                 }],
             ));
         }
-        if let Some((row, _)) = decl.tests.first() {
-            errors.push((
-                row.span,
-                format!(
-                    "`{name}` pushes to its parameter `{p}`, and a test table gives a function \
-                     values, never a port."
-                ),
-                vec![Note {
-                    span: row.span,
-                    text: format!(
-                        "repair: test a function that computes the lines `{name}` pushes"
-                    )
-                    .into(),
-                }],
-            ));
-        }
+        table_rows(decl, name, &ports_at, &mut errors);
     }
     let writers = outs.into_keys().collect();
     let args = args.iter().map(|a| ((a.call, a.param), a.span)).collect();
@@ -433,6 +419,107 @@ pub fn ports(t: &Tables<'_>) -> Ports {
         errors,
         not_ports,
         args,
+    }
+}
+
+/// The errors of the rows of `decl`'s test tables, `decl` the function `name` whose output port
+/// parameters are `ports_at`, by place and name. "A port parameter is given by the row's key, as
+/// `main`'s ports are; what the row wrote to it is a field of the row's record, named by the
+/// parameter: `greet(positional name: Utf8String, out: Lines)` is tested by the row `("a", [])
+/// -> { result: (), out: ["hi a"] }`", and "A written port left out of the record is expected
+/// to be written nothing" (DESIGN.md sec:ports, "A test table gives a port its values"). So the
+/// key's component at a port is `[]`, the port before the row pushes to it, and the value is a
+/// record with the field `result` and at most one field per port parameter. A key of another
+/// arity is refused where the row is elaborated (`zedc_elab`'s `test_case`), so it is skipped
+/// here. The checker's walk then checks each field (`test_args` in walk.rs), and may assume this
+/// shape. Cost: one pass over each row's key components and record fields, O(r·(n + f)) for r
+/// rows of n parameters and records of f fields; a field is looked up among the n names, so a
+/// record costs O(f·n), small since both are written by hand.
+fn table_rows(
+    decl: &zedc_syntax::ast::Function,
+    name: &str,
+    ports_at: &[(usize, &str)],
+    errors: &mut Vec<(Span, String, Vec<Note>)>,
+) {
+    let n = decl.params.len();
+    let shown: Vec<String> = ports_at.iter().map(|(_, q)| format!("{q}: […]")).collect();
+    let record = format!("{{ result: …, {} }}", shown.join(", "));
+    for (key, value) in &decl.tests {
+        let items: Vec<&Expr> = match &key.kind {
+            _ if n == 1 => vec![key],
+            ExprKind::Tuple(items) if items.len() == n => items.iter().collect(),
+            _ => continue,
+        };
+        for &(i, q) in ports_at {
+            if !matches!(&items[i].kind, ExprKind::Array(xs) if xs.is_empty()) {
+                errors.push((
+                    items[i].span,
+                    format!(
+                        "A test key gives the output port `{q}` of `{name}` as `[]`, the port \
+                         before the row pushes to it."
+                    ),
+                    vec![Note {
+                        span: items[i].span,
+                        text: format!(
+                            "repair: write `[]` here, and the lines the row pushes to `{q}` in \
+                             its value, as `{record}`"
+                        )
+                        .into(),
+                    }],
+                ));
+            }
+        }
+        let ExprKind::Record(fields) = &value.kind else {
+            errors.push((
+                value.span,
+                format!(
+                    "A row of `{name}`, which pushes to its parameter `{}`, expects a record: \
+                     `{record}`.",
+                    ports_at[0].1
+                ),
+                vec![Note {
+                    span: value.span,
+                    text: format!(
+                        "repair: write the result as the field `result`, and what the row \
+                         pushes to each port as the field of its name, a list of lines; a port \
+                         left out is expected to be pushed nothing: `{record}`"
+                    )
+                    .into(),
+                }],
+            ));
+            continue;
+        };
+        // A field given twice is refused before this, as in any record display.
+        for (field, e) in fields {
+            if field == "result" || ports_at.iter().any(|&(_, q)| q == field) {
+                continue;
+            }
+            errors.push((
+                e.span,
+                format!(
+                    "`{field}` is not an output port of `{name}`: the record of a row of it has \
+                     the fields `result` and {}.",
+                    (ports_at.iter())
+                        .map(|(_, q)| format!("`{q}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                vec![Note {
+                    span: e.span,
+                    text: format!("repair: `{record}`").into(),
+                }],
+            ));
+        }
+        if !fields.iter().any(|(field, _)| field == "result") {
+            errors.push((
+                value.span,
+                format!("A row of `{name}` gives its result as the field `result`: `{record}`."),
+                vec![Note {
+                    span: value.span,
+                    text: "repair: add the field `result: …`, the value the call gives".into(),
+                }],
+            ));
+        }
     }
 }
 

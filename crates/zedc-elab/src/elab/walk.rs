@@ -241,6 +241,10 @@ enum Frame<'a> {
     /// The fields of a record value of a row of `main` ([`MAIN_VALUE`]), once elaborated: the
     /// row's table, its arguments and the fields.
     MainWant(Box<TestsF<'a>>, Option<Vec<Term>>, &'a [(String, Expr)]),
+    /// The fields of the record value of a row of a function with output port parameters,
+    /// `{ result:, <port>: … }`, once elaborated: the row's table, its arguments and the fields
+    /// ([`Elab::port_places`]).
+    PortWant(Box<TestsF<'a>>, Option<Vec<Term>>, &'a [(String, Expr)]),
     /// A call through the value of its callee, once the callee is elaborated.
     CallOf(Call<'a>),
     /// An atom's payload: the atom's name and its fields.
@@ -1227,6 +1231,18 @@ impl<'a> Elab<'a> {
     /// elaborated, as a call expression makes it: an argument whose loose atoms the parameter
     /// does not take passes them by (rule 6 of sec:type_resolution), as the checker recorded
     /// for the row's call, which it checks at `input`'s span.
+    /// The places among `f`'s parameters of its output port parameters, in order (the
+    /// checker's `Info::port_params`). O(n) for n parameters.
+    fn port_places(&self, f: &Function) -> Vec<usize> {
+        (f.params.iter().enumerate())
+            .filter(|(_, p)| {
+                (self.t.ids.get(&(p.span, p.name.as_str())))
+                    .is_some_and(|b| self.info.port_params.contains(b))
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     fn row_call(
         &mut self,
         f: &Function,
@@ -2190,7 +2206,11 @@ impl<'a> Elab<'a> {
             let t = match at.get(name.as_str()).copied() {
                 None => {
                     let who = ff.callee.who();
-                    self.misfit(a.span, Misfit::NoParam(name), &who, ff.callee.called())
+                    // The nearest parameter is offered by the checker's copy of this error,
+                    // which the merge keeps where both report; elaboration alone reports a
+                    // call through a parameter, whose menu then names no parameter.
+                    let misfit = Misfit::NoParam(name, None);
+                    self.misfit(a.span, misfit, &who, ff.callee.called())
                 }
                 Some(j) if ff.callee.param(j).1 => {
                     let who = ff.callee.who();
@@ -3577,6 +3597,12 @@ impl<'a> Elab<'a> {
                         m.k(Frame::MainWant(tf, args, fields));
                         m.seq(fields.iter().map(|(_, e)| e).collect(), true);
                     }
+                    // The record `{ result:, <port>: … }` of a function with output ports,
+                    // whose fields the checker has checked (`ports::table_rows`).
+                    ExprKind::Record(fields) if !self.port_places(f).is_empty() => {
+                        m.k(Frame::PortWant(tf, args, fields));
+                        m.seq(fields.iter().map(|(_, e)| e).collect(), true);
+                    }
                     _ => {
                         m.k(Frame::TestWant(tf, args));
                         m.stack.push(Job::Expr(expected));
@@ -3602,11 +3628,52 @@ impl<'a> Elab<'a> {
                 m.k(Frame::TestWant(tf, args));
                 m.give(want);
             }
+            Frame::PortWant(tf, args, fields) => {
+                // The tuple `(result, lines of each port parameter, in order)` that `zedc`'s
+                // `rows.rs` compares with what the row gives and pushes, each port the record
+                // leaves out `[]`: "A written port left out of the record is expected to be
+                // written nothing" (DESIGN.md sec:ports, "A test table gives a port its values").
+                let f = tf.f;
+                let places = self.port_places(f);
+                let want = all(m.got()).map(|ts| {
+                    let mut out = vec![Term::Prim(Prim::Entries, Vec::new()); places.len() + 1];
+                    for ((name, _), t) in fields.iter().zip(ts) {
+                        let at = match name.as_str() {
+                            "result" => Some(0),
+                            n => places
+                                .iter()
+                                .position(|&i| f.params[i].name == n)
+                                .map(|j| j + 1),
+                        };
+                        if let Some(at) = at {
+                            out[at] = t;
+                        }
+                    }
+                    Term::Prim(Prim::Tuple, out)
+                });
+                m.k(Frame::TestWant(tf, args));
+                m.give(want);
+            }
             Frame::TestWant(mut tf, args) => {
                 let want = m.t();
                 let (input, expected) = &tf.f.tests[tf.i];
                 match (args, want) {
-                    (Some(args), Some(want)) => {
+                    (Some(mut args), Some(want)) => {
+                        // The key's `[]` at the j-th output port parameter gives it the port
+                        // `outputs[j]` (`Elab::new` made enough of them), a port's name as a
+                        // call passes it ([`Self::push`]); the row reads what was pushed there.
+                        let places = match tf.f.main {
+                            Some(_) => Vec::new(),
+                            None => self.port_places(tf.f),
+                        };
+                        let pushed: Vec<(Arc<str>, Arc<str>)> = (places.iter())
+                            .zip(&self.outputs)
+                            .map(|(&i, port)| (tf.f.params[i].name.as_str().into(), port.clone()))
+                            .collect();
+                        debug_assert_eq!(pushed.len(), places.len(), "`Elab::new` counted them");
+                        for (&i, (_, port)) in places.iter().zip(&pushed) {
+                            args[i] = Term::Lit(Value::str(port));
+                        }
                         let case = Span {
                             start: input.span.start,
                             end: expected.span.end,
@@ -3639,6 +3706,7 @@ impl<'a> Elab<'a> {
                             check: Term::Prim(Prim::Eq, vec![call, want.clone()]),
                             args,
                             ports,
+                            pushed,
                             want,
                             span: case,
                         });
@@ -3780,10 +3848,14 @@ impl<'a> Elab<'a> {
                 // A read of a family at a key that may be an atom the family takes reads it
                 // as a key (`Info::atom_keys`; plan row KERNEL-atom-key-read): `GetAtomKey`,
                 // which looks the atom up as data; where the key may also be an atom it passes
-                // through, the key is tested first, and such an atom is applied as before.
+                // through, the key is tested first, and such an atom is applied as before. A
+                // value that may be a family or a function of one parameter (a count of 1)
+                // reads so too: `GetAtomKey` applies a function (CHECK-atom-key-mixed-receiver).
                 let info = self.info;
                 let atom_keys = match (dense, count) {
-                    (false, None) => info.atom_keys.get(&span).filter(|(t, _)| !t.is_empty()),
+                    (false, None | Some(1)) => {
+                        info.atom_keys.get(&span).filter(|(t, _)| !t.is_empty())
+                    }
                     _ => None,
                 };
                 let t = all(m.got()).map(|ts| {

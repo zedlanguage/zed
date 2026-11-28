@@ -147,6 +147,8 @@ mod pairs;
 mod pick_wide_tests;
 #[cfg(test)]
 mod tie_group_tests;
+#[cfg(test)]
+mod tie_pending_tests;
 // Public and not re-exported here: placing.rs reads `Formula::and`, whose impl is in this file,
 // so a `use` of it here would make an import cycle (S1F-presburger-placing-cycle).
 pub mod placing;
@@ -12428,7 +12430,7 @@ fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
 /// refuted) or answers differently on a stronger `q`, and the disjuncts kept untested as
 /// `Immune`. Neither (M1) nor (M2) is proved here.
 ///
-/// A fifth source, found by `probe_order::probe_leaves_the_same_parts_in_every_order` and fixed
+/// A fifth source, found by `probe_order::probe_leaves_the_same_parts` (now four tests) and fixed
 /// (2026-11-21): [`drop_by_bounds`] and [`bounds_refute`] read the parts four and two times in
 /// an order made from the order they were written in, and those readings stop short of the
 /// bounds' fixed point, so a disjunct without a point that `settle` does not refute was removed
@@ -12442,10 +12444,15 @@ fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
 /// ([`content_order`], whose note has the proof), so a round, and by induction on the rounds
 /// the probe, does the same work and gives the same answer in every order the top-level
 /// constraints, disjunctions and disjuncts are written in, whether or not (M1) and (M2) hold.
-/// That settles (a), (b) and (d), and in (c) the `Err` of `settle` with no meter. Still open:
-/// the meter of (c), which counts the work before the probe, and the order of the disjunctions
-/// nested inside a disjunct, which is not changed. The sub-cases below are the argument as it
-/// stood before.
+/// That settles (a), (b) and (d), and in (c) the `Err` of `settle` with no meter. The meter
+/// of (c), closed for the probe's own work (2026-11-27): a round does the same steps in every
+/// order, so it makes the same charges (each a count of rows, terms or disjuncts), and the
+/// lemma at [`meter::charge`] makes the outcome under any limit a function of the answer with
+/// no limit and the total charged; so with the same units left when the probe starts, every
+/// order gives the same answer or the same refusal. Still open: that the units left are the
+/// same, which is the claim of the caller (the work before the probe in the same question),
+/// and the order of the disjunctions nested inside a disjunct, which is not changed. The
+/// sub-cases below are the argument as it stood before.
 ///
 /// (a) A bound of [`learn`] proved by [`bounds_refute`] alone. `bounds_refute` of given parts
 /// and bound no longer depends on their order, but `learn` asks it only after a disjunct is
@@ -13348,8 +13355,9 @@ impl<'a> Unit<'a> {
 /// answer, `None`, or its refusal is the same in every written order. Each of the four sources
 /// the comment at [`probe_unhandled`] named, the bounds of `learn`, the slack index, `settle`'s
 /// refusals and `Immune`, follows only the round's state, so it is now the same in every
-/// order too. What still differs between two calls: a refusal under the cover's meter
-/// ([`meter::charge`]), whose budget the work before the probe has spent, and the order of the
+/// order too, and so are its charges, so by the lemma at [`meter::charge`] its outcome under
+/// the cover's meter is too, given the same units left. What still differs between two calls:
+/// the units left, which the work before the probe has spent, and the order of the
 /// disjunctions nested inside a disjunct, which this function does not change (a disjunct is
 /// shared and not changed once made) and which is content here. Assumed, not traced through
 /// every helper: no step chooses by the iteration order of a hash map, whose seed changes from
@@ -19405,7 +19413,8 @@ impl Omega {
             // structure gives first (by color, through `System::least` and
             // `Equalities::least`), all such candidates together when no two share a row, the
             // first alone when two do and swapping it with each other maps the rows onto
-            // themselves (`Omega::untie`), and none otherwise, which ends the eliminations at
+            // themselves (`Omega::untie`), an equality's first tied pivot likewise
+            // (`Omega::pivot_swaps`), and none otherwise, which ends the eliminations at
             // `tie`. Equalities tied so are
             // kept as pairs of opposite rows, which the stages below decide by the same rule.
             let working = std::mem::take(&mut self.working);
@@ -19429,9 +19438,17 @@ impl Omega {
                     continue;
                 }
                 Some(Err((slots, t))) => {
-                    if !self.differences(&slots) {
-                        self.loosen(&slots, t);
+                    if self.differences(&slots) {
+                        continue;
                     }
+                    if let Some(chosen) = self.swapped_pivots(&slots) {
+                        for (s, y) in chosen {
+                            let e = self.es.clear(s, &self.sys);
+                            self.define(y, &e);
+                        }
+                        continue;
+                    }
+                    self.loosen(&slots, t);
                     continue;
                 }
                 None => {}
@@ -19439,14 +19456,59 @@ impl Omega {
             if !self.pending.is_empty() {
                 // Eliminations that neither read nor write a pending variable go first, so a
                 // long row is rewritten once for the values they leave (`Omega::deferred`).
-                // Assumption, not proved (ASSUME-documented): running these eliminations
-                // before the pending values are written, and the write-first rule of
-                // [`Omega::read_pending`] that decides when not to, change only the order of the
-                // steps, so the model and the place of a refusal can change but never whether a
-                // point exists. The argument (doc of [`Omega::deferred`]): the eliminations
-                // taken are exact, add no terms, and no row of theirs holds a pending variable,
-                // so writing a value changes none of their rows. No proof covers the whole
-                // loop. Evidence (counted once with a temporary counter, 2026-11-14): this branch
+                // Proof (PROOF-solve-omega-path-renaming, 2026-11-28) that running these
+                // eliminations and fixes before the pending definitions are written, and the
+                // rule of [`Omega::read_pending`] that decides when not to, change only the
+                // order of the steps: the model and the place of a refusal can change, never
+                // whether a point exists. Write `W(S)` for the rows `S` held with every pending
+                // definition written into them, the rows [`Omega::flush`] leaves.
+                // 1. Where `deferred` returns `None`, `flush` runs at once, the order without
+                //    deferral. It returns `Some` only with `write_first` unset, and
+                //    `read_pending` sets `write_first` for each new pending definition that
+                //    holds a variable, read at the start of `deferred` and again after each
+                //    `fix` in it, the only step there that adds definitions. So every step
+                //    below runs while every pending definition is a value `x[p] = v[p]`.
+                // 2. A value written into a row changes its constant only, so `W(S)` is the
+                //    same in whatever order and with whatever grouping the rows are written;
+                //    hence `write_lone` (writing some rows early) leaves `W(S)` as it was.
+                // 3. While pending, no step reads or changes a row that holds a pending
+                //    variable except `write_lone`: the ranks of pending variables are taken
+                //    out (`read_pending`, `write_lone`), the eliminations taken pass `clear`,
+                //    `fix` reads rows of one variable only, which is not pending (`retain`),
+                //    and `System::add` of a row over no pending variable merges or removes
+                //    (`dominated`) only rows over the same variables, so none holding one.
+                // 4. An elimination of `x[j]` taken here passes `clear`: no row of `x[j]`
+                //    holds a pending variable. So the rows of `x[j]` in `W(S)` are its rows
+                //    in `S`, unchanged, and no other row of `W(S)` holds `x[j]` (such a row
+                //    would be a row of `x[j]` holding a pending variable). Its sides, and so
+                //    whether it is exact, are the same in both. Eliminating it in `S` writes
+                //    the rows it would write in `W(S)`, none holding a pending variable, so
+                //    `W` of the result is `W(S)` with `x[j]` eliminated; the exact stage's
+                //    own argument (an exact elimination keeps the integer points of the
+                //    other variables) then holds of `W(S)`. Variables taken together share no
+                //    row (`System::least`), so this holds of each in turn.
+                // 5. A `fix` of `x[j]` taken here: `x[j]` is fixable in `S` on a side `σ`
+                //    whose rows are all of one term, so none holds a pending variable, and
+                //    they are its rows on side `σ` in `W(S)` too. Every other row of `x[j]`
+                //    in `W(S)` is the written form of one in `S` on the other side: writing
+                //    changes neither the sign of its coefficient nor (after normalizing by a
+                //    positive divisor) its side; a row written to `true` drops out. So in
+                //    `W(S)` the same bound on side `σ` holds and every other row pulls `x[j]`
+                //    toward it, which is what [`Omega::fix`]'s argument needs; it chooses
+                //    the same value. This needs no row noted for `write_lone`: those only
+                //    turn rows of the other side into bounds sooner, which is speed.
+                // 6. By 1-5 each step here is a step the loop could take on `W(S)` with the
+                //    same effect on its integer points, so after `flush` the rows hold the
+                //    same integer points, over the variables left, as in the order without
+                //    deferral, and every later stage decides the same question.
+                // 7. The model: `Step::Chosen(j, rows)` is replayed with `choose` from the
+                //    values of the variables of `rows`; none is pending (4), and each is
+                //    defined or chosen by a later step or by `start`, which the replay, last
+                //    step first, has set already. A value's `Step::Defined` holds no
+                //    variable. So the model replayed meets every row, as without deferral.
+                // A refusal can come at another place since the steps are charged in
+                // another order; the meter refuses whatever was found then. Evidence
+                // (counted once with a temporary counter, 2026-11-14): this branch
                 // was taken in tests checked against an independent answer, among them
                 // `l01_38_presburger::oracle::rows_of_three_terms_tight_at_a_corner_match_enumeration`
                 // (67 times with its seed test),
@@ -19454,8 +19516,7 @@ impl Omega {
                 // (42) and
                 // `l01_39_reduced_product::random::the_closed_path_condition_and_the_scope_agree_on_emptiness`
                 // (44); FAIL-open-sides-bench-ratio gives the scaling with it (8.99 against 51.6
-                // with the deferral off). If false, the Omega test can answer "no point" where one
-                // exists or the reverse: unsound.
+                // with the deferral off).
                 if let Some(js) = self.deferred() {
                     for j in js {
                         let rows = self.sys.eliminate(j, false);
@@ -19504,24 +19565,45 @@ impl Omega {
                     // The variables of a row that each have one other row, of a unit
                     // coefficient, go together with `x[j]`, the row written once
                     // (`System::pendants`).
-                    // Assumption, not proved (ASSUME-documented): writing the definitions of
-                    // `System::pendants` together into `l` gives the same set of integer points
-                    // as eliminating its variables one at a time, so only the order of steps
-                    // changes, never whether a point exists. The argument is in the doc of
-                    // `System::pendants` (each `x[p]` can move to its bound `-s·q[p]` and stay a
-                    // point; no `r[p]` holds another of them, so the definitions commute); it
-                    // also needs `pending` to be empty here, as the `continue` above makes it,
-                    // so that [`Omega::flush`] finds each definition free of the others. No
-                    // proof covers the whole loop. Evidence (counted once with a temporary
+                    // Proof (PROOF-solve-omega-path-renaming, 2026-11-28) that writing the
+                    // definitions `x[p] = -s[p]·q[p]` of `System::pendants`, for `p` in its set
+                    // `D`, keeps the integer points of the other variables, so that only the
+                    // order of steps changes, never whether a point exists.
+                    // 1. By `System::own_row`, each `x[p]` has exactly two rows, `l` and
+                    //    `r[p]: s[p]·x[p] + q[p] >= 0` with `s[p] = ±1`, one on each side
+                    //    (`lo == hi == 1`; the system holds inequalities only, its equalities
+                    //    being in `es`). By the `continue` in `pendants`, no `r[p]` holds
+                    //    another variable of the set found, so `q[p]` holds none of `D`.
+                    // 2. Every point of the rows, the values of `D` dropped, has a point of
+                    //    the rows written: the same values. Each row but `l` and the `r[p]`
+                    //    holds no variable of `D` (1) and is unchanged; each `r[p]` is written
+                    //    to `0 >= 0`; and `l` written is `l` at the point with every `x[p]`
+                    //    moved to `-s[p]·q[p]`. Take `s[p] = 1` (the other sign is the mirror):
+                    //    `r[p]` is `x[p] >= -q[p]`, so `l`, on the other side, has a negative
+                    //    coefficient `c` of `x[p]`, and moving `x[p]` down to `-q[p]` adds
+                    //    `|c|·(x[p] + q[p]) >= 0` to `l`. The moves change no `q[p']` (1), so
+                    //    taken one at a time each keeps every row, and `l` written holds.
+                    // 3. Every point of the rows written gives a point of the rows: set each
+                    //    `x[p] = -s[p]·q[p]`, an integer, read from variables outside `D` (1).
+                    //    Then `r[p]` holds with equality, `l` holds since `l` written holds,
+                    //    and no other row holds `x[p]` (1).
+                    // 4. `pending` is empty here (the `continue` of the pending branch above),
+                    //    so [`Omega::flush`] writes these definitions alone; it rewrites `l`
+                    //    and each `r[p]`, which are all the rows of `D` (1). `System::add`
+                    //    normalizes `l` written by its coefficients' divisor, rounding the
+                    //    constant down, which keeps its integer points.
+                    // 5. The model: each `Step::Defined(p, def)` is replayed after the steps
+                    //    that set the variables of `q[p]` (they stay in the system and are
+                    //    taken later, last step replayed first), giving the point of 3.
+                    // So 2 and 3 give the same integer points as the `|D|` exact eliminations
+                    // one at a time. Evidence (counted once with a temporary
                     // counter, 2026-11-14): this branch was taken 526 times in
                     // `zedc_presburger::difference_rows::solve_never_refuses_rows_of_two_unit_terms`,
                     // checked against Bellman-Ford, and in
                     // `l01_38_omega_test::scaling::random_rows_of_two_unit_coefficients_with_a_point_are_decided`
                     // and `model_keys`, which check the model; the enumeration tests
                     // `forest_answers_match_enumeration` and
-                    // `random_unit_rows_agree_with_enumeration` never reach it. If false, the Omega
-                    // test can answer "no point" where one exists or the reverse, or give a model
-                    // that is no point: unsound.
+                    // `random_unit_rows_agree_with_enumeration` never reach it.
                     if let [j] = js[..]
                         && let Some(defs) = self.sys.pendants(j)
                     {
@@ -20135,7 +20217,17 @@ impl Omega {
             // colors (the pivots share one) and maps the system onto itself, so the run that
             // defines `y` is the image under `τ` of the run that defines `x`, step for step, and
             // ends in the same kind of leaf (the argument at `Omega::untie`, whose assumption on
-            // the later steps this shares). Kept rows (`loose`) are refused as there.
+            // the later steps this shares). Kept rows (`loose`) are refused as there. The
+            // system includes the definitions not yet written into the rows (`pending`), whose
+            // variables the rows still hold, so `τ` must map each of them onto itself too
+            // ([`Omega::pending_swaps_onto_itself`], PRES-tie-symmetry-pending); without it a
+            // swap that changes one was taken. A temporary probe (2026-11-27, every test of
+            // `l01_38_omega_test`, `l01_38_presburger` and `l01_25_preimage_catalog`) found it
+            // in three tests, `cell_sweep::overlap_at_last_level_with_k` and two of
+            // `ref_memo`: in each, a pending definition held one of the two swapped variables
+            // and not the other. `broken_swap` asks the same of the definitions before a tie
+            // once splinters are built (it compares each with its own image, not with another
+            // definition's), so both checks now read the definitions alike.
             // Before PRES-tie-symmetry every tie here was kept as two rows, and a row tie
             // on kept rows is refused, so `a' + b' == 2d'` with `a'` and `b'` alike was refused
             // (`tests::a_hull_side_past_a_symmetric_tie_is_answered`; also
@@ -20153,6 +20245,7 @@ impl Omega {
                     swapped(&e.a, x, y) == *e.a
                         && self.sys.swaps_onto_itself(x, y)
                         && self.es.swaps_onto_itself(x, y)
+                        && self.pending_swaps_onto_itself(x, y)
                 });
             if !symmetric {
                 self.es.put(s, e, &mut self.sys);
@@ -20193,6 +20286,97 @@ impl Omega {
         self.steps.push(Step::Defined(y, def.clone()));
         self.pending.push((y, def));
         Ok(())
+    }
+
+    /// The swaps that let a step on the equality `e` define the first of `tied`, the
+    /// variables with a unit coefficient that tie for its pivot (`pivots`), when each swap of
+    /// the first with another maps the whole problem onto itself; `None` otherwise. `alone`
+    /// says whether no equality but `e` holds a variable. A swap of `x` and `y` maps onto
+    /// itself: `e`, when its coefficients at the two are equal; every other equality, which
+    /// holds neither (`alone`); the inequalities, by [`System::swaps_onto_itself`]; and the
+    /// definitions not yet written into them, by [`Omega::pending_swaps_onto_itself`]. Rows
+    /// kept loose are refused, as [`Omega::untie`] refuses them. Then the run that defines `y`
+    /// is the image under the swap of the run that defines `x`, by the argument of
+    /// [`Omega::untie`], and the swaps are checked against the rows the splinters read by
+    /// [`broken_swap`] as those of `untie` are. Before PROJECT-each-eq-slack such a tie kept `e`
+    /// as a pair of rows, which turns off every later swap of `untie` (`sys.loose`):
+    /// `v0 + v3 == v1 - 1` and `v1 == v2 + v4 + 1` in a box were refused. Used by
+    /// [`Omega::swapped_pivots`] for equalities tied with each other; the tie within one
+    /// equality is the check of PRES-tie-symmetry in [`Omega::equality`], which asks the same,
+    /// with the other equalities by [`Equalities::swaps_onto_itself`]. O(t·d·w log m) for the
+    /// t tied variables, as `untie`'s check. Test:
+    /// `l01_38_omega_test::names::tied_pivots_that_a_swap_maps_onto_itself_are_defined`.
+    fn pivot_swaps(
+        &self,
+        e: &Row,
+        tied: &[usize],
+        alone: impl Fn(usize) -> bool,
+    ) -> Option<Vec<Moves>> {
+        let [x, ref others @ ..] = tied[..] else {
+            return None;
+        };
+        let fits = |j: usize| alone(j) && e.at(j) == e.at(x);
+        (self.sys.loose.is_empty()
+            && !others.is_empty()
+            && fits(x)
+            && others.iter().all(|&y| {
+                fits(y) && self.sys.swaps_onto_itself(x, y) && self.pending_swaps_onto_itself(x, y)
+            }))
+        .then(|| {
+            (others.iter())
+                .map(|&y| vec![(x.min(y), x.max(y)), (x.max(y), x.min(y))])
+                .collect()
+        })
+    }
+
+    /// Whether the swap `τ` of `x` and `y` maps each definition not yet written into the rows
+    /// (`pending`) onto itself, which a swap check on the rows does not see: the rows still
+    /// hold the defined variable `v`, which `τ` fixes (a pending variable is out of the
+    /// equalities, so it is neither `x` nor `y`), and a row `r` is written as `r[v := def]`.
+    /// When `τ` maps the rows onto themselves and `τ(def) == def`, then `τ(r[v := def]) ==
+    /// τ(r)[v := def]`, a written row again, so the written rows map onto themselves; a
+    /// definition that holds only one of `x` and `y`, or both at different coefficients, is
+    /// changed by `τ` and the swap is refused. One rule for both swap checks of an equality's
+    /// tied pivots ([`Omega::equality`], [`Omega::pivot_swaps`]), item
+    /// PRES-tie-symmetry-pending; [`broken_swap`] asks the same of the definitions among the
+    /// steps. O(p·w log w) for p pending definitions of w terms.
+    fn pending_swaps_onto_itself(&self, x: usize, y: usize) -> bool {
+        (self.pending.iter()).all(|(_, d)| swapped(&d.a, x, y) == *d.a)
+    }
+
+    /// The pivot of each equality in `slots`, the equalities of least key that
+    /// [`Equalities::least`] found tied, when each has its own: every variable that ties for
+    /// its pivot is held by no other equality, and when more than one ties, a swap of the first
+    /// with each other maps the whole problem onto itself ([`Omega::pivot_swaps`]), whose swaps
+    /// are recorded. Each pivot is then in its own equality alone, so the equalities are solved
+    /// together in any order, by the argument of [`Equalities::least`], and every check reads
+    /// the state before any is solved, so no order among them plays a part. `None`, with
+    /// nothing recorded, when some slot has no such pivot. O(t·d·w log m) for the t tied
+    /// variables.
+    fn swapped_pivots(&mut self, slots: &[usize]) -> Option<Vec<(usize, usize)>> {
+        let mut chosen = Vec::with_capacity(slots.len());
+        let mut swaps = Vec::new();
+        for &s in slots {
+            let held = self.es.rows[s].as_ref()?;
+            let alone = |p: usize| self.es.of[p].len() == 1;
+            let e = &held.row;
+            if !held.pivots.iter().all(|&p| alone(p) && e.at(p).is_unit()) {
+                return None;
+            }
+            if let [p] = held.pivots[..] {
+                chosen.push((s, p));
+                continue;
+            }
+            let perms = self.pivot_swaps(e, &held.pivots, alone)?;
+            let t = Tied {
+                vars: held.pivots.clone(),
+                rows: vec![(e.clone(), Rel::Eq)],
+            };
+            swaps.push((t, perms, self.steps.len()));
+            chosen.push((s, held.pivots[0]));
+        }
+        self.swaps.extend(swaps);
+        Some(chosen)
     }
 
     /// Solves the equalities in `slots` together when each is `x - y == d`, and says whether
@@ -20388,17 +20572,41 @@ impl Omega {
     /// `l01_38_omega_test::names::a_cycle_turned_both_ways_and_a_longer_cycle_one_way_are_decided`,
     /// `l01_38_omega_test::names::a_tie_that_shares_a_row_is_refused`. COMPLEXITY.md row
     /// NAME-ties.
-    // Assumption, not proved (ASSUME-documented): the argument above needs every step of the
-    // loop after the tie to read only the rows and the flags that hold no variable, and each
-    // step to be the same under a renaming of the variables (the invariant [`solve`] states).
-    // No proof covers every step, and a step added later that reads a variable's index would
-    // break it. The counts of `System::shrinking` are those of the rows held when a tie is
-    // read from them (`System::shrink` states why), and `System::touch` marks every variable
-    // of fewest rows, none by index. Evidence:
+    // Proof (PROOF-untie-renaming, b30-pres4, 2026-11-27) that every step of [`Omega::run`]
+    // after the tie reads only the rows and the flags that hold no variable, and is the same
+    // under a renaming `τ` of the variables that keeps their colors (the invariant [`solve`]
+    // states). Each step that chooses, in the order `run` takes them:
+    // 1. The next equality is the least by color (`Equalities::least`); a tie of pivots is
+    //    taken only by a swap that maps the rows onto themselves (`Omega::pivot_swaps`), and
+    //    is otherwise kept as a pair of opposite rows (`loose_tie`), so by content alone.
+    // 2. `Omega::differences` defines each member of a class by its representative, the least
+    //    by (color, offset, place); two members of one color and offset are equal at every
+    //    point and alike in the rows, so the place only names the variable left
+    //    (`Ties::representatives`).
+    // 3. `Omega::cycles` turns into equalities the rows of edges inside a strongly connected
+    //    component: a set read from the rows alone, then ordered by step 1.
+    // 4. Eliminations before the pending definitions are written (`Omega::deferred`): the
+    //    order of steps changes, never whether a point exists (PROOF-solve-omega-path-renaming).
+    // 5. `System::one_sided` is taken by its first index, but the rows left after all are
+    //    dropped are the same in every order (the note at that step), and `Omega::fix` gives
+    //    each fixable variable a value read from its own bounds.
+    // 6. The exact, lossless, inexact and shrinking stages choose by `System::least` and
+    //    `System::least_unfilled`, by color, and pass every tie back through this function.
+    //    The counts of `System::shrinking` are those of the rows held when a tie is read from
+    //    them (`System::shrink` states why), and `System::touch` marks every variable of
+    //    fewest rows, none by index.
+    // 7. `Omega::batch_pendant` sorts by (color, place) and takes only the prefix in which no
+    //    two colors are equal, which `τ` maps onto itself.
+    // 8. With three variables left, `live3::decide` decides completely; the order can change
+    //    which point, not the verdict. [`splinters`] checks `τ` on the rows it reads.
+    // So the two runs agree step by step up to `τ`. Not covered: a step added to `run` later;
+    // it must choose by content or come back here, and the list above is the review list.
+    // Evidence:
     // `l01_38_omega_test::names::ties_taken_by_a_swap_agree_with_enumeration` (200 random symmetric
     // systems against enumeration, under both namings) and
     // `a_tie_that_a_swap_maps_onto_itself_is_decided`. No test reaches the branch of
-    // [`broken_swap`] where a swap fails. If false, the answer can depend on the names (an answer
+    // [`broken_swap`] where a swap fails. If a later step breaks it, the answer can depend on the
+    // names (an answer
     // under one naming, a refusal under another). Each run is still an exact elimination order, so
     // no answer is wrong: determinism and precision only.
     fn untie(&mut self, least: Option<Least>, taken: impl Fn(isize) -> bool) -> Option<Least> {
@@ -20600,15 +20808,13 @@ impl Omega {
     /// written, since a deferred elimination reads no such row, so its count of pending
     /// variables stays true; the counts are read once all the new definitions are counted, so
     /// that two variables of a row fixed at once are both counted.
-    // Assumption, not proved (ASSUME-documented): the `write_first` rule and the rows noted
-    // for `write_lone` below choose only which pending definitions are written before the
-    // next elimination, and into which rows. The rule (a definition that holds a variable) is
-    // what the argument for deferring needs, since writing such a definition changes the rows
-    // of the variables it holds; the rows noted (a row left with one variable not pending) are
-    // for speed alone (39 times the instructions from 160 to 1,280 links without them). That
-    // either choice reaches the same set of points is argued, not proved; the evidence is at
-    // the call of [`Omega::deferred`] in the loop. If false, the answer could change with it:
-    // unsound.
+    // Proved at the call of [`Omega::deferred`] in [`Omega::run`] (PROOF-solve-omega-path-
+    // renaming, 2026-11-28): the `write_first` rule and the rows noted for `write_lone` below
+    // choose only which pending definitions are written before the next elimination, and into
+    // which rows. The rule (a definition that holds a variable) is what the proof needs (its
+    // step 1), since writing such a definition adds terms to the rows of the variables it
+    // holds; the rows noted (a row left with one variable not pending) are for speed alone
+    // (its steps 2 and 5; 39 times the instructions from 160 to 1,280 links without them).
     fn read_pending(&mut self) {
         let mut counted = Vec::new();
         for (p, (j, def)) in self
@@ -20722,11 +20928,27 @@ impl Omega {
         // alike) and one without a unit coefficient (`3·a + 2·b + 3·c + 2 == 0`), each step on
         // the second wrote a fresh variable into the tied pair, which met as a new equality,
         // and the steps went on without end (test `loose_pair_tests`).
-        // Assumption, not proved: keeping the rewritten pair loose never holds back a tie that
-        // a later step needs. The two rows still state the equality, so the set is unchanged;
-        // what could be lost is only an elimination by that equality. Evidence: the 2255
-        // pieces of zedc_presburger, zedc_preimage and l01_ (2026-11-14) gave the same
-        // verdicts as before, apart from two snapshots that already failed on main.
+        // Claim: keeping the rewritten pair loose changes no answer and turns off no swap of a
+        // tie; it gives up only an elimination by the rewritten equality. Proof. (1) The rows:
+        // a pair `a·v + k >= 0` and `-a·v - k >= 0` holds exactly the points of `a·v + k == 0`,
+        // and `resolve` writes each definition `v_j = d_j` of `defs` into both rows alike, so
+        // the rewritten pair holds exactly the points of the rewritten equality; the set the
+        // system states is the one it stated before the write, whether the pair meets or not.
+        // (2) The swaps: `sys.loose` is only ever added to (no `clear`, `remove` or `retain`;
+        // `System` is not `Clone`, and each run builds its own), and the pair was put there by
+        // `loosen` before this write, so `sys.loose` is not empty already. Every step that
+        // settles a tie by a swap requires it empty: `Omega::equality` (`symmetric`),
+        // `Omega::swapped_pivots` and `Omega::untie` (each `self.sys.loose.is_empty()`). So the
+        // insert below turns off no swap that was on. (3) What the insert does change: the pair
+        // is not met as an equality (`System::add`, `meets`), so no elimination by it is made;
+        // the two rows go to the stages below as inequalities, each of which decides the set it
+        // is given or refuses, and a refusal there returns the tie `loosen` kept
+        // (`loose_tie`). So the loss is of precision or cost, never of an answer: a run that
+        // the rewritten equality would have let answer may refuse instead. Not done: meeting
+        // the rewritten pair again when its equality has a unit coefficient on a variable no
+        // other variable is alike with, which would end as `equality` ends; test
+        // `a_tied_equality_rewritten_is_not_met_again` shows the case it must still stop on
+        // (the rewritten pair tied again, without end). The same holds for `write_lone`'s pair.
         for r in rows {
             if meter::spent() {
                 return;
@@ -21712,8 +21934,9 @@ fn cover_input(f: &Formula) -> Formula {
     canonical_parts(&signed.map_cons(&|c| Formula::Con(c.clone())))
 }
 
-/// Exact projections without a cover question when every row is a difference row,
-/// and every disjunction is certified by `forest_domains`. Products are excluded.
+/// Exact projections without a cover question when every row is a difference row or an
+/// equality with a slack atom ([`is_slack_row`]), and every disjunction is certified by
+/// `forest_domains`. Products are excluded.
 /// No disjunction may be omitted, even one on an atom not asked for: its component
 /// might be empty. A failed certificate takes the ordinary solver and cover path.
 ///
@@ -21726,6 +21949,16 @@ fn cover_input(f: &Formula) -> Formula {
 /// its handled components share no atom with any unhandled component. When all
 /// disjunctions are handled, the remaining components are satisfiable base rows.
 /// Their Cartesian product proves both existence and each returned projection.
+///
+/// Slack rows (item PROJECT-each-eq-slack): `forest_domains` reads a base slack row as a band
+/// on the edge of its two other atoms, and answers every atom of a component it handles (its
+/// difference rows' atoms, free atoms and the slack rows' atoms; the slack atom's exact values
+/// by `slack_values`). So a slack row is taken only when each of its atoms has a forest
+/// domain: its component is then handled, and every component left holds difference rows
+/// alone, whose hulls (`difference_hulls` of the difference rows) are exact as above. The
+/// hulls of a handled component's atoms from its difference rows alone are wider, and the
+/// forest's domains replace them. A slack row the forest does not take leaves an atom with
+/// no forest domain, or a disjunction not handled, and the ordinary path answers.
 ///
 /// Complexity tradeoff: reuse the existing O(N log N) difference/forest passes,
 /// plus their interval output, rather than O(S N) whole-formula questions/cells
@@ -21741,7 +21974,8 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<EachClassed> {
         |_, ()| (),
         |g, (), parts: Vec<bool>| match g {
             Formula::Con(c) => {
-                is_difference(c) && !c.lin.terms.keys().any(|a| matches!(a, Atom::Product(..)))
+                (is_difference(c) || is_slack_row(c))
+                    && !c.lin.terms.keys().any(|a| matches!(a, Atom::Product(..)))
             }
             _ => parts.into_iter().all(|p| p),
         },
@@ -21750,7 +21984,7 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<EachClassed> {
         return None;
     }
     let mut p = Parts::of(nnf(f, true));
-    if !p.cons.iter().all(is_difference) {
+    if !p.cons.iter().all(|c| is_difference(c) || is_slack_row(c)) {
         return None;
     }
     let model = match solve(&p.cons, true).ok()? {
@@ -21758,13 +21992,19 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<EachClassed> {
         Some(m) => m,
     };
     let linked = Linked::of(std::mem::take(&mut p.cons));
-    let rows: Vec<&Con> = linked.cons.iter().collect();
+    let rows: Vec<&Con> = linked.cons.iter().filter(|c| is_difference(c)).collect();
     let mut doms = difference_hulls(&rows, &model)?;
     let (forest, handled, empty) = forest_domains_classed(&linked, &p.ors, &model);
     if empty {
         return Some(EachClassed::plain(no_points(syms)));
     }
     if handled.iter().any(|h| !h) {
+        return None;
+    }
+    // Each slack row in a component the forest handled (above).
+    if !(linked.cons.iter().filter(|c| !is_difference(c)))
+        .all(|c| c.lin.terms.keys().all(|a| forest.contains_key(a)))
+    {
         return None;
     }
     // The forest's sets kept classed (PRES-holes-steps-cost): O(1) ranges each on a chain of
@@ -24199,10 +24439,16 @@ impl Level {
         // that such a refusal is the same under every naming; where it differs, the disjunct
         // is asked again with the base's groups (`groups` below), which reads the base as it is
         // and so answers alike under every naming, but whether that answer and the projection's
-        // agree on every hull is not proved either (row PROOF-tied-projection-refusal-names).
-        // Evidence: two copies of a random three-variable system joined by a disjunction that a
-        // swap of the copies maps onto itself, 180 systems under 20 random namings each, gave
-        // one answer each.
+        // agree on every hull is not proved either. Where [`decide_named`] and
+        // [`satisfiable_named`] reach here, a tied formula has first been renamed by its
+        // structure where that can be done ([`Renamed::untied`];
+        // PROOF-tied-projection-refusal-names, done), so the names as given are the
+        // structure's. The claim stays open where no renaming is found (true symmetries,
+        // PRES-tie-symmetry) and for a call of [`project_parts`] over the names as given
+        // (PROOF-sweep-zedc-presburger), as the doc of [`stage_kernels`] says of a tied
+        // component. Evidence: two copies of a random three-variable system joined by a
+        // disjunction that a swap of the copies maps onto itself, 180 systems under 20 random
+        // namings each, gave one answer each.
         let mut kernels: Vec<Vec<Option<Vec<Con>>>> =
             ors.iter().map(|ds| vec![None; ds.len()]).collect();
         {
@@ -25807,14 +26053,21 @@ impl Hull {
                     let top = hi
                         .clone()
                         .or_else(|| self.seen[i].as_ref().map(|s| s.0.clone()));
+                    // Steps of 1, 2, 4, ... from `lo` (item PERF-wide-modulus-cliffs), each a
+                    // value snapped to `set` as in the bisection below, up to `top` where there
+                    // is one; see the tradeoff at `new_hi`.
                     let (mut a, mut b) = match top {
-                        Some(top) => (lo, top),
-                        None => {
+                        Some(top) if !shortcuts => (lo, top),
+                        top => {
                             let (mut a, mut step) = (lo, one.clone());
                             loop {
                                 let v = &a + &step;
-                                if !self.none(i, true, &v) {
-                                    break (a, v);
+                                if let Some(t) = top.as_ref().filter(|t| &v >= *t) {
+                                    break (a, t.clone());
+                                }
+                                match snap_below(&a, &v) {
+                                    Some(m) if !self.none(i, true, &m) => break (a, m),
+                                    _ => {}
                                 }
                                 a = &v + &one;
                                 step = &step * &two;
@@ -25857,14 +26110,32 @@ impl Hull {
                 _ => {
                     let bottom =
                         (new_lo.clone()).or_else(|| self.seen[i].as_ref().map(|s| s.1.clone()));
+                    // Complexity tradeoff (PERF-wide-modulus-cliffs): the bisection from the end
+                    // to the value at a point found asks about `log2 w` whole questions for `w`
+                    // the distance between them, whatever the distance `d` from the end to the
+                    // bound: shape 3 of `counted_remainder_chain(k, m)` at m = 2^62 and
+                    // `i64::MIN` (`l01_25_preimage_catalog::s22`) found a point at about `-m`
+                    // and the bound `-2` or `-3` below the end 2, and asked 63 questions, each a
+                    // probe of every disjunct, 1.1 to 3.0 s at k = 4 and 5. Used: steps of 1, 2,
+                    // 4, ... from the end first (the unbounded search of Bentley and Yao 1976,
+                    // doi:10.1016/0020-0190(76)90071-5, its first stage), up to the value at
+                    // the point, then the bisection within the last step: about `2 log2 d + 2`
+                    // questions, at most `2 log2 w + 2` where the bound lies near the point,
+                    // against `log2 w + 1`. Each value is snapped to a member of `set`, so a gap
+                    // of `set` costs no question, as in the bisection. `HULL_BISECT` turns it
+                    // off with the other shortcuts.
                     let (mut a, mut b) = match bottom {
-                        Some(bottom) => (bottom, hi),
-                        None => {
+                        Some(bottom) if !shortcuts => (bottom, hi),
+                        bottom => {
                             let (mut b, mut step) = (hi, one.clone());
                             loop {
                                 let v = &b - &step;
-                                if !self.none(i, false, &v) {
-                                    break (v, b);
+                                if let Some(t) = bottom.as_ref().filter(|t| &v <= *t) {
+                                    break (t.clone(), b);
+                                }
+                                match snap_above(&b, &v) {
+                                    Some(m) if !self.none(i, false, &m) => break (m, b),
+                                    _ => {}
                                 }
                                 b = &v - &one;
                                 step = &step * &two;
@@ -27586,6 +27857,14 @@ fn is_difference(c: &Con) -> bool {
     }
 }
 
+/// Whether `c` is an equality of three atoms, each of coefficient 1 or -1: `x - y + e·s + k ==
+/// 0` (in some order) with `s` the slack atom, read by [`forest_component_domains`] as the
+/// band `x - y` in `-e·S - k` for the values `S` of `s` (item PROJECT-each-eq-slack). Which
+/// atom is `s` is chosen there.
+fn is_slack_row(c: &Con) -> bool {
+    c.rel == Rel::Eq && c.lin.terms.len() == 3 && c.lin.terms.values().all(|k| k.is_unit())
+}
+
 /// The exact domain of each atom of a component whose base rows are difference rows and
 /// bounds and whose disjunctions name atoms of one or two tie classes each (atoms whose
 /// differences the base fixes), with difference rows and bounds in every disjunct, when the
@@ -27778,7 +28057,11 @@ fn forest_domains_classed(
             .iter()
             .flat_map(|r| linked.held[*r].iter().map(|i| &linked.cons[*i]))
             .collect();
-        if !cons.iter().all(|c| is_difference(c)) {
+        // The base rows that are not difference rows must be equalities with a slack atom
+        // ([`is_slack_row`]), read as bands below (item PROJECT-each-eq-slack).
+        let (cons, slack): (Vec<&Con>, Vec<&Con>) =
+            cons.into_iter().partition(|c| is_difference(c));
+        if !slack.iter().all(|c| is_slack_row(c)) {
             continue;
         }
         let g = if cons.is_empty() {
@@ -27795,7 +28078,7 @@ fn forest_domains_classed(
                 None => continue,
             }
         };
-        match forest_component_domains(&g, free_atoms, js, ors) {
+        match forest_component_domains(&g, free_atoms, &slack, js, ors) {
             Some(None) => return (doms, handled, true),
             Some(Some(d)) => {
                 doms.extend(d);
@@ -28021,6 +28304,61 @@ struct ForestPart {
     hi: Option<Int>,
 }
 
+/// A slack row of [`forest_component_domains`] by its nodes: `x - y == σ·s + κ`, with `up`
+/// for `σ = 1` and `!up` for `σ = -1`.
+struct SlackRow {
+    x: usize,
+    y: usize,
+    s: usize,
+    atom: Atom,
+    up: bool,
+    kappa: Int,
+}
+
+/// Each row of `slack` ([`is_slack_row`]) as a [`SlackRow`], its slack atom `s` one whose node
+/// has no edge to another atom in `g` and that is in no other slack row; the first such atom
+/// of the row whose other two have opposite signs. `None` when a row has none, and the
+/// component then keeps main's way. O(r log r) for r slack rows.
+fn slack_rows(
+    g: &Differences,
+    node: &HashMap<&Atom, usize>,
+    slack: &[&Con],
+) -> Option<Vec<SlackRow>> {
+    let mut uses: HashMap<usize, usize> = HashMap::new();
+    for a in slack.iter().flat_map(|c| c.lin.terms.keys()) {
+        *uses.entry(node[a]).or_insert(0) += 1;
+    }
+    let alone = |v: usize| {
+        uses[&v] == 1
+            && (v >= g.out.len() || (g.out[v].iter().chain(&g.back[v])).all(|(u, _)| *u == 0))
+    };
+    let mut out = Vec::with_capacity(slack.len());
+    for c in slack {
+        let ts: Vec<(usize, bool, &Atom)> = (c.lin.terms.iter())
+            .map(|(a, k)| (node[a], k.is_positive(), a))
+            .collect();
+        let row = (0..3).find_map(|i| {
+            let (s, ks, atom) = ts[i];
+            let (p, q) = (ts[(i + 1) % 3], ts[(i + 2) % 3]);
+            if p.1 == q.1 || !alone(s) {
+                return None;
+            }
+            // `x - y + ks·s + k == 0` with `x` the positive one: `x - y == -ks·s - k`.
+            let (x, y) = if p.1 { (p.0, q.0) } else { (q.0, p.0) };
+            Some(SlackRow {
+                x,
+                y,
+                s,
+                atom: atom.clone(),
+                up: !ks,
+                kappa: -&c.lin.constant,
+            })
+        })?;
+        out.push(row);
+    }
+    Some(out)
+}
+
 /// An edge between classes `a < b`: bounds of `rep(b) - rep(a)`, and the disjunction on it.
 struct ForestEdge {
     a: usize,
@@ -28033,16 +28371,26 @@ struct ForestEdge {
 fn forest_component_domains(
     g: &Differences,
     free_atoms: &[&Atom],
+    slack: &[&Con],
     js: &[usize],
     ors: &[Vec<Rc<Parts>>],
 ) -> Option<Option<HashMap<Atom, Classed>>> {
-    // Nodes: 0 is z, 1..=atoms the graph's atoms, then the free atoms.
+    // Nodes: 0 is z, 1..=atoms the graph's atoms, then the free atoms, then the atoms of the
+    // slack rows in no difference row.
     let n0 = g.out.len();
-    let n = n0 + free_atoms.len();
     let mut node: HashMap<&Atom, usize> = g.node.iter().map(|(a, v)| (*a, *v)).collect();
     for (k, a) in free_atoms.iter().enumerate() {
         node.insert(*a, n0 + k);
     }
+    let mut extra: Vec<&Atom> = Vec::new();
+    for a in slack.iter().flat_map(|c| c.lin.terms.keys()) {
+        if !node.contains_key(a) {
+            node.insert(a, n0 + free_atoms.len() + extra.len());
+            extra.push(a);
+        }
+    }
+    let n = n0 + free_atoms.len() + extra.len();
+    let rows = slack_rows(g, &node, slack)?;
     let p = |v: usize| -> Int { if v < n0 { g.p[v].clone() } else { Int::ZERO } };
     // Tie classes: strongly connected components of the edges of reduced weight 0 between
     // atoms (Kosaraju, explicit stacks).
@@ -28273,11 +28621,58 @@ fn forest_component_domains(
             *d = d.meet_ranges(&fold_in_pairs(us, true));
         }
     }
+    // Each slack row `x - y == σ·s + κ` as a disjunction on the edge of `x` and `y`, one part
+    // per piece `[l, h]` of the values of `s`: `x - y` in `σ·[l, h] + κ`. The class of `s` is
+    // `s` alone (it has no edge to another atom, so no tie), and no edge meets it (checked
+    // below), so its set is final here.
+    let int_end = |e: &End| match e {
+        End::Fin(v) => Some(Int::from(v)),
+        _ => None,
+    };
+    let mut slack_edge: Vec<usize> = Vec::with_capacity(rows.len());
+    for r in &rows {
+        if class[r.x] == class[r.y] {
+            return None;
+        }
+        let e = edge(class[r.x], class[r.y], &mut edges, &mut key)?;
+        if edges[e].parts.is_some() {
+            return None;
+        }
+        let a = edges[e].a;
+        let mut parts: Vec<ForestPart> = Vec::new();
+        for (l, h) in dom[class[r.s]].pieces() {
+            let (l, h) = (int_end(&l), int_end(&h));
+            let (lo, hi) = if r.up {
+                (l.map(|l| &l + &r.kappa), h.map(|h| &h + &r.kappa))
+            } else {
+                (h.map(|h| &r.kappa - &h), l.map(|l| &r.kappa - &l))
+            };
+            let mut part = ForestPart {
+                ia: IntervalSet::top(),
+                ib: IntervalSet::top(),
+                lo: None,
+                hi: None,
+            };
+            // `x - y <= hi` is `x <= y + hi`; `x - y >= lo` is `y <= x - lo`.
+            if let Some(hi) = &hi {
+                le(r.y, r.x, hi, a, &mut part.lo, &mut part.hi);
+            }
+            if let Some(lo) = &lo {
+                le(r.x, r.y, &-lo, a, &mut part.lo, &mut part.hi);
+            }
+            parts.push(part);
+        }
+        edges[e].parts = Some(parts);
+        slack_edge.push(e);
+    }
     // Two passes of arc revision over each tree.
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nc];
     for (i, e) in edges.iter().enumerate() {
         adj[e.a].push(i);
         adj[e.b].push(i);
+    }
+    if rows.iter().any(|r| !adj[class[r.s]].is_empty()) {
+        return None;
     }
     let revise = |e: &ForestEdge, x: usize, dx: &Classed| -> Classed {
         // The values of the other end `y` that some value of `x` in `dx` supports.
@@ -28376,23 +28771,123 @@ fn forest_component_domains(
     if dom.iter().any(Classed::is_empty) {
         return Some(None);
     }
-    Some(Some(
-        (1..n)
-            .map(|v| {
-                let c = &off[v];
-                let k = Some(c.clone());
-                (
-                    (if v < n0 {
-                        g.atoms[v - 1]
-                    } else {
-                        free_atoms[v - n0]
-                    })
-                    .clone(),
-                    shifted_classed(&dom[class[v]], &k, &k),
-                )
+    let mut out: HashMap<Atom, Classed> = (1..n)
+        .map(|v| {
+            let c = &off[v];
+            let k = Some(c.clone());
+            let a = if v < n0 {
+                g.atoms[v - 1]
+            } else if v < n0 + free_atoms.len() {
+                free_atoms[v - n0]
+            } else {
+                extra[v - n0 - free_atoms.len()]
+            };
+            (a.clone(), shifted_classed(&dom[class[v]], &k, &k))
+        })
+        .collect();
+    for (r, &e) in rows.iter().zip(&slack_edge) {
+        let s = slack_values(r, &edges[e], &dom, &class, &off);
+        if s.is_empty() {
+            return Some(None);
+        }
+        out.insert(r.atom.clone(), s);
+    }
+    Some(Some(out))
+}
+
+/// The values of the slack atom `s` of the row `r` (`x - y == σ·s + κ`) at the points of its
+/// component, once the two passes of [`forest_component_domains`] have made `dom` exact: the
+/// values `t` of `s`'s set for which some value of `x`'s class and some value of `y`'s class
+/// meet the edge `e` between them with `x - y == σ·t + κ`.
+///
+/// Proof that each such `t` has a point, and only those: the class of `s` is `s` alone and no
+/// edge meets it, so `s` is bound only by its own set and by this row. With `d = rep(c_U) -
+/// rep(c_V)` for `(U, V) = (x, y)` when `σ = 1`, else `(y, x)`, the row is `s == d + off(U) -
+/// off(V) - σκ`. A pair of values of the two classes that meets the edge `e` (its base bounds
+/// and one of its parts, each part a piece of `s`'s set) extends to a point of the whole tree:
+/// with the edge removed, the tree falls into the side of `c_U` and the side of `c_V`, and
+/// after both passes every value of a final domain extends to a point of its side (step 4 of
+/// the proof at [`forest_domains_classed`], applied to each side, since a value with a support
+/// across `e` keeps the supports it has within its own side). So `t` has a point exactly when
+/// `t` is in `s`'s set and `t - off(U) + off(V) + σκ` is a difference `u - v` of values of the
+/// classes within the edge's base bounds; that `t` lies in a part is then `t` in `s`'s set.
+///
+/// Cost, for `p` and `q` pieces in the two classes' sets and `c` values of `s`: each value of
+/// `s` checked, `dom(c_U)` met with `dom(c_V)` moved by it, O(c·(p + q) log), or the set of
+/// differences built, `dom(c_U)` moved by each piece of `dom(c_V)` and joined, O(p·q log);
+/// the smaller of the two is taken (as [`touches_simple`] takes its smaller side), so a slack
+/// of few values costs O(p + q) a value: `acc`'s `x[k+1] == x[k] + y[k]` with `y[k]` in
+/// `{0, 2}` checks 2 values per row.
+// Complexity tradeoff: the set of differences alone has p·q pieces at most and that many in
+// general (`{0, 10, 20}` less `{0, 1, 2}`), so it is the naive bound; checking each value is
+// linear in the sets but unbounded for a slack of many values. Taking the cheaper by their
+// counts costs O(p + q) to count.
+fn slack_values(
+    r: &SlackRow,
+    e: &ForestEdge,
+    dom: &[Classed],
+    class: &[usize],
+    off: &[Int],
+) -> Classed {
+    let (u, v) = if r.up { (r.x, r.y) } else { (r.y, r.x) };
+    let (cu, cv) = (class[u], class[v]);
+    // Bounds of `d = rep(cu) - rep(cv)` from the edge's base rows (on `rep(b) - rep(a)`).
+    let (lo, hi) = if cu == e.b {
+        (e.lo.clone(), e.hi.clone())
+    } else {
+        (e.hi.as_ref().map(|h| -h), e.lo.as_ref().map(|l| -l))
+    };
+    // `s == d + c`.
+    let sigma_kappa = if r.up { r.kappa.clone() } else { -&r.kappa };
+    let c = &(&off[u] - &off[v]) - &sigma_kappa;
+    let fin = |k: &Option<Int>, neg: bool| match k {
+        Some(k) => End::Fin(Num::from(k)),
+        None if neg => End::NegInf,
+        None => End::PosInf,
+    };
+    let band = IntervalSet::range(fin(&lo, true), fin(&hi, false));
+    let own = &dom[class[r.s]];
+    let (du, dv) = (dom[cu].met(), dom[cv].met());
+    let (p, q) = (du.len() as u64, dv.len() as u64);
+    let each = own.count().saturating_mul(p + q);
+    let int_end = |e: &End| match e {
+        End::Fin(x) => Some(Int::from(x)),
+        _ => None,
+    };
+    let ds = if each <= p.saturating_mul(q) {
+        // Each value `t` of `s`: `d = t - c` must be in the band with `du ∩ (dv + d)` not empty.
+        let mut keep: Vec<(End, End)> = Vec::new();
+        for (l, h) in own.pieces() {
+            let (Some(l), Some(h)) = (int_end(&l), int_end(&h)) else {
+                unreachable!("a set of finite count has finite ends")
+            };
+            let mut t = l;
+            while t <= h {
+                let d = &t - &c;
+                let dd = Some(d.clone());
+                if band.contains_end(&End::Fin(Num::from(&d)))
+                    && !du.meet(&shifted(&dv, &dd, &dd)).is_empty()
+                {
+                    let te = End::Fin(Num::from(&t));
+                    keep.push((te.clone(), te));
+                }
+                t = &t + &Int::ONE;
+            }
+        }
+        IntervalSet::from_pieces(keep)
+    } else {
+        // `du - dv`: `du` moved by `-[l, h]` for each piece `[l, h]` of `dv`.
+        let diffs: Vec<IntervalSet> = (dv.pieces())
+            .map(|(l, h)| {
+                let (l, h) = (int_end(l), int_end(h));
+                shifted(&du, &h.map(|h| -&h), &l.map(|l| -&l))
             })
-            .collect(),
-    ))
+            .collect();
+        let d = fold_in_pairs(diffs, false).meet(&band);
+        let c = Some(c.clone());
+        shifted(&d, &c, &c)
+    };
+    own.meet_ranges(&ds)
 }
 
 /// The bounds that the row `lin >= 0` gives each of its atoms from the bounds `b` of the
@@ -34789,13 +35284,16 @@ mod probe_order {
     /// cases a seed, seeds 1 to 8), the answers of a seed kept 150 to 250 disjuncts without a
     /// point ([`has_point`] of the parts with each), so the test reaches the answers where an
     /// order could matter; 27 of 3669 differed on seed 1 before [`read_order`] read the parts
-    /// in the order of their content, none on any seed after.
-    #[test]
-    fn probe_leaves_the_same_parts_in_every_order() {
-        let (mut rng, seed) = Rng::fresh("probe_leaves_the_same_parts_in_every_order");
+    /// in the order of their content, none on any seed after. 375 cases of the 1500 the check
+    /// draws in all; the parts below are tests apart, each a piece of tools/run_tests.sh, since
+    /// the 1500 in one test took 20.0 s alone at load 11.8 against a limit of 20 s
+    /// (TESTS-split-two-presburger-tests-near-20s, 2026-11-27). Each part draws its own seed,
+    /// named after it.
+    fn probe_leaves_the_same_parts(part: &str) {
+        let (mut rng, seed) = Rng::fresh(part);
         let mut diffs = Vec::new();
         let mut asked = 0;
-        for case in 0..1500 {
+        for case in 0..375 {
             let f = match case % 3 {
                 0 => rows(&mut rng),
                 1 => slack(&mut rng),
@@ -34841,6 +35339,30 @@ mod probe_order {
             diffs.len(),
             diffs.join("\n")
         );
+    }
+
+    /// The first 375 cases of [`probe_leaves_the_same_parts`].
+    #[test]
+    fn probe_leaves_the_same_parts_in_every_order_part_1() {
+        probe_leaves_the_same_parts("probe_leaves_the_same_parts_in_every_order_part_1");
+    }
+
+    /// The second 375 cases of [`probe_leaves_the_same_parts`].
+    #[test]
+    fn probe_leaves_the_same_parts_in_every_order_part_2() {
+        probe_leaves_the_same_parts("probe_leaves_the_same_parts_in_every_order_part_2");
+    }
+
+    /// The third 375 cases of [`probe_leaves_the_same_parts`].
+    #[test]
+    fn probe_leaves_the_same_parts_in_every_order_part_3() {
+        probe_leaves_the_same_parts("probe_leaves_the_same_parts_in_every_order_part_3");
+    }
+
+    /// The fourth 375 cases of [`probe_leaves_the_same_parts`].
+    #[test]
+    fn probe_leaves_the_same_parts_in_every_order_part_4() {
+        probe_leaves_the_same_parts("probe_leaves_the_same_parts_in_every_order_part_4");
     }
 
     /// The parts [`probe`] leaves in the written order, reversed and shuffled are the same parts
@@ -34906,6 +35428,144 @@ mod probe_order {
         assert!(
             diffs.is_empty(),
             "seed {seed:#x}, {} of {asked}:\n{}",
+            diffs.len(),
+            diffs.first().map_or("", String::as_str)
+        );
+    }
+
+    /// The parts [`probe`] leaves are the same, read without their order, when the
+    /// disjunctions nested inside each disjunct, and their disjuncts, are shuffled: the open
+    /// case of the note at [`content_order`], which sorts the top level only
+    /// (PROOF-probe-order-independent). Each case is a system of [`rows_in`] with one or two
+    /// disjunctions more whose disjuncts are themselves systems of [`rows_in`] on the same
+    /// atoms, so each holds two disjunctions or more.
+    #[test]
+    fn probe_leaves_the_same_parts_whatever_the_order_of_the_disjunctions_inside_a_disjunct() {
+        let (mut rng, seed) = Rng::fresh(
+            "probe_leaves_the_same_parts_whatever_the_order_of_the_disjunctions_inside_a_disjunct",
+        );
+        let mut diffs = Vec::new();
+        let mut asked = 0;
+        for case in 0..300 {
+            let n = 2 + rng.below(4);
+            let b = 2 + rng.int_i128(0, 6);
+            let base = Parts::of(nnf(&rows_in(&mut rng, n, b), true));
+            let mut ors = base.ors.clone();
+            for _ in 0..1 + rng.below(2) {
+                let ds = (0..2 + rng.below(2))
+                    .map(|_| Rc::new(Parts::of(nnf(&rows_in(&mut rng, n, b), true))))
+                    .collect();
+                ors.push(ds);
+            }
+            let p = Parts::by_hand(base.cons.clone(), ors);
+            if !p.ors.iter().flatten().any(|d| d.ors.len() >= 2) {
+                continue;
+            }
+            asked += 1;
+            let mut mixed = || {
+                let ors = (p.ors.iter())
+                    .map(|o| {
+                        (o.iter())
+                            .map(|d| {
+                                let mut inner = d.ors.clone();
+                                rng.shuffle(&mut inner);
+                                for e in &mut inner {
+                                    rng.shuffle(e);
+                                }
+                                part(d.cons.clone(), inner)
+                            })
+                            .collect()
+                    })
+                    .collect();
+                Parts::by_hand(p.cons.clone(), ors)
+            };
+            let q = mixed();
+            let run = |q: Parts| match probe(q, &HashSet::new()) {
+                Ok(Some(q)) => format!("{:?}", key(&q)),
+                other => format!("{:?}", other.map(|o| o.is_some())),
+            };
+            let first = run(p.clone());
+            let other = run(q);
+            if first != other {
+                diffs.push(format!(
+                    "case {case}:\n  as written {first}\n  inner shuffled {other}"
+                ));
+            }
+        }
+        assert!(
+            asked >= 100,
+            "seed {seed:#x}: only {asked} cases with nested disjunctions"
+        );
+        assert!(
+            diffs.is_empty(),
+            "seed {seed:#x}, {} of {asked}:\n{}",
+            diffs.len(),
+            diffs.first().map_or("", String::as_str)
+        );
+    }
+
+    /// As the test above, with disjunctions of one disjunct allowed, which `drop_by_bounds`
+    /// lifts into the round with their nested disjunctions, and the inner disjunctions and
+    /// their disjuncts shuffled: the probe's answer does not depend on the order of a nested
+    /// disjunction (PROOF-probe-order-independent). A run of 787 such cases found no
+    /// difference (b30-pres4, 2026-11-28, seed 0xf98cedc861459be6); 200 cases take about 10 s
+    /// on one core.
+    #[test]
+    fn the_order_of_a_nested_disjunction_does_not_change_the_probe() {
+        let (mut rng, seed) =
+            Rng::fresh("the_order_of_a_nested_disjunction_does_not_change_the_probe");
+        let mut diffs = Vec::new();
+        let mut asked = 0;
+        for case in 0..200 {
+            let n = 2 + rng.below(4);
+            let b = 2 + rng.int_i128(0, 6);
+            let base = Parts::of(nnf(&rows_in(&mut rng, n, b), true));
+            let mut ors = base.ors.clone();
+            for _ in 0..1 + rng.below(3) {
+                let ds = (0..1 + rng.below(3))
+                    .map(|_| Rc::new(Parts::of(nnf(&rows_in(&mut rng, n, b), true))))
+                    .collect();
+                ors.push(ds);
+            }
+            let p = Parts::by_hand(base.cons.clone(), ors);
+            if !p.ors.iter().flatten().any(|d| d.ors.len() >= 2) {
+                continue;
+            }
+            asked += 1;
+            for _ in 0..3 {
+                let ors = (p.ors.iter())
+                    .map(|o| {
+                        (o.iter())
+                            .map(|d| {
+                                let mut inner = d.ors.clone();
+                                rng.shuffle(&mut inner);
+                                for e in &mut inner {
+                                    rng.shuffle(e);
+                                }
+                                part(d.cons.clone(), inner)
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let q = Parts::by_hand(p.cons.clone(), ors);
+                let run = |q: Parts| match probe(q, &HashSet::new()) {
+                    Ok(Some(q)) => format!("{:?}", key(&q)),
+                    other => format!("{:?}", other.map(|o| o.is_some())),
+                };
+                let first = run(p.clone());
+                let other = run(q.clone());
+                if first != other {
+                    diffs.push(format!(
+                        "case {case}:\n  p {:?}\n  as written {first}\n  shuffled {other}",
+                        key(&p)
+                    ));
+                }
+            }
+        }
+        assert!(asked > 0, "no case held a nested disjunction");
+        assert!(
+            diffs.is_empty(),
+            "seed {seed:#x}: {} of {asked}:\n{}",
             diffs.len(),
             diffs.first().map_or("", String::as_str)
         );

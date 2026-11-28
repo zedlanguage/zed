@@ -80,7 +80,7 @@ fn enclosing(stmts: &[Stmt], at: usize) -> Option<&str> {
 }
 
 /// The name the statement `s` declares, if it declares one.
-fn declared(s: &Stmt) -> Option<&str> {
+pub(crate) fn declared(s: &Stmt) -> Option<&str> {
     match &s.kind {
         StmtKind::Function(f) => Some(&f.name),
         StmtKind::Method(m) => Some(&m.function.name),

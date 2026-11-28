@@ -5350,9 +5350,35 @@ impl Drop for ViaLink {
     }
 }
 
-/// The calls that passed a need on ([`Need::via`]).
+/// The calls that passed a need on ([`Need::via`]), and the arrows current where the need was
+/// made ([`ArrowTrail`]). Neither is part of the need's equality or hash (below).
 #[derive(Clone, Default)]
-pub struct CallPath(pub Option<Arc<ViaLink>>);
+pub struct CallPath(pub Option<Arc<ViaLink>>, pub ArrowTrail);
+
+/// The lambdas checked at the arrows of an intersection of function types that hold a place
+/// where the checker is, innermost first, each with the arrow it is checked at: what the
+/// checker uses to name the lambda whose arrows give a span two rebuildings (row
+/// MSG-arrow-lambda-nested-cause, zedc-check `Ck::arrow_cause`). A need made inside such
+/// lambdas carries the trail current when it was made ([`CallPath`]), so that a refusal met
+/// when the need is met later, at a call of the function around, names a lambda by the arrows
+/// of the walk that made the need.
+// Complexity tradeoff: a cons list, so that a push, a pop and the copy kept with a need or a
+// fit are O(1) (one `Arc` clone); the list is walked, O(depth), only at a refusal. The naive
+// form, a `Vec` of frames copied into each need, costs O(depth) per need made.
+#[derive(Clone, Default, Debug)]
+pub struct ArrowTrail(pub Option<Arc<ArrowFrame>>);
+
+/// One frame of an [`ArrowTrail`]: the lambda at `lam`, checked at its arrow `arrow`, and the
+/// frames around it.
+#[derive(Debug)]
+pub struct ArrowFrame {
+    /// The lambda's span.
+    pub lam: Span,
+    /// The arrow of the intersection it is checked at, from 0.
+    pub arrow: usize,
+    /// The frame of the lambda around it, if any.
+    pub up: Option<Arc<ArrowFrame>>,
+}
 
 /// The links outermost first, as the notes read them ([`CallPath::for_each_note`]), so that a
 /// path built of `Cons` links and the same path with a shared `Join` prefix (the form
@@ -5368,13 +5394,14 @@ impl std::fmt::Debug for CallPath {
 }
 
 impl CallPath {
-    /// Prepends one outer link `(at, text)` onto `tail` in O(1).
+    /// Prepends one outer link `(at, text)` onto `tail` in O(1), keeping `tail`'s trail.
     pub fn prepend(at: Span, text: Arc<str>, tail: &CallPath) -> CallPath {
-        CallPath(Some(Arc::new(ViaLink::Cons {
+        let path = Arc::new(ViaLink::Cons {
             at,
             text,
             next: tail.0.clone(),
-        })))
+        });
+        CallPath(Some(path), tail.1.clone())
     }
 
     /// Combines a shared inner-to-outer `prefix_rev` with one leaf link `(at, text)` and `tail`
@@ -5391,11 +5418,14 @@ impl CallPath {
             next: tail.0.clone(),
         });
         match prefix_rev {
-            None => CallPath(Some(leaf)),
-            Some(p) => CallPath(Some(Arc::new(ViaLink::Join {
-                prefix_rev: p,
-                tail: Some(leaf),
-            }))),
+            None => CallPath(Some(leaf), tail.1.clone()),
+            Some(p) => CallPath(
+                Some(Arc::new(ViaLink::Join {
+                    prefix_rev: p,
+                    tail: Some(leaf),
+                })),
+                tail.1.clone(),
+            ),
         }
     }
 
@@ -9632,13 +9662,66 @@ fn member(x: &Ty, by_value: bool, rigid: &BTreeMap<Arc<str>, u8>) -> Member {
     }
 }
 
+/// Where a component of a member meets the shapes' at the places inside one tuple, at which a
+/// [`Group`] files ([`Group::lookup`]): `ms` says where each of its tuples' components there may
+/// be held ([`member`]). The shapes' component there is one value or of one class, so it holds
+/// the components of two tuples only when they are held under one key: Nowhere when one of them
+/// is held nowhere or two are held under two keys, else the key one is held under, or Anywhere
+/// when each may be held by any shape.
+fn meet(ms: impl IntoIterator<Item = Member>) -> Member {
+    let mut out = Member::Anywhere;
+    for m in ms {
+        match (m, &out) {
+            (Member::Nowhere, _) => return Member::Nowhere,
+            (Member::Anywhere, _) => {}
+            (Member::At(k), Member::Anywhere) => out = Member::At(k),
+            (Member::At(k), Member::At(l)) if k == *l => {}
+            (Member::At(_), _) => return Member::Nowhere,
+        }
+    }
+    out
+}
+
+/// A place a [`Group`] files: the component `at` of a member, or, where `inside` is the index
+/// of an earlier place of the group, the component `at` of each tuple at that place.
+///
+/// A place inside another is filed only where each shape of the group is one tuple there, of
+/// one length, that is not one value (TYPES-bucket-members-share-shape). Why the shapes may be
+/// filed by the components of that tuple, proof (proofdoc-bucket-depth): (1) the values of one
+/// tuple `(a_0, …, a_k)` are the tuples `(v_0, …, v_k)` with each `v_i` a value of `a_i`, the
+/// tuple type being the product of its components (the product type of B. C. Pierce, Types
+/// and Programming Languages, MIT Press 2002, sec. 11.6 and 11.7; cited from memory, the text
+/// not checked for this row), as [`Comparing`] compares a row with a row, component by
+/// component. (2) So a component `x` of a member, made of the tuples `r`, is held by that tuple
+/// exactly when each `r_i` is held by `a_i`, for each `i`. (3) The shapes' `a_i` at a place
+/// filed is one value or of one class ([`class`]), so `r_i` is held by it only where it is held
+/// under its key ([`member`], as at the top), and the tuples of `x` are all held only where
+/// they are held under one key ([`meet`]). (4) A shape filed under another key than the
+/// member's at a place inside therefore does not hold the member's component at the place
+/// around it, and so does not hold the member, which is what filing at the top claims (the
+/// claim [`Choices`] rests on). A variable in `x` may be any tuples, so its tuples' components
+/// may be held anywhere. Each row of a shape is filed under at most one place (the walk keeps
+/// the rows it has filed, by [`Row::node`]): a row shared at two paths is filed at the first,
+/// which files less finely but holds by (4) all the same; a shape with rows shared at many paths
+/// (a type written with names for its parts) is then filed in its number of rows, not paths.
+/// Test: l01_26 fits `shapes_told_apart_inside_their_one_tuple_fit_themselves_renamed`,
+/// refused before.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct TuplePlace {
+    inside: Option<usize>,
+    at: usize,
+}
+
 /// The shapes of a group of [`Choices`] whose components have a class ([`class`]) at the same
-/// places, and are one value at the same places of those, filed by their components there: by
-/// value where they are one value, else by class. A shape filed under another key than a
-/// member's holds no component of the member's there ([`member`]).
+/// places ([`TuplePlace`]), and are one value at the same places of those, filed by their
+/// components there: by value where they are one value, else by class. A shape filed under
+/// another key than a member's holds no component of the member's there ([`member`], [`meet`]).
 struct Group {
-    /// The places filed, each with whether it is filed by value.
-    places: Vec<(usize, bool)>,
+    /// The places filed, each with whether it is filed by value; a place comes after the place
+    /// it is inside.
+    places: Vec<(TuplePlace, bool)>,
+    /// Whether a place is inside another.
+    deep: bool,
     /// The shapes under each key, by their index in the list of shapes, in order.
     buckets: BTreeMap<Vec<ShapeKey>, Vec<usize>>,
     /// Every shape of the group, in order.
@@ -9656,11 +9739,43 @@ type ExactVars = HashMap<Arc<str>, Vec<(usize, usize)>>;
 impl Group {
     /// The bucket of the member whose components are `xs`, read with the rigid variables
     /// `rigid`: `None` when no shape of the group holds it.
+    ///
+    /// Where a place is inside another, the member's components at each place are kept, one for
+    /// each tuple at the place around it, each tuple once (by [`Row::node`]); none where a
+    /// component around it holds a variable, which may be any tuples ([`TuplePlace`]). Each
+    /// tuple of the member at a place is read once for each place inside it, so a lookup is
+    /// linear in the member's rows at the places filed, times their components filed.
     fn lookup(&self, xs: &[&Ty], rigid: &BTreeMap<Arc<str>, u8>) -> Option<Bucket> {
         let mut key = Vec::with_capacity(self.places.len());
         let mut anywhere = false;
-        for &(j, by_value) in &self.places {
-            match member(xs[j], by_value, rigid) {
+        let mut at: Vec<Option<Vec<&Ty>>> = Vec::new();
+        for &(TuplePlace { inside, at: i }, by_value) in &self.places {
+            let found = match inside {
+                None if !self.deep => member(xs[i], by_value, rigid),
+                None => {
+                    at.push(Some(vec![xs[i]]));
+                    member(xs[i], by_value, rigid)
+                }
+                Some(p) => {
+                    let here = at[p]
+                        .as_ref()
+                        .filter(|cs| cs.iter().all(|c| c.vars.is_empty()));
+                    let here = here.map(|cs| {
+                        let mut seen = HashSet::new();
+                        (cs.iter().flat_map(|c| c.tuples.iter()))
+                            .filter(|r| seen.insert(r.node()))
+                            .filter_map(|r| r.get(i))
+                            .collect::<Vec<&Ty>>()
+                    });
+                    let found = match &here {
+                        Some(cs) => meet(cs.iter().map(|c| member(c, by_value, rigid))),
+                        None => Member::Anywhere,
+                    };
+                    at.push(here);
+                    found
+                }
+            };
+            match found {
                 Member::Nowhere => return None,
                 Member::Anywhere => anywhere = true,
                 Member::At(k) => key.push(k),
@@ -9722,23 +9837,44 @@ struct Choices {
 type Buckets = Vec<(usize, Bucket)>;
 
 impl Choices {
-    /// The shapes, each by its index in its list and the keys of its components ([`class`]),
-    /// all of one width.
-    fn new<'k>(shapes: impl IntoIterator<Item = (usize, &'k [CompKey])>) -> Choices {
+    /// The shapes, each by its index in its list, the keys of its components ([`class`]) and
+    /// its components, all of one width. Linear in the shapes' components, and in the rows of
+    /// the places filed inside them, each row once a shape ([`TuplePlace`]).
+    fn new<'k>(shapes: impl IntoIterator<Item = (usize, &'k [CompKey], Vec<&'k Ty>)>) -> Choices {
         // The groups by the places where a shape's components have a class, each with whether
         // it is one value there; each group's places are set once all are filed.
-        let mut by_places: BTreeMap<Vec<(usize, bool)>, Group> = BTreeMap::new();
-        for (i, keys) in shapes {
+        let mut by_places: BTreeMap<Vec<(TuplePlace, bool)>, Group> = BTreeMap::new();
+        for (i, keys, ys) in shapes {
             let mut places = Vec::new();
             let mut key = Vec::new();
-            for (j, c) in keys.iter().enumerate() {
-                if let Some((k, point)) = c {
-                    places.push((j, point.is_some()));
-                    key.push(point.clone().map_or_else(|| k.clone(), ShapeKey::Point));
+            let mut seen = HashSet::new();
+            // The components still to file, last first, so each place's are filed after it
+            // and before the next place's: the places of a shape come in one order whatever
+            // the shape, the order of their paths.
+            let mut todo: Vec<(Option<usize>, usize, &CompKey, &Ty)> = (keys.iter().zip(ys))
+                .enumerate()
+                .rev()
+                .map(|(j, (c, y))| (None, j, c, y))
+                .collect();
+            while let Some((inside, at, c, y)) = todo.pop() {
+                let Some((k, point)) = c else { continue };
+                let here = places.len();
+                places.push((TuplePlace { inside, at }, point.is_some()));
+                key.push(point.clone().map_or_else(|| k.clone(), ShapeKey::Point));
+                // One tuple, not one value, filed by its components too ([`TuplePlace`]).
+                if point.is_some() || y.tuples.len() != 1 {
+                    continue;
                 }
+                let Some(r) = y.tuples.first().filter(|r| seen.insert(r.node())) else {
+                    continue;
+                };
+                let inner = (r.keys().comps.iter().zip(r.iter())).enumerate().rev();
+                todo.extend(inner.map(|(j, (c, y))| (Some(here), j, c, y)));
             }
+            let deep = places.iter().any(|(p, _)| p.inside.is_some());
             let group = by_places.entry(places).or_insert_with(|| Group {
                 places: Vec::new(),
+                deep,
                 buckets: BTreeMap::new(),
                 all: Vec::new(),
                 exact: std::sync::OnceLock::new(),
@@ -9773,12 +9909,15 @@ impl Choices {
     /// Why the shapes of the bucket `id` of group `g` may each hold the members found in it,
     /// for a message: the members have `items` items, then the fields `names`.
     fn apart(&self, g: usize, id: &Bucket, items: usize, names: &[&Arc<str>]) -> String {
-        let places: Vec<String> = (self.groups[g].places.iter())
-            .map(|&(j, _)| match j.checked_sub(items) {
-                None => format!("component {}", j + 1),
-                Some(f) => format!("field {}", names[f]),
-            })
-            .collect();
+        let filed = &self.groups[g].places;
+        let mut places: Vec<String> = Vec::with_capacity(filed.len());
+        for &(TuplePlace { inside, at }, _) in filed {
+            places.push(match (inside, at.checked_sub(items)) {
+                (Some(p), _) => format!("component {} of {}", at + 1, places[p]),
+                (None, None) => format!("component {}", at + 1),
+                (None, Some(f)) => format!("field {}", names[f]),
+            });
+        }
         match (id, &places[..]) {
             (_, []) => "have no component that is one value, of one carrier, of one atom name or \
                         of one tuple length"
@@ -9941,27 +10080,40 @@ fn member_hit(table: Option<&MemberTable>, xs: &[&Ty]) -> Option<usize> {
     })
 }
 
+/// The shapes given to [`Choices::new`]: each by its index in its list, the keys of its
+/// components (`K`, borrowed or owned) and its components.
+type ShapesKeyed<'r, K> = Vec<(usize, K, Vec<&'r Ty>)>;
+
 impl Filed {
     /// In the size of `t`'s tuples and payloads. The keys of the tuples are those each row
     /// keeps ([`Row::keys`]); those of a payload shape are found here.
     fn new(t: &Ty) -> Filed {
-        let mut rows: HashMap<usize, Vec<(usize, &[CompKey])>> = HashMap::new();
+        let mut rows: HashMap<usize, ShapesKeyed<'_, &[CompKey]>> = HashMap::new();
         for (i, r) in t.tuples.iter().enumerate() {
-            rows.entry(r.len()).or_default().push((i, &r.keys().comps));
+            rows.entry(r.len())
+                .or_default()
+                .push((i, &r.keys().comps, r.iter().collect()));
         }
         let mut payloads = HashMap::new();
         for (n, rs) in &t.payloads {
             let Some(rs) = rs else { continue };
-            let mut groups: HashMap<ShapeGroup, Vec<(usize, Vec<CompKey>)>> = HashMap::new();
+            let mut groups: HashMap<ShapeGroup, ShapesKeyed<'_, Vec<CompKey>>> = HashMap::new();
             for (i, r) in rs.iter().enumerate() {
-                let keys = comps(r).into_iter().map(class).collect();
-                groups.entry(shape_group(r)).or_default().push((i, keys));
+                let ys = comps(r);
+                let keys = ys.iter().map(|y| class(y)).collect();
+                groups
+                    .entry(shape_group(r))
+                    .or_default()
+                    .push((i, keys, ys));
             }
             let groups = groups.into_iter();
             payloads.insert(
                 n.clone(),
                 groups
-                    .map(|(g, s)| (g, Choices::new(s.iter().map(|(i, k)| (*i, &k[..])))))
+                    .map(|(g, s)| {
+                        let shapes = s.iter().map(|(i, k, ys)| (*i, &k[..], ys.clone()));
+                        (g, Choices::new(shapes))
+                    })
                     .collect(),
             );
         }
@@ -11718,7 +11870,11 @@ fn unchosen_text(
         // keys are `H`'s at `H`'s places, where `first`, held by `H`, has those keys too, and
         // `first`'s own at `j`, so the lookup of `first` ([`Choices::lookup`]) gives the
         // bucket that holds `S`. Where `B` is a group whole (`None`, a member that may be at
-        // any key), `S`, with a class at `j`, is again of another group.
+        // any key), `S`, with a class at `j`, is again of another group. Places inside a
+        // component ([`TuplePlace`]) change none of this: `j` is a component, not filed in `B`'s
+        // group, so neither is a place inside it; `S`'s places inside `j` are those of
+        // `first`'s component, where `first`'s keys are `S`'s, as at `j`; and at a place
+        // inside another component `first`'s key is `H`'s, or `first` may be at any key there.
         // (4) Written after the first shape of `B` and before the second, `S` is the next
         // shape after the first of `B` that `first` takes; by (1) `first` has failed at most
         // that one shape of `B` when it takes `S`, and has taken no later shape of `B`, so it
@@ -13256,10 +13412,15 @@ impl<'m, 's> Comparing<'m, 's> {
     /// `tests/steps/l01_22_type_representation/kinds.rs`,
     /// `payloads_with_a_variable_are_searched_by_their_keys` and the tests after it, and the
     /// tests after `a_union_of_three_shapes_of_variables_fits_itself_renamed`; COMPLEXITY.md
-    /// F124. A complete solution would search a bucket once for all its members, by keys of
-    /// the components that are not one value too (a tuple of a carrier, a payload), at any
-    /// depth, as the kernel files its rows (`RowIndex`), and would find the groups that may
-    /// hold a member by a partial-match index rather than one lookup in each.
+    /// F124. Members told apart only inside a component that is one tuple in each shape, at any
+    /// depth, are in buckets of their own: the shapes are filed by that tuple's components too
+    /// ([`TuplePlace`], TYPES-bucket-members-share-shape; test l01_26 fits
+    /// `shapes_told_apart_inside_their_one_tuple_fit_themselves_renamed`, benchmark
+    /// `n_shapes_told_apart_inside_a_tuple_fit_themselves_renamed_scales`). A complete solution
+    /// would search a bucket once for all its members, by keys of the components that are not
+    /// one value and not one tuple too (tuples of several rows, a payload), as the kernel files
+    /// its rows (`RowIndex`), and would find the groups that may hold a member by a
+    /// partial-match index rather than one lookup in each.
     #[allow(clippy::too_many_arguments)]
     async fn search<'t, G: Ord + Clone, M: Clone>(
         &'m self,
@@ -24181,6 +24342,12 @@ struct Scope {
     /// The variables of [`Scope::left`] each open signature added, innermost last, so that
     /// [`Scope::close`] takes out exactly those.
     left_opened: Vec<Vec<Arc<str>>>,
+    /// The unbounded variables printed by a name wherever they stand, once or more, as one
+    /// standing twice is ([`Sig::text_around_then`]).
+    marked: HashSet<Arc<str>>,
+    /// For each variable of [`Scope::marked`] the text writes, the root its mark is written by
+    /// ([`Walk::plan`]), once the text is written.
+    marks: HashMap<Arc<str>, usize>,
 }
 
 /// What a message knows of the type variables around a text it prints (DESIGN.md
@@ -24255,6 +24422,8 @@ impl Default for Scope {
             kept: HashMap::new(),
             left: HashMap::new(),
             left_opened: Vec::new(),
+            marked: HashSet::new(),
+            marks: HashMap::new(),
         }
     }
 }
@@ -24962,6 +25131,9 @@ impl Ty {
             match k {
                 LeftKey::Name(n) => out.push_str(&n),
                 LeftKey::Mark(r) => {
+                    if !walk.marked.is_empty() {
+                        walk.wrote.insert(r);
+                    }
                     // One mark alone in a union, which [`defs::name_vars`] names as the marks
                     // of [`Ty::write_vars`].
                     out.push(defs::UNION);
@@ -25027,9 +25199,19 @@ impl Ty {
                         names.push(name);
                     }
                 }
-                (Some(&VarSlot::Free(k)), None) => walk.occ.push(k),
+                (Some(&VarSlot::Free(k)), None) => {
+                    if scope.marked.contains(v) {
+                        walk.marked.entry(v.clone()).or_insert(k);
+                    }
+                    walk.occ.push(k)
+                }
                 (Some(&VarSlot::Free(k)), Some(plan)) => match plan.count[plan.root[k]] >= 2 {
-                    true => marks.push(plan.root[k]),
+                    true => {
+                        if !walk.marked.is_empty() {
+                            walk.wrote.insert(plan.root[k]);
+                        }
+                        marks.push(plan.root[k])
+                    }
                     false => blank = true,
                 },
                 (None, _) => blank = true,
@@ -25129,6 +25311,7 @@ impl Ty {
                 others: others || end.named,
                 blank,
                 occ: end.occ.clone(),
+                local: walk.nodes[node].local,
             };
             blank |= !end.occ.is_empty();
         }
@@ -25177,6 +25360,18 @@ struct PrintNode {
     blank: bool,
     /// Its unbounded variables, in [`Walk::occ`].
     occ: std::ops::Range<usize>,
+    /// The tuple written once ([`Walk::locals`]) whose text it stands in, innermost, if any.
+    local: Option<usize>,
+}
+
+/// A tuple written once in its printed type ([`Shared::local`]), as the first pass of a
+/// [`Walk`] finds it.
+struct Local {
+    /// Its place in the order of [`Shared::of`], each tuple after those inside it.
+    rank: usize,
+    /// Each place it stands in the text, its first included: the tuple written once whose
+    /// text holds that place, innermost, if any.
+    uses: Vec<Option<usize>>,
 }
 
 /// The walks of one text by [`write_parts`]. The first writes it as if every unbounded
@@ -25201,6 +25396,26 @@ struct Walk {
     /// bounded by carriers that the outermost signature binds: the type it stands in, and the
     /// variable. `None` on a walk that prints, which keeps no such places.
     named: Option<Vec<(usize, Arc<str>)>>,
+    /// The tuples written once ([`Shared::local`]), numbered in the order the first pass
+    /// first meets them, as each pass meets them, since the passes enter the same parts in the
+    /// same order.
+    locals: Vec<Local>,
+    /// The tuples written once whose text is being written, innermost last.
+    local_open: Vec<usize>,
+    /// The number of each tuple written once that this pass has met.
+    local_seen: HashMap<NodeId, usize>,
+    /// Whether the tuples of [`Shared::local`] are written in full at each place, as any
+    /// other tuple with variables: after a first pass whose plan writes a union `_`
+    /// ([`Walk::plan`]).
+    no_local: bool,
+    /// Whether the plan of a first pass that wrote a tuple once would write a union `_`, so
+    /// that the text is written again with no tuple written once ([`write_text`]).
+    retry: bool,
+    /// Each variable of [`Scope::marked`] the first pass met, with its number in
+    /// [`Scope::same`] where first met.
+    marked: HashMap<Arc<str>, usize>,
+    /// The roots the second pass wrote a mark of, kept while [`Walk::marked`] holds any.
+    wrote: HashSet<usize>,
 }
 
 /// What the end of a type entered and not yet closed is written by ([`Ty::write_end`]).
@@ -25241,13 +25456,75 @@ impl Walk {
         end.members += 1;
     }
 
+    /// Writes the tuple `r`, standing at `at`, which [`Shared::local`] gives the place `rank`:
+    /// in full at the first place this pass meets it, between the marks of [`defs::local_open`]
+    /// and [`defs::local_close`], and by [`defs::local_ref`] at the others. The first pass
+    /// records each place with the tuple written once whose text holds it ([`Local::uses`]).
+    fn local<'a>(
+        &mut self,
+        r: &'a Row,
+        at: PrintAt,
+        rank: usize,
+        out: &mut String,
+        stack: &mut Vec<Print<'a>>,
+    ) {
+        let within = self.local_open.last().copied();
+        let first = self.plan.is_none();
+        if let Some(&id) = self.local_seen.get(&r.node()) {
+            if first {
+                self.locals[id].uses.push(within);
+            }
+            defs::local_ref(out, id, r.wraps(at));
+            return;
+        }
+        let id = self.local_seen.len();
+        self.local_seen.insert(r.node(), id);
+        if first {
+            self.locals.push(Local {
+                rank,
+                uses: vec![within],
+            });
+        }
+        defs::local_open(out, id, r.wraps(at));
+        self.local_open.push(id);
+        // Pushed in reading order: [`walk_parts`] reverses what a part pushes, so the end,
+        // pushed last, is popped after the tuple's parts.
+        r.parts(PrintAt::Any, stack);
+        stack.push(Print::LocalEnd);
+    }
+
+    /// How many times the text of each tuple written once stands in the text once each is
+    /// written in full at each place: the sum over its places of 1 for a place in the text
+    /// outside such tuples, and of the count of the innermost one around it for a place
+    /// inside one. Counted in one pass from the outermost: a tuple whose text holds a place of
+    /// another holds that other at some depth, so it comes after it in the order of
+    /// [`Shared::of`] ([`Local::rank`]). Saturating: a count past `usize::MAX` is two or more
+    /// all the same, which is all [`Walk::plan`] reads. O(k log k + p) for k tuples and p
+    /// places, where writing each in full at each place, as the text read back stands for, is
+    /// exponential in the depth.
+    fn local_counts(&self) -> Vec<usize> {
+        let mut by_rank: Vec<usize> = (0..self.locals.len()).collect();
+        by_rank.sort_unstable_by_key(|&d| std::cmp::Reverse(self.locals[d].rank));
+        let mut count = vec![0usize; self.locals.len()];
+        for d in by_rank {
+            count[d] = (self.locals[d].uses.iter()).fold(0usize, |n, u| {
+                debug_assert!(u.is_none_or(|e| self.locals[e].rank > self.locals[d].rank));
+                n.saturating_add(u.map_or(1, |e| count[e]))
+            });
+        }
+        count
+    }
+
     /// Enters a type at `out`: whether its parts are to be written. On the second pass a type
     /// whose union is written `_` is written so here, and the walk steps over the types and
     /// variables inside it.
     fn enter(&mut self, out: &mut String, scope: &mut Scope) -> bool {
         let Some(plan) = &self.plan else {
             self.open.push(self.nodes.len());
-            self.nodes.push(PrintNode::default());
+            self.nodes.push(PrintNode {
+                local: self.local_open.last().copied(),
+                ..PrintNode::default()
+            });
             self.ends.push(OpenEnd::default());
             return true;
         };
@@ -25304,13 +25581,24 @@ impl Walk {
             node.occ = start..kept;
         }
         self.occ = occ;
-        let mut count = vec![0; root.len()];
+        // A type inside a tuple written once stands once for each place of that tuple
+        // ([`Walk::local_counts`]), and its variables with it.
+        let weight = self.local_counts();
+        let mut count: Vec<usize> = vec![0; root.len()];
         let mut places: Vec<Vec<usize>> = vec![Vec::new(); root.len()];
         for (k, node) in self.nodes.iter().enumerate() {
+            let w = node.local.map_or(1, |d| weight[d]);
             for &r in &self.occ[node.occ.clone()] {
-                count[r] += 1;
+                count[r] = count[r].saturating_add(w);
                 places[r].push(k);
             }
+        }
+        // A variable of [`Scope::marked`] counts as standing in two more places, so it prints
+        // as a mark however many places it has, and taking types out below, each one place,
+        // leaves its count at 2 or more: a union holding it is written `_` alone only where it
+        // holds `_` whatever the names ([`PrintNode::blank`]), which `_ | T` is.
+        for &k in self.marked.values() {
+            count[root[k]] += 2;
         }
         let absorbs = |node: &PrintNode, count: &[usize]| {
             let vars = &self.occ[node.occ.clone()];
@@ -25321,6 +25609,17 @@ impl Walk {
             .filter(|&k| absorbs(&self.nodes[k], &count))
             .collect();
         if work.is_empty() && count.iter().all(|&c| c < 2) {
+            return None;
+        }
+        // A union written `_` that holds or stands in a tuple written once would drop a
+        // place the counts above give that tuple's variables, or the first place of the tuple
+        // with the text the others refer to: the text is written again with every tuple in
+        // full ([`write_text`]). Tradeoff: such a text is as long as before this row, each
+        // shared tuple in full at each place; writing it once there would need the work list
+        // to take off a tuple's weight per place and to move its first place when that one is
+        // written `_`, which is not built.
+        if !self.locals.is_empty() && !work.is_empty() {
+            self.retry = true;
             return None;
         }
         let mut gone = vec![false; self.nodes.len()];
@@ -25386,6 +25685,8 @@ enum Print<'a> {
     Set(KType, TextPlace, bool),
     /// ` | ` before a member of the union being written, but its first.
     Sep,
+    /// The end of the text of a tuple written once in its printed type ([`Shared::local`]).
+    LocalEnd,
     /// Where the text of a signature begins that stands where only a bounds clause needs a pair
     /// ([`Sig::wraps`]): its [`Print::Bounds`] writes the pair if it writes a bound.
     Begin,
@@ -25566,8 +25867,17 @@ fn write_parts<'a>(
 /// a part that holds others, or writes it in full.
 ///
 /// A part with no type variable reads the same wherever it stands, so its body is written once,
-/// alone, with a scope of its own. A function or a tuple with variables is still written in
-/// full each time: its variables are named by the whole text ([`Walk`]).
+/// alone, with a scope of its own. A function with variables is still written in full each
+/// time: its variables are named by the whole text ([`Walk`]). So is a tuple with variables,
+/// but one placed as [`Shared::local`] says (row PRINT-shared-part-exponential): a tuple held
+/// in two places or more, below a part, whose variables are all bound by the one function the
+/// text writes, and that holds no function, no payload and no variable bounded by carriers, is
+/// written in full at its first place only, marked so that [`defs::lift`] takes that text as a
+/// soft part's body once its variables are named, and by reference at the others. Its
+/// variables then stand once in the text for each place, as [`Walk::plan`] counts them; the
+/// reader counts each name in a definition's body once for each use of the definition
+/// (`read::parse_type` in zedc-check; DESIGN.md sec:diagnostics, "Types in a message"), so the
+/// text reads back as the type.
 ///
 /// A part none of whose places is below another row or function, other than those on top (the
 /// ones the whole type holds directly, written in full), is not placed: [`defs::lift`] names a
@@ -25608,6 +25918,30 @@ struct Shared {
     /// signatures hold such parts alone and in unions beside a variable; skipping every tuple
     /// in place of the closed ones makes it and three other tests fail.
     closed: bool,
+    /// Each shared tuple that holds variables and is written once, at its first place, as a
+    /// part of the table, and by reference at the others ([`Walk::local`]), by its number,
+    /// with its place in the order [`Shared::of`] leaves the nodes, each after those inside it.
+    local: HashMap<NodeId, usize>,
+}
+
+/// The one function `start` writes, where it writes a function and nothing else: the
+/// signature whose variables a part written once by [`Shared::local`] may hold.
+fn sole_sig<'a>(start: &Print<'a>) -> Option<&'a Sig> {
+    match *start {
+        Print::Sig(s, _) => Some(s),
+        Print::Ty(t, _)
+            if t.fns.len() == 1
+                && t.tuples.is_empty()
+                && t.vars.is_empty()
+                && t.payloads.is_empty()
+                && !t.dynamic
+                && t.set.is_empty()
+                && t.family.is_empty() =>
+        {
+            t.fns.first().map(|s| &**s)
+        }
+        _ => None,
+    }
 }
 
 impl Shared {
@@ -25644,6 +25978,10 @@ impl Shared {
             _ => return shared,
         };
         let spelled = spell.is_some();
+        // The function whose variables a part written once may hold, and the names some other
+        // function binds, or any function bounds by carriers ([`Shared::local`]).
+        let owner = sole_sig(start);
+        let mut others: HashSet<Arc<str>> = HashSet::new();
         // By address: every node is borrowed from `start` for the whole walk, so no key names
         // a freed node. The places of each row and function, and the rows and functions in
         // the order left, each after those inside it. A node is on top when no row or
@@ -25703,6 +26041,12 @@ impl Shared {
                         let (places, held) = sigs.entry(key.0).or_insert((0usize, false));
                         *places += 1;
                         *held |= below;
+                        if *places == 1 && owner.is_some() {
+                            others.extend(s.bounds.keys().cloned());
+                            if owner.is_none_or(|o| !std::ptr::eq(o, s)) {
+                                others.extend(s.own.iter().cloned());
+                            }
+                        }
                         if *places == 1 {
                             stack.push((node, true, top, below));
                             let tys = s
@@ -25729,7 +26073,29 @@ impl Shared {
             defs::soft_reference(defs::add_soft(body))
         };
         let mut placed: Vec<(Node<'_>, String)> = Vec::new();
-        for node in order {
+        // Whether each tuple may be written once with its variables ([`Shared::local`]): its
+        // components hold no function and no payload, each variable they hold the owner binds
+        // and no other function binds or any bounds, and each tuple they hold may be so. A
+        // tuple is left after those it holds, so one look at each component, O(n) in all with
+        // a hash lookup per tuple and variable.
+        let mut writable: HashMap<NodeId, bool> = HashMap::new();
+        let free = |v: &Arc<str>| owner.is_some_and(|o| o.own.contains(v)) && !others.contains(v);
+        for (rank, node) in order.into_iter().enumerate() {
+            if let (Node::Row(r), Some(_)) = (node, owner) {
+                let ok = r.iter().all(|c| {
+                    c.fns.is_empty()
+                        && c.payload_shapes().next().is_none()
+                        && c.vars.iter().all(free)
+                        && (c.tuples.iter()).all(|q| match writable.get(&q.node()) {
+                            Some(&ok) => ok,
+                            None => !q.holds_vars(),
+                        })
+                });
+                writable.insert(r.node(), ok);
+                if ok && r.holds_vars() && matches!(rows[&r.node()], (2.., true)) {
+                    shared.local.insert(r.node(), rank);
+                }
+            }
             match node {
                 Node::Row(r) if matches!(rows[&r.node()], (2.., true)) && !r.holds_vars() => {
                     let name = place(Print::Row(r, PrintAt::Any), &shared);
@@ -25809,7 +26175,19 @@ fn write_text<'a>(
     let mut walk = Walk::default();
     let mut kernel = walk_parts(start.clone(), out, scope, &mut walk, shared);
     let mut marked = false;
-    if let Some(plan) = walk.plan(scope) {
+    let mut plan = walk.plan(scope);
+    if walk.retry {
+        out.truncate(base);
+        scope.fresh = fresh;
+        scope.same.truncate(opened);
+        walk = Walk {
+            no_local: true,
+            ..Walk::default()
+        };
+        kernel = walk_parts(start.clone(), out, scope, &mut walk, shared);
+        plan = walk.plan(scope);
+    }
+    if let Some(plan) = plan {
         out.truncate(base);
         scope.fresh = fresh;
         scope.same.truncate(opened);
@@ -25821,6 +26199,14 @@ fn write_text<'a>(
         kernel = walk_parts(start, out, scope, &mut walk, shared);
         if marked {
             out.push(defs::VARS_END);
+        }
+        if let Some(plan) = &walk.plan {
+            for (v, &k) in &walk.marked {
+                let r = plan.root[k];
+                if walk.wrote.contains(&r) {
+                    scope.marks.insert(v.clone(), r);
+                }
+            }
         }
     }
     if !kernel.sets.is_empty() || !kernel.opens.is_empty() {
@@ -25871,6 +26257,7 @@ fn walk_parts<'a>(
     let mut kernel = Kernel::default();
     let mut stack = vec![start];
     let mut first = true;
+    walk.local_seen.clear();
     // Where each signature begins whose pair its bounds clause decides ([`Print::Begin`]),
     // innermost last.
     let mut begins = Vec::new();
@@ -25881,8 +26268,17 @@ fn walk_parts<'a>(
             Print::Row(r, at) => match shared.row(r).filter(|_| !root) {
                 Some(name) if r.wraps(at) => out.push_str(&defs::wrapped(name)),
                 Some(name) => out.push_str(name),
-                None => r.parts(at, &mut stack),
+                None => match shared.local.get(&r.node()) {
+                    Some(&rank) if !root && !walk.no_local => {
+                        walk.local(r, at, rank, out, &mut stack)
+                    }
+                    _ => r.parts(at, &mut stack),
+                },
             },
+            Print::LocalEnd => {
+                defs::local_close(out);
+                walk.local_open.pop();
+            }
             Print::Sig(s, at) => match shared.sig(s).filter(|_| !root) {
                 // As [`Sig::parts`] writes it, with no variables to open: a closed part has
                 // no bounds clause, and one left to the end of its union is empty.
@@ -26531,6 +26927,82 @@ impl Sig {
         text
     }
 
+    /// [`Self::text_around`], each unbounded variable of `marked` printed by a name wherever it
+    /// stands, once or more, and followed by the words `then` writes, given the type's text,
+    /// its marks not yet named, and for each variable of `marked` the text that names it, or
+    /// `None` where the type does not write it (a
+    /// parameter's variable replaced by its type, or every place of it inside a union written
+    /// `_`). The words are put inside the type's marks of variables to be named
+    /// ([`defs::VARS`]), so [`defs::name_vars`] names a variable in them as in the type: in a
+    /// message by the names it gives the variables of its other texts, from `T` on in each,
+    /// and alone at once, as `write_parts` finishes a text alone. So a note that says
+    /// `T -> #errs(T), where T is not int | …` gives the variable the name the other notes'
+    /// texts give theirs, not one of its own that they then skip (plan row
+    /// MSG-takes-note-name-shared).
+    ///
+    /// Why a name in the words means the variable: the variable is a `VarSlot::Free` one,
+    /// counted as standing twice more than it does (`Walk::plan`), so the second pass writes
+    /// it as a mark at each place it stands outside a union written `_`, by the root of its
+    /// tree, and records that root (`Scope::marks`); the words write the mark of that root,
+    /// alone in a union, as `Ty::write_lefts` writes one; and [`defs::name_vars`] gives one
+    /// name to one root throughout the text between [`defs::VARS`] and [`defs::VARS_END`],
+    /// which the words are now inside. Cost: one hash insert per place of such a variable, and
+    /// one lookup per variable of `marked`, beside the text.
+    pub fn text_around_then(
+        &self,
+        around: Around<'_>,
+        marked: &[Arc<str>],
+        then: impl FnOnce(&str, &[Option<String>]) -> String,
+    ) -> String {
+        let alone = defs::local();
+        let mut scope = Scope::around(around);
+        scope.marked = marked.iter().cloned().collect();
+        let mut text = String::new();
+        self.write(&mut text, &mut scope);
+        // Recorded as [`Self::text_around`] records its text, before the words; a text with a
+        // marked variable can name it where it stands once, which the type alone writes `_`,
+        // so it is not recorded.
+        #[cfg(feature = "printed-types")]
+        if around.named.is_empty() && around.kept.is_empty() && marked.is_empty() {
+            printed::record(&Ty::func(Arc::new(self.clone())), &text);
+        }
+        let names: Vec<Option<String>> = (marked.iter())
+            .map(|v| {
+                let r = scope.marks.get(v)?;
+                Some(format!(
+                    "{}{}{r}{}",
+                    defs::UNION,
+                    defs::VAR,
+                    defs::UNION_END
+                ))
+            })
+            .collect();
+        let words = then(&text, &names);
+        // A mark is written only inside the marks a text writes when it marks a variable
+        // ([`write_text`]), the last thing it writes there.
+        match text.strip_suffix(defs::VARS_END) {
+            Some(head) => {
+                let end = head.len();
+                text.truncate(end);
+                text.push_str(&words);
+                text.push(defs::VARS_END);
+            }
+            None => text.push_str(&words),
+        }
+        // Alone, the text is finished here, as [`write_parts`] finishes one: it left it so, the
+        // table being on.
+        if alone.is_some() {
+            let lifted = defs::lift(&mut [&mut text], &|w| scope.bound.contains(w));
+            let mut out = String::new();
+            for (name, body) in &lifted {
+                defs::declare(&mut out, name, body).expect("a String takes any text");
+            }
+            out.push_str(&text);
+            text = out;
+        }
+        text
+    }
+
     /// Opens its variables in `scope` and pushes the parts of its text to `parts`, in order. It
     /// stands at `at`: a text with a bounds clause is parenthesized anywhere but where a whole
     /// type stands, and an arrow also as a key, a bound or an operand of `|`; an intersection
@@ -26944,16 +27416,44 @@ pub fn var_name(n: usize) -> Arc<str> {
 #[cfg(feature = "printed-types")]
 pub mod printed {
     use std::cell::RefCell;
+    use std::sync::Arc;
 
-    use super::Ty;
+    use super::{Sig, Ty};
 
     thread_local! {
         static SEEN: RefCell<Option<Vec<(Ty, String, String)>>> = const { RefCell::new(None) };
+        static CHECKED: RefCell<Vec<Checked>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// What one check of a unit gave its names: the type of each top-level name bound by `=`,
+    /// and the signature of each function, in any scope, each with its name. A test prints
+    /// them after the check, so the printing records nothing (PERF-small-unit-fixed-cost: the
+    /// test of L1.29a read them from a second check of its own).
+    #[derive(Default)]
+    pub struct Checked {
+        /// Each top-level name bound by `=`, with its type.
+        pub tops: Vec<(String, Ty)>,
+        /// Each function's name, in any scope, with its signature.
+        pub sigs: Vec<(String, Arc<Sig>)>,
     }
 
     /// Starts recording on this thread, dropping what was recorded.
     pub fn start() {
         SEEN.set(Some(Vec::new()));
+        CHECKED.take();
+    }
+
+    /// Records what a check gave the unit's names, built by `names`, if recording is on.
+    pub fn record_checked(names: impl FnOnce() -> Checked) {
+        if SEEN.with_borrow(Option::is_some) {
+            let checked = names();
+            CHECKED.with_borrow_mut(|all| all.push(checked));
+        }
+    }
+
+    /// What each check since `start` gave the names of its unit, in order of check.
+    pub fn take_checked() -> Vec<Checked> {
+        CHECKED.take()
     }
 
     /// What was recorded since `start`, in printed order; recording stops.

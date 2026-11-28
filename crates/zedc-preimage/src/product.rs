@@ -3134,6 +3134,11 @@ impl Lazy {
     /// Gemini, round 1); they compare arms and values, not the summaries themselves, so a
     /// summary that differs but gives the same arms is not caught.
     fn get(&self) -> Option<Arc<Held>> {
+        // A summary already made is read under one lock, with no work list allocated: most
+        // reads are of one made before (PERF-walk-allocator-no-coalesce).
+        if let Making::Made(held) = &*self.lock() {
+            return held.clone();
+        }
         let mut todo = vec![self.clone()];
         while let Some(top) = todo.last().cloned() {
             let mut m = top.lock();
@@ -10899,7 +10904,7 @@ impl Scope {
             return;
         }
         let mut names = stage::free(test);
-        if let Some(closed) = self.close(test) {
+        if let Some(closed) = self.close(test, &names) {
             names.extend(stage::free(&closed));
         }
         self.settle(&names);
@@ -11856,9 +11861,17 @@ impl Scope {
     // most once (`seen`). Cost: each name popped once, `stage::free` of each function looked
     // at (reached or left unbound) once, and the sort of the r reached: O((r + s) log(r + s))
     // for s the sizes of the functions looked at, the log from the ordered sets.
-    fn close(&self, test: &Term) -> Option<Term> {
+    //
+    // `free` is `stage::free(test)`, which the callers have already. A test that reads no
+    // function returns at once, with nothing allocated: every function reached is a free
+    // name of `test` or is read by one reached before it, so with none among `free` the
+    // loop below reaches none (PERF-walk-allocator-no-coalesce).
+    fn close(&self, test: &Term, free: &BTreeSet<Arc<str>>) -> Option<Term> {
+        if !(free.iter()).any(|n| self.bindings.get(n).is_some_and(|b| b.function.is_some())) {
+            return None;
+        }
         let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
-        let mut todo: Vec<Arc<str>> = stage::free(test).into_iter().collect();
+        let mut todo: Vec<Arc<str>> = free.iter().cloned().collect();
         let mut reached: Vec<(u64, &Arc<str>, &Shared)> = Vec::new();
         while let Some(n) = todo.pop() {
             if !seen.insert(n.clone()) {
@@ -12139,10 +12152,13 @@ impl Scope {
                 side.seen.order.sync(&side.relation, &side.names);
             }
             for n in &moved {
+                // An eager side's stars at `n` are the cut's; `around` would add them all.
                 if eager {
                     leaves.extend(side.cut_leaves(&side.relation, n));
+                    leaves.extend(side.relation.around_other_hubs(n));
+                } else {
+                    leaves.extend(side.relation.around(n));
                 }
-                leaves.extend(side.relation.around(n));
             }
         }
         a.refresh(&leaves);
@@ -12208,13 +12224,31 @@ impl Scope {
                 }
             }
         }
+        // Of two eager sides, the stars at a hub whose free conjuncts differ are at their
+        // projection on each side where their family's bound does not cut their leaf, as for a
+        // hub moved above; the others are refreshed.
+        // Complexity tradeoff: naive version, every leaf of each class at such a hub refreshed
+        // on both sides unless one side holds every hub of the class as the join does, O(k)
+        // per join for `k` stars, O(k²) over a nest of `k` tests `n - m <= j` on the hubs,
+        // whose joins hold a constraint on `m` that differs from both sides'. Used: the
+        // leaves the family bounds cut ([`Scope::cut_leaves`]), as for a hub moved (row
+        // EAGER-hub-diff-join, COMPLEXITY.md row C49).
+        if eager {
+            for n in &cored {
+                for side in [&mut a, &mut b] {
+                    side.seen.order.sync(&side.relation, &side.names);
+                    let cut = side.cut_leaves(&side.relation, n);
+                    due.extend(cut.into_iter().filter(|x| !leaves.contains(x)));
+                }
+            }
+        }
         let mut checked: BTreeSet<&conjuncts::Class> = BTreeSet::new();
         let at: Vec<&Arc<str>> = if eager {
             Vec::new()
         } else {
-            moved.iter().collect()
+            cored.iter().chain(&moved).collect()
         };
-        for n in cored.iter().chain(at) {
+        for n in at {
             for side in [self, other] {
                 for c in side.relation.classes_at(n) {
                     if !checked.insert(c) {
@@ -14586,8 +14620,13 @@ impl Scope {
                 }
             }
             Kind::Atom => {
-                let t = substitute(node.term, &self.statics_of(&stage::free(node.term)));
-                self.atom_names(&t, node.term, value, true, prem);
+                let free = stage::free(node.term);
+                let t = substituted(node.term, &self.statics_of(&free));
+                let free = match &t {
+                    Cow::Borrowed(_) => free,
+                    Cow::Owned(t) => stage::free(t),
+                };
+                self.atom_names(&t, free, node.term, value, true, prem);
             }
             Kind::Nest(and, sides) if *and == value => {
                 for &(k, p) in sides {
@@ -14601,19 +14640,30 @@ impl Scope {
     /// Narrows by one atomic test.
     fn atom(&mut self, test: &Term, outcome: bool, prem: &Premises) {
         let written = test;
-        let closed = self.close(test);
-        let test = closed.as_ref().unwrap_or(test);
+        // The free names, found once for the closing, the statics and the preimage when the
+        // test is neither closed nor substituted, the common case: each `stage::free` is a
+        // walk and a set (PERF-walk-allocator-no-coalesce).
+        let free = stage::free(test);
+        let closed = self.close(test, &free);
+        let (test, free) = match &closed {
+            Some(c) => (c, stage::free(c)),
+            None => (test, free),
+        };
         // An integer name keeps its place: its interval holds its one value, and the
         // preimage reads the name where substituting it would leave terms it cannot cancel.
         let int = Type::int();
-        let statics = self.statics_of(stage::free(test).iter().filter(|n| {
+        let statics = self.statics_of(free.iter().filter(|n| {
             !self
                 .names
                 .get(*n)
                 .is_some_and(|p| p.ty.element.subtype(&int))
         }));
-        let t = substitute(test, &statics);
-        let (exact, inputs, free) = self.atom_names(&t, written, outcome, false, prem);
+        let t = substituted(test, &statics);
+        let free = match &t {
+            Cow::Borrowed(_) => free,
+            Cow::Owned(t) => stage::free(t),
+        };
+        let (exact, inputs, free) = self.atom_names(&t, free, written, outcome, false, prem);
         // Whether the relation holds the test exactly as a bound on a sum of its names, each
         // of coefficient one or minus one, `x - y + c >= 0` or `x - n - m + c >= 0`, so that
         // the written constraint adds nothing.
@@ -14680,10 +14730,12 @@ impl Scope {
     /// is not taken, and a preimage gives only its hull, so that a case of a nest of `k` sides
     /// holds no more pieces than one side gives. A refused preimage names the test as
     /// `written`, the test as the program wrote it: neither closed over its helpers nor with
-    /// its static names substituted, each binder by its written name.
+    /// its static names substituted, each binder by its written name. `free` is
+    /// `stage::free(t)`, which the callers have already.
     fn atom_names(
         &mut self,
         t: &Term,
+        free: BTreeSet<Arc<str>>,
         written: &Term,
         outcome: bool,
         convex: bool,
@@ -14839,7 +14891,6 @@ impl Scope {
             }
         }
         let int = Type::int();
-        let free = stage::free(t);
         let inputs: Vec<Arc<str>> = free
             .iter()
             .filter(|n| {
@@ -15239,7 +15290,7 @@ impl Scope {
             if stage::free(&e).iter().any(later) {
                 continue;
             }
-            let closed = self.close(&e);
+            let closed = self.close(&e, &stage::free(&e));
             let e = closed.as_ref().map_or(&*e, |c| c);
             let statics = self.statics_of(stage::free(e).iter().filter(|n| {
                 !self
@@ -15253,6 +15304,14 @@ impl Scope {
                 continue;
             }
             let reads: Vec<_> = lets.values().filter_map(|l| l.read.clone()).collect();
+            let one_input: Vec<(Arc<str>, LetPa)> = (lets.iter())
+                .filter(|(_, l)| l.summary.vars().len() == 1)
+                .map(|(n, l)| (n.clone(), l.summary.clone()))
+                .collect();
+            let many_inputs: Vec<Arc<str>> = (lets.iter())
+                .filter(|(_, l)| l.read.is_some())
+                .map(|(n, _)| n.clone())
+                .collect();
             let demand = Demand::Ints(self.get(&z).ints().clone());
             #[cfg(feature = "counts")]
             super::preimage::counts::TERM_READS.set(super::preimage::counts::TERM_READS.get() + 1);
@@ -15279,6 +15338,61 @@ impl Scope {
                         return true;
                     }
                     push(n.clone(), self, &mut seen, &mut todo);
+                }
+            }
+            // A name the term read through its summary over one input is no input, so the
+            // narrowing gave it nothing (`w` of `w = x + 1; z = w div 2` under `z == 3` kept
+            // `..` while `x` became `5..=6`, PA-let-followups part 2). Its value is its
+            // summary of that input at every state, so it lies in the summary's image over
+            // the input's integers as now narrowed, an `O(1)` read ([`LetPa::image`]), as
+            // [`Scope::bind_with`] meets a binding with it. Test: `l01_39_reduced_product::
+            // let_terms::a_summarized_binding_read_inside_a_term_narrows_its_input`.
+            for (l, summary) in &one_input {
+                if !summary.vars().iter().any(|v| narrowed.contains_key(v)) {
+                    continue;
+                }
+                let Some(image) = summary.image(|v| self.names.get(v).map(Product::ints)) else {
+                    continue;
+                };
+                if self.meet_name(l, &image, convex, prem) {
+                    met = true;
+                    if self.no_value(l) {
+                        return true;
+                    }
+                }
+            }
+            // The same for a summary over two inputs or more, read through the tree of its
+            // terms' bounds ([`View::term_read`]) (PA-let-followups part 2 for k > 1:
+            // `w = x + y; z = w div 2` under `z == 3` with `x` in `0..=6` and `y` in `0..=1`
+            // kept `w` at `0..=7` while `x` became `5..=6`). Its image over all `k` inputs
+            // ([`LetPa::image`]) would cost `O(k)` a test, where the test costs only the inputs
+            // it narrows (item PA-letpre-linear). Used: the summary's tree, which
+            // [`Scope::inputs_and_lets`] read for this test, updated at the names that differ
+            // since, the `m` inputs met just above, `O(m log k)` ([`images::updated`]), and its
+            // total read as the image in `O(1)` ([`LetPa::image_read`], with its proof that it
+            // bounds the value); a summary none of whose inputs the narrowing gave is skipped
+            // by `O(m log k)` lookups. The image is the hull of the sum of the terms' bounds,
+            // so with `w = x + y` it is `5..=7`, not the `6..=7` the term's inversion found for
+            // `w`; that inversion is not kept for names read through summaries. Test:
+            // `l01_39_reduced_product::let_terms::
+            // a_binding_summarized_over_two_inputs_read_inside_a_term_narrows_by_its_inputs`.
+            for l in &many_inputs {
+                let Some(held) = self.view().summary(l) else {
+                    continue;
+                };
+                let vars = held.summary.vars();
+                if !narrowed.keys().any(|v| vars.contains(v)) {
+                    continue;
+                }
+                let read = self.view().term_read(&held);
+                let Some(image) = held.summary.image_read(&read) else {
+                    continue;
+                };
+                if self.meet_name(l, &image, convex, prem) {
+                    met = true;
+                    if self.no_value(l) {
+                        return true;
+                    }
                 }
             }
         }
@@ -15745,10 +15859,11 @@ impl Scope {
             seeds.changed.insert(n.clone());
             // A satellite moved changes the stars at the hubs it relates to, whose conjuncts do
             // not mention it ([`Conjuncts::around`]); a lazy scope finds their leaves stale.
+            // The stars at `n` itself are those `moved_blocks` found by the cut above.
             if !self.lazy {
                 out.extend(
                     self.relation
-                        .around(n)
+                        .around_other_hubs(n)
                         .iter()
                         .filter_map(|x| self.relation.star(x)),
                 );
@@ -21026,6 +21141,21 @@ impl<'a> Tree<'a> {
             rank: 0,
         };
         let (root, pol) = strip(test);
+        // A test of one atom, the common case: the tree the loops below build for it, made
+        // with one allocation in place of eight (the work list, the heights, texts, debugs
+        // and levels; PERF-walk-allocator-no-coalesce). Proof that it is the same: the root
+        // is neither a literal nor a connective nor an `if` of tests, so the first loop
+        // leaves it `Kind::Atom` and adds no node; `ordered` is false, so no text is
+        // written; the one level holds the root, which gets size 1, its `rank` and id 1.
+        let lone = !matches!(root, Term::Lit(Value::Bool(_)))
+            && connective(root).is_none()
+            && !matches!(root, Term::If(_, a, b) if is_test(a) && is_test(b));
+        if lone {
+            let mut node = leaf(root);
+            node.rank = rank(&node);
+            node.id = 1;
+            return (Tree { nodes: vec![node] }, pol);
+        }
         let mut nodes = vec![leaf(root)];
         let mut work = vec![0];
         while let Some(i) = work.pop() {
@@ -21548,12 +21678,23 @@ fn equality(p: &mut Product, v: &Value, equal: bool, prem: &Premises) -> bool {
 
 /// `t` with each of `env`'s names bound to its value.
 fn substitute(t: &Term, env: &BTreeMap<Arc<str>, Value>) -> Term {
+    substituted(t, env).into_owned()
+}
+
+/// [`substitute`], borrowing `t` when `env` binds none of its free names: the common case of
+/// a test of no static name copies no term (PERF-walk-allocator-no-coalesce).
+fn substituted<'a>(t: &'a Term, env: &BTreeMap<Arc<str>, Value>) -> Cow<'a, Term> {
+    if env.is_empty() {
+        return Cow::Borrowed(t);
+    }
     let free = stage::free(t);
-    env.iter()
-        .filter(|(n, _)| free.contains(*n))
-        .fold(t.clone(), |b, (n, v)| {
-            Term::Let(n.clone(), Shared::new(Term::Lit(v.clone())), Shared::new(b))
-        })
+    let mut bound = env.iter().filter(|(n, _)| free.contains(*n)).peekable();
+    if bound.peek().is_none() {
+        return Cow::Borrowed(t);
+    }
+    Cow::Owned(bound.fold(t.clone(), |b, (n, v)| {
+        Term::Let(n.clone(), Shared::new(Term::Lit(v.clone())), Shared::new(b))
+    }))
 }
 
 /// The element of `e`'s value in `scope`: a literal, a value computed from static names, the

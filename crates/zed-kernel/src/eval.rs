@@ -34,9 +34,11 @@ use crate::value::KernelError;
 use crate::value::{
     Atom, Family, Fields, HeldEntry, HeldFamily, Keypath, all_leaves, ieee_min_max,
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use num_bigint::BigInt;
+
+use crate::value::canon::{Canon, Namer};
 
 use crate::provenance::{Fact, FactAddress, Holds, NodeAddress, Position, Provenance};
 use crate::term::{FixKind, GuardPos, Pattern, Prim, Shared, Term};
@@ -503,11 +505,8 @@ pub trait Lookup: std::fmt::Debug + Send + Sync {
     }
 
     /// Whether the port keeps its own answers, each key answered once, so the world does not
-    /// keep them in [`World::reads`]. A port whose keys may hold values it compares more
-    /// cheaply than by their bytes, such as joined strings named by
-    /// [`crate::text::names::Names`], keeps its answers itself: a map of the world compares keys by
-    /// [`Value`]'s order, which reads a long join byte by byte. By default the world keeps
-    /// them.
+    /// keep them in [`World::reads`] (which keys them by their canonical forms, [`Reads`]),
+    /// and a replay is not given them. By default the world keeps them.
     fn keeps_answers(&self) -> bool {
         false
     }
@@ -528,9 +527,70 @@ pub struct World {
     pub outputs: BTreeMap<String, Output>,
     /// The lookup ports by name.
     pub sources: BTreeMap<String, Arc<dyn Lookup>>,
-    /// The keys read from each lookup port and the values read there, in key order: what a
+    /// The keys read from each lookup port and the values read there ([`Reads`]): what a
     /// replay of the wave must supply.
-    pub reads: BTreeMap<String, BTreeMap<Value, Value>>,
+    pub reads: BTreeMap<String, Reads>,
+}
+
+/// The keys read from one lookup port and the value read at each, each key kept by its
+/// canonical form ([`Canon`]), so a key is found without reading a string's bytes or a shared
+/// tuple twice (item WORLD-reads-canon-keys).
+// Complexity tradeoff: a map ordered by `Value` compares keys byte by byte and tuple by tuple,
+// so a key holding a join doubled k times, 2^k bytes in O(k) nodes, read again at an equal key
+// built apart, compares 2^k bytes, and a tuple holding itself doubled k times is read as a tree,
+// 2^k parts; neither ends at k = 40. Used: each key is named once when read, O(n log N)
+// dictionary steps for n string nodes not named before and N bytes, and O(p log T) for p
+// tuple parts not read before and T tuples named, a shared tuple read once by its id
+// ([`Namer::canon`]); then a lookup by the form hashes a few words. Tradeoff: each node and
+// tuple named is kept while the world lives, as its key is. The replay order, `Value`'s order,
+// is made once, when the wave's record is taken ([`Reads::into_map`]), O(r log r) comparisons
+// of r keys. Tests
+// `m0_09_kernel_evaluator::a_lookup_port_read_at_a_long_join_or_a_doubled_tuple_is_asked_once`
+// and `m0_09_kernel_evaluator::bench::scaling::reading_a_port_at_doubled_keys_scales`.
+#[derive(Clone, Debug, Default)]
+pub struct Reads {
+    /// The names of the keys' strings and tuples, shared by the clones of one world: a namer
+    /// only adds names, so a clone that names more gives the same forms to the keys it holds.
+    namer: Arc<Mutex<Namer>>,
+    /// Each key, by its form, with the value read there.
+    answers: HashMap<Canon, (Value, Value)>,
+}
+
+impl Reads {
+    /// The value read at `k`, asking `ask` for it the first time; the answer is kept unless
+    /// `ask` fails.
+    pub fn get_or_ask<E>(
+        &mut self,
+        k: Cow<'_, Value>,
+        ask: impl FnOnce(&Value) -> Result<Value, E>,
+    ) -> Result<Value, E> {
+        // A poisoned lock leaves a namer whose maps hold only finished entries (each insert is
+        // one call), so its names are still those of equal values; it is read on.
+        let canon = (self.namer.lock())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .canon(&k);
+        if let Some((_, v)) = self.answers.get(&canon) {
+            return Ok(v.clone());
+        }
+        let v = ask(&k)?;
+        self.answers.insert(canon, (k.into_owned(), v.clone()));
+        Ok(v)
+    }
+
+    /// The number of keys read.
+    pub fn len(&self) -> usize {
+        self.answers.len()
+    }
+
+    /// Whether no key was read.
+    pub fn is_empty(&self) -> bool {
+        self.answers.is_empty()
+    }
+
+    /// The keys and the values read there, in the order of the keys, the replay order.
+    pub fn into_map(self) -> BTreeMap<Value, Value> {
+        self.answers.into_values().collect()
+    }
 }
 
 impl World {
@@ -2356,14 +2416,13 @@ impl<'t> Machine<'_, 't> {
                 .map_err(|why| KernelError::Port(port.to_string(), why))?;
             return give(v);
         }
-        if let Some(v) = world.reads.get(port).and_then(|r| r.get(&*k)) {
-            return give(v.clone());
+        if !world.reads.contains_key(port) {
+            world.reads.insert(port.to_string(), Reads::default());
         }
-        let v = world.sources[port]
-            .get(&k)
-            .map_err(|why| KernelError::Port(port.to_string(), why))?;
-        let reads = world.reads.entry(port.to_string()).or_default();
-        reads.insert(k.into_owned(), v.clone());
+        let reads = (world.reads.get_mut(port)).expect("inserted above");
+        let v = reads.get_or_ask(k, |k| {
+            (source.get(k)).map_err(|why| KernelError::Port(port.to_string(), why))
+        })?;
         give(v)
     }
 
@@ -2615,6 +2674,17 @@ impl<'t> Machine<'_, 't> {
                     args.len()
                 ),
             ));
+        }
+        // `GetAtomKey` on a function applies it to the key, an atom too: the elaborator writes
+        // it for a read of a value that may be a family or a function of one parameter, and
+        // the checker checked the function's arm as that application
+        // (CHECK-atom-key-mixed-receiver).
+        if p == Prim::GetAtomKey && matches!(args[0], V::Closure(_) | V::Prim(_)) {
+            let mut args = args.into_iter();
+            let f = args
+                .next()
+                .expect("`GetAtomKey` takes two arguments, checked above");
+            return self.apply(&f, args.collect());
         }
         // A tuple, an atom or a family display made with a part that is no data, or a value
         // that holds a function given to any primitive (DESIGN.md step L1.17).

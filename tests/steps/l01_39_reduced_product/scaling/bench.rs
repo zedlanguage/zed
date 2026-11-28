@@ -193,6 +193,28 @@ fn tests_on_the_hubs_of_many_stars_in_an_eager_scope_scale() {
     );
 }
 
+#[test]
+fn tests_within_two_hubs_of_many_stars_in_an_eager_scope_scale() {
+    // A nest of `k` `if`s on `n - m <= j` over `k` stars of the hubs `n` and `m`, eager. Each
+    // join kept the tests' cases among the hubs as a growing disjunction, `m >= n - 1 || m >=
+    // n - 2 || ...`, which is `m >= n - j`; with it in the core the family had no bound, so
+    // every star was refreshed and every projection read the disjunction: O(k²) to O(k³)
+    // (row EAGER-hub-diff-join). The join now merges the intervals of one form
+    // (`Formula::merge_intervals`). `n` is a satellite of `m` and a hub of the stars at once,
+    // and `around` then gave every star at `n` on each move; an eager scope now takes the
+    // stars at `n` from the cut alone (`Conjuncts::around_other_hubs`). And at a hub whose free
+    // conjuncts differ between the sides, every leaf of its classes was refreshed; an eager
+    // scope now takes the leaves the cut finds there too. COMPLEXITY.md row EAGER-hub-diff-join.
+    let inputs = scaling::inputs(32, |k| stars_above_the_hubs(k, false));
+    scaling::check(
+        "a nest of k tests n - m <= j on the two hubs of k stars, eager",
+        32,
+        |k| {
+            hubs_within_nested(&inputs[&k], k);
+        },
+    );
+}
+
 /// The stars of [`stars_above_the_hubs`] of one hub, `n`, with `n` also in a tree of the
 /// forest one of whose names is in a class: `n - m >= 0` and `m % 2 == 0`, so that each test
 /// `n <= c` moves `m` to the even values up to `c`.

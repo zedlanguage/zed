@@ -24,10 +24,14 @@ struct Shown {
     tops: BTreeMap<String, Vec<String>>,
 }
 
-/// The types printed by the check of `text`.
+/// The types printed by the check of `text`. The tops are those of the load's own check,
+/// printed once recording has stopped, so their printing adds nothing to `said`; checking
+/// the unit a second time for them doubled the work of a small unit
+/// (PERF-small-unit-fixed-cost).
 fn shown(text: &str) -> Shown {
     printed::start();
     let _ = zedc::run::load(text.as_bytes());
+    let checked = printed::take_checked();
     let said = printed::take()
         .into_iter()
         .filter(|(t, _)| !unsolved(t))
@@ -35,33 +39,27 @@ fn shown(text: &str) -> Shown {
         .collect();
     Shown {
         said,
-        tops: tops(text),
+        tops: tops(checked),
     }
 }
 
-/// The type the checker gives each top-level binding of `text`, and the signature of each of
-/// its functions, printed, by name; none when the unit does not reach the checker.
-fn tops(text: &str) -> BTreeMap<String, Vec<String>> {
-    let Ok((tokens, _)) = zedc::lex::lex_with_docs(text) else {
-        return BTreeMap::new();
-    };
-    let Ok(tree) = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP) else {
-        return BTreeMap::new();
-    };
-    let Ok(stmts) = zedc::ast::unit(text, &tokens, &tree) else {
-        return BTreeMap::new();
-    };
-    let Ok(res) = zedc::resolve::resolve(&stmts) else {
-        return BTreeMap::new();
-    };
-    let info = zedc::check::walk::check(&stmts, &res);
+/// The type the checker gives each top-level binding of the unit, and the signature of each
+/// of its functions, printed, by name, from `checked`, what the load's checks recorded: one
+/// check, or none when the unit does not reach the checker.
+fn tops(checked: Vec<printed::Checked>) -> BTreeMap<String, Vec<String>> {
+    assert!(
+        checked.len() <= 1,
+        "a load checks its unit once, not {} times",
+        checked.len()
+    );
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (name, t) in &info.tops {
-        out.entry(name.clone()).or_default().push(t.to_string());
-    }
-    for (&binder, sig) in &info.sigs {
-        let name = &res.binders[binder].name;
-        out.entry(name.clone()).or_default().push(sig.to_string());
+    for printed::Checked { tops, sigs } in checked {
+        for (name, t) in tops {
+            out.entry(name).or_default().push(t.to_string());
+        }
+        for (name, sig) in sigs {
+            out.entry(name).or_default().push(sig.to_string());
+        }
     }
     for types in out.values_mut() {
         types.sort();

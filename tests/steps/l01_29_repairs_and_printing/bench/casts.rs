@@ -131,10 +131,15 @@ fn a_cast_in_place_of_many_parentheses_scales() {
 
 #[test]
 fn the_message_of_a_long_literal_with_a_suffix_scales() {
-    // At 8,000 and 64,000 digits the work grew 13.3 times, and at 64,000 and 512,000 14.5 times,
-    // past the limit and past the 12.1 of n log² n (COMPLEXITY.md K41), so the size stays
-    // (TEST-bench-move-l0125; plan row PERF-long-literal-digits).
-    let n = 1000;
+    // Plan row PERF-long-literal-digits: at 64,000 and 512,000 digits the work grew 12.33 times
+    // (330 and 4,073 million instructions), past the limit, because `Rat::over_ten_to` caps the
+    // power of 5 at the exponent and a cap kept `valuation_upto`'s tests on the way up, each a
+    // division of the whole of the digits: 128 against 2,363 million instructions, 18.4 times
+    // (callgrind, 2026-11-27). With the tests from the top under a cap too, 10.30 times (281 and
+    // 2,895 million). `valuation_upto` alone still grows 14.9 times (79 and 1,186 million), in
+    // `fast::div_rem`: the steps down and the remainders from the top, 609 and 341 million at
+    // 512,000 digits, where num-bigint's Burnikel-Ziegler division is 169 million.
+    let n = 64_000;
     let srcs = scaling::inputs(n, long_suffixed_literals);
     scaling::check(
         "the messages of two literals of n digits with a suffix",

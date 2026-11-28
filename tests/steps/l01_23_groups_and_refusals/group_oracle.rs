@@ -30,6 +30,7 @@ use super::judgments::{bodies, group};
 use zed_kernel::types::bes::{Answer, decide};
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
+use zed_tests::instances::heap_permutations;
 use zed_tests::instances::{Rng, pick_seeds};
 use zed_tests::scaling;
 use zedc::lex::lex_fence;
@@ -1947,24 +1948,6 @@ fn in_order(types: &[Option<Type>], order: &[usize]) -> Vec<Option<Verdict>> {
     got
 }
 
-/// Every order of `0..n`, by Heap's algorithm, for small `n`.
-fn permutations(n: usize) -> Vec<Vec<usize>> {
-    let mut p: Vec<usize> = (0..n).collect();
-    let (mut c, mut out, mut i) = (vec![0; n], vec![p.clone()], 1);
-    while i < n {
-        if c[i] < i {
-            p.swap(if i % 2 == 0 { 0 } else { c[i] }, i);
-            out.push(p.clone());
-            c[i] += 1;
-            i = 1;
-        } else {
-            c[i] = 0;
-            i += 1;
-        }
-    }
-    out
-}
-
 /// The members of a group asked in every order give the same verdicts, each the verdict it has
 /// when asked alone (a unit checked by itself) and in a batch: groups of three in all six
 /// orders, and with their definitions written in all six orders, larger groups in every
@@ -2015,7 +1998,7 @@ fn members_asked_in_every_order((mut rng, rng_seed): (Rng, u64)) {
         let want = alone(&types);
         let n = sys.len();
         let all: Vec<Vec<usize>> = if n <= 3 {
-            permutations(n)
+            heap_permutations(n)
         } else {
             (0..n)
                 .map(|k| (0..n).map(|i| (i + k) % n).collect())
@@ -2716,7 +2699,7 @@ fn the_group_that_hung_the_search_is_decided_in_every_order() {
     let refused = Some(Verdict::Refused(Refusal::Group));
     assert_eq!(want, vec![refused; 3], "{}", show_system(&sys));
     let types = kernel(&sys, "hang");
-    for order in permutations(3) {
+    for order in heap_permutations(3) {
         assert_eq!(
             in_order(&types, &order),
             want,
@@ -2760,7 +2743,7 @@ fn the_group_that_hung_the_search_with_atoms_is_decided_in_every_order() {
             ("S", Expr::Union(vec![k(and(0, 1)), k(q(2))])),
         ]
     };
-    for (p, at) in permutations(3).into_iter().enumerate() {
+    for (p, at) in heap_permutations(3).into_iter().enumerate() {
         let mut defs: Vec<Option<Def>> = vec![None, None, None];
         for (j, (name, body)) in body(&|i| Expr::Ref(at[i], vec![])).into_iter().enumerate() {
             defs[at[j]] = Some(Def {
@@ -2775,9 +2758,9 @@ fn the_group_that_hung_the_search_with_atoms_is_decided_in_every_order() {
             .collect();
         let types = (Group::new(defs).unwrap_or_else(|e| panic!("{}", e.message))).instance(vec![]);
         let orders = if p == 0 {
-            permutations(3)
+            heap_permutations(3)
         } else {
-            vec![permutations(3)[rng.below(6)].clone()]
+            vec![heap_permutations(3)[rng.below(6)].clone()]
         };
         for order in orders {
             Type::forget_emptiness();
@@ -2870,7 +2853,7 @@ fn cases_j_and_l() -> Vec<(&'static str, Vec<E>)> {
 #[test]
 fn cases_j_and_l_are_inhabited_in_every_order() {
     let (mut rng, _) = Rng::fresh("cases J and L");
-    let orders = permutations(5);
+    let orders = heap_permutations(5);
     let mut runs = 0;
     for (name, sys) in cases_j_and_l() {
         let mut asked = vec![0];
@@ -2930,7 +2913,7 @@ fn groups_found_inhabited_in_some_orders_are_inhabited_in_all() {
     ];
     for (tag, sys) in systems {
         let n = sys.len();
-        for (k, order) in permutations(n).iter().enumerate() {
+        for (k, order) in heap_permutations(n).iter().enumerate() {
             let sys = moved(&sys, order);
             let got = alone(&kernel(&sys, &format!("{tag}_{k}")));
             assert_eq!(
@@ -4952,7 +4935,11 @@ fn rebuilt_at_once(sys: &[E], step: usize, tag: &str) -> ([usize; 2], [usize; 2]
     let (mut hits, mut builds) = ([0; 2], [0; 2]);
     for (vi, sys) in [sys.to_vec(), undecided(sys.to_vec())].iter().enumerate() {
         let tr = truth(sys, CAP);
-        for (k, order) in permutations(sys.len()).iter().enumerate().step_by(step) {
+        for (k, order) in heap_permutations(sys.len())
+            .iter()
+            .enumerate()
+            .step_by(step)
+        {
             let m = moved(sys, order);
             let ts = kernel(&m, &format!("{tag}v{vi}p{k}"));
             let (h0, b0) = (Type::rebuilds_at_once(), Type::rep_builds());

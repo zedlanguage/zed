@@ -50,6 +50,57 @@ pub fn bmc_floats() -> Vec<Value> {
     BMC_FLOATS.iter().map(|&x| Value::float(x)).collect()
 }
 
+/// All `k!` permutations of `0..k`, the `j`th by the factorial digits of `j` (the Lehmer
+/// code), so in lexicographic order.
+pub fn permutations(k: usize) -> Vec<Vec<usize>> {
+    let count: usize = (1..=k).product();
+    let perms: Vec<Vec<usize>> = (0..count)
+        .map(|mut j: usize| {
+            let mut left: Vec<usize> = (0..k).collect();
+            let mut p = Vec::with_capacity(k);
+            for f in (1..=k).rev() {
+                let fact: usize = (1..f).product();
+                p.push(left.remove(j / fact));
+                j %= fact;
+            }
+            p
+        })
+        .collect();
+    assert_eq!(perms.iter().collect::<BTreeSet<_>>().len(), count);
+    perms
+}
+
+/// Calls `visit` with every permutation of `0..n`, by Heap's algorithm (each next one a single
+/// swap of the one before), and returns how many there were. A test that reads a part of them
+/// (`step_by`, a pinned count) depends on this order, which is not [`permutations`]'.
+pub fn each_permutation(n: usize, mut visit: impl FnMut(&[usize])) -> usize {
+    let mut perm: Vec<usize> = (0..n).collect();
+    visit(&perm);
+    let mut count = 1;
+    let mut c = vec![0; n];
+    let mut i = 1;
+    while i < n {
+        if c[i] < i {
+            perm.swap(if i % 2 == 0 { 0 } else { c[i] }, i);
+            visit(&perm);
+            count += 1;
+            c[i] += 1;
+            i = 1;
+        } else {
+            c[i] = 0;
+            i += 1;
+        }
+    }
+    count
+}
+
+/// The permutations of [`each_permutation`], in its order.
+pub fn heap_permutations(n: usize) -> Vec<Vec<usize>> {
+    let mut out = Vec::new();
+    each_permutation(n, |p| out.push(p.to_vec()));
+    out
+}
+
 /// Every sequence of at most `max_len` elements of `alphabet`, in shortlex order: by length,
 /// then lexicographically in the alphabet's order.
 pub fn shortlex<T: Clone>(alphabet: &[T], max_len: usize) -> Vec<Vec<T>> {
@@ -139,6 +190,22 @@ mod tests {
             ]
         );
         assert_eq!(shortlex(&bmc_ints(), 2).len(), 1 + 17 + 289);
+    }
+
+    #[test]
+    fn both_orders_give_every_permutation_once() {
+        for n in 0..=6 {
+            let mut heap = heap_permutations(n);
+            assert_eq!(each_permutation(n, |_| {}), heap.len());
+            // Heap's order: each next one a single swap of the one before.
+            assert!(
+                heap.windows(2)
+                    .all(|w| w[0].iter().zip(&w[1]).filter(|(a, b)| a != b).count() == 2)
+            );
+            heap.sort();
+            assert_eq!(heap, permutations(n), "{n}");
+        }
+        assert_eq!(permutations(3)[1], vec![0, 2, 1]);
     }
 
     #[test]

@@ -183,3 +183,65 @@ fn the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block() {
         );
     });
 }
+
+/// The walk of `fees(d, 1)`, a block of `d` bindings each with a test, goes to the allocator
+/// at most 250 times a binding at 4,000 and at 32,000 bindings (items
+/// PERF-walk-allocator-no-coalesce, then PERF-walk-allocs-by-stack below). Measured on this
+/// thread (`zed_alloc_count::allocations`, which counts each allocation and each
+/// reallocation), before and after the cuts in
+/// `zedc-preimage` product.rs that carry the item's name:
+///
+/// | bindings | allocations a binding | bytes a binding   | time            |
+/// |----------|-----------------------|-------------------|-----------------|
+/// | 4,000    | 329.3 to 281.4        | 105.8 KB after    | 0.605 to 0.565 s |
+/// | 32,000   | 338.9 to 297.7        | 112.6 to 110.8 KB | 4.78 to 4.44 s  |
+///
+/// (medians of three runs of the profiling build on the local job runner, glibc's allocator,
+/// load 13 to 17; the count varies by about 2% from run to run, a cause not traced; the time
+/// before at 32,000 is of one earlier run.) The drop is 14% of the calls and 2% of the bytes,
+/// not more: what is left has no one site to cut. The cuts: a test
+/// with no name bound to a function is not closed (`Scope::close`), a term binding none of its
+/// free names to a static is borrowed, not copied (`substituted`), the free names of a test
+/// are found once (`Scope::atom`, `Scope::atom_names`), a summary already made is read with no
+/// work list (`Lazy::get`), and a test that is one atom is one node with no stack
+/// (`Tree::of`). What is left is spread over the walk, no site above 47 a binding: the copies
+/// of paths of the scope's persistent maps (`imbl`) at each binding and test, which the
+/// snapshots the walk keeps make necessary, and the making of each binding's summary, about
+/// ten allocations a summary. Red on the code before the cuts (327.6 and 338.9).
+///
+/// Then (item PERF-walk-allocs-by-stack) a heap profile of the walk grouped by call stack (one
+/// sample in 61 allocations, 500 bindings) found four sites to cut, each marked at the code
+/// with the item's name: a type compared with itself in `Type::subtype` (about 26 a binding),
+/// the copy of a conjunction's star index at each copy of the conjunction, now shared until
+/// changed (about 19, the most bytes), the node of `IntervalSet::top`, now made once (about
+/// 3), and the stack and sets of `Finiteness::order` for a type with no columns (about 9).
+/// Counted with the profile's counter (`probe_heap_profile`, not landed), medians of three:
+///
+/// | bindings | allocations a binding | bytes a binding   |
+/// |----------|-----------------------|-------------------|
+/// | 4,000    | 283.0 to 226.1        | 104.6 to 82.9 KB  |
+/// | 32,000   | 297.5 to 239.0        | 110.0 to 88.2 KB  |
+///
+/// What is left, by site: the nodes of the persistent treaps of piecewise-affine maps made by
+/// each binding's summary (`node_of`, about 24 a binding, from `add_treaps`), interval set
+/// nodes (about 17), hash tables (about 14) and the cursors of `OrdMap::diff` (about 12). The
+/// bound is 250, red on the code before the item (281 and 298 in this test's count).
+#[test]
+fn the_walk_of_a_deep_block_allocates_at_most_250_times_a_binding() {
+    on_small_stack(|| {
+        for d in [4_000, 32_000] {
+            let t = fees(d, 1);
+            let scope = ints(&["n".into()]);
+            let c0 = zed_alloc_count::allocations();
+            let start = std::time::Instant::now();
+            _ = arms(&t, &scope);
+            let time = start.elapsed();
+            let per = (zed_alloc_count::allocations() - c0) as f64 / d as f64;
+            eprintln!("{d} bindings: {per:.1} allocations a binding, {time:?}");
+            assert!(
+                per <= 250.0,
+                "the walk of {d} bindings allocated {per:.1} times a binding, more than 250"
+            );
+        }
+    });
+}

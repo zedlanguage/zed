@@ -277,6 +277,102 @@ fn witness_unpacking_by_euclidean_div_and_mod() {
     same(src, "x", "want");
 }
 
+// ---- Strictly monotone arithmetic (TONIC-remap-witness) ----
+// DESIGN.md sec:grouping: "a key of one integer or rational binder whose tonicity grade is ↑s
+// or ↓s by the rules of (sec:property_tracking), total on the binder's domain: `k + 1`, `2*k`
+// and `3*k + k div 2` on `int`, and `k*k` on `int[0..]` (on `int` it is refused, since `-5`
+// and `5` meet) ... never a float key, where `x + 1.0 == x` at `x = 1.0e16`".
+
+#[test]
+fn witness_strictly_monotone_with_a_floor_division() {
+    // ↑s plus ↑ is ↑s; the Euclidean `-3 div 2` is -2.
+    let src = "f(positional m: int ->? int) = m as (k -> v) into (3 * k + k div 2 -> v);\n\
+               x = f({ -3 -> 1, 0 -> 2, 1 -> 3, 4 -> 4 });\n\
+               want = { -11 -> 1, 0 -> 2, 3 -> 3, 14 -> 4 };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn witness_strictly_decreasing_cube() {
+    // `k ^ 3` is ↑s on `int` (odd power), its negation ↓s.
+    let src = "f(positional m: int ->? int) = m as (k -> v) into (-(k ^ 3) + 7 -> v);\n\
+               x = f({ -2 -> 1, 0 -> 2, 3 -> 3 });\nwant = { 15 -> 1, 7 -> 2, -20 -> 3 };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn witness_square_on_the_naturals() {
+    let src = "f(positional m: int[0..] ->? int) = m as (k -> v) into (k * k -> v);\n\
+               x = f({ 0 -> 1, 2 -> 2, 5 -> 3 });\nwant = { 0 -> 1, 4 -> 2, 25 -> 3 };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn witness_square_on_a_range_its_refinement_gives() {
+    // The grade needs the range: `k` lies above 0 only by `int[3..=9]`.
+    let src = "f(positional m: int[3..=9] ->? int) = m as (k -> v) into (k * k -> v);\n\
+               x = f({ 3 -> 1, 9 -> 2 });\nwant = { 9 -> 1, 81 -> 2 };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn witness_square_on_a_range_of_one_point() {
+    let src = "f(positional m: int[-4..=-4] ->? int) = m as (k -> v) into (k * k -> v);\n\
+               x = f({ -4 -> 9 });\nwant = { 16 -> 9 };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn witness_a_key_that_is_its_binder_stays_literal() {
+    let src = "f(positional m: int ->? int) = m as (k -> v) into (k -> v);\n\
+               x = f({ -1 -> 1, 2 -> 2 });\nwant = { -1 -> 1, 2 -> 2 };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn witness_square_on_int_is_rejected() {
+    let src = "f(positional m: int ->? int) = m as (k -> v) into (k * k -> v);\n";
+    rejected(
+        src,
+        &[
+            "Cannot show that `k * k` keeps the keys of `k` apart",
+            "#collision",
+        ],
+    );
+}
+
+#[test]
+fn witness_monotone_but_not_strict_is_rejected() {
+    // `k div 2` and `min(k, 50)` are ↑ and not ↑s: 2 and 3 meet at 1, and 50 and 51 at 50.
+    for key in ["k div 2", "min(k, 50)"] {
+        let src = format!("f(positional m: int ->? int) = m as (k -> v) into ({key} -> v);\n");
+        let headline = format!("Cannot show that `{key}` keeps the keys of `k` apart");
+        rejected(&src, &[headline.as_str(), "#collision"]);
+    }
+}
+
+#[test]
+fn witness_strict_plus_monotone_min() {
+    // ↑s plus ↑ is ↑s: the prelude's `min` is read as the kernel's, ↑ in each argument.
+    let src = "f(positional m: int ->? int) = m as (k -> v) into (k + min(k, 50) -> v);\n\
+               x = f({ 49 -> 1, 50 -> 2, 51 -> 3, 60 -> 4 });\n\
+               want = { 98 -> 1, 100 -> 2, 101 -> 3, 110 -> 4 };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn witness_a_float_key_plus_one_is_rejected() {
+    // "never a float key, where `x + 1.0 == x` at `x = 1.0e16`".
+    let src = "f(positional m: f64 ->? int) = m as (k -> v) into (k + 1.0 -> v);\n";
+    rejected(
+        src,
+        &[
+            "Cannot show that `k + 1.0` keeps the keys of `k` apart",
+            "#collision",
+        ],
+    );
+}
+
 // ---- Calls of a function whose partial-map parameter has a range on its key (RANGE-keys) ----
 // The witness above reads the range, so each call must show the keys it passes lie in it.
 

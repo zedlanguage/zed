@@ -469,11 +469,13 @@ fn tiny_bic(t: &Tiny, rng: &mut Rng) -> Prob {
 /// pair, every drop replays, the pairs left are within the single-holder rule's, and renaming
 /// changes nothing. Controls: the mutant `frame_bad` must fail a replay or change a verdict,
 /// and dropping every pair with a free atom (no Theorem D) must change a verdict, which shows
-/// the oracle can see a wrong drop.
+/// the oracle can see a wrong drop. Step 5's sign events leave the same pairs as its row
+/// rechecks (`Opts::row_rechecks`), in a family where step 5's Def-set tests drop some pair.
 fn tiny_family(what: &str, generate: fn(&mut Rng) -> Tiny, n: usize, seed: u64) {
     let mut rng = Rng::new(seed);
     let (mut differ, mut skip, mut replay_bad, mut drops, mut sh_bad, mut ren_bad) =
         (0, 0, 0, 0, 0, 0);
+    let (mut events_differ, mut def_drops) = (0, 0);
     let (mut m_replay, mut m_differ, mut c_differ) = (0, 0, 0);
     for i in 0..n {
         let t = generate(&mut rng);
@@ -488,6 +490,15 @@ fn tiny_family(what: &str, generate: fn(&mut Rng) -> Tiny, n: usize, seed: u64) 
             ..Opts::default()
         };
         let out = solve(&p, log);
+        let rows_out = solve(
+            &p,
+            Opts {
+                row_rechecks: true,
+                ..Opts::default()
+            },
+        );
+        events_differ += usize::from(rows_out.left != out.left);
+        def_drops += usize::from(out.log.iter().any(|d| d.1 < 3));
         replay_bad += usize::from(!replay_ok(&p, &out));
         drops += usize::from(out.left.len() < all.len());
         sh_bad += usize::from(!within_single_holder(&p, &out.left));
@@ -523,7 +534,16 @@ fn tiny_family(what: &str, generate: fn(&mut Rng) -> Tiny, n: usize, seed: u64) 
         "tiny {what}: n={n} verdict_differs={differ} skipped={skip} replay_failures={replay_bad} \
          with_a_drop={drops} not_within_single_holder={sh_bad} renaming_differs={ren_bad} | \
          controls: frame_bad replay_failures={m_replay} verdict_differs={m_differ}; \
-         drop_any_free verdict_differs={c_differ}"
+         drop_any_free verdict_differs={c_differ} | sign events vs row rechecks: \
+         pairs_left_differ={events_differ} with_a_step5_def_drop={def_drops}"
+    );
+    assert_eq!(
+        events_differ, 0,
+        "{what}: step 5's sign events left other pairs than its row rechecks"
+    );
+    assert!(
+        def_drops > 0,
+        "{what}: step 5's Def-set tests dropped no pair"
     );
     assert_eq!(
         (differ, replay_bad, sh_bad, ren_bad),
@@ -613,9 +633,10 @@ fn tiny_cone(rng: &mut Rng) -> (Tiny, Vec<Lists>) {
 /// found not implied. (The prototype's control compared verdicts only and saw 1 or 2
 /// differences in 4000 cases; the implication check caught 214 of the 530 cases where the
 /// mutant fired on shape 0, 146 of 478 on shape 1 and 225 of 525 on shape 2, VM run of
-/// 2026-11-24.)
-#[test]
-fn the_cone_rule_keeps_the_verdict_on_lists_shared_by_products() {
+/// 2026-11-24.) Each shape is a test of its own below, each a piece of tools/run_tests.sh, since
+/// the three in one test took 20.1 s alone at load 12.9 against a limit of 20 s
+/// (TESTS-split-two-presburger-tests-near-20s, 2026-11-27); each shape keeps its fixed seed.
+fn cone_rule_keeps_the_verdict(shape: usize) {
     // Whether each pair step 0 drops is implied by the factor rows and the products of the
     // pairs step 0 keeps (`step0`: the pairs of the reduced lists, whose class representative
     // may lie outside the product's list; the later steps drop some of them, so `left` alone
@@ -641,95 +662,112 @@ fn the_cone_rule_keeps_the_verdict_on_lists_shared_by_products() {
         }
         Some(true)
     };
-    for shape in 0..3usize {
-        let mut rng = Rng::new(0x0c0e_1000_0000_0000 + shape as u64);
-        let (mut fired, mut differ, mut replay_bad, mut not_implied, mut skip) = (0, 0, 0, 0, 0);
-        let mut skip_implied = 0;
-        let (mut ctrl_fired, mut ctrl_caught) = (0, 0);
-        let n = 2000;
-        for _ in 0..n {
-            let (t, mut bic) = tiny_cone(&mut rng);
-            let nr = t.rows.len();
-            let cone: Vec<usize> = (nr - 3..nr).collect();
-            let other: Vec<usize> = (0..nr - 3).filter(|_| rng.coin()).collect();
-            let b2 = if other.is_empty() { vec![0] } else { other };
-            let second = match shape {
-                0 => (bic[0].0.clone(), b2),
-                1 => {
-                    let gone = cone[rng.below(3)];
-                    (
-                        bic[0].0.iter().copied().filter(|&r| r != gone).collect(),
-                        b2,
-                    )
-                }
-                _ => (b2, bic[0].0.clone()),
-            };
-            bic.push(second);
-            let p = prob(&t.rows, &t.consts, &bic, &t.ment, t.nv);
-            let log = Opts {
-                log: true,
-                ..Opts::default()
-            };
-            let on = solve(&p, log);
-            let off = solve(
-                &p,
-                Opts {
-                    no_cone: true,
-                    ..log
-                },
-            );
-            let bad = solve(
-                &p,
-                Opts {
-                    cone_bad: true,
-                    ..log
-                },
-            );
-            let f = on.dominated.len() != off.dominated.len();
-            fired += usize::from(f);
-            replay_bad += usize::from(!replay_ok(&p, &on));
-            let cf = bad.dominated != on.dominated;
-            ctrl_fired += usize::from(cf);
-            match implied_all(&p, &on, true) {
-                Some(i) => not_implied += usize::from(!i),
-                None => skip_implied += 1,
+    let mut rng = Rng::new(0x0c0e_1000_0000_0000 + shape as u64);
+    let (mut fired, mut differ, mut replay_bad, mut not_implied, mut skip) = (0, 0, 0, 0, 0);
+    let mut skip_implied = 0;
+    let (mut ctrl_fired, mut ctrl_caught) = (0, 0);
+    let n = 2000;
+    for _ in 0..n {
+        let (t, mut bic) = tiny_cone(&mut rng);
+        let nr = t.rows.len();
+        let cone: Vec<usize> = (nr - 3..nr).collect();
+        let other: Vec<usize> = (0..nr - 3).filter(|_| rng.coin()).collect();
+        let b2 = if other.is_empty() { vec![0] } else { other };
+        let second = match shape {
+            0 => (bic[0].0.clone(), b2),
+            1 => {
+                let gone = cone[rng.below(3)];
+                (
+                    bic[0].0.iter().copied().filter(|&r| r != gone).collect(),
+                    b2,
+                )
             }
-            if cf {
-                ctrl_caught += usize::from(implied_all(&p, &bad, false) == Some(false));
-            }
-            match (
-                feasible(&p, &t.base, &all_pairs(&p), None),
-                feasible(&p, &t.base, &on.left, None),
-            ) {
-                (Some(x), Some(y)) => differ += usize::from(x != y),
-                _ => skip += 1,
-            }
+            _ => (b2, bic[0].0.clone()),
+        };
+        bic.push(second);
+        let p = prob(&t.rows, &t.consts, &bic, &t.ment, t.nv);
+        let log = Opts {
+            log: true,
+            ..Opts::default()
+        };
+        let on = solve(&p, log);
+        let off = solve(
+            &p,
+            Opts {
+                no_cone: true,
+                ..log
+            },
+        );
+        let bad = solve(
+            &p,
+            Opts {
+                cone_bad: true,
+                ..log
+            },
+        );
+        let f = on.dominated.len() != off.dominated.len();
+        fired += usize::from(f);
+        replay_bad += usize::from(!replay_ok(&p, &on));
+        let cf = bad.dominated != on.dominated;
+        ctrl_fired += usize::from(cf);
+        match implied_all(&p, &on, true) {
+            Some(i) => not_implied += usize::from(!i),
+            None => skip_implied += 1,
         }
-        println!(
-            "cone1 shape={shape}: n={n} rule_fired={fired} verdict_differs={differ} \
-             replay_failures={replay_bad} not_implied={not_implied} skipped_verdict={skip} \
-             skipped_implied={skip_implied} | control cone_bad: fired={ctrl_fired} \
-             caught_not_implied={ctrl_caught}"
-        );
-        assert_eq!(
-            (differ, replay_bad, not_implied),
-            (0, 0, 0),
-            "shape {shape}"
-        );
-        // At most a fifth of the cases refused by the oracle (measured 2026-11-24: 271 of 2000
-        // on shape 0, before the implication check was counted apart).
-        assert!(
-            skip * 5 <= n && skip_implied * 5 <= n,
-            "shape {shape}: the oracle refused {skip} verdicts and {skip_implied} implications of {n}"
-        );
-        assert!(fired > 0, "shape {shape}: the cone rule never fired");
-        // The prototype's verdict control saw 1 or 2 differences in 4000 cases; the implication
-        // check must catch at least a tenth of the cases where the mutant drops other pairs.
-        assert!(
-            ctrl_fired > 0 && ctrl_caught * 10 >= ctrl_fired,
-            "shape {shape}: the control cone_bad was caught in {ctrl_caught} of {ctrl_fired} cases"
-        );
+        if cf {
+            ctrl_caught += usize::from(implied_all(&p, &bad, false) == Some(false));
+        }
+        match (
+            feasible(&p, &t.base, &all_pairs(&p), None),
+            feasible(&p, &t.base, &on.left, None),
+        ) {
+            (Some(x), Some(y)) => differ += usize::from(x != y),
+            _ => skip += 1,
+        }
     }
+    println!(
+        "cone1 shape={shape}: n={n} rule_fired={fired} verdict_differs={differ} \
+         replay_failures={replay_bad} not_implied={not_implied} skipped_verdict={skip} \
+         skipped_implied={skip_implied} | control cone_bad: fired={ctrl_fired} \
+         caught_not_implied={ctrl_caught}"
+    );
+    assert_eq!(
+        (differ, replay_bad, not_implied),
+        (0, 0, 0),
+        "shape {shape}"
+    );
+    // At most a fifth of the cases refused by the oracle (measured 2026-11-24: 271 of 2000
+    // on shape 0, before the implication check was counted apart).
+    assert!(
+        skip * 5 <= n && skip_implied * 5 <= n,
+        "shape {shape}: the oracle refused {skip} verdicts and {skip_implied} implications of {n}"
+    );
+    assert!(fired > 0, "shape {shape}: the cone rule never fired");
+    // The prototype's verdict control saw 1 or 2 differences in 4000 cases; the implication
+    // check must catch at least a tenth of the cases where the mutant drops other pairs.
+    assert!(
+        ctrl_fired > 0 && ctrl_caught * 10 >= ctrl_fired,
+        "shape {shape}: the control cone_bad was caught in {ctrl_caught} of {ctrl_fired} cases"
+    );
+}
+
+/// Shape 0 of [`cone_rule_keeps_the_verdict`]: the second product has the same list on side A.
+#[test]
+fn the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_0() {
+    cone_rule_keeps_the_verdict(0);
+}
+
+/// Shape 1 of [`cone_rule_keeps_the_verdict`]: the second product has that list less one plane
+/// row.
+#[test]
+fn the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_1() {
+    cone_rule_keeps_the_verdict(1);
+}
+
+/// Shape 2 of [`cone_rule_keeps_the_verdict`]: the second product has that list on side B.
+#[test]
+fn the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_2() {
+    cone_rule_keeps_the_verdict(2);
 }
 
 /// Boolean matrix multiplication as one run of the solver (design sec. 5.3, the prototype's
@@ -747,8 +785,16 @@ fn build_bmm(n: usize, free: usize, seed: u64, g: bool) -> (Prob, Vec<Vec<bool>>
     for _ in 0..free {
         f[rng.below(n)][rng.below(n)] = true;
     }
+    let p = bmm_instance(&a, &f, g);
+    (p, boolean_product(&a, &f))
+}
+
+/// The instance of [`build_bmm`] for given n x n matrices A and F (A with a unit diagonal for
+/// the proof's step 1; [`any_boolean_product_is_read_off_the_pairs_left`] embeds any A in one).
+fn bmm_instance(a: &[Vec<bool>], f: &[Vec<bool>], g: bool) -> Prob {
+    let n = a.len();
     let mut rows: Vec<Vec<(usize, i64)>> = Vec::new();
-    for au in &a {
+    for au in a {
         rows.push((0..n).filter(|&x| au[x]).map(|x| (x, 1)).collect());
     }
     for v in 0..n {
@@ -780,11 +826,91 @@ fn build_bmm(n: usize, free: usize, seed: u64, g: bool) -> (Prob, Vec<Vec<bool>>
     }
     let side_a: Vec<usize> = (0..n).chain(2 * n..3 * n).collect();
     let consts = vec![0; rows.len()];
-    let p = prob(&rows, &consts, &[(side_a, side_b)], &ment, 4 * n + 3);
-    let c = (0..n)
+    prob(&rows, &consts, &[(side_a, side_b)], &ment, 4 * n + 3)
+}
+
+/// The Boolean product A F of two n x n matrices, by its definition.
+fn boolean_product(a: &[Vec<bool>], f: &[Vec<bool>]) -> Vec<Vec<bool>> {
+    let n = a.len();
+    (0..n)
         .map(|u| (0..n).map(|v| (0..n).any(|x| a[u][x] && f[x][v])).collect())
-        .collect();
-    (p, c)
+        .collect()
+}
+
+/// Step 0 of the proof at the module's "The general worklist and Boolean matrix
+/// multiplication": any A, not only one with a unit diagonal, multiplies through [`build_bmm`]'s
+/// instance. A' = [[I, A], [0, I]] and F' = [[0, 0], [F, 0]] (2n x 2n) have A' F' = [[A F, 0],
+/// [F, 0]], so A F is the top-left block, read off the pairs left: (A F)[u][v] = 1 iff the pair
+/// (s_u, t_v) is not left. F' is at least three quarters zeros, so at least 3 (2n)^2 / 4 atoms
+/// `w_x * z_v` are mentioned whatever F is, and the input size is Θ(n^2). Here A has a zero
+/// diagonal and F runs from no ones to about half ones. Control: without the sign predicates
+/// (`no_def`) the matrix read off is wrong wherever A F has a one.
+#[test]
+fn any_boolean_product_is_read_off_the_pairs_left() {
+    let mut rng = Rng::new(7);
+    let mut ctrl_caught = 0;
+    let mut ctrl_cases = 0;
+    for n in [12usize, 34] {
+        for density in 0..3 {
+            let a: Vec<Vec<bool>> = (0..n)
+                .map(|u| (0..n).map(|x| x != u && rng.coin()).collect())
+                .collect();
+            let f: Vec<Vec<bool>> = (0..n)
+                .map(|_| {
+                    (0..n)
+                        .map(|_| match density {
+                            0 => false,
+                            1 => rng.coin() && rng.coin(),
+                            _ => rng.coin(),
+                        })
+                        .collect()
+                })
+                .collect();
+            let m = 2 * n;
+            let a2: Vec<Vec<bool>> = (0..m)
+                .map(|u| {
+                    (0..m)
+                        .map(|x| u == x || u < n && x >= n && a[u][x - n])
+                        .collect()
+                })
+                .collect();
+            let f2: Vec<Vec<bool>> = (0..m)
+                .map(|x| (0..m).map(|v| x >= n && v < n && f[x - n][v]).collect())
+                .collect();
+            let want = boolean_product(&a, &f);
+            let p = bmm_instance(&a2, &f2, true);
+            let read = |left: &[(usize, usize)]| -> Vec<Vec<bool>> {
+                (0..n)
+                    .map(|u| (0..n).map(|v| !left.contains(&(u, m + v))).collect())
+                    .collect()
+            };
+            let out = solve(&p, Opts::default());
+            println!(
+                "bmm embedded n={n} (n'={m}) F density {density}: ones of AF={} left={} \
+                 worklist={}",
+                want.iter().flatten().filter(|&&b| b).count(),
+                out.left.len(),
+                out.worklist
+            );
+            assert_eq!(read(&out.left), want, "n={n} density={density}");
+            if want.iter().flatten().any(|&b| b) {
+                ctrl_cases += 1;
+                let ctrl = solve(
+                    &p,
+                    Opts {
+                        no_def: true,
+                        ..Opts::default()
+                    },
+                );
+                ctrl_caught += usize::from(read(&ctrl.left) != want);
+            }
+        }
+    }
+    assert!(ctrl_cases > 0);
+    assert_eq!(
+        ctrl_caught, ctrl_cases,
+        "the control no_def must misread A F"
+    );
 }
 
 /// Design sec. 5.3: the pairs left are exactly the zeros of A F (with `g`, also every (s_u,
@@ -943,13 +1069,61 @@ fn ratios(build: &dyn Fn(usize) -> Prob, ls: [usize; 2]) -> ([u64; 2], [f64; 4])
     (k, r)
 }
 
-/// Exception 4 of A225 (COMPLEXITY.md, the A225 entry): on `wlgrow_g` the worklist grows 34
-/// times at 8 times the input, since each of the l signings of an x rechecks the r² pairs of
-/// the X and Y rows (design sec. 5.3: Boolean matrix multiplication reduces to this worklist,
-/// so no combinatorial method is known to bring it under 10.5). This test asserts the limit
-/// and fails until that is solved; it is not ignored (the standing rule).
+/// The worklist of step 5 on `wlgrow_g` is O(N log N), N = Θ(l²) the input size, with r = l
+/// (FAIL-factored-wlgrow-g-worklist, b30-pres4, 2026-11-28). Until then each of the l signings
+/// of an x rechecked the r² pairs of the X and Y rows: ratio 34.00 at 6.97 times the input,
+/// exception 4 of A225. The sign events of [`super::Joint::gain`] give 7.50 (worklist 10,960
+/// at l = 10 and 82,220 at l = 28; at l = 20 and 40, sizes 5,301 and 20,201, it is 40,088 and
+/// 166,032: 4.14 times at 3.81 times the input; local run, b30-pres4, 2026-11-28). They leave
+/// the same pairs as the row rechecks, which the test checks at l = 10 and 28; the row
+/// rechecks on the same inputs are the control and must grow past the limit.
+///
+/// *Proof of the bound.* Rows: X_i = Σ x + (±1) pv + e_i and Y_j = Σ y + d_j + (±1) g (i, j
+/// < r), one product of the X and the Y rows; K_t = −x_t + c_t − c_{t+1} with M_t = m_t, a
+/// product each (t < l). Row ids: X 0..r, Y r..2r, K_t 2r + 2t, M_t 2r + 2t + 1, so the trie
+/// height over rows is hh = O(log l), and th = O(log l) over the variables.
+/// 1. Signs. pv and g have both signs in rows that never die (no pair of X × Y drops: every
+///    x, e_i is mentioned with every y and d_j, and pv, g never sign), so they never sign.
+///    x_t is unsigned while K_t lives (−1 there, +1 in the X rows), and c_t (0 < t < l) while
+///    K_{t−1} and K_t both live. Pass 1 drops {K_{l−1}, M_{l−1}} (c_l signed, `c_l * m_{l−1}`
+///    free), K_{l−1} is killed at the start of step 5, and from there the chain goes down:
+///    c_t signs when K_t dies, enters Def(K_{t−1}), `c_t * m_{t−1}` is free, and
+///    {K_{t−1}, M_{t−1}} drops. So the sign events are those of x_t and c_t, at most three
+///    predicates each: O(l) events.
+/// 2. Holder sets. holders(x_t) = the X rows and K_t (t < l − 1; X alone for t = l − 1), and
+///    holders(c_t) ⊆ {K_{t−1}, K_t}. Their tries cost O((r + 1) hh) for each x_t and O(hh) for
+///    each c_t: O(l r log l) in all.
+/// 3. Partner lists ([`super::Joint::partners`]). A trie node of the holders of x_t whose row range
+///    misses K_t holds X rows only, the same node for every t, so it is built once; those
+///    nodes number at most 2r and list the Y rows, O(r²) in all. The other nodes are the at
+///    most hh + 1 on the path to K_t, each listing at most the Y rows and M_t: O((r + 1) hh)
+///    for each t. The nodes for c_t list at most M_{t−1} and M_t. In all O(r² + l r log l).
+/// 4. Tests. An event of x_t tests the r Y rows and M_t once each. Def(Y_j) ⊆ {y_0, …,
+///    y_{l−1}, d_j}, so the trie nodes of Def(Y_j) off the path to d_j are the same for all j,
+///    and [`super::Joint::within`] makes at most 2l memo entries on them for x_t and th + 1 on each
+///    path to a d_j: O(l + r log l) for each event. No test of an x fails (every y and d_j is
+///    mentioned with every x, and `m_t * x_t` is mentioned). An event of c_t tests at most two
+///    M rows, O(th), and a failure drops the one pair of M_{t−1}.
+/// 5. The rest of step 5 is the kills of the l K rows, each reading the holder lists of its
+///    three variables, O(r) each, and the X and Y rows, which never die.
+///
+/// Summed: O(l r log l + r²) = O(N log N). This bound is for this family only: Boolean matrix
+/// multiplication reduces to the general worklist, so O(N log N) there would multiply Boolean
+/// matrices in O(n² log n) (a conditional bound, not a proved one: the module's "The general
+/// worklist and Boolean matrix multiplication").
 #[test]
 fn the_worklist_of_wlgrow_g_scales() {
+    let p = build_wlgrow(10, 10, true);
+    let rows = Opts {
+        row_rechecks: true,
+        ..Opts::default()
+    };
+    let (new, old) = (solve(&p, Opts::default()), solve(&p, rows));
+    println!(
+        "l=10 worklist: sign events {}, row rechecks {}",
+        new.worklist, old.worklist
+    );
+    assert_eq!(new.left, old.left, "the sign events left other pairs");
     let (k, r) = ratios(&|l| build_wlgrow(l, l, true), [10, 28]);
     // The size grows as l²: 28/10 gives 6.97, the nearest to 8 the prototype's sizes reach.
     assert!(
@@ -958,8 +1132,29 @@ fn the_worklist_of_wlgrow_g_scales() {
     );
     assert!(
         r[2] < crate::scaling::LIMIT,
-        "the worklist grew {:.2} times at 8x the input on wlgrow_g (exception 4 of A225)",
+        "the worklist grew {:.2} times at 8x the input on wlgrow_g",
         r[2]
+    );
+    // Control: the row rechecks on the same two inputs grow past the limit, and leave the same
+    // pairs at l = 28 too.
+    let (p28, new28) = {
+        let p = build_wlgrow(28, 28, true);
+        let out = solve(&p, Opts::default());
+        (p, out)
+    };
+    let old28 = solve(&p28, rows);
+    let control = old28.worklist as f64 / old.worklist.max(1) as f64;
+    println!(
+        "control: row rechecks {} to {} ({control:.2})",
+        old.worklist, old28.worklist
+    );
+    assert_eq!(
+        new28.left, old28.left,
+        "the sign events left other pairs at l = 28"
+    );
+    assert!(
+        control > crate::scaling::LIMIT,
+        "control: the row rechecks grew only {control:.2} times"
     );
 }
 

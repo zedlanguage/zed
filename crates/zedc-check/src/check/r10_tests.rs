@@ -177,6 +177,7 @@ fn info_eq_full(label: &str, e: &Info, d: &Info) -> Result<(), String> {
         warnings: _,
         blocking: _,
         limits: _,
+        port_params: _,
     } = e;
     if e.errors != d.errors {
         return Err(format!(
@@ -299,6 +300,9 @@ fn info_eq_full(label: &str, e: &Info, d: &Info) -> Result<(), String> {
     }
     if e.limits != d.limits {
         return Err(format!("{label}: limits mismatch"));
+    }
+    if e.port_params != d.port_params {
+        return Err(format!("{label}: port_params mismatch"));
     }
     Ok(())
 }

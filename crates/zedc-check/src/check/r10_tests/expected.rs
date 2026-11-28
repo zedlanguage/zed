@@ -243,6 +243,10 @@ pub(super) fn info_text(info: &Info) -> String {
         warnings,
         blocking,
         limits,
+        // Not printed: the binders of the parameters pushed to, which `ports` finds from the
+        // pushes and errors already show; a field here would change the text of every program
+        // with such a parameter from what `expected.out` holds (PORT-table-param).
+        port_params: _,
     } = info;
     let mut memo = Memo::new();
     let mut names = Names::default();

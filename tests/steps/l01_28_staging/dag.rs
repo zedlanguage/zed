@@ -553,16 +553,7 @@ fn calls_at_a_doubled_tuple_stage_alike() {
     assert_eq!(at_doubled, at_literal);
 }
 
-/// `let twice = (t) -> t ++ t in twice(twice(… seed))`, `d` calls, or with `(t, t)` for
-/// `t ++ t` when `pair`: a string `2^d` times as long as `seed`, or a tuple of `2^d` places,
-/// each built in `d` nodes.
-pub(super) fn doubled(seed: Term, d: usize, pair: bool) -> Term {
-    let both = vec![var("t"), var("t")];
-    let body = prim(if pair { Prim::Tuple } else { Prim::Concat }, both);
-    let twice = lam(&["t"], body);
-    let t = (0..d).fold(seed, |t, _| Term::App(Shared::new(var("twice")), vec![t]));
-    Term::Let("twice".into(), Shared::new(twice), Shared::new(t))
-}
+pub(super) use zed_tests::kernel::doubled;
 
 /// `f = (x, y) -> x; main = (n) -> f(n, a0) + (f(n, a1) + … f(n, a(k-1)))` for the `k`
 /// arguments `args`, each built apart: the values passed to `f`'s second parameter are those of

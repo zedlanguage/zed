@@ -42,6 +42,7 @@ l01_30a_query_reads
 l01_31_zir
 l01_32_canonical_zir
 l01_33_lowering
+l01_33a_zir_sources
 l01_34_memory
 l01_35_mlir_study
 l01_36_cranelift

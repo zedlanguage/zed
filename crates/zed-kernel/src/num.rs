@@ -20,6 +20,7 @@ mod bound;
 pub mod dec;
 pub mod float_mod;
 mod float_text;
+pub mod form;
 mod room;
 pub mod tininess;
 
@@ -2728,13 +2729,26 @@ fn valuation(n: BigInt, p: u64) -> (u64, BigInt) {
 /// each, so O(N log^2 v) in all: O(N) for a power `v` of a few factors, as most decimals have,
 /// and O(M(N) log N) = O(N log^2 N) at most, the order of reading the digits.
 ///
-/// With no cap, once the next power `P_(i+1)` passes [`WHOLE_TEST_BITS`], the tests from it on
-/// are made from the top instead ([`valuation_from_the_top`]): the powers are squared up to the
-/// last `P_T` of at most `N` bits, and `r_T = |n| mod P_T`, then `r_k = r_(k+1) mod P_k` for `k`
-/// down from `T`, which is `|n| mod P_k` since `P_k` divides `P_(k+1)`. The `P_k` that divide
-/// `n` are those below the least `k` with `r_k` not zero, as in the tests on the way up, so `J`
-/// and `x` are the same.
+/// Once the next power `P_(i+1)` passes [`WHOLE_TEST_BITS`] and the cap would still let the
+/// tests go on (`2^(i+1) <= cap`), the tests from it on are made from the top instead
+/// ([`valuation_from_the_top`]): the powers are squared up to the last `P_T` of at most `N`
+/// bits, and `r_T = |n| mod P_T`, then `r_k = r_(k+1) mod P_k` for `k` down from `T`, which is
+/// `|n| mod P_k` since `P_k` divides `P_(k+1)`. The `P_k` that divide `n` are those below the
+/// least `k` with `r_k` not zero, as in the tests on the way up with no cap, so `x` is not zero
+/// and the steps down read `v_p(n)` whole, which `v.min(cap)` then clips. Up to the cap the two
+/// ways agree: with a cap the tests on the way up stop at the first `J` with `2^(J+1) > cap`
+/// and give `cap` when `x` is zero there, which is `v_p(n) >= 2^(J+1) > cap`, the clipped
+/// `v_p(n)`. Plan row PERF-long-literal-digits: `Rat::over_ten_to` caps the powers of 2 and 5
+/// of a literal's digits at its exponent, and the tests on the way up made the valuation of
+/// 5 in 512,000 digits 18.4 times the instructions of that in 64,000 (2,363 million against
+/// 128 million, callgrind, 2026-11-27).
 fn valuation_upto(n: BigInt, p: u64, cap: u64) -> (u64, BigInt) {
+    valuation_upto_by(n, p, cap, true)
+}
+
+/// [`valuation_upto`], with the tests from the top past [`WHOLE_TEST_BITS`] (`from_the_top`)
+/// or the tests on the way up throughout, which the tests of this module compare it with.
+fn valuation_upto_by(n: BigInt, p: u64, cap: u64, from_the_top: bool) -> (u64, BigInt) {
     if n.is_zero() || cap == 0 {
         return (0, n);
     }
@@ -2760,7 +2774,7 @@ fn valuation_upto(n: BigInt, p: u64, cap: u64) -> (u64, BigInt) {
         if next.bits() > n.bits() {
             break n.magnitude().clone();
         }
-        if cap == u64::MAX && next.bits() > WHOLE_TEST_BITS {
+        if from_the_top && next.bits() > WHOLE_TEST_BITS && i + 1 < 64 && 2u64 << i <= cap {
             powers.push(next);
             break valuation_from_the_top(n.magnitude(), &mut powers);
         }
@@ -2823,9 +2837,10 @@ fn valuation_upto(n: BigInt, p: u64, cap: u64) -> (u64, BigInt) {
 /// KERNEL-bz-short-quotient), so the valuation of `q 3^v` still allocated 10.9 times the
 /// bytes from `v = 2^15` to `2^18` (1,094,432 and 11,947,280), against 18.2 on the way up;
 /// not proved O(N) until that row is done. 4096 bits, 64 words, is the division's leaf
-/// `fast::DIV_LEAF` and lies between the two measured groups. Both ways find the same `J` and
-/// `x` (the proof at [`valuation_upto`]); tested by
-/// `valuations_from_the_top_agree_with_the_tests_on_the_way_up`.
+/// `fast::DIV_LEAF` and lies between the two measured groups. Both ways find the same `v` (the
+/// proof at [`valuation_upto`]); tested by
+/// `valuations_from_the_top_agree_with_the_tests_on_the_way_up` and
+/// `random_capped_valuations_agree_with_the_tests_on_the_way_up`.
 const WHOLE_TEST_BITS: u64 = 64 * 64;
 
 /// What [`Rat::pow`] asks the system for, in bits for each bit of a part wider than a word,
@@ -4461,8 +4476,8 @@ mod tests {
     /// `valuation` against division by `p` one at a time, on `c p^v` for powers `v` either side
     /// of the step from the tests on the way up to those from the top (`WHOLE_TEST_BITS`, at
     /// `v` of 2048 to 4096 for `p = 3`), cofactors `c` that `p` divides and does not, and with
-    /// a cap, which keeps the tests on the way up; and the bytes it allocates for `q 3^v`
-    /// against those of the tests on the way up.
+    /// caps on either side of that step; and the bytes it allocates for `q 3^v` against those
+    /// of the tests on the way up ([`valuation_upto_by`] without `from_the_top`).
     #[test]
     fn valuations_from_the_top_agree_with_the_tests_on_the_way_up() {
         fn by_one(mut n: BigInt, p: u64) -> (u64, BigInt) {
@@ -4502,8 +4517,8 @@ mod tests {
                 }
             }
         }
-        // The step it guards, against the tests on the way up on the same input (a cap of
-        // `u64::MAX - 1` keeps them): `q 3^(2^18)`, `q = 2^61 - 1`, 415,550 bits, took
+        // The step it guards, against the tests on the way up on the same input:
+        // `q 3^(2^18)`, `q = 2^61 - 1`, 415,550 bits, took
         // 11,947,280 bytes from the top and 21,410,592 on the way up (2026-11-23, Colab);
         // allocation counts are deterministic. Not held to 10.5 from `v` to `8v`: from `2^15`
         // to `2^18` it grows 10.9 times (1,094,432 to 11,947,280), all of it in divisions with
@@ -4515,13 +4530,54 @@ mod tests {
         // `bench::kept_powers::the_text_of_a_prime_word_times_a_power_held_as_digits_scales`
         // (9.8 times the bytes).
         let n = BigInt::from(m61) * BigInt::from(3).pow(1u32 << 18);
-        let bytes = [u64::MAX, u64::MAX - 1].map(|cap| {
+        let bytes = [true, false].map(|from_the_top| {
             let before = zed_alloc_count::allocated();
-            let (k, _) = valuation_upto(n.clone(), 3, cap);
+            let (k, _) = valuation_upto_by(n.clone(), 3, u64::MAX, from_the_top);
             assert_eq!(k, 1 << 18);
             zed_alloc_count::allocated() - before
         });
         assert!(bytes[0] * 3 < bytes[1] * 2, "{bytes:?}");
+    }
+
+    /// `valuation_upto` against the tests on the way up ([`valuation_upto_by`] without
+    /// `from_the_top`) on random `c p^v`: `p` among 2, 3, 5 and a prime of 61 bits, `v` up to
+    /// 6,000, which reaches past `WHOLE_TEST_BITS` for each odd `p`, a random cofactor of up to
+    /// 2,000 bits of either sign, and a random cap, which is below `v`, at it or above it about
+    /// as often each, with 0, 1 and `u64::MAX` among them (plan row PERF-long-literal-digits:
+    /// the cap no longer keeps the tests on the way up).
+    #[test]
+    fn random_capped_valuations_agree_with_the_tests_on_the_way_up() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("random_capped_valuations");
+        let m61 = (1u64 << 61) - 1;
+        for _ in 0..60 {
+            let p = [2, 3, 5, m61][rng.below(4)];
+            let v = match p {
+                _ if p == m61 => rng.below_u64(200),
+                _ => rng.below_u64(6001),
+            };
+            let bits = rng.below_u64(2001);
+            let c = (0..bits.div_ceil(64)).fold(BigInt::one(), |c, _| {
+                (c << 64u32) + BigInt::from(rng.next_u64())
+            }) >> (bits.div_ceil(64) * 64 - bits) as u32;
+            let c = match rng.below(2) {
+                0 => c,
+                _ => -c,
+            };
+            let n = c * BigInt::from(p).pow(v as u32);
+            let cap = match rng.below(6) {
+                0 => 0,
+                1 => 1,
+                2 => u64::MAX,
+                3 => v,
+                4 => rng.below_u64(v + 1),
+                _ => v + 1 + rng.below_u64(4000),
+            };
+            assert_eq!(
+                valuation_upto(n.clone(), p, cap),
+                valuation_upto_by(n.clone(), p, cap, false),
+                "seed {seed}: p {p}, v {v}, {bits} bits of cofactor, cap {cap}"
+            );
+        }
     }
 
     #[test]

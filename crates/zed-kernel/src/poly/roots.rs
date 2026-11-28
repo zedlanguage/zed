@@ -646,20 +646,23 @@ fn scaled(q: &[(u64, BigInt)], x: &BigInt, s: u64) -> BigInt {
 /// coefficients (Gemini's `verify_req2`, rerun by the orchestrator): the cluster bound never
 /// counted that work. So once the units spent reach [`HORNER_COST`]` D^2 / t`, the cost of one
 /// test of [`positive_from`] in units, the least power of 2 past every root and then the least
-/// integer `u` past them are found by that test ([`horner_bound`]), and the intervals are cut to
-/// `u - 1`. Ski rental: the test is bought once the branch and bound has spent what one test
-/// costs, so the whole is at most about twice the cheaper of the two on every input whose
-/// bound search runs a few tests. Sparse inputs of high degree are left as they were: the
-/// trigger needs `spent t >= HORNER_COST D^2` and the cap of [`horner_bound`] `D <= B`, and
+/// integer `u` past them are found by that test ([`BoundSearch`]), and the intervals are cut to
+/// `u - 1`. Each test runs only once the branch and bound has spent its units, so the units of
+/// the tests are at most those of the branch and bound as built, and the whole at most twice
+/// them (proof at [`positive_roots_by`]); this bounds the whole by the branch and bound with the
+/// cut, not by the cheaper of the branch and bound without it and the search run at the start.
+/// Sparse inputs of high degree are left as they were: the
+/// trigger needs `spent t >= HORNER_COST D^2` and the cap of [`BoundSearch`] `D <= B`, and
 /// `roots_are_linear_in_the_number_of_terms` (`t = D = 8192`) finishes in 34 units (test
 /// `the_bound_from_above_leaves_sparse_inputs_as_they_were`).
 fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigInt> {
     positive_roots_by(p, a, b, Horner::Built).0
 }
 
-/// When [`positive_roots_by`] runs [`horner_bound`]: never, at its first interval, or as built,
-/// once `spent t >= HORNER_COST D^2`. The first two are for `crossover roots-horner`, which
-/// measures [`HORNER_COST`].
+/// When [`positive_roots_by`] runs the tests of [`BoundSearch`]: never, all at its first
+/// interval, or as built, each once `spent t >= HORNER_COST D^2` and the branch and bound has
+/// spent its units. The first two are for `crossover roots-horner`, which measures
+/// [`HORNER_COST`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Horner {
     Off,
@@ -673,23 +676,25 @@ pub(super) enum Horner {
 /// of the trigger `spent t >= C D^2`. Measured by `crossover roots-horner` (zed-benches), on
 /// the clusters `(x - 2) … (x - k - 1)`, `k` from 8 to 128: every `C` from 0 to 6.56 gives a
 /// worst ratio of 1.00 to the cheaper of the two, and the worst ratio rises past it (2.08 at
-/// 6.6, 9.9 past 33.6; local, load 12.5 to 14.7, 2026-11-27). 1, the value of the ski-rental
-/// argument at [`positive_roots`], is inside that range. Built itself, the bound found once the
-/// trigger fires, measured as a third arm (`crossover roots-horner-built`, Codex's B1 of round
-/// 2, instructions, local, load 13.6, 2026-11-27): 1.29 times the cheaper of the two at `k` 4,
-/// falling to 1.10 at 16, 1.04 at 64 and 1.006 at 128; on the sparse `(x - 4) (x^n + 1)`, `n`
-/// 64, 1,000 and 8,192, 1.004, where the bound from the first interval costs 1.01 times no
-/// bound. The bench holds it to 2, the ski-rental bound.
+/// 6.6, 9.9 past 33.6; local, load 12.5 to 14.7, 2026-11-27). 1, the value the factor-2
+/// argument at [`positive_roots`] uses, is inside that range. Built itself, measured as a third
+/// arm (`crossover roots-horner-built`, Codex's B1 of round 2, instructions, local, load 13.6,
+/// 2026-11-27) on the form before [`BoundSearch`], which ran the whole search once the trigger
+/// fired: 1.29 times the cheaper of the two at `k` 4, falling to 1.10 at 16, 1.04 at 64 and
+/// 1.006 at 128; on the sparse `(x - 4) (x^n + 1)`, `n` 64, 1,000 and 8,192, 1.004, where the
+/// bound from the first interval costs 1.01 times no bound. Not measured again on the form that
+/// runs one test at a time. The bench holds it to 2, the factor-2 bound.
 const HORNER_COST: f64 = 1.0;
 
-/// The units [`horner_bound`] charges for one test of [`positive_from`]: `D (D + 1) / 2`
-/// products and sums, in groups of `t`, each group under one pass of a unit. Computed in
-/// `u128`, where `D (D + 1) / 2 < 2^127` for every `D < 2^64`, and saturated to `u64::MAX`:
-/// in `u64` it overflowed from `D = 2^32` (Gemini's B-1 of cross-review
-/// XR-lazy-and-kernel-batch-1 round 3).
+/// The units [`BoundSearch`] charges for one test of [`positive_from`]: `D (D + 1) / 2`
+/// products and sums, in groups of `t`, each group under one pass of a unit. Computed in u128
+/// (`D (D + 1)` passes u64 from `D` near `2^32`, a sparse degree the cap may still admit;
+/// Gemini's B-1 of cross-review XR-lazy-and-kernel-batch-1 round 3) and saturated at
+/// `u64::MAX`: a saturated count only keeps the tests from running, as `units <= spent -
+/// rented` then never holds, and a test only cuts `hi`, so no answer changes.
 fn horner_units(d: u64, t: usize) -> u64 {
-    let (d, t) = (u128::from(d), t as u128);
-    u64::try_from((d * (d + 1) / 2).div_ceil(t))
+    let d = u128::from(d);
+    u64::try_from((d * (d + 1) / 2).div_ceil(t as u128))
         .unwrap_or(u64::MAX)
         .max(1)
 }
@@ -705,10 +710,11 @@ fn horner_units(d: u64, t: usize) -> u64 {
 /// Isabelle/HOL), the positive roots counted by "the number of sign variations of the
 /// coefficient sequence of P" and at most that count (verification/bib.md, LiPaulson). The
 /// paper supports only this test; the synthetic division above and the trigger and cap of
-/// [`horner_bound`] are proved here.
-/// `D (D + 1) / 2` products of a coefficient by `u` at most; every number is a partial sum of
-/// `sum |c_k| (1 + u)^k`, of at most `B + D bits(u + 1) + bits(t)` bits for coefficients of `B`
-/// bits.
+/// [`BoundSearch`] are proved here.
+/// `D (D + 1) / 2` products of a coefficient by `u` at most, each by the kernel's [`mul_int`]
+/// (O(M(n)) past its crossovers, as the products of a unit of [`positive_roots`]); every number
+/// is a partial sum of `sum |c_k| (1 + u)^k`, of at most `B + D bits(u + 1) + bits(t)` bits for
+/// coefficients of `B` bits.
 fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
     #[cfg(test)]
     tests::HORNER_TESTS.with(|n| n.set(n.get() + 1));
@@ -721,7 +727,7 @@ fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
     }
     for i in 0..=d {
         for j in (i..d).rev() {
-            let add = u * &c[j + 1];
+            let add = mul_int(u, &c[j + 1]);
             c[j] += add;
         }
         if c[i].is_negative() || (i == 0 && c[i].is_zero()) {
@@ -731,14 +737,50 @@ fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
     true
 }
 
-/// The least integer `u >= 2` with [`positive_from`]`(p, u)`, if it is found below `hi` under
-/// the cap: the powers of 2 from 2 up to the first that passes, then the bisection between it
-/// and the one before (the test passes at every point above one where it passes: `p(u' + y) =
-/// p(u + ((u' - u) + y))`, a polynomial of coefficients of one sign taken at a shift `u' - u >=
-/// 0`, keeps them so). Every real root of `p` is then below `u`, so `u - 1` bounds the integers
-/// searched, not the real roots: `(2x - 5)(x + 1)` passes at `u = 3`, and its root 5/2 lies
-/// above 2 (Codex, cross-review XR-lazy-and-kernel-batch-1 round 2, B1). At most `2 bits(u)`
-/// tests, each charged [`horner_units`] to `spent`.
+/// The search for the least integer `u >= 2` with [`positive_from`]`(p, u)`, among the points
+/// up to `2^top` (`top` the largest exponent under the cap with `2^top < hi`), one test at a
+/// time ([`BoundSearch::next`] gives the point to test and
+/// [`BoundSearch::record`] its outcome), so that [`positive_roots_by`] can run each test only
+/// once its branch and bound has spent the test's units. The test passes at every point above
+/// one where it passes (`p(u' + y) = p(u + ((u' - u) + y))`, a polynomial of coefficients of one
+/// sign taken at a shift `u' - u >= 0`, keeps them so), so each stage is a search of a monotone
+/// predicate, and each point that passes bounds every integer root of `p` above 1 by `u - 1`:
+///
+/// 1. the exponents `m` of `2^m` from 1, doubled until a test passes, the last clamped to
+///    `top`, the largest exponent under the cap and with `2^m < hi`;
+/// 2. a bisection of the exponents between the last that failed and the one that passed, which
+///    gives the least `m` whose power passes. Stages 1 and 2 are a variant of Bentley and Yao's
+///    algorithm B1 on `m` (Bentley and Yao, "An Almost Optimal Algorithm for Unbounded
+///    Searching", Information Processing Letters 5(3), 1976, doi:10.1016/0020-0190(76)90071-5;
+///    read in the report SLAC-PUB-1679, p. 5: "the first stage of the algorithm determines
+///    m = ⌊lg n⌋ + 1 by successively evaluating F(2^i-1) for i = 1,2,..."; spec
+///    verification/bib.md, Bentley_1976): B1 tests `2^i - 1`, these the exponents `2^i` and
+///    `top`, and at most `2 bits(m)` tests (1 at `m = 1`): with `2^(j-1) < m <= 2^j`, `j + 1`
+///    tests to the first power at or beyond `m` and `j - 1` to bisect the `2^(j-1)` exponents
+///    below it, and where `top` clamps the last, `k + 1` and fewer than `k` with `2^(k-1) < m`;
+/// 3. a bisection of the integers between `2^(m - 1)` and `2^m`, `m - 1` tests, which gives the
+///    least `u`. This is the second stage of B2, so the three stages are a bounded variant of
+///    B2 on `u` (p. 5: "so the total cost of the algorithm (substituting m = ⌊lg n⌋ + 1) is
+///    C_B2(n) = ⌊lg n⌋ + 2⌊lg(⌊lg n⌋ + 1)⌋ + 1", that is `bits(n) + 2 bits(bits(n)) - 2`). As
+///    `m <= bits(u)`, they take at most `m - 1 + 2 bits(m) <= bits(u) + 2 bits(bits(u)) - 1`
+///    tests, one more than C_B2(u), so B2 itself would save at most one test.
+///
+/// Run to the end, the search covers the points `[2, 2^top]`, not every integer below `hi`
+/// under the cap: it gives the least integer `u >= 2` whose test passes where some power `2^m`,
+/// `1 <= m <= top`, passes, which is the `u` the search through every power of 2 gave before
+/// (plan row FAIL-l01_39-roots-benches-bytes), and none where none of them passes, even where a
+/// larger integer below `hi` would pass (`(x - 2)^2` with `hi = 4`: `top = 1`, 2 fails, 3
+/// passes; test `the_bound_search_covers_the_powers_up_to_top`). None loses no root, as the
+/// cut is only an aid. Stage 3 alone takes about `bits(u)` tests, and Bentley and Yao's lower
+/// bound says that every correct unbounded search that reads only the monotone predicate
+/// takes, for infinitely many `n`, more than about `lg n` tests to find the least passing `n`
+/// (p. 11: "Theorem A: For infinitely many n, f(n) > lg n + lg^(2) n + ... + lg^(lg* n) n -
+/// 2(lg* n)", `f(n)` bounding the tests of a given algorithm by p. 10, so the infinite set of
+/// `n` depends on the search: one that tests `n - 1` and `n` first takes 2 at that `n`); it
+/// does not bound every `n`. So the cost is kept by the schedule, not by the search. Every real
+/// root of `p` is below a `u` that passes, so `u - 1` bounds the integers searched, not the real
+/// roots: `(2x - 5)(x + 1)` passes at `u = 3`, and its root 5/2 lies above 2 (Codex,
+/// cross-review XR-lazy-and-kernel-batch-1 round 2, B1).
 ///
 /// The cap: a test at `u` is run only where `D bits(u) <= 2 B`, `B` the most bits of a
 /// coefficient, so that each number of a test has at most `B + D bits(u + 1) + bits(t) <= 4 B +
@@ -749,38 +791,123 @@ fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
 /// B` bits. The decision's cap read `D bits(u) <= B`; on `(x - 2) … (x - 65)` that refuses the
 /// test at 66 (`64 * 7 = 448 > 305`, `B` 305 bits there, as Codex's check computed), so the
 /// factor is 2, the least power of 2 that admits it.
-fn horner_bound(p: &[(u64, BigInt)], hi: &BigInt, spent: &mut u64) -> Option<BigInt> {
-    let d = p.last().map_or(0, |(d, _)| *d);
-    let b = p.iter().map(|(_, c)| c.bits()).max().unwrap_or(0);
-    let units = horner_units(d, p.len());
-    let under_cap = |u: &BigInt| d.checked_mul(u.bits()).is_some_and(|w| w <= 2 * b);
-    let mut test = |u: &BigInt| {
-        *spent = spent.saturating_add(units);
-        positive_from(p, u)
-    };
-    let mut u = BigInt::from(2);
-    let mut below = BigInt::one();
-    loop {
-        if &u >= hi || !under_cap(&u) {
-            return None;
-        }
-        if test(&u) {
-            break;
-        }
-        below = u.clone();
-        u <<= 1u32;
-    }
-    while &u - &below > BigInt::one() {
-        let mid: BigInt = (&u + &below) >> 1u32;
-        match test(&mid) {
-            true => u = mid,
-            false => below = mid,
-        }
-    }
-    Some(u)
+/// As `bits(2^m) = m + 1`, the cap is `m <= 2 B / D - 1`, and `2^m < hi` is `m < bits(hi - 1)`.
+struct BoundSearch {
+    /// The units of one test, [`horner_units`].
+    units: u64,
+    /// The largest exponent tested in stages 1 and 2.
+    top: u64,
+    stage: Stage,
 }
 
-/// [`positive_roots`] with [`horner_bound`] run as `horner` says, and the units spent.
+/// Where a [`BoundSearch`] is. In stages 1 and 2 exponent 0 stands for "none failed", the
+/// integer 1 below the range of `u >= 2`.
+enum Stage {
+    /// `2^fail` failed and `2^m` is the next test.
+    Doubling {
+        fail: u64,
+        m: u64,
+    },
+    /// `2^fail` failed and `2^pass` passed.
+    Exponent {
+        fail: u64,
+        pass: u64,
+    },
+    /// `below` failed and `u` passed.
+    Integer {
+        below: BigInt,
+        u: BigInt,
+    },
+    Done,
+}
+
+impl BoundSearch {
+    /// The search, none where no exponent is under the cap and `hi` (`top = 0`): then nothing
+    /// would be tested, and the units are not computed.
+    fn new(p: &[(u64, BigInt)], hi: &BigInt) -> Option<BoundSearch> {
+        let d = p.last().map_or(0, |(d, _)| *d).max(1);
+        let b = p.iter().map(|(_, c)| c.bits()).max().unwrap_or(0);
+        let by_cap = (2 * u128::from(b) / u128::from(d)).saturating_sub(1);
+        let by_hi = match *hi > BigInt::from(2) {
+            true => (hi - 1u32).bits() - 1,
+            false => 0,
+        };
+        let top = u64::try_from(by_cap).unwrap_or(u64::MAX).min(by_hi);
+        (top > 0).then(|| BoundSearch {
+            units: horner_units(d, p.len()),
+            top,
+            stage: Stage::Doubling { fail: 0, m: 1 },
+        })
+    }
+
+    /// The next point to test, none once the search is done. Moves past a stage whose range
+    /// holds no point to test.
+    fn next(&mut self) -> Option<BigInt> {
+        if let Stage::Exponent { fail, pass } = self.stage
+            && pass - fail == 1
+        {
+            self.stage = Stage::Integer {
+                below: BigInt::one() << (pass - 1),
+                u: BigInt::one() << pass,
+            };
+        }
+        if let Stage::Integer { below, u } = &self.stage
+            && u - below == BigInt::one()
+        {
+            self.stage = Stage::Done;
+        }
+        match &self.stage {
+            Stage::Doubling { m, .. } => Some(BigInt::one() << *m),
+            Stage::Exponent { fail, pass } => Some(BigInt::one() << ((fail + pass) / 2)),
+            Stage::Integer { below, u } => Some((u + below) >> 1u32),
+            Stage::Done => None,
+        }
+    }
+
+    /// Records whether the point [`BoundSearch::next`] gave passed.
+    fn record(&mut self, pass: bool) {
+        self.stage = match std::mem::replace(&mut self.stage, Stage::Done) {
+            Stage::Doubling { fail, m } if pass => Stage::Exponent { fail, pass: m },
+            Stage::Doubling { m, .. } if m == self.top => Stage::Done,
+            Stage::Doubling { m, .. } => Stage::Doubling {
+                fail: m,
+                m: (2 * m).min(self.top),
+            },
+            Stage::Exponent { fail, pass: p } => match (fail + p) / 2 {
+                mid if pass => Stage::Exponent { fail, pass: mid },
+                mid => Stage::Exponent { fail: mid, pass: p },
+            },
+            Stage::Integer { below, u } => {
+                let mid: BigInt = (&u + &below) >> 1u32;
+                match pass {
+                    true => Stage::Integer { below, u: mid },
+                    false => Stage::Integer { below: mid, u },
+                }
+            }
+            Stage::Done => Stage::Done,
+        };
+    }
+}
+
+/// The [`BoundSearch`] run to its end, each test charged [`horner_units`] to `spent`: the least
+/// integer `u >= 2` whose test passes, if some power `2^m`, `1 <= m <= top`, passes.
+#[cfg(test)]
+fn horner_bound(p: &[(u64, BigInt)], hi: &BigInt, spent: &mut u64) -> Option<BigInt> {
+    let mut search = BoundSearch::new(p, hi)?;
+    let mut bound = None;
+    while let Some(x) = search.next() {
+        *spent += search.units;
+        let pass = positive_from(p, &x);
+        search.record(pass);
+        if pass {
+            bound = Some(x);
+        }
+    }
+    bound
+}
+
+/// [`positive_roots`] with the tests of [`BoundSearch`] run as `horner` says, and the units
+/// spent, those of the tests among them.
 pub(super) fn positive_roots_by(
     p: &[(u64, BigInt)],
     a: BigInt,
@@ -820,44 +947,103 @@ pub(super) fn positive_roots_by(
     let mut spent: u64 = 0;
     let mut out = Vec::new();
     let mut open = vec![(a.clone(), hi.clone())];
-    // The trigger of the bound from above, `spent t >= HORNER_COST D^2`; tried once.
+    // The trigger of the bound from above, `spent t >= HORNER_COST D^2`, and the units of its
+    // tests, `rented`: `spent` counts the branch and bound's own units only, and is the count
+    // the budget bounds.
     let d = p.last().map_or(0, |(d, _)| *d) as f64;
     let trigger = HORNER_COST * d * d / p.len() as f64;
-    let mut bounded = horner == Horner::Off;
+    let mut bound = (horner != Horner::Off)
+        .then(|| BoundSearch::new(p, &hi))
+        .flatten();
+    let mut rented: u64 = 0;
     while let Some((l, mut h)) = open.pop() {
-        // Saturating: [`horner_bound`] may have saturated `spent`.
-        spent = spent.saturating_add(1);
+        spent += 1;
         if spent > budget {
             #[cfg(test)]
             tests::CHAINED.with(|c| c.set(c.get() + 1));
             #[cfg(test)]
-            tests::UNITS.with(|u| u.set(u.get() + budget));
+            tests::UNITS.with(|u| u.set(u.get() + budget + rented));
             let roots = match a <= hi {
                 true => chain_roots(p, a, Some(hi)),
                 false => Vec::new(),
             };
-            return (roots, budget);
+            return (roots, budget + rented);
         }
-        if !bounded && (horner == Horner::AtStart || spent as f64 >= trigger) {
-            bounded = true;
-            if let Some(u) = horner_bound(p, &hi, &mut spent) {
-                hi = u - 1;
+        // Each test of the bound from above is run once the branch and bound has spent its
+        // units (as built; `AtStart` runs the whole search at the first interval, for
+        // `crossover roots-horner`, and is outside this proof). The claim: as built, the units
+        // returned are at most twice those of the branch and bound, `spent + rented <= 2 spent`
+        // at the end and `budget + rented <= 2 budget` at the switch to the chain. Proof:
+        // 1. Invariant `rented <= spent`. It holds at the start (`rented = 0`). `spent` only
+        //    grows, which keeps it. `rented` grows only here, by `units` at a test, and the
+        //    condition of this loop is `units <= spent - rented` before that test (a
+        //    difference, so no sum can overflow; it is not negative by the invariant), so the
+        //    invariant holds after it.
+        // 2. At the end of the loop over `open`, the units returned are `spent + rented <= 2
+        //    spent` by 1.
+        // 3. At the switch to the chain, this check sees `spent > budget` for the first time
+        //    (`spent` may have passed `budget` inside a `search` of the pass before). The tests of
+        //    earlier passes ran with `spent <= budget` (each pass checks the budget before its
+        //    tests), so by 1 at the last of them `rented <= spent <= budget`, and no test ran
+        //    since. The units returned are `budget + rented <= 2 budget`.
+        // 4. Each test costs at most `units` units in bit cost, not only in products. The bound
+        //    of the whole at [`positive_roots`] counts a unit as at most 12 passes of O(t)
+        //    products of numbers of O(B + s) bits, `s = 2 bits(h)`, so O(t M(B + s)) bit
+        //    operations. A test is at most `D (D + 1) / 2` products by [`mul_int`] and as many
+        //    sums, each of numbers of at most `B + D bits(u + 1) + bits(t) <= 4 B + bits(t)`
+        //    bits by the cap (at [`BoundSearch`], whose `B`, the most bits of a coefficient, is
+        //    at most the `B` of a unit), and `bits(t) <= B` as `t <= D + 1 <= B + 1` and `B >= 2`
+        //    (a search needs `t >= 3`, two terms taking the binomial path, so `2 <= D <= B`), so
+        //    each operand has at most `5 B` bits. Here `M(n) = n lg n`, the bound of zed-bignum's
+        //    `fast` module doc ("`M(n)` below is the cost of a product of two `n`-bit numbers,
+        //    O(n log n) here"): a product of `n`-bit numbers costs O(M(n)) bit operations, and
+        //    only that upper bound is used. It is regular, M(c n) = O(M(n)) for a constant `c >=
+        //    1`, as `c n lg(c n) <= c (1 + lg c) n lg n` for `n >= 2`, so each product is
+        //    O(M(5 B)) = O(M(B)). `M(n) / n` not decreasing alone does not give it (`M(n) = 2^n`
+        //    meets that). Each group of `t` products, `horner_units` groups, is then O(t M(B)),
+        //    within the envelope of one unit, O(t M(B + s)) as `M` does not decrease. Filling
+        //    the array is `D + 1` zeros, O(D) word operations with `D <= B`, and `t` copies of
+        //    at most `B` bits, O(t B), under one group. So a test's bit cost is at most a
+        //    constant times its `units` times the per-unit envelope. The factor 2 of 1 to 3 is on
+        //    charged units, so the bound of [`positive_roots`] holds in bit operations up to
+        //    the constant of that envelope, not with a factor of exactly 2. (With num-bigint's
+        //    `*`, Toom-3 past its crossover, a product was not O(M(B)); round 1 of the
+        //    cross-review, Gemini.)
+        // 5. This loop ends at each pass: each test adds `units >= 1` to `rented`
+        //    ([`horner_units`] is at least 1), so after at most `spent` tests the condition
+        //    fails, and a search has at most `top + 2 bits(top)` tests (stage 1 tests the
+        //    exponents 1, 2, 4, … below `top` and `top`, at most `bits(top) + 1`; stage 2 bisects
+        //    a range of at most `top / 2` exponents, at most `bits(top)` times; stage 3 bisects
+        //    `2^(m - 1)` integers, `m - 1 <= top - 1` times).
+        // Test `the_bound_from_above_costs_at_most_the_branch_and_bound` checks
+        // `2 rented <= spent + rented` on the cubics of the benches.
+        while let Some(search) = bound.as_mut()
+            && (horner == Horner::AtStart
+                || (spent as f64 >= trigger && search.units <= spent - rented))
+        {
+            let Some(x) = search.next() else {
+                bound = None;
+                break;
+            };
+            rented += search.units;
+            let pass = positive_from(p, &x);
+            search.record(pass);
+            if pass {
+                hi = x - 1;
+                // A box with `l > hi` is dropped before its `h` is clamped, so no clone of `hi`
+                // is made for a box that goes.
                 open.retain_mut(|(ol, oh)| {
+                    if *ol > hi {
+                        return false;
+                    }
                     if *oh > hi {
                         *oh = hi.clone();
                     }
-                    *ol <= hi
+                    true
                 });
                 if h > hi {
                     h = hi.clone();
                 }
-            }
-            // The tests' units count against the budget: one they pass ends in the chain at
-            // the head of the loop, which the interval kept here brings back to (test
-            // `the_units_of_the_bound_from_above_count_against_the_budget`).
-            if spent > budget {
-                open.push((l, h));
-                continue;
             }
         }
         if l > h {
@@ -910,9 +1096,9 @@ pub(super) fn positive_roots_by(
         open.push((l, m));
     }
     #[cfg(test)]
-    tests::UNITS.with(|u| u.set(u.get() + spent));
+    tests::UNITS.with(|u| u.set(u.get() + spent + rented));
     out.sort();
-    (out, spent)
+    (out, spent + rented)
 }
 
 /// The integer root of `p` in `lo..=hi`, `2 <= lo < hi`, on which `p` is strictly monotone
@@ -973,8 +1159,7 @@ fn search(
     #[cfg(test)]
     let mut wide = false;
     while &hi - &lo > BigInt::one() {
-        // Saturating, here and below: [`horner_bound`] may have saturated the count.
-        *steps = steps.saturating_add(1);
+        *steps += 1;
         if &lo * 4 < hi {
             let x = BigInt::one() << ((lo.bits() + hi.bits()) / 2);
             if lo < x && x < hi {
@@ -1009,7 +1194,7 @@ fn search(
                     })
                 })
                 .flatten();
-            *steps = steps.saturating_add(calls);
+            *steps += calls;
             if let Some((e, y)) = guess {
                 // The guess of [`doubling`] is a Newton step at full precision: the one below
                 // is not taken again.
@@ -1102,7 +1287,7 @@ fn search(
         // and 3 ratios of two [`scaled`] each, 39 passes, under 4 units of 12 (the loop's head
         // charged one). `v = p / p'` is `x Phi / Psi`, `Phi` and `Psi` [`scaled`] at a scale of
         // at least `s`.
-        *steps = steps.saturating_add(3);
+        *steps += 3;
         let mut side = |x: &BigInt| {
             #[cfg(test)]
             full_eval(wide);
@@ -2344,7 +2529,12 @@ mod tests {
                             "{name}({n}), {on}: {rf} + {bi} steps, over {bound}"
                         ));
                     }
-                    assert_eq!([ch, un], [1, 15], "{name}({n}), {on}");
+                    // 14 units of the branch and bound to its budget (`chain_ends(4)`, reported at
+                    // the switch to the chain), 14 of the 7 tests of the bound from above (2 units
+                    // each) run beside it, which the switch used to drop from the count, and 1 of
+                    // the call on the reflected polynomial, whose one interval is empty: 28 is
+                    // within the factor 2 proved at `positive_roots_by`.
+                    assert_eq!([ch, un], [1, 29], "{name}({n}), {on}");
                 }
             }
         }
@@ -2841,31 +3031,65 @@ mod tests {
     }
 
     /// The bound from above on `(x - 2) … (x - 65)` (plan row ROOTS-dense-cluster-constant,
-    /// cross-review XR-lazy-and-kernel-batch-1 round 1): as built, no interval popped lies wholly
-    /// above the largest root, 65, and at least 127 meet `[2, 65]`, Claude's proved lower bound
-    /// for that count (a box holding two roots is split, so 64 roots need 63 splits and 64
-    /// leaves at least). Negative control: without the bound the intervals above 65 are the
-    /// 1,152 Gemini's `verify_req2` counted, of 1,293.
+    /// cross-review XR-lazy-and-kernel-batch-1 round 1): as built, at most a tenth of the
+    /// intervals popped above the largest root, 65, without the bound are popped, at least 127
+    /// meet `[2, 65]`, Claude's proved lower bound for that count (a box holding two roots is
+    /// split, so 64 roots need 63 splits and 64 leaves at least), and the units are at most
+    /// those of the whole search run at the first interval. Since plan row
+    /// FAIL-l01_39-roots-benches-bytes each test waits until the branch and bound has spent its
+    /// units, so some intervals above 65 are popped before the test that cuts them: measured
+    /// (local, 2026-11-27) 84 above, 139 meet, 7 tests, 448 units; at the first interval 0
+    /// above, 12 tests, 511 units; before that row 0 above, 13 tests. Negative control: without
+    /// the bound the intervals above 65 are the 1,152 Gemini's `verify_req2` counted, of 1,293
+    /// units.
+    ///
+    /// The factor 1/10 is measured, not proved: 84 / 1,152 = 0.073 as built, so the check fires
+    /// from 116 intervals above, 1.38 times the measured count. It guards against a schedule
+    /// that waits so long that the bound no longer cuts most of the work past the cluster, the
+    /// cost plan row ROOTS-dense-cluster-constant removed: tests that never meet the condition
+    /// `rented + units <= spent`, a trigger raised past the cluster's units, or a search whose
+    /// first passing test comes late. Each would leave the count near the 1,152 without the
+    /// bound. The check on units guards the other side: a schedule that pays more than the
+    /// whole search run at once.
     #[test]
     fn the_bound_from_above_drops_the_intervals_past_the_cluster() {
         let rs: Vec<i64> = (2..=65).collect();
         let f = from_roots(1, &rs);
         let p = f.terms();
         let want: Vec<BigInt> = rs.iter().map(|&r| BigInt::from(r)).collect();
-        let (roots, meet, above, tests) = boxes(p, Horner::Built, 2, 65);
+        let units = |horner| {
+            let before = UNITS.with(|u| u.get());
+            let got = boxes(p, horner, 2, 65);
+            (got, UNITS.with(|u| u.get()) - before)
+        };
+        let ((roots, meet, above, tests), built) = units(Horner::Built);
         assert_eq!(roots, want);
-        assert_eq!(above, 0, "intervals above 65 as built");
         assert!(meet >= 127, "{meet} intervals meet [2, 65]");
         assert!(tests > 0, "the bound was found");
-        let (roots, meet_off, above_off, tests_off) = boxes(p, Horner::Off, 2, 65);
+        let ((roots, _, above_start, _), at_start) = units(Horner::AtStart);
+        assert_eq!(roots, want);
+        assert_eq!(
+            above_start, 0,
+            "intervals above 65 with the bound at the start"
+        );
+        let ((roots, meet_off, above_off, tests_off), off) = units(Horner::Off);
         assert_eq!(roots, want);
         assert_eq!(tests_off, 0);
         println!(
-            "as built: {meet} meet [2, 65], {tests} tests; without: {meet_off} meet, {above_off} above"
+            "as built: {meet} meet [2, 65], {above} above, {tests} tests, {built} units; at the \
+             start: {at_start} units; without: {meet_off} meet, {above_off} above, {off} units"
         );
         assert!(
             above_off > 1_000,
             "{above_off} intervals above 65 without the bound"
+        );
+        assert!(
+            10 * above <= above_off,
+            "{above} of {above_off} intervals above 65 as built"
+        );
+        assert!(
+            built <= at_start,
+            "{built} units as built, {at_start} at the start"
         );
     }
 
@@ -2920,22 +3144,28 @@ mod tests {
         assert_eq!(spent, 0);
     }
 
-    /// The units of [`horner_bound`] count against the budget (cross-review
-    /// XR-lazy-and-kernel-batch-1 round 4, Codex B3.1, Gemini B-2): on `x^40 + 2^40 x + 2^40`
-    /// (`t = 3`, budget `chain_ends(3) = 6`, no positive root) the test at 2 passes and charges
-    /// 274 units, the bound cuts the one interval to nothing, and the loop ended there, returning
-    /// 275 units, past the bound proved at [`positive_roots`]; a later interval would have met
-    /// the check at the head of the loop. Now a budget passed by those units ends in
-    /// [`chain_roots`] at once, as one passed at the head of the loop does.
+    /// The units of the bound from above stay within the factor 2 where a test empties the one
+    /// interval (cross-review XR-lazy-and-kernel-batch-1 round 4, Codex B3.1, Gemini B-2): on
+    /// `x^40 + 2^40 x + 2^40` (`t = 3`, budget `chain_ends(3) = 6`, no positive root) the test at
+    /// 2 passes, costs 274 units, and cuts the one interval to nothing, so the loop ends with no
+    /// check of the budget after it. Before [`BoundSearch`], which runs a test only once the
+    /// branch and bound has spent its units, the form that ran every test at the trigger
+    /// returned 275 units as built, past the bound proved at [`positive_roots_by`]. As built
+    /// the test now never runs here (its 274 units are above what the branch and bound
+    /// spends), and the units are within `2 chain_ends(3)`; `AtStart`, the arm of `crossover
+    /// roots-horner` outside that proof, still runs it first and returns the 275.
     #[test]
     fn the_units_of_the_bound_from_above_count_against_the_budget() {
         let c = BigInt::one() << 40u32;
         let p = big(&[(0, c.clone()), (1, c), (40, BigInt::one())]);
         let p = p.terms();
         assert_eq!(horner_units(40, 3), 274);
+        let (roots, spent) = positive_roots_by(p, BigInt::from(2), None, Horner::Built);
+        assert_eq!(roots, Vec::<BigInt>::new());
+        assert!(spent <= 2 * chain_ends(3), "{spent} units");
         let (roots, spent) = positive_roots_by(p, BigInt::from(2), None, Horner::AtStart);
         assert_eq!(roots, Vec::<BigInt>::new());
-        assert_eq!(spent, chain_ends(3));
+        assert_eq!(spent, 275);
     }
 
     /// The sparse inputs stay as they were: on `(x^n + 1)(x - 4)` (`t = 4`, `D = n + 1`) for
@@ -2954,6 +3184,107 @@ mod tests {
             let (roots, _, _, tests) = boxes(p.terms(), Horner::Built, 2, 4);
             assert_eq!(roots, vec![BigInt::from(4)], "n = {n}");
             assert_eq!(tests, 0, "n = {n}");
+        }
+    }
+
+    /// The bound from above costs at most the units of the branch and bound it runs beside
+    /// (plan row FAIL-l01_39-roots-benches-bytes): on a cubic whose three roots have about `B`
+    /// bits, for `B` of 64, 256 and 2,048, the tests of [`positive_from`] times their units
+    /// are at most half the units [`positive_roots_by`] spends in all. Red before the fix
+    /// (2026-11-27): the bound was searched through every power of 2 up to the roots and then
+    /// by a bisection to the least integer, about `2 B` tests of 2 units against the cubic's
+    /// budget of 14, so its work grew as `B` tests of `O(M(B))` each (one call at 262,144 bits
+    /// of `roots_scale_in_the_bits_where_products_are_transforms` took 349.8 s, local).
+    #[test]
+    fn the_bound_from_above_costs_at_most_the_branch_and_bound() {
+        for b in [64u32, 256, 2048] {
+            let rs = vec![
+                (BigInt::one() << (b - 2)) + 1,
+                (BigInt::one() << (b - 1)) + 3,
+                (BigInt::one() << b) - 1,
+            ];
+            let f = from_big_roots(&rs);
+            let p = f.terms();
+            let before = HORNER_TESTS.with(|n| n.get());
+            let (roots, spent) = positive_roots_by(p, BigInt::from(2), None, Horner::Built);
+            let tests = HORNER_TESTS.with(|n| n.get()) - before;
+            assert_eq!(roots, rs, "B = {b}");
+            let rented = tests * horner_units(p.last().expect("terms").0, p.len());
+            println!("B = {b}: {tests} tests, {rented} of {spent} units");
+            assert!(
+                2 * rented <= spent,
+                "B = {b}: {rented} of {spent} units on the bound"
+            );
+        }
+    }
+
+    /// A sparse degree past the cap forms no search and computes no units (cross-review
+    /// XR-roots-bound-search-schedule round 1, Codex Q6): on `2^g + sum over i = 1..4097 of
+    /// x^(i g)`, `g = 2^20 - 1`, `D = 4097 g = 4,296,011,775 > B = 2^20`, so `top = 0`, and
+    /// `D (D + 1)` passes u64. Red before (2026-11-28, 4f6bdf1bf): `BoundSearch::new` computed
+    /// [`horner_units`] before it looked at `top`, and the product overflowed (a panic with the
+    /// test build's overflow checks). `b = 1` leaves no interval, so only the search's set-up
+    /// runs. Units past u64 saturate.
+    #[test]
+    fn a_sparse_degree_past_the_cap_forms_no_bound_search() {
+        let g: u64 = (1 << 20) - 1;
+        let mut terms = vec![(0, BigInt::one() << g)];
+        terms.extend((1..=4097u64).map(|i| (i * g, BigInt::one())));
+        let p = big(&terms);
+        assert_eq!(p.terms().last().expect("terms").0, 4_296_011_775);
+        let (roots, spent) = positive_roots_by(
+            p.terms(),
+            BigInt::from(2),
+            Some(BigInt::one()),
+            Horner::Built,
+        );
+        assert_eq!((roots, spent), (Vec::new(), 1));
+        assert!(BoundSearch::new(p.terms(), &(BigInt::one() << (2 * g))).is_none());
+        assert_eq!(horner_units(u64::MAX, 1), u64::MAX);
+        assert_eq!(horner_units(4_296_011_775, 4098), 2_251_795_653_396_128);
+    }
+
+    /// The search covers `[2, 2^top]`, not every integer below `hi` under the cap
+    /// (cross-review XR-roots-bound-search-schedule round 1, Codex Q1): on `(x - 2)^2` with `hi
+    /// = 4`, `top = 1`; the test at 2 fails (`p(2) = 0`) and the search gives none, though 3
+    /// passes (`(y + 1)^2`). No root is lost: each mode still finds 2. And `2^top` itself is
+    /// covered (round 2, Gemini R2-3): on `(x - 3)^2` with `hi = 5`, `top = 2`; 2 fails, 4
+    /// passes, 3 fails (`p(3) = 0`), so the search gives 4, and a search that stops a power
+    /// short of `top` gives none. Where `top` is no power of 2 the doubling is clamped to it
+    /// (round 3, Gemini R3-3): on `(x - 7)^2` with `hi = 9`, `top = 3`, the tests are 2, 4, 8
+    /// (passes), 6, 7, five in all, and the search gives 8; doubling past `top` would test 16
+    /// as well. On `(x - 9)^2` with `hi = 16`, `top = 3`, the powers 2, 4 and 8 fail and the
+    /// search gives none; doubling past `top` would test 16, which passes, and give 10.
+    #[test]
+    fn the_bound_search_covers_the_powers_up_to_top() {
+        let q = from_big_roots(&[BigInt::from(3), BigInt::from(3)]);
+        let mut spent = 0;
+        let got = horner_bound(q.terms(), &BigInt::from(5), &mut spent);
+        assert_eq!(got, Some(BigInt::from(4)));
+        let q = from_big_roots(&[BigInt::from(7), BigInt::from(7)]);
+        let q = q.terms();
+        let mut spent = 0;
+        assert_eq!(
+            horner_bound(q, &BigInt::from(9), &mut spent),
+            Some(BigInt::from(8))
+        );
+        let units = BoundSearch::new(q, &BigInt::from(9))
+            .expect("top = 3")
+            .units;
+        assert_eq!(spent, 5 * units, "the tests at 2, 4, 8, 6 and 7");
+        let q = from_big_roots(&[BigInt::from(9), BigInt::from(9)]);
+        let q = q.terms();
+        assert!(positive_from(q, &BigInt::from(16)));
+        let mut spent = 0;
+        assert_eq!(horner_bound(q, &BigInt::from(16), &mut spent), None);
+        let p = from_big_roots(&[BigInt::from(2), BigInt::from(2)]);
+        let p = p.terms();
+        let mut spent = 0;
+        assert_eq!(horner_bound(p, &BigInt::from(4), &mut spent), None);
+        assert!(positive_from(p, &BigInt::from(3)));
+        for horner in [Horner::Off, Horner::AtStart, Horner::Built] {
+            let roots = positive_roots_by(p, BigInt::from(2), Some(BigInt::from(4)), horner).0;
+            assert_eq!(roots, vec![BigInt::from(2)], "{horner:?}");
         }
     }
 
@@ -3422,20 +3753,6 @@ mod tests {
     /// at this degree, so NEWREFINE's `ratio` runs (red before the fix, 2026-11-27, local:
     /// "attempt to multiply with overflow" at the cap). Then the same without its constant
     /// term, whose root 3072 is found with and without a budget for a raised scale.
-    #[test]
-    fn search_adds_its_steps_with_saturation() {
-        // Cross-review XR-lazy-and-kernel-batch-1 round 4 (Codex B3.1, Gemini B-2): `steps`
-        // may come in saturated from [`horner_bound`], and each of `search`'s charges saturates.
-        // `x - 1000` on `[2, 4096]` takes a cut (`2 * 4 < 4096`), then the steps after it.
-        let p = vec![(0, BigInt::from(-1000)), (1, BigInt::one())];
-        let times_x = vec![(1, BigInt::one())];
-        let mut steps = u64::MAX;
-        let (lo, hi) = (BigInt::from(2), BigInt::from(4096));
-        let found = search(&p, &times_x, None, lo, hi, &mut steps, u64::MAX);
-        assert_eq!(found, Some(BigInt::from(1000)));
-        assert_eq!(steps, u64::MAX);
-    }
-
     #[test]
     fn search_on_a_sparse_high_degree_polynomial_does_not_overflow_the_scale_cap() {
         let d = 1u64 << 62;

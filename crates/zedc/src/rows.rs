@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use zed_kernel::{Evaluator, Lookup, Shared, Term, Value, World};
+use zed_kernel::{Evaluator, Family, Lookup, Prim, Shared, Term, Value, World};
 
 use crate::elab::{Cones, MAIN_KEY, MAIN_VALUE, Test};
 use crate::interp;
@@ -65,6 +65,9 @@ pub(crate) fn row(
     t: &Test,
     map: &Through<'_>,
 ) -> Result<(), String> {
+    if !t.pushed.is_empty() {
+        return pushed_row(cones, swap, t, map);
+    }
     match value_in(cones, swap, &t.check, map, row_world(cones, swap, t))? {
         Value::Bool(true) => Ok(()),
         _ => {
@@ -75,6 +78,68 @@ pub(crate) fn row(
                 "the result is {}",
                 value_in(cones, swap, &sides[0], map, row_world(cones, swap, t))?
             ))
+        }
+    }
+}
+
+/// Checks a row of a function with output port parameters, with `swap`: runs the call in the
+/// row's world with an output for each port the key gives (`t.pushed`), and compares the tuple
+/// of its result and of the lines pushed to each port with `t.want`, which elaboration made
+/// from the record `{ result:, <port>: … }` (DESIGN.md sec:ports, "A test table gives a port
+/// its values": "for a port that is only written, an output stream …, it is the list of the
+/// values written, in order"). The lines of a port are those a run of `main` writes for the
+/// same pushes ([`crate::run::join_lines`]): a String is one line, and a family of strings one
+/// line per entry in key order, an empty level none. A loose atom pushed fails the row, as
+/// it ends a run of `main`. Cost: the call's run, then one pass over the values pushed.
+fn pushed_row(
+    cones: &Cones<'_>,
+    swap: Swap<'_>,
+    t: &Test,
+    map: &Through<'_>,
+) -> Result<(), String> {
+    let Term::Prim(_, sides) = &t.check else {
+        unreachable!("a check is `call == want`")
+    };
+    let world = (t.pushed.iter()).fold(row_world(cones, swap, t), |w, (_, p)| w.output(p));
+    let mut ev = Evaluator::new(world);
+    let result = map(
+        &interp::prelude(cones.close_with(sides[0].clone(), swap)),
+        &mut ev,
+    )?;
+    let mut got = vec![result];
+    for (param, port) in &t.pushed {
+        let log = ev.world.outputs.get(&**port).map(|o| &o.log[..]);
+        let mut lines = Vec::new();
+        for v in log.unwrap_or_default() {
+            match v {
+                Value::Family(f) => lines.extend(
+                    (f.leaves().into_iter())
+                        .map(|(_, v)| v)
+                        .filter(|v| !matches!(v, Value::Family(f) if f.is_empty())),
+                ),
+                Value::Atom(_) => {
+                    return Err(format!(
+                        "the row pushed {v} to `{param}`, a failure, which ends a run of `main`"
+                    ));
+                }
+                v => lines.push(v.clone()),
+            }
+        }
+        let lines = (lines.into_iter().enumerate()).map(|(i, v)| (Value::Int(i as i64), v));
+        got.push(Value::Family(Family::of(lines)));
+    }
+    let got = Value::Tuple(got.into());
+    let check = Term::Prim(Prim::Eq, vec![Term::Lit(got.clone()), t.want.clone()]);
+    match value(cones, swap, &check, map)? {
+        Value::Bool(true) => Ok(()),
+        _ => {
+            let Value::Tuple(got) = got else {
+                unreachable!("made a tuple above")
+            };
+            let pushed = (t.pushed.iter().zip(&got[1..]))
+                .map(|((param, _), lines)| format!(", and `{param}` is pushed {lines}"))
+                .collect::<String>();
+            Err(format!("the result is {}{pushed}", got[0]))
         }
     }
 }

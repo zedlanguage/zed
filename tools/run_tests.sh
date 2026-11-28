@@ -671,14 +671,19 @@ select_pieces() {
       # <group>:: itself, so that --only '^l01_26_type_resolution::random::a_wrong_claim_is_caught'
       # runs that one test, as tools/time_tests.sh needs (TOOLS-time-tests-fixes: it printed NO
       # PIECE MATCHES). That text is the condition, and not a pattern that could match such a
-      # name, so that only the binaries --only names are listed, not every split step's; a step
-      # that is one piece named <group> is not split, so <group>:: alone still selects nothing
-      # there and check_terms says how to select the step (TOOL-run-tests-empty-filter). A piece
+      # name, so that only the binaries --only names are listed, not every split step's. A step
+      # that is one piece named <group> is split the same way when --only holds <group>:: and
+      # then a path, so that --only 'm0_03_grammar_tools::plan::' runs those tests one at a time,
+      # as the header says (TOOLS-run-tests-only-double-colon: it printed NO PIECE MATCHES, as a
+      # full test path did). <group>:: alone, with nothing after it but the end, a ) or a |,
+      # still selects nothing there and check_terms says how to select the step
+      # (TOOL-run-tests-empty-filter). A piece
       # that runs one test `--exact` is that test already, matched or not by selected above;
       # listing each such piece's tests cost an awk a piece, 15 s for the 850 pieces of l01_26 at
       # load 64, where the old selection took 3 s.
       [[ $k == test && $only == *::* &&
         ($name =~ ^$group-[0-9a-f]+(::|$) || ($name == short-* && $name == "$group") ||
+        ($name == "$group" && $only == *"$group::"[!\|\)\$]*) ||
         ($name == "$group::"* && $args != --exact* && $only == *"$group::"*)) ]] || continue
       list_binary "$bin"
       for t in $(piece_tests "$bin" $args); do
@@ -1143,8 +1148,11 @@ fi
 # and port_in_family's six forms 6.2-10.6 s; they are four, two and two tests over parts of
 # their corpus or forms, which took 5.1-7.2 s (damaged plans) and 6.0-7.0 s (forms) in three
 # runs at load 11-16 on hm4, beside eight busy loops. prelink's test of three builds took
-# 6.7-12.0 s in those runs; the check that a prelink made again has the same bytes is a test of
-# its own, of two builds (FAIL-link-pieces-at-20s-limit, b31-tools, 2026-11-27).
+# 6.7-12.0 s in those runs; the check that a prelink made again has the same bytes became a test
+# of its own, of two builds, which took up to 10.2 s in a merge check at load 15 and 5.9-8.6 s
+# beside eight busy loops on hm4. It is now a unit test of zed-native's link.rs that runs the two
+# prelinks alone and at once: 2.0 s alone and 3.6-4.1 s beside eight busy loops on hm2
+# (FAIL-link-pieces-at-20s-limit, b31-tools, 2026-11-27).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_groups_and_refusals l01_23_groups_and_refusals::r6_reduction
@@ -1274,6 +1282,31 @@ split="
 # and the others (16.6 s, slowest 1.1 s). In the listing no name holds types:: or
 # types::empty:: other than at its start, and no other name holds every_f16_product_pair
 # (TEST-bdd-bench-split).
+# zedc_presburger's other piece took 18.76 s alone and 30.04 s under load against its limit of
+# 20 s (dry-coll's merge check, 2026-11-27). Each of its 567 tests alone (tools/time_tests.sh,
+# 4 jobs, load 10.8 to 16.0, b30-pres4, 2026-11-27): 215.4 s together, the slowest 7.9 s. The rest
+# is four pieces by module (zedc_*-* below): presburger::exact:: (139 tests, 75.2 s
+# together, slowest 6.5 s), presburger::modular:: (115, 36.4 s, slowest 5.8 s),
+# presburger::extend:: (103, 25.7 s, slowest 2.8 s) and the others (210, 78.1 s, slowest 7.9 s).
+# In the listing no name holds one of the three other than at its start
+# (TESTS-split-zedc-presburger-lib-piece). In the same timing two pieces of this list came near
+# the limit alone: the test of probes in every order, 20.0 s at load 11.8, is now four tests of
+# 375 cases, and the test of the cone rule, 20.1 s at load 12.9, three, one a shape
+# (TESTS-split-two-presburger-tests-near-20s).
+# zedc_preimage's lib has 170 tests: 149 correctness tests and 21 benchmarks. A plain
+# `cargo test -p zedc-preimage --lib` ran 62 of them in 60 s on one core (b30-pres4,
+# 2026-11-27), past the 60 s cap of a job's line. Each correctness test alone
+# (tools/time_tests.sh, 1 core, load 22): 52.4 s together; the five tests below, 18.3 s. The
+# other piece, 144 tests and 34 s, is three pieces by module (zedc_*-* below):
+# preimage::tests::or_ifs with one_inequality_answers_as_the_solver (7 tests, 10.0 s,
+# slowest 4.3 s), the other preimage:: (68, 13.1 s, slowest 1.4 s), and the others: address,
+# divisors, holes, loops, product, shared_ints, spans (69, 10.9 s, slowest 2.8 s). Each
+# correctness test is in exactly one piece, checked against the listing with libtest's rule (a
+# filter or a --skip matches anywhere in a name), and no name outside preimage:: holds
+# preimage::. The benchmarks took 0.05 to 6.4 s each alone, about 48 s together, and ran past
+# 60 s in one process, so each is a piece of its own (--bench), as every benchmark is. A job's
+# lines run the same filters: `cargo test -p zedc-preimage --lib -- <filters> --skip bench::`,
+# and each benchmark `--exact` (TESTS-split-zedc-preimage-lib).
 alone="
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_1
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_2
@@ -1312,7 +1345,10 @@ alone="
   zedc_presburger::presburger::row_sums::tests::the_route_and_the_join_agree_on_wide_ranges_with_several_defined_atoms
   zedc_presburger::presburger::exact::tests::read_once_formulas_project_to_the_values_of_their_points
   zedc_presburger::presburger::exact::tests::every_writing_of_a_formula_gets_one_answer
-  zedc_presburger::presburger::probe_order::probe_leaves_the_same_parts_in_every_order
+  zedc_presburger::presburger::probe_order::probe_leaves_the_same_parts_in_every_order_part_1
+  zedc_presburger::presburger::probe_order::probe_leaves_the_same_parts_in_every_order_part_2
+  zedc_presburger::presburger::probe_order::probe_leaves_the_same_parts_in_every_order_part_3
+  zedc_presburger::presburger::probe_order::probe_leaves_the_same_parts_in_every_order_part_4
   zedc_check::check::r10_tests::landing5_chain_decode_grid
   zedc_check::check::r10_tests::landing6_battery::landing6_battery_held
   zedc_check::check::r10_tests::landing6_battery::landing6_battery_held_holding
@@ -1374,7 +1410,9 @@ alone="
   zedc_presburger::presburger::factored::tests::the_pairs_left_keep_the_verdict_on_random_tiny_instances
   zedc_presburger::presburger::factored::tests::the_pairs_left_keep_the_verdict_when_two_rows_conflict_on_a_variable
   zedc_presburger::presburger::factored::tests::the_pairs_left_keep_the_verdict_when_conflicting_rows_share_variables
-  zedc_presburger::presburger::factored::tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products
+  zedc_presburger::presburger::factored::tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_0
+  zedc_presburger::presburger::factored::tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_1
+  zedc_presburger::presburger::factored::tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_2
   zedc_presburger::presburger::factored::tests::the_residual_of_the_bmm_reduction_is_the_zeros_of_a_f
   zedc_presburger::presburger::factored::tests::the_worklist_of_wlgrow_g_scales
   zedc_presburger::presburger::factored::tests::the_pass1_and_worklist_of_wlgrow_scale
@@ -1496,7 +1534,24 @@ step_pieces() {
             echo "$t $c $p --exact ${t#*::}"
             skips="$skips --skip ${t#*::}"
           done
-          echo "$n $c $p$skips"
+          # zedc_presburger's rest in four pieces by module (see alone): exact::, modular::,
+          # extend:: and the others. Each filter matches only names that start with it.
+          rest=
+          if [ "$g" = zedc_presburger ]; then
+            for m in exact modular extend; do
+              echo "$n::presburger::$m $c $p presburger::$m::$skips"
+              rest="$rest --skip presburger::$m::"
+            done
+          fi
+          # zedc_preimage's rest in three pieces (see alone): preimage::tests::or_ifs with
+          # one_inequality_answers_as_the_solver, the other preimage::, and the others.
+          if [ "$g" = zedc_preimage ]; then
+            o="preimage::tests::or_ifs preimage::tests::one_inequality_answers_as_the_solver"
+            echo "$n::preimage::or_ifs $c $p $o$skips"
+            echo "$n::preimage $c $p preimage::$skips --skip ${o// / --skip }"
+            rest=" --skip preimage::"
+          fi
+          echo "$n $c $p$skips$rest"
           ;;
         zed_kernel-*)
           skips=

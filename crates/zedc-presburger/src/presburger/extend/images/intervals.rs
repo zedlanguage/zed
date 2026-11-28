@@ -56,12 +56,8 @@ impl lazy::Lazy<Span> for Moves {
         }
     }
 
-    fn cleared(&self, s: &Span) -> Span {
-        Span {
-            lo: s.lo.clone(),
-            hi: s.hi.clone(),
-            off: Int::ZERO,
-        }
+    fn clear(&self, s: &mut Span) {
+        s.off = Int::ZERO;
     }
 }
 

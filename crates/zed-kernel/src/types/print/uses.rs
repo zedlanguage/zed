@@ -17,8 +17,8 @@
 //! when the prefixes `p0`, `p1` of two trees disagree, "no matter how large t0 and t1 are, we can
 //! merge them simply by creating a new Br node that has t0 and t1 as children", branching at the
 //! first bit where they differ; `insert` runs in O(min(n, W)) and `merge` in O(n0 + n1) for a
-//! word of W bits. Here: `mask`, `branching_bit`, `join`, `insert` and `union` (their `merge`)
-//! follow §3-4, case for case.
+//! word of W bits. Here: `mask`, `branching_bit` (in `zed_collections::patricia`, shared with
+//! zedc-stage's tries), `join`, `insert` and `union` (their `merge`) follow §3-4, case for case.
 //!
 //! Departures. (1) Big-endian: the branching bit is the highest bit in which two keys differ,
 //! not the lowest, so the keys are in order left to right. The paper's §5, "Big-endian Patricia
@@ -54,6 +54,7 @@
 
 use std::collections::HashSet;
 use std::rc::Rc;
+use zed_collections::patricia::{branching_bit, mask};
 
 /// The uses of one part.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -108,16 +109,6 @@ impl Trie {
 /// The uses of the named-by-count parts a part holds, by their numbers.
 #[derive(Clone, Default, Debug)]
 pub(super) struct Uses(Option<Rc<Trie>>);
-
-/// `key` with the bit `bit` and every bit below cleared.
-fn mask(key: u32, bit: u32) -> u32 {
-    key & !(bit | (bit - 1))
-}
-
-/// The highest bit in which `a` and `b` differ.
-fn branching_bit(a: u32, b: u32) -> u32 {
-    1 << (a ^ b).ilog2()
-}
 
 fn branch(prefix: u32, bit: u32, left: Rc<Trie>, right: Rc<Trie>) -> Rc<Trie> {
     let many = left.many() || right.many();

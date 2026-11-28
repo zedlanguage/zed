@@ -3077,7 +3077,7 @@ fn remainder_reads_outside_a_split_at_their_corners() {
 }
 
 /// The moduli of [`remainder_reads_outside_a_split_at_their_corners`].
-const CORNER_MODULI: [i64; 5] = [1, -3, 1024, 1 << 62, i64::MIN];
+pub(crate) const CORNER_MODULI: [i64; 5] = [1, -3, 1024, 1 << 62, i64::MIN];
 
 /// [`remainder_reads_outside_a_split_at_their_corners`] at a longer chain, at one modulus drawn
 /// from a new seed each run.
@@ -3117,7 +3117,7 @@ fn longer_chain_at_seed(seed: u64) {
 
 /// Each shape of the chain of `k` remainders at modulus `m` against the interpreter, on the
 /// domains of [`remainder_reads_outside_a_split_at_their_corners`].
-fn remainder_corners_at(m: i64, k: usize) {
+pub(crate) fn remainder_corners_at(m: i64, k: usize) {
     let y = ("y", IntervalSet::of(-60, 60));
     let domains = [
         over(&[("x", IntervalSet::of(-60, 60)), y.clone()]),

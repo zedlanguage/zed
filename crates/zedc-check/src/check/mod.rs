@@ -252,8 +252,11 @@ pub enum Misfit<'s> {
     Named(&'s str),
     /// A named argument for this positional parameter.
     Positional(&'s str),
-    /// A named argument of a name no parameter has.
-    NoParam(&'s str),
+    /// A named argument of a name no parameter has, with, where one is near (step L1.29c),
+    /// the parameter nearest to it in spelling among those the call gives no value, the code
+    /// of the argument's value, and the span of the whole argument, `name: value`, which the
+    /// repair writing that parameter's name replaces (`Ck::unfit` puts its note there).
+    NoParam(&'s str, Option<(&'s str, &'s str, Span)>),
     /// A named argument for a parameter already filled, with the span of the argument that
     /// filled it where the call writes one ([`Misfit::first_site`]).
     Supplied(&'s str, Option<Span>),
@@ -328,9 +331,10 @@ impl Misfit<'_> {
     /// The row of the rejection table the misfit is a case of, if any.
     pub fn row(self) -> Option<Row> {
         match self {
-            Misfit::NoReceiver | Misfit::TooMany(_) | Misfit::NoParam(_) | Misfit::Supplied(..) => {
-                None
-            }
+            Misfit::NoReceiver => Some(Row::ValueBeforeDotWithNoParameters),
+            Misfit::TooMany(_) => Some(Row::ArgumentBeyondParameters),
+            Misfit::NoParam(..) => Some(Row::ArgumentNamedForNoParameter),
+            Misfit::Supplied(..) => Some(Row::ParameterGivenTwice),
             Misfit::Named(_) | Misfit::Positional(_) => Some(Row::WrongForm),
             Misfit::CurriedPositional { .. } | Misfit::NothingLeftOut => Some(Row::NothingLeftOut),
             Misfit::Missing(..) => Some(Row::MissingArgument),
@@ -379,7 +383,7 @@ impl Misfit<'_> {
                 "this argument is passed by name, as `{name}: …`, and `{name}` of `{who}` is \
                  positional, so a call passes it only by position"
             ),
-            Misfit::NoParam(name) => format!(
+            Misfit::NoParam(name, _) => format!(
                 "this argument is passed by the name `{name}`, and `{who}` has no parameter of \
                  that name, so the argument has no parameter to go to"
             ),
@@ -469,17 +473,27 @@ impl Misfit<'_> {
                 }
                 menu
             }
-            (Misfit::NoParam(name), true) => vec![
-                format!("repair: write the name of a parameter of `{who}` in place of `{name}`"),
-                "repair: remove this argument".into(),
-                format!("repair: add a parameter `{name}` to the declaration of `{who}`"),
-            ],
-            (Misfit::NoParam(name), false) if called == CalledKind::Word => vec![
-                format!("repair: write the name of a parameter of `{who}` in place of `{name}`"),
-                "repair: remove this argument".into(),
-            ],
-            (Misfit::NoParam(name), false) => {
-                vec!["repair: remove this argument".into(), named_function(name)]
+            (Misfit::NoParam(name, near), _) => {
+                // The parameter nearest in spelling, written into the argument (DESIGN.md
+                // sec:diagnostics, row "Argument named for no parameter"); where none is near,
+                // a function with a declaration or a word is offered its parameters' names in
+                // general, and a value, whose parameters a reader cannot look up, nothing.
+                let mut menu: Vec<String> = match near {
+                    Some((p, value, _)) => vec![format!("repair: write `{p}: {value}`")],
+                    None if called == CalledKind::Value => Vec::new(),
+                    None => vec![format!(
+                        "repair: write the name of a parameter of `{who}` in place of `{name}`"
+                    )],
+                };
+                menu.push("repair: remove this argument".into());
+                match called {
+                    CalledKind::Declared => menu.push(format!(
+                        "repair: add a parameter `{name}` to the declaration of `{who}`"
+                    )),
+                    CalledKind::Word => {}
+                    CalledKind::Value => menu.push(named_function(name)),
+                }
+                menu
             }
             (Misfit::Supplied(name, _), _) => vec![
                 format!("repair: remove this second value for `{name}`"),
@@ -817,6 +831,11 @@ pub struct Info {
     /// The limits written before the unit's `main` (DESIGN.md sec:ports), which the run
     /// enforces; none when the unit writes none.
     pub limits: zed_kernel::limits::MainLimits,
+    /// The output port parameters, by binder: each parameter a push names as its target
+    /// (DESIGN.md L1.19). A row of a test table gives each one by its key's `[]`, and its
+    /// value's record holds what the row pushed there (sec:ports, "A test table gives a port
+    /// its values").
+    pub port_params: HashSet<usize>,
 }
 
 /// The two operands of `==` that [`Ck::equal`] pairs, built before a scaling test, so that
@@ -1798,10 +1817,11 @@ fn lay_out_with(
 }
 
 /// Whether `text` holds a mark that [`lay_out`] reads: a reference, a variable or [`DECLARE`],
-/// all in U+FDD0..=U+FDDF (module `defs` of the kernel). [`lay_out`] leaves a text with none
-/// as it is, though its words are names the others' names skip.
+/// all in U+FDD0..=U+FDDF, or a tuple written once in its printed type, [`defs::LOCALS`]
+/// (module `defs` of the kernel). [`lay_out`] leaves a text with none as it is, though its
+/// words are names the others' names skip.
 fn holds_lay_out_mark(text: &str) -> bool {
-    text.contains(|c| ('\u{FDD0}'..='\u{FDDF}').contains(&c))
+    text.contains(|c| ('\u{FDD0}'..='\u{FDDF}').contains(&c) || defs::LOCALS.contains(&c))
 }
 
 /// What [`lay_out`] makes of a message whose one marked text is the note `text`
@@ -1937,9 +1957,10 @@ fn lay_out_alone(text: &Arc<str>) -> LaidAlone {
 ///
 /// Proof that the swap changes nothing else:
 /// 1. A placeholder is U+FDE0, a decimal index and U+FDE1. It holds no `$`, so `named`
-///    copies it, and no mark of U+FDD0..=U+FDDF, so `lay_out` neither starts nor ends a part
-///    in it and moves it whole with the text around it.
-/// 2. The printer never writes U+FDE0 (its marks are U+FDD0..=U+FDDF), and the program
+///    copies it, and no mark of U+FDD0..=U+FDDF or [`defs::LOCALS`], so `lay_out` neither
+///    starts nor ends a part in it and moves it whole with the text around it.
+/// 2. The printer never writes U+FDE0 (its marks are U+FDD0..=U+FDDF and
+///    [`defs::LOCALS`], U+FDE2..=U+FDE6), and the program
 ///    writes one only inside a string or a comment, which then is a piece here: a name is
 ///    ASCII (DESIGN.md sec:lexical), and no other token takes a noncharacter. So after the
 ///    swap each U+FDE0 left in a text starts a placeholder, and [`Self::restore`] writes
@@ -2169,6 +2190,42 @@ struct Alone {
     at: Span,
     within: Span,
     takes: u8,
+}
+
+/// The lambda to name for two rebuildings at one span, made under the trails `first` and `now`
+/// ([`ty::ArrowTrail`], innermost first): both trails are turned outermost first, and of the
+/// lambdas they share from the outside in, up to the first place where the two name different
+/// lambdas or one ends, the innermost whose arrow differs between the two. `None` where none
+/// differs (row MSG-arrow-lambda-nested-cause; the rule of the orchestrator's decision of
+/// 2026-11-23).
+///
+/// Why that lambda: a span is checked at two types only by the arrows of the lambdas around it
+/// (the proof at `Ck::coerce_at`), and the trails list those lambdas with the arrow each was
+/// checked at for each rebuilding. A shared lambda checked at the same arrow both times gave
+/// the span the same part of its type both times; the innermost one whose arrow differs is the
+/// nearest lambda whose two checks the span's two types come from, and passing it once at each
+/// arrow, the repair offered, checks its body once per arrow, where those two types no longer
+/// meet. With `g -> bothK(h: k -> pass(x: g))` passed to `both`, the trails at `g` are
+/// (`both`'s lambda at arrow 0, `bothK`'s at 0) and (at 1, at 0): the outer lambda is named.
+/// Past a place where the trails name different lambdas, frames belong to different places
+/// in the text and are not compared.
+// Complexity: O(d) in the depths of the two trails, once per refusal; the naive form, the
+// innermost recorded lambda around the span, is O(l) in the lambdas recorded but names the
+// inner lambda in the example above, whose repair is refused again.
+fn arrow_cause(first: &ty::ArrowFrame, now: &ty::ArrowFrame) -> Option<Span> {
+    let outside_in = |f: &ty::ArrowFrame| {
+        let mut frames = vec![(f.lam, f.arrow)];
+        let mut up = f.up.as_deref();
+        while let Some(g) = up {
+            frames.push((g.lam, g.arrow));
+            up = g.up.as_deref();
+        }
+        frames.reverse();
+        frames
+    };
+    let (a, b) = (outside_in(first), outside_in(now));
+    let shared = a.iter().zip(&b).take_while(|(x, y)| x.0 == y.0);
+    shared.filter(|(x, y)| x.1 != y.1).last().map(|(x, _)| x.0)
 }
 
 /// A class of values that must share one carrier: a node of the union-find forest of
@@ -3092,6 +3149,21 @@ struct Ck<'t, 'a> {
     /// in the body are met later, at a call of the generic function the lambda lies in, and
     /// rebuild spans in the body then (`an_arrow_lambda_refused_through_a_call_s_needs_is_named`).
     arrow_lambdas: HashMap<Span, Arc<Sig>>,
+    /// The lambdas checked at the arrows of an intersection that hold the place being checked,
+    /// each with its arrow ([`ty::ArrowTrail`]): pushed and popped by [`Self::fit_step`]
+    /// around each check of such a body; while a need is met ([`Self::meet`]), the trail the
+    /// need was made under, where it has one. A need made now takes it ([`Self::passed_on`]).
+    arrow_now: ty::ArrowTrail,
+    /// For each span with a fit, the trail current when its first fit was written
+    /// ([`Self::set`]), where one was: of two rebuildings at a span, the one kept. Compared
+    /// with [`Self::arrow_now`] at the refusal of a second one ([`arrow_cause`]).
+    fit_arrows: HashMap<Span, Arc<ty::ArrowFrame>>,
+    /// For each span refused outside a trial for a rebuilding that differs at the arrows of
+    /// a lambda ([`Self::arrow_lambda_twice`]), the index in [`Self::errors`] and the id of
+    /// that refusal: a later rebuilding at the span is refused without a second message
+    /// while that error is still there. Read only where the error at the index still has
+    /// the id, since errors after a point can be undone.
+    arrow_refused: HashMap<Span, (usize, usize)>,
     /// How many lambdas are being checked at the arrows of an intersection outside a trial
     /// (`FitF::joined` in walk.rs): while any is, a bare `else` is not refused at each arrow
     /// but joined in [`Self::else_joined`], and refused once when the outermost ends
@@ -3841,6 +3913,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             remap_keys: Vec::new(),
             meet_alike: Vec::new(),
             arrow_lambdas: HashMap::new(),
+            arrow_now: ty::ArrowTrail::default(),
+            fit_arrows: HashMap::new(),
+            arrow_refused: HashMap::new(),
             arrow_fits: 0,
             else_joined: Vec::new(),
             else_joined_at: HashMap::new(),
@@ -6747,7 +6822,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
-        let (ty, inexact) = denoted_inexact(t, &Binds::new(), &HashSet::new(), ranged);
+        let (ty, inexact) =
+            denoted_inexact(t, &Binds::new(), &HashSet::new(), &Held::new(), ranged);
         let any_var = inexact.iter().any(|i| matches!(i.cause, Loss::Var(_)));
         for Inexact {
             span,
@@ -8237,6 +8313,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         around.kept.extend(kept.iter().cloned());
         let kept: HashSet<&Arc<str>> = around.kept.iter().map(|(v, _)| v).collect();
         s.uses_written(&kept).text_around(around.get())
+    }
+
+    /// [`Self::sig_text_with`] with no `written` and no `kept`, each variable of `marked`
+    /// printed by a name the message gives wherever it stands and not replaced by the types of
+    /// its uses, and followed by the words `then` writes ([`Sig::text_around_then`]).
+    fn sig_text_then(
+        &self,
+        s: &Sig,
+        marked: &[Arc<str>],
+        then: impl FnOnce(&str, &[Option<String>]) -> String,
+    ) -> String {
+        let s = s.solved_with(&|v| self.stale(v));
+        let around = self.around(s.facts());
+        let held: HashSet<&Arc<str>> = (around.kept.iter().map(|(v, _)| v)).chain(marked).collect();
+        s.uses_written(&held)
+            .text_around_then(around.get(), marked, then)
     }
 
     /// [`Ty::sub`], each solved class variable read as its type ([`Self::stale`]).
@@ -11020,25 +11112,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             // words, by the variable's name: `T -> #errs(T), where T is not int | …` for the
             // payload of `#errs`, and `[T] -> #errs(T), where T is not …` for one inside a
             // parameter's type (plan rows MSG-takes-note-hides-bound, MSG-takes-note-names-var).
-            // The printer names such a variable only where it stands twice, in a walk after
-            // this one (`VarSlot::Free`), so the note gives it its name in this text, as a
-            // name a declaration wrote is given ([`Around::kept`], `Scope::kept_slot`): then it
-            // is printed by that name at every place, once or twice. The name is the one the
-            // program wrote for the variable, which `around.kept` holds and prints already
-            // (`([T], T) -> #errs(T)`); else the variable's own, where it is no class and no
-            // other variable around the text has it; else a fresh one, `T`, `U`, …, that no
-            // name around the text and no variable of the signature has, so `kept_slot` does
-            // not refuse it. A variable the checker made is named `$k` ([`class_id`]), and a
-            // `$k` left in a note's text is read as class `k` of the function being checked
-            // when the message is printed ([`Self::named`]), so such a variable always takes
-            // a fresh name (a probe found `$0` printed as `T` by that pass, and the note's own
-            // test of the name, made before it, failed). The name, a word of the message,
-            // is one the names `lay_out` gives the other notes' variables skip, so the same
-            // variable can print as `T` here and `U` in the declaration's note (open:
-            // MSG-takes-note-name-shared). Should the name still be missing from the text
-            // (the parameter's variable replaced by the type passed to it,
-            // [`Self::sig_text_with`]), the bound is said by the parameter, `where the
-            // argument `s` is not …`, and else not at all.
+            // A variable the program wrote a name for is printed by it ([`Self::around`],
+            // `([T], T) -> #errs(T)`). Every other one is printed by a name the message gives,
+            // in the type and in the words after it alike, wherever it stands, once or more
+            // ([`Sig::text_around_then`]): the same name the message gives it in the note on
+            // the declaration, `T` in both, where a name given in this note's own text was a
+            // word of the message, which the names `lay_out` gives the other notes' variables
+            // skip, so the variable printed `T` here and `U` there (plan row
+            // MSG-takes-note-name-shared). Where the type does not write the variable (a
+            // written name not in the text, or a parameter's variable replaced by the type
+            // passed to it, [`Self::sig_text_then`]), the bound is said by the parameter,
+            // `where the argument `s` is not …`, and else not at all.
             // The variables are those of the parameters and those their needs reach, as `$0`
             // in the lookup `s[0]: $0` of the parameter `s`, which stands in the parameter's
             // map type only: each variable's needs are read once (`held` is the visited set).
@@ -11063,50 +11147,44 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .filter(|&(_, m)| m & OTHER != 0 && m != EVERY)
                 .collect();
             let around = self.around(one.facts());
-            // Whether a variable other than `v` has `name` around the text: `v`'s own written
-            // name, which `around.named` holds as `(T, T)`, is no clash (`[T]` stays `[T]`).
-            let used = |v: &str, name: &str| {
-                around.taken.iter().any(|t| &**t == name)
-                    || (around.named.iter().chain(&around.kept))
-                        .any(|(k, w)| &**w == name && &**k != v)
-            };
-            let mut n = 0;
-            let mut kept: Vec<(Arc<str>, Arc<str>)> = Vec::with_capacity(hidden.len());
-            for (v, _) in &hidden {
-                let written = (around.kept.iter()).find(|(k, _)| k == v).map(|(_, w)| w);
-                let name = match written {
-                    // A class the declaration wrote a name for is printed by it already.
-                    Some(w) => w.clone(),
-                    None if class_id(v).is_none() && !used(v, v) => v.clone(),
-                    None => fresh_name(Names::Variables, &mut n, |name| {
-                        used("", name)
-                            || one.bounds.contains_key(name)
-                            || one.own.contains(name)
-                            || kept.iter().any(|(_, w)| &**w == name)
-                    }),
-                };
-                kept.push((v.clone(), name));
-            }
-            let sig_text = self.sig_text_with(&one, &[], &kept);
-            let in_text = |name: &str| {
-                (sig_text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '\'')))
-                    .any(|w| w == name)
-            };
-            let left_out = (hidden.iter().zip(&kept))
-                .filter_map(|((v, m), (_, name))| {
-                    let out = carriers_text(Carrier::of_mask(EVERY & !OTHER & !m));
-                    match in_text(name) {
-                        true => Some(format!("{name} is not {out}")),
-                        false => (arrow.params.iter().zip(&one.params))
-                            .find(|(t, _)| t.as_var() == Some(v))
-                            .map(|(_, p)| format!("the argument `{}` is not {out}", p.name)),
-                    }
+            let written: Vec<Option<Arc<str>>> = (hidden.iter())
+                .map(|(v, _)| {
+                    let w = around.kept.iter().find(|(k, _)| k == v);
+                    w.map(|(_, w)| w.clone())
                 })
-                .collect::<Vec<_>>();
-            let mut text = format!("{what} takes {sig_text}");
-            if !left_out.is_empty() {
-                text = format!("{text}, where {}", left_out.join(" and "));
-            }
+                .collect();
+            let marked: Vec<Arc<str>> = (hidden.iter().zip(&written))
+                .filter(|(_, w)| w.is_none())
+                .map(|((v, _), _)| v.clone())
+                .collect();
+            let sig_text = self.sig_text_then(&one, &marked, |text, names| {
+                let in_text = |name: &str| {
+                    (text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '\'')))
+                        .any(|w| w == name)
+                };
+                // `names` is in the order of `marked`, the variables of no written name.
+                let mut names = names.iter();
+                let left_out = (hidden.iter().zip(&written))
+                    .filter_map(|((v, m), w)| {
+                        let out = carriers_text(Carrier::of_mask(EVERY & !OTHER & !m));
+                        let name = match w {
+                            Some(w) => in_text(w).then(|| w.to_string()),
+                            None => names.next().cloned().flatten(),
+                        };
+                        match name {
+                            Some(name) => Some(format!("{name} is not {out}")),
+                            None => (arrow.params.iter().zip(&one.params))
+                                .find(|(t, _)| t.as_var() == Some(v))
+                                .map(|(_, p)| format!("the argument `{}` is not {out}", p.name)),
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                match left_out.is_empty() {
+                    true => String::new(),
+                    false => format!(", where {}", left_out.join(" and ")),
+                }
+            });
+            let text = format!("{what} takes {sig_text}");
             out.push(Note {
                 span,
                 text: text.into(),
@@ -12583,20 +12661,52 @@ impl Ck<'_, '_> {
     ///
     /// A different rebuilding at one span needs that span checked at two types, which only
     /// the arrows of such a lambda make (the proof at [`Self::coerce_at`]), so a span in no
-    /// recorded lambda keeps the other words. The lambda named is the innermost that holds
-    /// `at`; with one lambda checked at an intersection inside another, the outer one's arrows
-    /// may be those that make the two types, and naming the inner one there is not proved
-    /// right (row MSG-arrow-lambda-nested-cause). Cost: O(l) for the l lambdas recorded, once
-    /// per refusal; the naive way, a stack cut when each body ends, loses the lambda before a
-    /// later call meets the body's needs.
+    /// recorded lambda keeps the other words. The lambda named is the one whose arrows differ
+    /// between the two rebuildings ([`arrow_cause`]), from the trail of the first fit at `at`
+    /// ([`Self::fit_arrows`]) and the trail current now ([`Self::arrow_now`]): with one lambda
+    /// checked at an intersection inside another, `g -> bothK(h: k -> pass(x: g))` passed to
+    /// `both`, the outer one's arrows give `g` its two types, and it is named, not the inner
+    /// one (row MSG-arrow-lambda-nested-cause). Where either trail is missing (a fit written
+    /// outside such a lambda, a need made before its trail was kept, as one decoded from a
+    /// compact forward whose path holds none) or no common lambda's arrow differs, the lambda
+    /// named is the innermost recorded one that holds `at`, as before. Only the first differing
+    /// rebuilding at a span gets a message ([`Self::arrow_refused`]). Cost: O(l) for the l
+    /// lambdas recorded and O(d) for the depth of the trails, once per refusal; the naive way,
+    /// a stack cut when each body ends, loses the lambda before a later call meets the body's
+    /// needs.
     fn arrow_lambda_twice(&mut self, at: Span) -> bool {
-        let Some((l, e)) = (self.arrow_lambdas.iter())
-            .filter(|(l, _)| l.start <= at.start && at.end <= l.end)
-            .min_by_key(|(l, _)| (l.end - l.start, l.start))
-            .map(|(l, e)| (*l, e.clone()))
-        else {
+        let caused = match (self.fit_arrows.get(&at), &self.arrow_now.0) {
+            (Some(first), Some(now)) => arrow_cause(first, now),
+            _ => None,
+        };
+        let caused = caused.and_then(|l| Some((l, self.arrow_lambdas.get(&l)?.clone())));
+        let innermost = || {
+            (self.arrow_lambdas.iter())
+                .filter(|(l, _)| l.start <= at.start && at.end <= l.end)
+                .min_by_key(|(l, _)| (l.end - l.start, l.start))
+                .map(|(l, e)| (*l, e.clone()))
+        };
+        let Some((l, e)) = caused.or_else(innermost) else {
             return false;
         };
+        // Only the first rebuilding at a span that differs from its first fit gets a message.
+        // The lambdas around a span are checked nested, the inner one at all its arrows for
+        // each arrow of the outer one, so the trails come in order with the innermost arrow
+        // moving fastest. The first trail t whose rebuilding differs follows one that gave the
+        // first fit's rebuilding; going to t moved one lambda to its next arrow and set every
+        // lambda inside it back to arrow 0, so that lambda is the one whose arrows make the
+        // difference, and [`arrow_cause`] of t and the first trail names it (every arrow inside
+        // it is 0 in both). A later trail can also differ at an inner lambda: with
+        // `g -> bothK(h: k -> pass(x: g))` passed to `both`, the trails (1, 0) and then (1, 1)
+        // differ from (0, 0), and the second names `k -> …`, whose repair is refused again.
+        // Test: `function_variance::the_outer_arrow_lambda_whose_arrows_differ_is_named`. A
+        // trial still pushes its refusal, since its errors are counted and then undone.
+        let refused = self.arrow_refused.get(&at);
+        if !self.trying
+            && refused.is_some_and(|&(i, id)| self.errors.get(i).is_some_and(|f| f.id == id))
+        {
+            return true;
+        }
         let code = self.code(Some(at)).unwrap_or("the value");
         let lam = self.code(Some(l)).unwrap_or("the lambda");
         let whole = self.sig_text(&e);
@@ -12622,6 +12732,10 @@ impl Ck<'_, '_> {
                  rebuilding of `{code}`"
             )],
         );
+        if !self.trying {
+            let i = self.errors.len() - 1;
+            self.arrow_refused.insert(at, (i, self.errors[i].id));
+        }
         true
     }
 
@@ -12639,6 +12753,21 @@ impl Ck<'_, '_> {
         }
         if let Undo::ArrowLambda(l, v) = w {
             return Undo::ArrowLambda(l, set!(self.arrow_lambdas, l, v));
+        }
+        // The trail of a span's first fit, for [`arrow_cause`]: kept where the fit is
+        // written to a span that had none, dropped where the span's fit is taken away. A
+        // trial's undo writes back what each write found, so a first fit the trial wrote is
+        // taken away with its trail, and one it replaced keeps the trail it had. O(1).
+        if let Undo::Fit(k, v) = &w {
+            match (v, &self.arrow_now.0) {
+                (None, _) => {
+                    self.fit_arrows.remove(k);
+                }
+                (Some(_), Some(now)) if !self.info.fits.contains_key(k) => {
+                    self.fit_arrows.insert(*k, now.clone());
+                }
+                _ => {}
+            }
         }
         let i = &mut self.info;
         match w {
@@ -13153,7 +13282,7 @@ fn adopted(a: &Arg, p: &Ty, rough: bool) -> Result<Option<(Ty, Adoptions)>, (Spa
         let Some(c) = expected(l, want).map_err(|m| (l.site, m))? else {
             return Ok(None);
         };
-        // Complexity tradeoff: reading a decimal's digits as a `rat` costs O(n^1.47) in its
+        // Complexity tradeoff: reading a decimal's digits as a `rat` costs O(n log^2 n) in its
         // length (COMPLEXITY.md K41), and a tried repair, `rat(n) + 0.5` for `n + 0.5` with
         // `n` an int, needs only whether the call checks. Typed `rat`, the literal is read in
         // O(n) ([`fits`] read its syntax); a repair whose check needs the literal's value, as
@@ -13530,7 +13659,7 @@ pub fn float_range(s: &str, forced: Option<FloatFormat>, r: &LiteralRounding) ->
 /// `bool`, though [`adopt`] leaves it as it is there, so `0.0f64` fits `f64` alone of the
 /// carriers `<` takes. A decimal literal without a suffix is exactly a `rat` whenever its
 /// text reads as a number, so that case scans the text and reads none of its digits: reading
-/// them is O(n^1.47) (COMPLEXITY.md K41), and a literal is tried at every arrow and repair
+/// them is O(n log^2 n) (COMPLEXITY.md K41), and a literal is tried at every arrow and repair
 /// that holds `rat`. The digits are read when the literal adopts.
 fn fits(l: &Lit, c: Carrier) -> bool {
     if !c.numeric() {
@@ -14437,7 +14566,7 @@ fn carrier_names(cs: &[Carrier]) -> String {
 
 /// The value of the literal `l`, with its `-`, at the carrier `c`; `None` where it is not
 /// exactly a value of `c`, or is a decimal at `int`. A decimal's digits are read at `rat`,
-/// which costs O(n^1.47) in their number (COMPLEXITY.md K41).
+/// which costs O(n log^2 n) in their number (COMPLEXITY.md K41).
 fn lit_value(l: &Lit, c: Carrier) -> Option<Value> {
     if l.past_f64.is_some() && c == Carrier::F64 {
         return None;
@@ -19440,8 +19569,12 @@ pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
 /// variables). A printed type writes such a name for a variable that stands in two places or
 /// more (UNDERSCORE-print), which only `parse_type` reads back.
 pub fn denoted_free(t: &Type, leaves: &Binds, free: &HashSet<Arc<str>>) -> Ty {
-    denoted_inexact(t, leaves, free, Ranged::default()).0
+    denoted_inexact(t, leaves, free, &Held::new(), Ranged::default()).0
 }
+
+/// The variables each definition of a printed type holds, its own and those of the
+/// definitions it names, by the definition's name ([`Denote::held`]).
+type Held = HashMap<Arc<str>, Arc<[Arc<str>]>>;
 
 /// The ranges read where an arrow of a type is, by the arrow's span, which the type's own
 /// parts do not denote ([`Denote::make`]).
@@ -19459,16 +19592,19 @@ struct Ranged {
 
 /// [`denoted_free`], with the span and printed text of each difference in `t` whose value holds
 /// more than the difference ([`Ty::diff_exact`]). Each arrow whose span `ranged` holds is read
-/// with its range ([`Ranged`]).
+/// with its range ([`Ranged`]), and each definition of `leaves` that `held` lists makes the
+/// outermost function type around a name for it the home of the variables it holds.
 fn denoted_inexact(
     t: &Type,
     leaves: &Binds,
     free: &HashSet<Arc<str>>,
+    held: &Held,
     ranged: Ranged,
 ) -> (Ty, Vec<Inexact>) {
     let mut d = Denote {
         leaves,
         free,
+        held,
         bound: HashMap::new(),
         open: Vec::new(),
         empty: None,
@@ -19501,6 +19637,7 @@ fn emptied(t: &Type, out: &mut Vec<Note>) {
     let mut d = Denote {
         leaves: &Binds::new(),
         free: &HashSet::new(),
+        held: &Held::new(),
         bound: HashMap::new(),
         open: Vec::new(),
         empty: Some(HashSet::new()),
@@ -19702,6 +19839,14 @@ struct Denote<'a> {
     /// The names read as variables of the outermost function type around them where no clause
     /// bounds them ([`denoted_free`]).
     free: &'a HashSet<Arc<str>>,
+    /// The variables each definition of `leaves` holds, of which the outermost function type
+    /// around a name for the definition is the home, as it is of them where the definition is
+    /// written out in full (`read::parse_type`, row PRINT-shared-part-exponential).
+    // Complexity tradeoff: each name for a definition inserts each of its `k` variables into
+    // its home's sorted set, O(k log k) a use, where a variable written once in the definition
+    // would be inserted once; the alternative, the definition's variables found by a walk of
+    // its value at each use, costs its size a use. `k` is at most the variables of the text.
+    held: &'a Held,
     /// Each variable a clause around the place bounds: its mask and the number of function
     /// types open at the clause, which is the index in `open` of its signature.
     bound: HashMap<&'a str, (u8, usize)>,
@@ -19853,6 +19998,11 @@ impl<'a> Denote<'a> {
                 return;
             }
             TypeKind::Name(n) if self.leaves.contains_key(n.as_str()) => {
+                if let Some(vs) = self.held.get(n.as_str())
+                    && let Some(home) = self.open.first_mut()
+                {
+                    home.free.extend(vs.iter().cloned());
+                }
                 self.leaves[n.as_str()].clone()
             }
             TypeKind::Name(n) => match n.as_str() {

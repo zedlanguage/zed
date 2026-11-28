@@ -30,19 +30,80 @@
 //!    row r with a sign. A pair whose Def sets hold an incidence `w * z` with `w * z` free is
 //!    dropped along `u_{wz} = ±σ_w σ_z` (design sec. 3, step 3, proved there).
 //! 4. Pass 1 per wanted product without listing pairs ([`solve`]).
-//! 5. The joint fixpoint ([`Joint`]): delta rechecks of the Def sets, the count rules P2, P3,
-//!    P4, then the exact single-holder peel.
+//! 5. The joint fixpoint ([`Joint`]): one Def-set test per sign event and partner row
+//!    ([`Joint::gain`]), the count rules P2, P3, P4, then the exact single-holder peel.
 //!
 //! Complexity tradeoff: the naive method lists every pair of `on[x] × on[y]` for each wanted
 //! product `x * y` and expands each, Θ(Σ |a||b|) over all pairs, which is Θ(k²) for one row of k
 //! factors paired with a row on each (the list main had, presburger.rs before this row). Here
 //! steps 0 to 4 cost O(k log k) on the measured families except exception 1 of A225 (pass 1 on
 //! the orthogonal-vectors family, design sec. 5.3), the output is |R|, and step 5 costs
-//! exceptions 3 (the exact peel, Σ|a||b| over the pairs left) and 4 (the worklist on
-//! `wlgrow_g`, ratio 34 at 8n, test `tests::the_worklist_of_wlgrow_g_scales`, which fails and is
-//! listed under A225 in COMPLEXITY.md). Boolean matrix multiplication reduces to step 5 (design
-//! sec. 5.3, test `tests::the_residual_of_the_bmm_reduction_is_the_zeros_of_a_f`), so no
-//! combinatorial algorithm for step 5 beats n^3 / polylog unless that does.
+//! exception 3 (the exact peel, Σ|a||b| over the pairs left). Its worklist on `wlgrow_g`, once
+//! exception 4 (ratio 34 at 8n), is O(N log N) by the sign events of [`Joint::gain`], proved at
+//! `tests::the_worklist_of_wlgrow_g_scales` (7.50). The general worklist has only a conditional
+//! bound, below.
+//!
+//! **The general worklist and Boolean matrix multiplication** (row
+//! PROOF-factored-step5-general-lower-bound, b30-pres4, 2026-11-28; design sec. 5.3, O8).
+//!
+//! *Claim.* If [`solve`] runs in time T(k) on inputs of size k (rows, side lists, mentioned
+//! atoms), the Boolean product of two n x n matrices is computed in time T(Θ(n²)) + O(n²).
+//!
+//! *Proof.* Let A, F be n x n Boolean matrices; M(u, v) is the entry of M in row u, column v.
+//! 0. Embed: A' and F', both 2n x 2n, in blocks of n x n: A' has I, A in its top blocks and 0, I
+//!    in its bottom ones; F' is 0 except its bottom-left block, F. Then (A' F')(u, v) =
+//!    Σ_x A'(u, x) F'(x, v); for u, v < n the terms x < n have F'(x, v) = 0 and the terms x >= n
+//!    are A(u, x − n) F(x − n, v), so the top-left block of A' F' is A F. A' has a unit diagonal,
+//!    which step 1 uses, and F' is at least three quarters zeros. Write n' = 2n.
+//! 1. Build the instance of `tests::build_bmm` from A', F' (O(n'²)): variables w_x, y_x, z_v
+//!    (x, v < n'), g, r_1, r_2; one wanted product, side A the rows s_u = Σ_{A'(u, x) = 1} w_x
+//!    and b_x = y_x − w_x, side B the rows t_v = z_v + (−1)^v g, t_+ = r_1 + g, t_− = r_2 − g;
+//!    mentioned: w_x * z_v iff F'(x, v) = 0, and every w_x * r_i. At least 3n'²/4 atoms are
+//!    mentioned, and the rows have O(n'²) terms, so k = Θ(n²).
+//! 2. w_x has holders of both signs on side A (s_x, by the unit diagonal, and b_x) and g has
+//!    both signs on side B, all in one component and parity class, so pass 1 signs neither
+//!    under glob, frame+ or frame− (design sec. 5.3 item 1).
+//! 3. Every pair (b_x, t) holds a free atom y_x * z_v or y_x * r_i with both factors signed, so
+//!    it is dropped and b_x dies before step 5; w_x is then signed (item 2). Test: pass 1 lists
+//!    no pair (b_x, t).
+//! 4. Each pair (s_u, t) holds a free w_x * g with g unsigned, so pass 1 drops none (item 3).
+//! 5. Step 5: Def(s_u) = {w_x : A'(u, x) = 1} and Def(t_v) = {z_v}, so (s_u, t_v) holds a free
+//!    incidence w_x * z_v iff some x has A'(u, x) = 1 and F'(x, v) = 1, that is (A' F')(u, v) =
+//!    1, and Theorem D drops exactly those pairs (item 4).
+//! 6. (s_u, t_+) and (s_u, t_−) share every free w_x * g, so neither is a single holder, and
+//!    Def(t_±) = {r_i} gives no free incidence: both stay, and g never gets a sign (item 5).
+//! 7. No other rule drops a pair (item 6), so R = {(s_u, t_v) : (A' F')(u, v) = 0} ∪ {(s_u,
+//!    t_±)}, and (A F)(u, v) = 1 iff (s_u, t_v) ∉ R for u, v < n, read off R in O(n²). ∎
+//!
+//! Items 1 to 6 are proved in the design, sec. 5.3. Tests: R equals that set in 16 cases with
+//! A's unit diagonal (`tests::the_residual_of_the_bmm_reduction_is_the_zeros_of_a_f`), and A F
+//! is read off R through the embedding of step 0 for A with a zero diagonal and F from empty to
+//! half ones (`tests::any_boolean_product_is_read_off_the_pairs_left`); in both, the control
+//! without the sign predicates gets the pairs wrong.
+//!
+//! *What the claim gives, and what it does not.* It is a conditional bound.
+//! - Unconditionally nothing above Ω(k) follows. Alman, Duan, Vassilevska Williams, Xu, Xu and
+//!   Zhou, "More Asymmetry Yields Faster Matrix Multiplication" (arXiv 2404.16349, DOI
+//!   10.48550/arXiv.2404.16349), intro.tex:8-9: "There is a straightforward lower bound of
+//!   $\omega\geq 2$ since the output size is $n^2$. No larger lower bound is known". That source
+//!   states this only for ω, the exponent of algebraic matrix multiplication. That no lower
+//!   bound above n² is known for the Boolean product on a RAM goes beyond it and is NOT PROVED
+//!   here (no source cited). So whether step 5 can be O(k log k) in general is NOT PROVED
+//!   either way.
+//! - An O(k log k) step 5 would multiply Boolean matrices in O(n² log n). The best bound known
+//!   is ω < 2.371177 (same source, intro.tex:23-24: "A recent work \cite{alphaevolve-note}
+//!   further improves the bound derived from our method to \[\omega<2.371177.\]"), so no known
+//!   method does that. At that ω the time is k^{ω/2} = k^1.1856, 8^1.1856 = 11.77 at 8 times the
+//!   input, above the limit 10.5: meeting 10.5 on this family needs ω <= 2 log_8 10.5 = 2.2616.
+//! - A combinatorial step 5 (no fast matrix multiplication) needs k^{1.5 − o(1)} on this family
+//!   under the combinatorial BMM conjecture, stated by Henzinger, Krinninger, Nanongkai and
+//!   Saranurak, STOC 2015 (DOI 10.1145/2746539.2746609), introduction.tex:17: "there is no truly
+//!   subcubic ($O(n^{3-\eps})$) time {\em combinatorial} algorithm for multiplying two $n\times
+//!   n$ Boolean matrices": n^{3 − ε} with n = Θ(k^{1/2}) is k^{1.5 − ε/2}.
+//!
+//! So under either hypothesis the general worklist is above k log k; neither is proved. Copies
+//! and the full records: verification/bib.md of the worktree b30-pres25 (Henzinger_2015,
+//! Alman_2025), not committed.
 //!
 //! **The exact peel and its lower bound** (row PERF-factored-peel-wlisted, b22-factored3,
 //! 2026-11-24). The peel lists the free atoms of each pair the count rules leave, W_listed =
@@ -397,6 +458,10 @@ struct Opts {
     no_peel: bool,
     /// Record each drop (for the replay in the tests) and the listed pairs.
     log: bool,
+    /// Step 5's Def-set tests as before FAIL-factored-wlgrow-g-worklist: each row whose Def
+    /// set grew rechecks its live pairs ([`Joint::recheck`]). The reference the tests compare
+    /// the sign events of [`Joint::gain`] with: the pairs left must be the same.
+    row_rechecks: bool,
 }
 
 /// A drop: the pair, the rule (0, 1, 2 the worklist under glob, frame+, frame−; 9 a single
@@ -1571,6 +1636,20 @@ struct Joint<'a> {
     memo: HashMap<(u32, u32), bool>,
     dirty: VecDeque<(usize, usize)>,
     isdirty: [Vec<bool>; 3],
+    /// The sign events (variable, predicate) of step 5 not yet tested ([`Joint::gain`]).
+    events: VecDeque<(usize, usize)>,
+    /// Per variable, built at its first event: its holder list as the root of a trie in `tn`
+    /// over row ids, of height `hh`. Equal ids mean equal holder lists, and the variables with
+    /// one id share their partner list (`gpart`).
+    hroot: Vec<Option<u32>>,
+    hh: u8,
+    /// Per holder set, built at its first event: the rows that had a live pair with one of
+    /// its rows then (a superset of those that have one now, since pairs only go).
+    gpart: HashMap<u32, Vec<usize>>,
+    /// [`Joint::partners`]'s lists, by (trie node of rows, the least row id it covers).
+    part: HashMap<(u32, usize), Vec<usize>>,
+    /// [`Joint::within`]'s answers, by (trie node, the least id it covers, variable).
+    sub: HashMap<(u32, usize, usize), bool>,
     // The count rules P2, P3, P4.
     sum: Vec<usize>,
     heap: Vec<BinaryHeap<(usize, usize)>>,
@@ -1624,6 +1703,12 @@ impl<'a> Joint<'a> {
             memo: HashMap::new(),
             dirty: VecDeque::new(),
             isdirty: std::array::from_fn(|_| vec![false; nr]),
+            events: VecDeque::new(),
+            hroot: vec![None; nv],
+            hh: u8::try_from(nr.max(1).bit_len()).expect("a bit count fits in u8"),
+            gpart: HashMap::new(),
+            part: HashMap::new(),
+            sub: HashMap::new(),
             sum: vec![0; nr],
             heap: vec![BinaryHeap::new(); nr],
             hcount: vec![0; nv],
@@ -1722,7 +1807,9 @@ impl<'a> Joint<'a> {
     }
 
     /// Row r leaves the live rows: its sign counts drop, and a variable that gains a sign adds
-    /// itself to the Def sets of its live holders, which become dirty. Live holders only
+    /// itself to the Def sets of its live holders and queues one sign event per predicate
+    /// ([`Joint::gain`]; with `frame_bad` or `row_rechecks`, the holders become dirty instead,
+    /// [`Joint::recheck`]). Live holders only
     /// shrink, so a sign is never lost or flipped at a live holder (design sec. 3, step 3,
     /// "Monotonicity", proved); checked in debug builds. With `peel`, the holder counts of the
     /// count rules drop too.
@@ -1739,6 +1826,7 @@ impl<'a> Joint<'a> {
             if s1 == s0 {
                 continue;
             }
+            let mut gained = [false; 3];
             for i in 0..self.holders[v].len() {
                 let r2 = self.holders[v][i];
                 self.work += 1;
@@ -1768,8 +1856,17 @@ impl<'a> Joint<'a> {
                     if self.dset[kind][r2].insert(v) {
                         self.dl[kind][r2].push(v);
                         self.root[kind][r2] = self.tput(self.root[kind][r2], self.th, v, true);
-                        self.mark(r2, kind);
+                        if self.o.frame_bad || self.o.row_rechecks {
+                            self.mark(r2, kind);
+                        } else {
+                            gained[kind] = true;
+                        }
                     }
+                }
+            }
+            for (kind, &g) in gained.iter().enumerate() {
+                if g {
+                    self.events.push_back((v, kind));
                 }
             }
         }
@@ -1960,6 +2057,175 @@ impl<'a> Joint<'a> {
         }
     }
 
+    /// A sign event of step 5 (FAIL-factored-wlgrow-g-worklist, b30-pres4, 2026-11-28): `v`
+    /// gained the sign of predicate `kind`. The sign is a property of v ([`State::sig`]), so v
+    /// is now in Def(a) for every live holder a of v: a live row has a live pair, so it had one
+    /// when [`Joint::kill`] put v in. The incidences this adds are v × Def(b), one set for each
+    /// live pair {a, b} with a a holder of v, and one of them is free iff Def(b) ⊄ M(v), M(v)
+    /// the variables w with `v * w` mentioned (`partners`, which the callers build symmetric).
+    /// That depends on b alone, so each partner row b is tested once ([`Joint::bad`]), not each
+    /// pair; when b fails, every live pair of b with a holder of v goes.
+    ///
+    /// *The same pairs as the row rechecks* (`Opts::row_rechecks`, which the tests compare).
+    /// 1. At the start of step 5 every incidence of an open pair has its atom mentioned: pass 1
+    ///    lists a pair only when it survives the three predicates on the same signs (step 4,
+    ///    `ok` in [`solve`]), and the Def sets here are those sets cut to the relevant
+    ///    variables. (The row rechecks test these incidences again the first time a row is
+    ///    dirty, and so find nothing there either.)
+    /// 2. A later incidence `x * y`, x ∈ Def(a), y ∈ Def(b), {a, b} a live pair, exists from
+    ///    the moment both are in. Say x went in last, at x's event (if both went in at one
+    ///    event, that event; the case y last is the same with a and b swapped). The event is
+    ///    tested after the insertion, so y ∈ Def(b) then, Def(b) ⊄ M(x) is seen if `x * y` is
+    ///    free, and {a, b} goes if it is still live.
+    /// 3. Each drop here is one the rechecks make too: a free incidence of Def(a) × Def(b).
+    ///
+    /// So both reach a fixpoint of the same rules, which is unique since every rule is
+    /// monotone (design sec. 3, "Monotonicity and unique fixpoint", proved there).
+    ///
+    /// *The partner list.* The rows with a live pair to a holder of v are the same for every
+    /// variable with v's holder list H, so they are listed once per holder set (`gpart`), at
+    /// its first event; pairs only go, so the list stays a superset. A row b that fails has
+    /// every live pair to the rows of H dropped, so it leaves the list for good. The list is
+    /// read from the trie of H over row ids ([`Joint::partners`]), whose nodes holder sets
+    /// share: holder sets that differ in a few rows, such as the X rows with one K_t row on
+    /// `wlgrow_g`, build only the nodes on the paths to those rows.
+    ///
+    /// *Cost.* For a holder set H with list P_H: the trie of H costs O(|H| hh) once (`tput`);
+    /// each event of H costs |P_H| tests; a row b that fails costs |opp(b)| once, as it then
+    /// leaves P_H. A test costs O(1) for each memo entry of [`Joint::within`] it reads or makes.
+    /// [`Joint::partners`] costs, over the whole run, the lengths of the lists of the trie
+    /// nodes it builds; those of one height cover disjoint row ranges, so the nodes of one
+    /// holder set H cost at most (hh + 1) Σ_{a ∈ H} |opp(a)|, and less for the nodes another
+    /// set built before. The row rechecks cost Σ_{a ∈ H} |opp(a)| pair tests at every event,
+    /// each at least O(1) and up to |Def(a)| |Def(b)|. The bound on `wlgrow_g` is proved at
+    /// `tests::the_worklist_of_wlgrow_g_scales`.
+    fn gain(&mut self, v: usize, kind: usize) {
+        self.work += 1;
+        let hs = match self.hroot[v] {
+            Some(hs) => hs,
+            None => {
+                let mut hs = 0;
+                for i in 0..self.holders[v].len() {
+                    hs = self.tput(hs, self.hh, self.holders[v][i], true);
+                }
+                self.hroot[v] = Some(hs);
+                hs
+            }
+        };
+        let mut ps = match self.gpart.remove(&hs) {
+            Some(ps) => ps,
+            None => {
+                self.partners(hs, self.hh, 0);
+                let ps = self.part.get(&(hs, 0)).cloned().unwrap_or_default();
+                self.work += ps.len() as u64;
+                ps
+            }
+        };
+        let mut i = 0;
+        while i < ps.len() {
+            let b = ps[i];
+            self.work += 1;
+            if !self.bad(kind, v, b) {
+                i += 1;
+                continue;
+            }
+            let es = self.opp[b].clone();
+            self.work += es.len() as u64;
+            for (a, e) in es {
+                if self.live[e] && self.p.rows[a].binary_search_by_key(&v, |t| t.0).is_ok() {
+                    debug_assert!(self.dset[kind][a].contains(&v), "v is in Def(a)");
+                    self.drop_pair(e, u8::try_from(kind).expect("three predicates"));
+                }
+            }
+            ps.swap_remove(i);
+        }
+        self.gpart.insert(hs, ps);
+    }
+
+    /// Fills `part` at (node, base): the rows with a live pair to a row of the trie node `node`
+    /// of height `h`, whose row ids start at `base`, sorted and each once.
+    /// Built at the first call and kept: pairs only go, so it stays a superset of the rows
+    /// with such a pair later. A leaf (row `base`) lists the other rows of `opp(base)`, O(d log
+    /// d) for d = |opp(base)|; an inner node merges its children's lists, O(their lengths). The
+    /// empty node lists nothing and is not stored.
+    fn partners(&mut self, node: u32, h: u8, base: usize) {
+        self.work += 1;
+        if node == 0 || self.part.contains_key(&(node, base)) {
+            return;
+        }
+        let list = if h == 0 {
+            let mut l: Vec<usize> = self.opp[base].iter().map(|&(b, _)| b).collect();
+            self.work += l.len() as u64;
+            l.sort_unstable();
+            l.dedup();
+            l
+        } else {
+            let (lc, rc) = self.tn[node as usize];
+            let rb = base + (1 << (h - 1));
+            self.partners(lc, h - 1, base);
+            self.partners(rc, h - 1, rb);
+            let none = Vec::new();
+            let x = self.part.get(&(lc, base)).unwrap_or(&none);
+            let y = self.part.get(&(rc, rb)).unwrap_or(&none);
+            let mut l = Vec::with_capacity(x.len() + y.len());
+            let (mut i, mut k) = (0, 0);
+            while i < x.len() || k < y.len() {
+                let next = match (x.get(i), y.get(k)) {
+                    (Some(&a), Some(&b)) if a == b => {
+                        i += 1;
+                        k += 1;
+                        a
+                    }
+                    (Some(&a), Some(&b)) if a < b => {
+                        i += 1;
+                        a
+                    }
+                    (Some(&a), None) => {
+                        i += 1;
+                        a
+                    }
+                    (_, Some(&b)) => {
+                        k += 1;
+                        b
+                    }
+                    (None, None) => unreachable!("the loop runs while one list has more"),
+                };
+                l.push(next);
+            }
+            l
+        };
+        self.work += list.len() as u64;
+        self.part.insert((node, base), list);
+    }
+
+    /// Def(b) of predicate `kind` holds a variable w with `v * w` free.
+    fn bad(&mut self, kind: usize, v: usize, b: usize) -> bool {
+        !self.within(self.root[kind][b], self.th, 0, v)
+    }
+
+    /// Every variable of the trie node `node` of height `h`, whose ids start at `base`, is
+    /// mentioned with `v`. Memoized by (node, base, v): a node id is one set of offsets (the
+    /// trie is hash-consed), and with `base` one set of ids. The left child covers `base` to
+    /// `base + 2^(h-1) - 1` and the right child the rest, as [`Joint::tput`] places them. A
+    /// call costs O(1) and the calls on its children when it is not in the memo, so the work
+    /// of a test is at most twice the memo entries it reads or makes.
+    fn within(&mut self, node: u32, h: u8, base: usize, v: usize) -> bool {
+        self.work += 1;
+        if node == 0 {
+            return true;
+        }
+        if h == 0 {
+            return self.p.mentioned(v, base);
+        }
+        if let Some(&w) = self.sub.get(&(node, base, v)) {
+            return w;
+        }
+        let (l, r) = self.tn[node as usize];
+        let w = self.within(l, h - 1, base, v) && self.within(r, h - 1, base + (1 << (h - 1)), v);
+        self.sub.insert((node, base, v), w);
+        w
+    }
+
     /// P3: w held only by r and z only by b (among rows with a live pair), `w * z` free. The
     /// pair {r, b} is then the only one holding `w * z`, with the coefficient r_w b_z ≠ 0
     /// (r_z = b_w = 0 when r ≠ b; when r = b, z = w), so it is a single holder.
@@ -2069,13 +2335,16 @@ impl<'a> Joint<'a> {
         }
     }
 
-    /// The joint fixpoint: Def-set rechecks first, then P3, P2, P4, then the exact peel; any
+    /// The joint fixpoint: Def-set tests first (row rechecks, then sign events), then P3, P2,
+    /// P4, then the exact peel; any
     /// drop can wake any of them. The rules are monotone, so the pairs left do not depend on
     /// the order (design sec. 3, "Monotonicity and unique fixpoint", proved).
     fn run(&mut self) {
         loop {
             if let Some((r, kind)) = self.dirty.pop_front() {
                 self.recheck(r, kind);
+            } else if let Some((v, kind)) = self.events.pop_front() {
+                self.gain(v, kind);
             } else if let Some(r) = self.p3q.pop_front() {
                 self.p3(r);
             } else if let Some(r) = self.queue.pop() {
@@ -2118,8 +2387,8 @@ fn free_atoms(p: &Prob, a: usize, b: usize) -> BTreeMap<(usize, usize), Int> {
 /// ⊗ b) + λ_2 (e_2 ⊗ b), and its pairs are dropped. Other groups are left as they are. Cross
 /// products are exact [`Int`] products (the prototype's i128 could overflow on wide
 /// coefficients). O(r log r) a group of r rows, for the sort. Tests:
-/// `tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products` (with the mutant
-/// `cone_bad` as control).
+/// `tests::the_cone_rule_keeps_the_verdict_on_lists_shared_by_products_shape_0` to `_shape_2`
+/// (with the mutant `cone_bad` as control).
 fn cone(v: Vec<usize>, p: &Prob, bad: bool, work: &mut u64) -> Vec<usize> {
     type Dir<'a> = (&'a Int, &'a Int, usize);
     let mut planes: BTreeMap<(usize, usize), Vec<Dir>> = BTreeMap::new();

@@ -90,7 +90,7 @@ pub(super) fn keys<A: Atom>(t: &Tree<A>) -> Vec<Key<A>> {
 /// Tested by `settings::tests`, against ordered sets.
 pub(super) fn from_keys<A: Atom>(mut keys: Vec<Key<A>>) -> Tree<A> {
     zed_collections::sorted::sort_dedup(&mut keys);
-    treap::from_sorted(keys.into_iter().map(Setting).collect())
+    treap::from_sorted(keys.into_iter().map(Setting))
 }
 
 /// The settings in either set (`zed_collections::treap::union`).

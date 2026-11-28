@@ -28,10 +28,14 @@ fn points_asked_after_a_disjunction_scale() {
 /// `exact::guarded::two_pins::u_runs` trying each value of a case's strip; read by the strip's
 /// equation since PERF-cover-union-of-classes-listed (two_pins part), the same sizes take
 /// 227,358,694 and 1,640,999,236 instructions (7.22 times; bytes 148,387,876 and 1,143,523,404,
-/// local run, 2026-11-27): about 25·10^6 fixed and the same 200 a unit of r, not yet profiled
-/// (callgrind of 2026-11-27 before that change put 8% in `row_sums::project`, which answers
-/// with each value listed). So both are held to `scaling::limit(1)` until the row's row_sums
-/// part is done. Negative control: the same values listed one range a value (`Classed::met` of
+/// local run, 2026-11-27): about 25·10^6 fixed and the same 200 a unit of r. A probe found the
+/// 200 a unit in `row_sums::project`, over the one row `-y + 2x == 0`: the join listed one
+/// interval per value (3,000,001 at r = 10^6) until it stopped at its work limit, then the
+/// solver answered. Since the row_sums part (module `row_sums::equation`, the equation solved
+/// whole) the same sizes take 21,723,425 and 21,791,243 instructions eager, ratio 1.003, and
+/// 21,598,017 and 21,662,544 lazy, bytes 5,194,173 and 5,194,181 (local job, 2026-11-28; red
+/// on 0eca50cf4 at 7.216 times), so both are held to `scaling::limit(0)`, 1.31 times. Negative
+/// control: the same values listed one range a value (`Classed::met` of
 /// `Product::classed`, the form the cases had below the old listing limit) are 8 times as many
 /// ranges at 8n, over that limit.
 #[test]
@@ -44,7 +48,7 @@ fn three_cases_of_two_classes_scale() {
     );
     for lazy in [false, true] {
         let what = format!("three cases of two classes past the old listing limit, lazy: {lazy}");
-        zed_tests::scaling::check_order(&what, 1_000, 1, |n| {
+        zed_tests::scaling::check_order(&what, 1_000, 0, |n| {
             std::hint::black_box(three_cases_at(1_000 * n as i64, lazy));
         });
     }

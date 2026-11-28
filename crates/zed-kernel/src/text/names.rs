@@ -89,7 +89,7 @@ use hashbrown::hash_table::Entry;
 use std::hash::BuildHasher;
 use std::sync::Arc;
 
-use super::tree::{Text, Tree};
+use super::tree::{Block, Text, Tree};
 use crate::digest::{DigestMap, TextState};
 
 /// How many symbols to the left a block start reads.
@@ -198,6 +198,19 @@ struct Long<'a> {
 // first meeting, not by bytes. Nothing is refused. Tests `names_are_equal_exactly_when_bytes_are`,
 // `doubled_texts_of_2_to_40_bytes_are_named`, `naming_n_and_8n_nodes`.
 //
+// A node is summarized from its parts by joins, and each join of two summaries is kept by the
+// names of its two texts (`joins`), so a join met again, at another node or another tree, is
+// one lookup (row PERF-names-doubled-join-cost). The naive version, every node folding its parts
+// with joins of its own, made a text doubled 60 times (2866 nodes, 160 distinct joins) cost
+// 31 to 63 times building it, 40 000 to 79 000 instructions a node: a finger tree's join makes a
+// new deep node at each level, and each one folded up to eight parts again, though its two
+// digits are those of the trees below it. Used: a deep node folds each digit alone and joins
+// them to its middle last, two joins of its own, and a digit's fold is found in `joins`; the
+// doubled text then costs 2.2 to 4.0 times building it. Tradeoff: one more summary kept per
+// distinct join, at most the parts of each node, so the bound above stays O(n log N) and the
+// memory O(n K log N). Tests `bench::naming_a_doubled_text_costs_a_few_times_building_it`,
+// `bench::naming_n_and_8n_doubled_texts`.
+//
 // The tables do not hash with the standard SipHash, which was a fifth of the work of a flat
 // string (row PERF-canon-flat-strings; SipHash: Aumasson and Bernstein 2012,
 // doi:10.1007/978-3-642-34931-7_28, full comment in `digest.rs`, type `FixedState`). The memo
@@ -220,6 +233,12 @@ pub struct Names {
     // The address of a node's tree, kept alive by the `Text` beside it, names the node for
     // identity only, never for order.
     memo: DigestMap<usize, (Text, Option<Arc<Sum>>)>,
+    /// The summary of each join of two nonempty texts met, by the names of the two texts.
+    // A name is the text's in this dictionary (equal names, equal texts), so a summary found
+    // here is a summary of the joined text whichever join made it, and [`Names::join`] of
+    // two summaries reads only them and the rules, whose numbers never change once given:
+    // the join again would give the same rules and so the same summary.
+    joins: DigestMap<(u64, u64), Arc<Sum>>,
 }
 
 impl std::fmt::Debug for Names {
@@ -247,26 +266,31 @@ impl Names {
     /// joined from their parts' summaries left to right. The recursion is as deep as the tree,
     /// at most 63 levels (text.rs).
     fn sum(&mut self, t: &Text) -> Option<Arc<Sum>> {
-        let key = Arc::as_ptr(&t.0).addr();
+        let key = t.0.addr();
         if let Some((_, s)) = self.memo.get(&key) {
             return s.clone();
         }
         let s = match &*t.0 {
             Tree::Empty => None,
-            Tree::Block { block, .. } => self.leaf(block.as_bytes()),
+            Tree::Leaf(Block { block, .. }) => self.leaf(block.as_bytes()),
             Tree::Node { parts, .. } => self.fold(parts.iter().flatten()),
+            // The two digits are folded on their own, and joined to the middle last: a digit
+            // is shared by the deep trees a join makes above it (`concat` in tree.rs keeps the
+            // left operand's front and the right one's back), and its fold is then found in
+            // `joins`, so a deep tree not named before costs two joins of its own, where a
+            // fold from left to right joined each part of the back digit to a new prefix.
             Tree::Deep {
                 front,
                 middle,
                 back,
                 ..
-            } => self.fold(
-                front
-                    .iter()
-                    .flatten()
-                    .chain(std::iter::once(middle))
-                    .chain(back.iter().flatten()),
-            ),
+            } => {
+                let f = self.fold(front.iter().flatten());
+                let m = self.sum(middle);
+                let b = self.fold(back.iter().flatten());
+                let fm = self.join(f, m);
+                self.join(fm, b)
+            }
         };
         self.memo.insert(key, (t.clone(), s.clone()));
         s
@@ -398,7 +422,15 @@ impl Names {
     fn join(&mut self, x: Option<Arc<Sum>>, y: Option<Arc<Sum>>) -> Option<Arc<Sum>> {
         match (x, y) {
             (None, s) | (s, None) => s,
-            (Some(x), Some(y)) => Some(Arc::new(self.levels(vec![seg_of(&x, 0), seg_of(&y, 0)]))),
+            (Some(x), Some(y)) => {
+                let key = (x.name, y.name);
+                if let Some(s) = self.joins.get(&key) {
+                    return Some(s.clone());
+                }
+                let s = Arc::new(self.levels(vec![seg_of(&x, 0), seg_of(&y, 0)]));
+                self.joins.insert(key, s.clone());
+                Some(s)
+            }
         }
     }
 

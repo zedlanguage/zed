@@ -447,13 +447,20 @@ fn map2(
     )
 }
 
-/// The real quotient `z / y` at two endpoints, rounded outward in `dir`.
+/// The real quotient `z / y` at two endpoints, as the bound in `dir` of the integers at or
+/// within it: rounded up for a lower bound (`Dir::Down`) and down for an upper one. An integer
+/// operand `x` with `x * y = z` is the real quotient itself, so of the quotients over a box,
+/// whose least and greatest are at its corners, `x` lies between the least rounded up and the
+/// greatest rounded down. Rounding outward, as before, kept one integer too many at each end
+/// that is not a whole quotient: `x * o` in `34..=38` with `o` in `-9..=-1` gave `x` up to
+/// `-3` (`ceil(34 / -9)`), though `-3 * o` reaches only `27`, where `floor(-34 / 9) = -4`
+/// is the bound (TEST-back-product-precision). An infinite end rounds outward as before.
 fn quotient(z: &End, y: &End, dir: Dir) -> End {
     match (z, y) {
         (Fin(n), Fin(d)) if !d.is_zero() => {
             let floor = n.div_floor(d);
             match dir {
-                Dir::Up if !n.mod_floor(d).is_zero() => Fin(&floor + &Num::ONE),
+                Dir::Down if !n.mod_floor(d).is_zero() => Fin(&floor + &Num::ONE),
                 _ => Fin(floor),
             }
         }
@@ -475,6 +482,44 @@ fn quotient(z: &End, y: &End, dir: Dir) -> End {
     }
 }
 
+/// `x + y` or `x - y` (`op` is `Add` or `Sub`) as [`forward`] gives it, but exact, with no
+/// cap, when one operand is one piece; [`backward`] reads `+` and `-` through here.
+// `+` and `-` with one operand of one piece `q` and the other of `k` pieces: the image is the
+// join of the `k` corner pairs (PROOF-factor-demand-monotone-all-shapes).
+// Proof. (1) Exact: for integer intervals `p` and `q`, `{u + v : u in p, v in q}` is every
+// integer from `lo(p) + lo(q)` to `hi(p) + hi(q)` (fix `v = lo(q)` and step `u` up, then fix
+// `u = hi(p)` and step `v` up; each step adds 1), which is `corners`; `u - v` is `u + (-v)`
+// with `-q` an interval, so it is exact too; the image of the sets is the union over pairs.
+// (2) At most `k` pieces: one interval per piece of the longer operand, and
+// [`IntervalSet::from_pieces`] only merges.
+// (3) Monotone in each operand, which the cap of [`map2`] is not: a piece of a subset lies in
+// a piece of the superset, and the corners of a smaller interval lie between those of the
+// larger. So the preimage of `x + y` under a smaller demand is a smaller set when the other
+// operand has one piece; through [`map2`] the image of `-13..=-12 ∪ 1..=2` minus `0..=4` was
+// capped to one negative piece, `-17..=-1`, and read `x` in `-6..=1` as all of it, while the
+// larger demand `-13..=-12 ∪ 1..=4 ∪ 14..=14` kept two and read `x` in `-3..=1`.
+// Complexity tradeoff: `O(k log k)`, as [`map2`] takes. Not in [`forward`] itself: there the
+// uncapped pieces of a chain's forward sets were carried into every later stage, and two
+// benches of zedc-preimage grew 12.8 and 57.5 times in bytes
+// (`a_chain_with_clamps_is_read_in_time_near_its_length`,
+// `a_staged_chain_under_false_is_read_in_time_near_its_length`); through [`backward`] alone
+// they keep within their bounds.
+// Test:
+// `l01_24_refinement_lattices::scaling::a_sum_with_a_one_piece_operand_is_exact_and_monotone`.
+pub fn sum_by_one_piece(op: &Op, x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
+    if let (Op::Add | Op::Sub, Some(q)) = (op, y.first())
+        && y.len() == 1
+    {
+        return IntervalSet::from_pieces(x.pieces().map(|p| corners(op, p, q)).collect());
+    }
+    if let (Op::Add | Op::Sub, Some(p)) = (op, x.first())
+        && x.len() == 1
+    {
+        return IntervalSet::from_pieces(y.pieces().map(|q| corners(op, p, q)).collect());
+    }
+    forward(op, x, y)
+}
+
 /// Backward transfer: the members of operand `arg` (0 or 1) of `op` that can give a result in
 /// `z` with the other operand in its interval. The result is contained in the operand's
 /// interval, and contains every member that can give a result in `z`.
@@ -488,9 +533,9 @@ pub fn backward(
     let own = if arg == 0 { x } else { y };
     let other = if arg == 0 { y } else { x };
     let narrowed = match (op, arg) {
-        (Op::Add, _) => forward(&Op::Sub, z, other),
-        (Op::Sub, 0) => forward(&Op::Add, z, y),
-        (Op::Sub, _) => forward(&Op::Sub, x, z),
+        (Op::Add, _) => sum_by_one_piece(&Op::Sub, z, other),
+        (Op::Sub, 0) => sum_by_one_piece(&Op::Add, z, y),
+        (Op::Sub, _) => sum_by_one_piece(&Op::Sub, x, z),
         (Op::Neg, _) => z.neg(),
         (Op::Mul, _) => {
             if z.contains(0) && other.contains(0) {
@@ -515,7 +560,11 @@ pub fn backward(
                         .map(|&(a, b)| quotient(a, b, Dir::Up))
                         .max()
                         .unwrap();
-                    vec![(lo, hi)]
+                    // Rounded inward (`quotient`), the ends cross where no integer is a
+                    // quotient (`z` in `-2..=-1`, `y` in `-7..=-5`: `1` and `0`); no pair then,
+                    // since a crossed pair would still take one of the pieces `map2` caps the
+                    // image to, and so coarsen the rest (TEST-back-product-precision).
+                    if lo > hi { vec![] } else { vec![(lo, hi)] }
                 })
             }
         }
@@ -814,7 +863,9 @@ mod tests {
 
     /// `+` and `-` of two sets of one piece each, read from the pieces' corners, are what the
     /// general path of [`forward`] gives from the parts split at zero, on every pair of
-    /// operands and on random pieces with large and infinite ends.
+    /// operands and on random pieces with large and infinite ends; with one operand of one
+    /// piece and the other of more, [`sum_by_one_piece`] is the join of what the general path
+    /// gives each pair of pieces, which is exact where the general path caps.
     #[test]
     fn a_sum_or_difference_of_two_pieces_is_what_the_parts_give() {
         let general = |op: &Op, x: &IntervalSet, y: &IntervalSet| {
@@ -849,6 +900,18 @@ mod tests {
             for (i, (x, y)) in pairs.iter().enumerate() {
                 one += usize::from(i < fixed && x.len() == 1 && y.len() == 1);
                 assert_eq!(forward(&op, x, y), general(&op, x, y), "{op:?} {x:?} {y:?}");
+                // With one operand of one piece, `sum_by_one_piece` is the join of the pairs
+                // of pieces, which the general path caps (PROOF-factor-demand-monotone-all-shapes).
+                let want = if x.len() == 1 || y.len() == 1 {
+                    let piece = |p: &(End, End)| IntervalSet::from_pieces(vec![p.clone()]);
+                    x.pieces().fold(IntervalSet::empty(), |j, p| {
+                        y.pieces()
+                            .fold(j, |j, q| j.join(&general(&op, &piece(p), &piece(q))))
+                    })
+                } else {
+                    general(&op, x, y)
+                };
+                assert_eq!(sum_by_one_piece(&op, x, y), want, "{op:?} {x:?} {y:?}");
             }
         }
         // The one-piece pairs are counted over the fixed operands only, whatever the draws
@@ -960,6 +1023,37 @@ mod tests {
         assert_eq!(
             backward(&Op::Mul, 0, &x, &IntervalSet::of(1, 3), &z),
             IntervalSet::of(0, 10)
+        );
+    }
+
+    /// Projected onto an operand, a product bounds it by the quotients at the corners rounded
+    /// inward, as the operand is an integer: `x * o` in `34..=38` with `o` in `-9..=-1` gives
+    /// `x` in `-38..=-4`, `-34 / 9` rounded down, so `x` in `-3..=-2` gives nothing; outward
+    /// it gave `-3`, whose products reach only `27` (TEST-back-product-precision). The sweep
+    /// of `backward_transfer_keeps_every_operand_that_can_give_the_result` checks that it
+    /// keeps every operand that can give the result.
+    #[test]
+    fn a_product_bounds_an_operand_by_whole_quotients() {
+        let (z, o) = (IntervalSet::of(34, 38), IntervalSet::of(-9, -1));
+        let x = IntervalSet::top();
+        assert_eq!(backward(&Op::Mul, 0, &x, &o, &z), IntervalSet::of(-38, -4));
+        assert!(backward(&Op::Mul, 0, &IntervalSet::of(-3, -2), &o, &z).is_empty());
+        // `7 / 2` and `9 / 2` are not whole: 4 alone, `4 * 2 = 8`.
+        let two = IntervalSet::of(2, 2);
+        assert_eq!(
+            backward(&Op::Mul, 1, &two, &x, &IntervalSet::of(7, 9)),
+            IntervalSet::of(4, 4)
+        );
+        // No integer times `-7..=-5` lies in `-2..=-1`: the ends cross (1 and 0), and no
+        // piece is kept. Beside a second piece of `z` the crossed pair coarsened the image
+        // (seed 9220505866642457837 of the zedc-preimage comparison of products).
+        let o = IntervalSet::of(-7, -5);
+        assert!(backward(&Op::Mul, 0, &x, &o, &IntervalSet::of(-2, -1)).is_empty());
+        let z = IntervalSet::of(-16, -13).join(&IntervalSet::of(-2, -1));
+        let w = o.join(&IntervalSet::of(2, 6));
+        assert_eq!(
+            backward(&Op::Mul, 0, &IntervalSet::of(-4, 0), &w, &z),
+            IntervalSet::of(-4, -3).join(&IntervalSet::of(-1, -1))
         );
     }
 

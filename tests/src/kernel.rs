@@ -14,6 +14,17 @@ pub fn s(x: &str) -> Value {
     Value::str(x)
 }
 
+/// `let twice = (t) -> t ++ t in twice(twice(… seed))`, `d` calls, or with `(t, t)` for
+/// `t ++ t` when `pair`: a string `2^d` times as long as `seed`, or a tuple of `2^d` places,
+/// each built in `d` nodes.
+pub fn doubled(seed: Term, d: usize, pair: bool) -> Term {
+    let both = vec![var("t"), var("t")];
+    let body = prim(if pair { Prim::Tuple } else { Prim::Concat }, both);
+    let twice = lam(&["t"], body);
+    let t = (0..d).fold(seed, |t, _| Term::App(Shared::new(var("twice")), vec![t]));
+    Term::Let("twice".into(), Shared::new(twice), Shared::new(t))
+}
+
 /// `f[k]`: the entry of family `f` at top-level key `k`.
 pub fn get(f: Term, k: Term) -> Term {
     prim(Prim::Get, vec![f, k])
