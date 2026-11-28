@@ -695,9 +695,10 @@ fn horner_units(d: u64, t: usize) -> u64 {
 /// one sign, the constant term among them, so not 0). Ruffini's scheme: pass `i` adds `u` times
 /// each coefficient into the one below it, from the top down to `i`, and leaves the `i`-th
 /// coefficient of `p(u + y)` final, so the test stops at the first of the wrong sign.
-/// `D (D + 1) / 2` products of a coefficient by `u` at most; every number is a partial sum of
-/// `sum |c_k| (1 + u)^k`, of at most `B + D bits(u + 1) + bits(t)` bits for coefficients of `B`
-/// bits.
+/// `D (D + 1) / 2` products of a coefficient by `u` at most, each by the kernel's [`mul_int`]
+/// (O(M(n)) past its crossovers, as the products of a unit of [`positive_roots`]); every number
+/// is a partial sum of `sum |c_k| (1 + u)^k`, of at most `B + D bits(u + 1) + bits(t)` bits for
+/// coefficients of `B` bits.
 fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
     #[cfg(test)]
     tests::HORNER_TESTS.with(|n| n.set(n.get() + 1));
@@ -710,7 +711,7 @@ fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
     }
     for i in 0..=d {
         for j in (i..d).rev() {
-            let add = u * &c[j + 1];
+            let add = mul_int(u, &c[j + 1]);
             c[j] += add;
         }
         if c[i].is_negative() || (i == 0 && c[i].is_zero()) {
@@ -963,9 +964,18 @@ pub(super) fn positive_roots_by(
         //    earlier passes ran with `spent <= budget` (each pass checks the budget before its
         //    tests), so by 1 at the last of them `rented <= spent <= budget`, and no test ran
         //    since. The units returned are `budget + rented <= 2 budget`.
-        // 4. Each test costs at most `units` units (the cap, at [`BoundSearch`]), so `rented`
-        //    bounds the tests' work, and the bound of [`positive_roots`] in units holds with a
-        //    factor of 2.
+        // 4. Each test costs at most `units` units in bit cost, not only in products. The bound
+        //    of the whole at [`positive_roots`] counts a unit as at most 12 passes of O(t)
+        //    products of numbers of O(B + s) bits, `s = 2 bits(h)`, so O(t M(B + s)) bit
+        //    operations. A test is at most `D (D + 1) / 2` products by [`mul_int`] and as many
+        //    sums, each of numbers of at most `B + D bits(u + 1) + bits(t) <= 4 B + bits(t)`
+        //    bits by the cap (at [`BoundSearch`]), and `bits(t) <= B` as `t <= D + 1 <= B + 1`,
+        //    so each product is O(M(B)) (`M(n) / n` not decreasing) and each group of `t` of
+        //    them, `horner_units` groups, is O(t M(B)), within one unit. Filling the array is
+        //    O(D + t) copies of at most `B` bits, under one group. So `rented` units bound
+        //    the tests' bit cost by the same per-unit bound, and the bound of [`positive_roots`]
+        //    holds in bit operations with a factor of 2. (With num-bigint's `*`, Toom-3 past
+        //    its crossover, a product was not O(M(B)); round 1 of the cross-review, Gemini.)
         // 5. This loop ends at each pass: each test adds `units >= 1` to `rented`
         //    ([`horner_units`] is at least 1), so after at most `spent` tests the condition
         //    fails, and a search has at most `top + 2 bits(top)` tests (stage 1 tests the
