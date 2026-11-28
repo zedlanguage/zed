@@ -147,6 +147,15 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     });
     ck.info.blocking = blocking;
     ck.info.port_params = std::mem::take(&mut ck.port_params);
+    #[cfg(feature = "printed-types")]
+    ty::printed::record_checked(|| ty::printed::Checked {
+        tops: (ck.info.tops.iter())
+            .map(|(name, top)| (name.clone(), top.clone()))
+            .collect(),
+        sigs: (ck.info.sigs.iter())
+            .map(|(&binder, sig)| (t.res.binders[binder].name.clone(), sig.clone()))
+            .collect(),
+    });
     ck.info
 }
 

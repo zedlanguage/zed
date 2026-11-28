@@ -27255,16 +27255,44 @@ pub fn var_name(n: usize) -> Arc<str> {
 #[cfg(feature = "printed-types")]
 pub mod printed {
     use std::cell::RefCell;
+    use std::sync::Arc;
 
-    use super::Ty;
+    use super::{Sig, Ty};
 
     thread_local! {
         static SEEN: RefCell<Option<Vec<(Ty, String, String)>>> = const { RefCell::new(None) };
+        static CHECKED: RefCell<Vec<Checked>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// What one check of a unit gave its names: the type of each top-level name bound by `=`,
+    /// and the signature of each function, in any scope, each with its name. A test prints
+    /// them after the check, so the printing records nothing (PERF-small-unit-fixed-cost: the
+    /// test of L1.29a read them from a second check of its own).
+    #[derive(Default)]
+    pub struct Checked {
+        /// Each top-level name bound by `=`, with its type.
+        pub tops: Vec<(String, Ty)>,
+        /// Each function's name, in any scope, with its signature.
+        pub sigs: Vec<(String, Arc<Sig>)>,
     }
 
     /// Starts recording on this thread, dropping what was recorded.
     pub fn start() {
         SEEN.set(Some(Vec::new()));
+        CHECKED.take();
+    }
+
+    /// Records what a check gave the unit's names, built by `names`, if recording is on.
+    pub fn record_checked(names: impl FnOnce() -> Checked) {
+        if SEEN.with_borrow(Option::is_some) {
+            let checked = names();
+            CHECKED.with_borrow_mut(|all| all.push(checked));
+        }
+    }
+
+    /// What each check since `start` gave the names of its unit, in order of check.
+    pub fn take_checked() -> Vec<Checked> {
+        CHECKED.take()
     }
 
     /// What was recorded since `start`, in printed order; recording stops.
