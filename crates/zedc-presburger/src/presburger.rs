@@ -19454,14 +19454,59 @@ impl Omega {
             if !self.pending.is_empty() {
                 // Eliminations that neither read nor write a pending variable go first, so a
                 // long row is rewritten once for the values they leave (`Omega::deferred`).
-                // Assumption, not proved (ASSUME-documented): running these eliminations
-                // before the pending values are written, and the write-first rule of
-                // [`Omega::read_pending`] that decides when not to, change only the order of the
-                // steps, so the model and the place of a refusal can change but never whether a
-                // point exists. The argument (doc of [`Omega::deferred`]): the eliminations
-                // taken are exact, add no terms, and no row of theirs holds a pending variable,
-                // so writing a value changes none of their rows. No proof covers the whole
-                // loop. Evidence (counted once with a temporary counter, 2026-11-14): this branch
+                // Proof (PROOF-solve-omega-path-renaming, 2026-11-28) that running these
+                // eliminations and fixes before the pending definitions are written, and the
+                // rule of [`Omega::read_pending`] that decides when not to, change only the
+                // order of the steps: the model and the place of a refusal can change, never
+                // whether a point exists. Write `W(S)` for the rows `S` held with every pending
+                // definition written into them, the rows [`Omega::flush`] leaves.
+                // 1. Where `deferred` returns `None`, `flush` runs at once, the order without
+                //    deferral. It returns `Some` only with `write_first` unset, and
+                //    `read_pending` sets `write_first` for each new pending definition that
+                //    holds a variable, read at the start of `deferred` and again after each
+                //    `fix` in it, the only step there that adds definitions. So every step
+                //    below runs while every pending definition is a value `x[p] = v[p]`.
+                // 2. A value written into a row changes its constant only, so `W(S)` is the
+                //    same in whatever order and with whatever grouping the rows are written;
+                //    hence `write_lone` (writing some rows early) leaves `W(S)` as it was.
+                // 3. While pending, no step reads or changes a row that holds a pending
+                //    variable except `write_lone`: the ranks of pending variables are taken
+                //    out (`read_pending`, `write_lone`), the eliminations taken pass `clear`,
+                //    `fix` reads rows of one variable only, which is not pending (`retain`),
+                //    and `System::add` of a row over no pending variable merges or removes
+                //    (`dominated`) only rows over the same variables, so none holding one.
+                // 4. An elimination of `x[j]` taken here passes `clear`: no row of `x[j]`
+                //    holds a pending variable. So the rows of `x[j]` in `W(S)` are its rows
+                //    in `S`, unchanged, and no other row of `W(S)` holds `x[j]` (such a row
+                //    would be a row of `x[j]` holding a pending variable). Its sides, and so
+                //    whether it is exact, are the same in both. Eliminating it in `S` writes
+                //    the rows it would write in `W(S)`, none holding a pending variable, so
+                //    `W` of the result is `W(S)` with `x[j]` eliminated; the exact stage's
+                //    own argument (an exact elimination keeps the integer points of the
+                //    other variables) then holds of `W(S)`. Variables taken together share no
+                //    row (`System::least`), so this holds of each in turn.
+                // 5. A `fix` of `x[j]` taken here: `x[j]` is fixable in `S` on a side `σ`
+                //    whose rows are all of one term, so none holds a pending variable, and
+                //    they are its rows on side `σ` in `W(S)` too. Every other row of `x[j]`
+                //    in `W(S)` is the written form of one in `S` on the other side: writing
+                //    changes neither the sign of its coefficient nor (after normalizing by a
+                //    positive divisor) its side; a row written to `true` drops out. So in
+                //    `W(S)` the same bound on side `σ` holds and every other row pulls `x[j]`
+                //    toward it, which is what [`Omega::fix`]'s argument needs; it chooses
+                //    the same value. This needs no row noted for `write_lone`: those only
+                //    turn rows of the other side into bounds sooner, which is speed.
+                // 6. By 1-5 each step here is a step the loop could take on `W(S)` with the
+                //    same effect on its integer points, so after `flush` the rows hold the
+                //    same integer points, over the variables left, as in the order without
+                //    deferral, and every later stage decides the same question.
+                // 7. The model: `Step::Chosen(j, rows)` is replayed with `choose` from the
+                //    values of the variables of `rows`; none is pending (4), and each is
+                //    defined or chosen by a later step or by `start`, which the replay, last
+                //    step first, has set already. A value's `Step::Defined` holds no
+                //    variable. So the model replayed meets every row, as without deferral.
+                // A refusal can come at another place since the steps are charged in
+                // another order; the meter refuses whatever was found then. Evidence
+                // (counted once with a temporary counter, 2026-11-14): this branch
                 // was taken in tests checked against an independent answer, among them
                 // `l01_38_presburger::oracle::rows_of_three_terms_tight_at_a_corner_match_enumeration`
                 // (67 times with its seed test),
@@ -19469,8 +19514,7 @@ impl Omega {
                 // (42) and
                 // `l01_39_reduced_product::random::the_closed_path_condition_and_the_scope_agree_on_emptiness`
                 // (44); FAIL-open-sides-bench-ratio gives the scaling with it (8.99 against 51.6
-                // with the deferral off). If false, the Omega test can answer "no point" where one
-                // exists or the reverse: unsound.
+                // with the deferral off).
                 if let Some(js) = self.deferred() {
                     for j in js {
                         let rows = self.sys.eliminate(j, false);
@@ -19519,24 +19563,45 @@ impl Omega {
                     // The variables of a row that each have one other row, of a unit
                     // coefficient, go together with `x[j]`, the row written once
                     // (`System::pendants`).
-                    // Assumption, not proved (ASSUME-documented): writing the definitions of
-                    // `System::pendants` together into `l` gives the same set of integer points
-                    // as eliminating its variables one at a time, so only the order of steps
-                    // changes, never whether a point exists. The argument is in the doc of
-                    // `System::pendants` (each `x[p]` can move to its bound `-s·q[p]` and stay a
-                    // point; no `r[p]` holds another of them, so the definitions commute); it
-                    // also needs `pending` to be empty here, as the `continue` above makes it,
-                    // so that [`Omega::flush`] finds each definition free of the others. No
-                    // proof covers the whole loop. Evidence (counted once with a temporary
+                    // Proof (PROOF-solve-omega-path-renaming, 2026-11-28) that writing the
+                    // definitions `x[p] = -s[p]·q[p]` of `System::pendants`, for `p` in its set
+                    // `D`, keeps the integer points of the other variables, so that only the
+                    // order of steps changes, never whether a point exists.
+                    // 1. By `System::own_row`, each `x[p]` has exactly two rows, `l` and
+                    //    `r[p]: s[p]·x[p] + q[p] >= 0` with `s[p] = ±1`, one on each side
+                    //    (`lo == hi == 1`; the system holds inequalities only, its equalities
+                    //    being in `es`). By the `continue` in `pendants`, no `r[p]` holds
+                    //    another variable of the set found, so `q[p]` holds none of `D`.
+                    // 2. Every point of the rows, the values of `D` dropped, has a point of
+                    //    the rows written: the same values. Each row but `l` and the `r[p]`
+                    //    holds no variable of `D` (1) and is unchanged; each `r[p]` is written
+                    //    to `0 >= 0`; and `l` written is `l` at the point with every `x[p]`
+                    //    moved to `-s[p]·q[p]`. Take `s[p] = 1` (the other sign is the mirror):
+                    //    `r[p]` is `x[p] >= -q[p]`, so `l`, on the other side, has a negative
+                    //    coefficient `c` of `x[p]`, and moving `x[p]` down to `-q[p]` adds
+                    //    `|c|·(x[p] + q[p]) >= 0` to `l`. The moves change no `q[p']` (1), so
+                    //    taken one at a time each keeps every row, and `l` written holds.
+                    // 3. Every point of the rows written gives a point of the rows: set each
+                    //    `x[p] = -s[p]·q[p]`, an integer, read from variables outside `D` (1).
+                    //    Then `r[p]` holds with equality, `l` holds since `l` written holds,
+                    //    and no other row holds `x[p]` (1).
+                    // 4. `pending` is empty here (the `continue` of the pending branch above),
+                    //    so [`Omega::flush`] writes these definitions alone; it rewrites `l`
+                    //    and each `r[p]`, which are all the rows of `D` (1). `System::add`
+                    //    normalizes `l` written by its coefficients' divisor, rounding the
+                    //    constant down, which keeps its integer points.
+                    // 5. The model: each `Step::Defined(p, def)` is replayed after the steps
+                    //    that set the variables of `q[p]` (they stay in the system and are
+                    //    taken later, last step replayed first), giving the point of 3.
+                    // So 2 and 3 give the same integer points as the `|D|` exact eliminations
+                    // one at a time. Evidence (counted once with a temporary
                     // counter, 2026-11-14): this branch was taken 526 times in
                     // `zedc_presburger::difference_rows::solve_never_refuses_rows_of_two_unit_terms`,
                     // checked against Bellman-Ford, and in
                     // `l01_38_omega_test::scaling::random_rows_of_two_unit_coefficients_with_a_point_are_decided`
                     // and `model_keys`, which check the model; the enumeration tests
                     // `forest_answers_match_enumeration` and
-                    // `random_unit_rows_agree_with_enumeration` never reach it. If false, the Omega
-                    // test can answer "no point" where one exists or the reverse, or give a model
-                    // that is no point: unsound.
+                    // `random_unit_rows_agree_with_enumeration` never reach it.
                     if let [j] = js[..]
                         && let Some(defs) = self.sys.pendants(j)
                     {
@@ -20706,15 +20771,13 @@ impl Omega {
     /// written, since a deferred elimination reads no such row, so its count of pending
     /// variables stays true; the counts are read once all the new definitions are counted, so
     /// that two variables of a row fixed at once are both counted.
-    // Assumption, not proved (ASSUME-documented): the `write_first` rule and the rows noted
-    // for `write_lone` below choose only which pending definitions are written before the
-    // next elimination, and into which rows. The rule (a definition that holds a variable) is
-    // what the argument for deferring needs, since writing such a definition changes the rows
-    // of the variables it holds; the rows noted (a row left with one variable not pending) are
-    // for speed alone (39 times the instructions from 160 to 1,280 links without them). That
-    // either choice reaches the same set of points is argued, not proved; the evidence is at
-    // the call of [`Omega::deferred`] in the loop. If false, the answer could change with it:
-    // unsound.
+    // Proved at the call of [`Omega::deferred`] in [`Omega::run`] (PROOF-solve-omega-path-
+    // renaming, 2026-11-28): the `write_first` rule and the rows noted for `write_lone` below
+    // choose only which pending definitions are written before the next elimination, and into
+    // which rows. The rule (a definition that holds a variable) is what the proof needs (its
+    // step 1), since writing such a definition adds terms to the rows of the variables it
+    // holds; the rows noted (a row left with one variable not pending) are for speed alone
+    // (its steps 2 and 5; 39 times the instructions from 160 to 1,280 links without them).
     fn read_pending(&mut self) {
         let mut counted = Vec::new();
         for (p, (j, def)) in self
