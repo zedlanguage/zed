@@ -6088,7 +6088,8 @@ pub struct FwdNeed {
     /// HELDNAME-closed-in-callee): one `Ck::r10_finish_one_fwd_callee` does not finish, so
     /// its classes stay written `$k` in the callee ([`VarFacts::fwd_unfinished`]). It implies
     /// [`Self::held_foreign_fn`], since a function that holds only its own variables binds
-    /// them all and so is closed within any callee. Made with it and read only by the facts, so it is stale
+    /// them all and so is closed within any callee. Made with it and read only by the facts, so
+    /// it is stale
     /// where that bit is, and never read so, by the same decodes
     /// (FAIL-map-chain-clashing-held-name-quadratic).
     pub held_open_fn: bool,

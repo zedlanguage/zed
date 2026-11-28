@@ -8982,7 +8982,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // which reads `f`, `keep` (from `f`'s facts), the classes (`&self`: the
                         // finish pass changes no class) and the memos of the pass, which give
                         // one result per address: so one copy, made from `f` alone, the same
-                        // template for every caller of this callee. (3) It writes each class of `keep` as it is, and each
+                        // template for every caller of this callee. (3) It writes each class of
+                        // `keep` as it is, and each
                         // other variable of `f` by the name `printed` gives it in the caller (a
                         // class by its class's name, another by its own spelling) unless
                         // `rename_apart` named it apart within `f`, which happens only where an

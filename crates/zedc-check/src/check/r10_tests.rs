@@ -2086,7 +2086,8 @@ fn r10_open_forward_kept_without_b4_is_decoded_at_finish() {
 /// the callee, as it holds a variable not its own, so the callee kept its class `$0` where E
 /// writes the name `U`, and `Ck::finished_with` decoded there (`unnamed`; before that, only the
 /// digest of `h1` differed); since FAIL-map-chain-clashing-held-name-quadratic it is finished
-/// there, as it binds all its variables. The others hold lambdas that capture a parameter, curried and nested
+/// there, as it binds all its variables. The others hold lambdas that capture a parameter,
+/// curried and nested
 /// lambdas, and a parameter function held in a tuple.
 ///
 /// It is also the test of the premise of `#4-outer` (PROOF-map-chain-d-skip-and-admit, point
