@@ -15373,10 +15373,11 @@ impl Lazy<PaPiece> for Maps {
 /// The summary of a subtree of summary `s` under the map `f`, in `O(1)` steps on its numbers:
 /// the same span and density, and the bounds moved by `f` over the whole span ([`Tag::vals`]),
 /// which hold the values and may be wider than the bounds the summary of the mapped piece over
-/// its children makes ([`treap::Item::sum`] of [`PaPiece`]). This is the rule the treap of pieces had before its move onto
-/// the generic treap (DRY-persistent-trees-2026-11-26); making the summary again from the
-/// children instead, two [`Tag::vals`] and two [`value_at`] a node, took up to 14.5% more
-/// instructions on the s22 chain families (`cj_live`, 256 and 2048, local runs, 2026-11-27).
+/// its children makes ([`treap::Item::sum`] of [`PaPiece`]). This is the rule the treap of
+/// pieces had before its move onto the generic treap (DRY-persistent-trees-2026-11-26); making
+/// the summary again from the children instead, two [`Tag::vals`] and two [`value_at`] a node,
+/// took up to 14.5% more instructions on the s22 chain families (`cj_live`, 256 and 2048,
+/// local runs, 2026-11-27).
 #[inline]
 fn sum_under(s: &PaSum, f: &Tag) -> PaSum {
     PaSum {
