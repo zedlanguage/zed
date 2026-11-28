@@ -29730,12 +29730,15 @@ mod tests {
     /// written constraints `a*a >= k` and disjunctions, run on an eager scope and a lazy one;
     /// after every step the eager product of each name is the lazy one settled. The lazy scope
     /// settles every stale star when read, so an eager join whose cut at the hubs missed a
-    /// star whose projection the join changes reads that leaf coarser here. Seeds 0 to 99;
-    /// a sweep of seeds 0 to 999 (2026-11-28) found no name where the two differ.
+    /// star whose projection the join changes reads that leaf coarser here. Seeds 0 to 14
+    /// and 27, 45, 67, 71 and 95, the seeds below 100 whose joins make a new star (seeds 0 to
+    /// 19 make none); about 0.15 s a seed in a test build, so the zedc-preimage piece stays
+    /// under its 20 s limit, where seeds 0 to 99 took 11.8 s alone and stopped it there. A
+    /// sweep of seeds 0 to 999 (2026-11-28) found no name where the two differ.
     #[test]
     fn an_eager_join_on_stars_with_periods_and_coefficients_settles_as_the_lazy_one() {
         use zed_kernel::term::build::{lit, prim, var};
-        let count: u64 = 100;
+        let seeds: Vec<u64> = (0..15).chain([27, 45, 67, 71, 95]).collect();
         let all: Vec<Arc<str>> = ["n", "m", "a0", "a1", "a2", "a3"].map(Arc::from).to_vec();
         let lin = |ts: &[(&str, i64)]| -> Term {
             ts.iter()
@@ -29821,7 +29824,7 @@ mod tests {
                 .assume(&prim(Prim::Le, vec![var(h), lit(20)]), true, &p);
         }
         let (mut joins, mut new_stars) = (0, 0);
-        for seed in 0..count {
+        for &seed in &seeds {
             let mut rng = zed_testkit::seed::Rng::new(seed);
             let (mut eager, mut lazy) = (start.clone(), start.clone().lazy());
             let mut trace = vec![format!("seed {seed}")];
@@ -29862,7 +29865,7 @@ mod tests {
         // The draw makes joins, and stars that a join holds and neither side does, which the
         // due loop of `Scope::join` does not list by difference.
         assert!(
-            joins > count && new_stars > 0,
+            joins > seeds.len() && new_stars > 0,
             "{joins} joins, {new_stars} new stars"
         );
     }
