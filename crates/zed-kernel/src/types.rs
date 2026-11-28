@@ -8028,7 +8028,9 @@ pub mod rec {
     //!
     //! A value type that mentions a parameter may be empty when that parameter is: it counts as
     //! possibly empty when it is empty with every parameter empty, or has a parameter under a
-    //! complement or to the right of `\`, where a larger argument shrinks it.
+    //! complement, to the right of `\` or in the guarantee of a morphism type, where a larger
+    //! argument shrinks it (`(A) -> !_` holds the empty morphism at `A = empty` and nothing at
+    //! `A = int`, FIX-shrinks-guarantee-param).
 
     use std::collections::HashMap;
     use std::sync::atomic::AtomicU64;
