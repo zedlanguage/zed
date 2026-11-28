@@ -12,7 +12,8 @@
 //! What a child writes of a unit ([`output`]): the whole report of `zedc::run::load` when it
 //! rejects the unit, and when it accepts it each warning with its steps, menu, row and address,
 //! the elaborated definitions and tests, the names of each definition's parameters and the
-//! program's content address; then the same of `Db::front`, the front end alone. The maps of
+//! program's content address; then the same of the front end alone (`Db::front`), taken from
+//! the same compile (`run::load_front`). The maps of
 //! the elaborated unit, which are the standard library's and iterate in an order of their own
 //! seed, are written sorted, so that an order that reaches no result is not reported as one.
 //!
@@ -26,7 +27,6 @@ use std::path::PathBuf;
 
 use zed_tests::first_difference;
 use zedc::front::{Diagnostic, Front};
-use zedc::query::Db;
 use zedc::run;
 
 use super::programs;
@@ -94,7 +94,16 @@ fn piece(k: usize) -> Vec<&'static (String, String)> {
 /// Everything the checker says of the unit `text` (module doc).
 fn output(text: &str) -> String {
     let mut out = String::new();
-    match run::load(text.as_bytes()) {
+    // One compile gives both results: `run::load` and `Db::front` each checked the unit
+    // (PERF-guarded-function-walk). Bytes that are not a source have no front end's result.
+    let (front_result, loaded) = match run::load_front(text.as_bytes()) {
+        Ok(both) => both,
+        Err(report) => {
+            writeln!(out, "load rejects:\n{report}").expect("a String takes any write");
+            return out;
+        }
+    };
+    match loaded {
         Err(report) => writeln!(out, "load rejects:\n{report}"),
         Ok(p) => writeln!(out, "load accepts").and_then(|()| {
             diagnostics(&mut out, p.warnings());
@@ -103,7 +112,7 @@ fn output(text: &str) -> String {
         }),
     }
     .expect("a String takes any write");
-    front(&mut out, &Db::new().front(text));
+    front(&mut out, &front_result);
     out
 }
 

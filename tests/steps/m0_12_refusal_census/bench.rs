@@ -17,7 +17,7 @@ const GUARD: &str = "4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * 
                      * x + 12 * y - z + 31 >= 0";
 
 /// Unit 49's form with `n` functions: each divides under [`GUARD`], one refusal each.
-fn guard_functions(n: usize) -> String {
+pub(super) fn guard_functions(n: usize) -> String {
     let mut src = String::new();
     for k in 0..n {
         src += &format!(
@@ -55,7 +55,10 @@ fn guarded_divisions(n: usize) -> String {
 /// node being made once (6.5 million, ratio 3.38). PERF-guarded-function-constant (2026-11-16)
 /// shares the test and reads of functions that differ only in their parameters' names, 67.0
 /// to 42.4 million instructions a guarded function (ratio 7.95 to 7.03); the rest, the walk of
-/// each body, is item PERF-guarded-function-walk.
+/// each body, is item PERF-guarded-function-walk. Its step 1 (2026-11-28) checks each unit once
+/// where the census checked it twice, in `run::load` and in `Db::front`: about 38 million to
+/// 21.6 million a guarded function (700 million at 32, 5.53 billion at 256, ratio 7.89),
+/// under the row's 33.5 million.
 #[test]
 fn refused_guarded_divisions_scale_linearly() {
     for (what, make) in [

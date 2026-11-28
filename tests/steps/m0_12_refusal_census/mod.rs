@@ -24,8 +24,9 @@ use std::fmt::Write;
 use std::path::Path;
 
 use zedc::front::Diagnostic;
-use zedc::query::Db;
 use zedc::run;
+use zedc::suppress::Suppress;
+use zedc::work::{self, Stage, Work};
 
 /// The refusals of the unit `text`, named `origin`: one line for each diagnostic that is a
 /// refusal, `origin`, then `line:col`, whether it rejects the unit or warns, its kinds and its
@@ -33,9 +34,19 @@ use zedc::run;
 /// a step or the menu, that step or the menu, every line break written `/`. A refusal that
 /// only [`run::load`] reports, after the front accepted the unit, is listed at site `load`.
 fn refusals(origin: &str, text: &str, out: &mut String) {
-    let loaded = run::load(text.as_bytes());
-    let front = Db::new().front(text);
-    let (diagnostics, severity): (&[Diagnostic], &str) = match &*front {
+    // One compile gives both results: `run::load` and `Db::front` each checked the unit, twice
+    // the work (PERF-guarded-function-walk, `each_unit_is_checked_once`).
+    let (front, loaded) = match run::load_front(text.as_bytes()) {
+        Ok(both) => both,
+        Err(why) => {
+            let found = kinds::of(&why);
+            if !found.is_empty() {
+                line(out, origin, "load", "rejected", &found, &why);
+            }
+            return;
+        }
+    };
+    let (diagnostics, severity): (&[Diagnostic], &str) = match &front {
         Ok((_, _, warnings)) => (warnings, "warning"),
         Err(ds) => (ds, "rejected"),
     };
@@ -67,7 +78,7 @@ fn refusals(origin: &str, text: &str, out: &mut String) {
             &reason,
         );
     }
-    match (&*front, &loaded) {
+    match (&front, &loaded) {
         (Err(ds), Err(why)) => {
             for d in ds {
                 assert!(
@@ -174,6 +185,88 @@ fn step_units() {
         refusals(&name, &text, &mut out);
     }
     insta::assert_snapshot!(report(&out));
+}
+
+/// PERF-guarded-function-walk: the census checks each unit once, where `run::load` and
+/// `Db::front` each checked it, about 38 million instructions a guarded function where one
+/// check is 19 (2026-11-28). The checker runs once for a unit accepted with refusals, one it
+/// rejects, and one that is not a program's, rejected after the check.
+#[test]
+fn each_unit_is_checked_once() {
+    let units = [
+        (bench::guard_functions(2), true),
+        ("f(x: int) = x + \"a\";\nmain() {\n}\n".to_string(), false),
+        ("f(x: int) = x;\n".to_string(), false),
+    ];
+    let checks = |f: &dyn Fn()| {
+        let ((), report) = work::with(Box::new(Work::default), f);
+        let n: u64 = (report.rows.iter())
+            .filter(|r| r.stage == Stage::Check)
+            .map(|r| r.computed)
+            .sum();
+        (n, report)
+    };
+    for (text, accepted) in units {
+        assert_eq!(run::load(text.as_bytes()).is_ok(), accepted, "{text}");
+        let (n, report) = checks(&|| refusals("unit", &text, &mut String::new()));
+        assert_eq!(n, 1, "{text}\n{report}");
+        // The negative control: the census as it was, a load and then the front end alone,
+        // counts two checks.
+        let (n, report) = checks(&|| {
+            let _ = run::load(text.as_bytes());
+            let _ = zedc::query::Db::new().front(&text);
+        });
+        assert_eq!(n, 2, "{text}\n{report}");
+    }
+}
+
+/// The claim behind PERF-guarded-function-walk's step 1, that only the census checked a unit
+/// twice: the checker runs once for a unit loaded by `run::load`, by `zedc run`
+/// (`run::load_file`, which also stages it) and by `zedc build` (`run::load_file_named`),
+/// accepted with refusals or rejected. The negative control, a load and then the front end
+/// alone counting two, is in `each_unit_is_checked_once`.
+#[test]
+fn zedc_run_and_build_check_a_unit_once() {
+    let dir = zed_tests::scratch::scratch_dir("m0_12_checked_once");
+    let units = [
+        ("guarded.zed", bench::guard_functions(2), true),
+        ("rejected.zed", "f(x: int) = x + \"a\";\nmain() {\n}\n".to_string(), false),
+    ];
+    let checks = |f: &dyn Fn() -> bool| {
+        let (ok, report) = work::with(Box::new(Work::default), f);
+        let n: u64 = (report.rows.iter())
+            .filter(|r| r.stage == Stage::Check)
+            .map(|r| r.computed)
+            .sum();
+        (ok, n, report)
+    };
+    for (name, text, accepted) in units {
+        let path = dir.join(name);
+        std::fs::write(&path, &text).expect("the scratch unit is written");
+        let file = path.to_str().expect("a scratch path is UTF-8");
+        type FileLoad = fn(
+            &str,
+            &[&str],
+            &mut Suppress,
+            &mut dyn std::io::Write,
+        ) -> Result<run::Program, (u8, String)>;
+        let file_load = |load: FileLoad| {
+            move || {
+                let (mut suppress, _) = Suppress::take(&[]).unwrap();
+                load(file, &[], &mut suppress, &mut Vec::new()).is_ok()
+            }
+        };
+        let paths: [(&str, &dyn Fn() -> bool); 3] = [
+            ("run::load", &|| run::load(text.as_bytes()).is_ok()),
+            ("zedc run", &file_load(run::load_file)),
+            ("zedc build", &file_load(run::load_file_named)),
+        ];
+        for (path, load) in paths {
+            let (ok, n, report) = checks(load);
+            assert_eq!(ok, accepted, "{path}: {name}");
+            assert_eq!(n, 1, "{path}: {name}\n{report}");
+        }
+    }
 }
 
 #[test]

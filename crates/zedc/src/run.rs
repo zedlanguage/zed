@@ -26,7 +26,7 @@ use crate::address::{ContentAddress, Framed};
 use crate::ast::{self, Function, Stmt, StmtKind, TypeKind};
 use crate::build::Build;
 use crate::elab::Unit;
-use crate::front::{Diagnostic, Quoted, Unloaded, compile};
+use crate::front::{Diagnostic, Front, Quoted, Unloaded, compile};
 use crate::lex::Span;
 use crate::source::{io_reason, unreadable};
 use crate::suppress::{InFile, Severity, Suppress};
@@ -404,17 +404,52 @@ pub fn load_for(bytes: &[u8], build: &Build) -> Result<Program, String> {
     loaded(bytes, build).map_err(|why| why.report(None, |_| String::new()))
 }
 
+/// The front end's result for the unit in `bytes`, built as [`load`] builds it, and the program
+/// made from it, as [`load`] gives it, from one compile: for a caller that reads the front end's
+/// diagnostics as well as the load's, which with [`load`] and `Db::front` compiled the unit
+/// twice (PERF-guarded-function-walk, the refusal census). `Err` when the bytes are not a
+/// source, the report [`load`] gives then.
+pub fn load_front(bytes: &[u8]) -> Result<(Front, Result<Program, String>), String> {
+    let report = |why: Unloaded| why.report(None, |_| String::new());
+    let text = text_of(bytes).map_err(report)?;
+    let recorder = Recorder::start(&Sites::default());
+    let front = compile(&text, &Build::default());
+    let program = match &front {
+        Ok((stmts, unit, warnings)) => made(text, recorder, stmts, unit.clone(), warnings.clone()),
+        Err(ds) => Err(Unloaded::Rejected(ds.clone())),
+    };
+    Ok((front, program.map_err(report)))
+}
+
+/// The text of the unit in `bytes`, or why its bytes are not a source.
+fn text_of(bytes: &[u8]) -> Result<String, Unloaded> {
+    work::stage(Stage::Load, None, || source::load(bytes))
+        .map_err(|e| Unloaded::Refused(e.render(bytes)))
+}
+
 /// The program in `bytes` built for `build`, or why it was not loaded.
 fn loaded(bytes: &[u8], build: &Build) -> Result<Program, Unloaded> {
-    let text = work::stage(Stage::Load, None, || source::load(bytes))
-        .map_err(|e| Unloaded::Refused(e.render(bytes)))?;
+    let text = text_of(bytes)?;
     // The front end records the site of each node it builds, kept for the nodes the unit holds
     // (plan row RT-sites).
     let recorder = Recorder::start(&Sites::default());
     let (stmts, unit, warnings) = compile(&text, build).map_err(Unloaded::Rejected)?;
+    made(text, recorder, &stmts, unit, warnings)
+}
+
+/// The program made from the front end's result for the unit `text`, its statements `stmts`,
+/// its elaboration `unit` and its `warnings`, with the sites `recorder` kept while the front
+/// end ran; or the refusal of a unit that is not a program's.
+fn made(
+    text: String,
+    recorder: Recorder,
+    stmts: &[Stmt],
+    unit: Arc<Unit>,
+    warnings: Vec<Diagnostic>,
+) -> Result<Program, Unloaded> {
     let sites = recorder.freeze(unit.defs.iter().map(|d| &*d.term));
-    let mut program = work::stage(Stage::Program, None, || program(&stmts, unit))
-        .map_err(|e| Unloaded::Rejected(refusal(&text, &stmts, e)))?;
+    let mut program = work::stage(Stage::Program, None, || program(stmts, unit))
+        .map_err(|e| Unloaded::Rejected(refusal(&text, stmts, e)))?;
     program.warnings = warnings.into();
     program.text = text.into();
     program.sites = Arc::new(sites);
