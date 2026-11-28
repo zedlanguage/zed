@@ -361,5 +361,5 @@ ShapeDim      = (Name ':')? (WILD | Additive)                                   
 GrammarBlock  = 'grammar' '{' GAlt '}'                                             L20
 GAlt          = GSeq ('|' GSeq)*                                                   L20
 GSeq          = GItem+                                                             L20
-GItem         = (Name ':')? GPrimary ('*' | '+' | '?')? ('sep' GPrimary)? TypeFacet*   L20
+GItem         = (Name ':')? GPrimary ('*' | '+' | '?')? ('sep' GPrimary)? ('with' FacetCall)*   L20
 GPrimary      = STRING | !'sep' Name | '(' GAlt ')'                                L20

@@ -1141,6 +1141,18 @@ struct Resolver<'u> {
     tops: HashSet<usize>,
     /// The binders bound to a lambda, `f = (x) -> e;`, which call like functions.
     lambdas: HashSet<usize>,
+    /// The binders of a type's local parts, `T with type P = U` (SPEC-with-local-part): the
+    /// type before `with` stands above them in the text and sees them, so a use above one is
+    /// not "used above its definition" ([`Resolver::order`]).
+    parts: HashSet<usize>,
+    /// For each `with type` clause inside a chain of them, `A with type P = U with type Q = V`,
+    /// the function type its parts stand in, if any ([`Resolver::part_home`]), found once by
+    /// the outermost clause of the chain.
+    // Complexity tradeoff: each clause finding the function type below it walks the rest of
+    // the chain, O(n²) over n clauses (bench `a_type_of_many_local_parts_scales`); the
+    // outermost clause walks it once and leaves each inner clause its answer here, O(n) in
+    // all, at one entry per clause until that clause is read.
+    part_homes: HashMap<Span, Option<Span>>,
     /// The tables of type variables of the signatures, top-level statements and field lists
     /// being walked, innermost last ([`FreeVars`]).
     free: Vec<FreeVars>,
@@ -1717,13 +1729,14 @@ impl Resolver<'_> {
     /// Notes the use at `span` of `name`, which names `ids`, when it stands above its
     /// definition in a block, a field list or a parameter list. A unit's top-level
     /// declarations and its imports may be named in any order (DESIGN.md sec:lexical), so only
-    /// the binders of an inner scope are compared. `O(1)`.
+    /// the binders of an inner scope are compared, and of those not a type's local part, which
+    /// the type before its `with` sees. `O(1)`.
     fn order(&mut self, name: &str, span: Span, ids: &Vector<usize>) {
         let inner = (self.visible.get(name))
             .and_then(|v| v.last())
             .is_some_and(|b| b.level > TOP && !b.imported);
         let id = ids[0];
-        if inner && self.out.binders[id].span.start > span.start {
+        if inner && !self.parts.contains(&id) && self.out.binders[id].span.start > span.start {
             let first = self.above.entry(id).or_insert(span);
             *first = (*first).min(span);
         }
@@ -2508,7 +2521,13 @@ impl Resolver<'_> {
                     }
                 }
                 Task::Close => self.close(),
-                Task::BindPart(name, span) => self.bind(name, span, span, Kind::Type, None),
+                Task::BindPart(name, span) => {
+                    let id = self.out.binders.len();
+                    self.bind(name, span, span, Kind::Type, None);
+                    if self.out.binders.len() == id + 1 {
+                        self.parts.insert(id);
+                    }
+                }
                 Task::ArrowEnd => {
                     self.arrows.pop();
                 }
@@ -4580,6 +4599,15 @@ impl Resolver<'_> {
                 }
                 self.open();
                 todo.extend([Task::Close, Task::Ty(ty)]);
+                // A part stands where the type before `with` uses it, so when that type is a
+                // function type the part's type is inside it, and a variable of the `for`
+                // around has its home there (DESIGN.md `with` row, `T -> (Part1, Part1) with
+                // type Part1 = (T, T) for T in int | rat`). The function type pushes the same
+                // span when it is read, so a variable used in both has one home.
+                if let Some(home) = self.part_home(t) {
+                    self.arrows.push(home);
+                    todo.push(Task::ArrowEnd);
+                }
                 for p in parts.iter().rev() {
                     todo.extend([Task::BindPart(&p.name, p.span), Task::Ty(&p.ty)]);
                 }
@@ -4967,6 +4995,36 @@ impl Resolver<'_> {
             message,
             notes: Vec::new(),
         });
+    }
+
+    /// The function type the parts of the `with type` clause `t` stand in: the span of the
+    /// type before `with`, under any clauses inside it, when that type is one the walk makes
+    /// the home of a variable (an arrow, a morphism type, a list, an overload). `O(1)` for a
+    /// clause inside a chain, after `O(n)` once for the outermost of n clauses
+    /// ([`Resolver::part_homes`]).
+    fn part_home(&mut self, t: &Type) -> Option<Span> {
+        if let Some(home) = self.part_homes.remove(&t.span) {
+            return home;
+        }
+        let mut inner = Vec::new();
+        let mut body = t;
+        while let TypeKind::Local { ty, .. } = &body.kind {
+            if !std::ptr::eq(body, t) {
+                inner.push(body.span);
+            }
+            body = ty;
+        }
+        let home = match &body.kind {
+            TypeKind::Arrow { .. } | TypeKind::Bounded { .. } | TypeKind::Array(_) => {
+                Some(body.span)
+            }
+            TypeKind::And(ts) => {
+                matches!(Type::overload(&Type::and_operands(ts)), Ok(true)).then_some(body.span)
+            }
+            _ => None,
+        };
+        self.part_homes.extend(inner.into_iter().map(|s| (s, home)));
+        home
     }
 
     /// A use of the bounded type variable `n` at `span`. Its bound is a bound of the outermost
