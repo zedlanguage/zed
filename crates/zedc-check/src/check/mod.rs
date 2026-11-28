@@ -19643,6 +19643,25 @@ pub fn reset_def_entries() {
     DEF_ENTRIES.with(|c| c.set(0));
 }
 
+thread_local! {
+    /// The leftovers [`Denote::left_of`] has compared or looked up on this thread while reading
+    /// a definition, to find the variable of a leftover's key. Per thread, as [`DEF_ENTRIES`].
+    static LEFT_PROBES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The leftovers counted in [`LEFT_PROBES`] on this thread since the last
+/// [`reset_left_probes`]: for the test that reading a definition with many distinct leftovers
+/// finds each key's variable in bounded work, not by a scan of the leftovers read before
+/// (XR-heldname-print-batch round 3, D2 of META3).
+pub fn left_probes() -> u64 {
+    LEFT_PROBES.with(std::cell::Cell::get)
+}
+
+/// Sets this thread's count of [`left_probes`] to 0.
+pub fn reset_left_probes() {
+    LEFT_PROBES.with(|c| c.set(0));
+}
+
 /// The steps that say why each part of the written type `t` that is written as a tuple type, an
 /// atom with a payload, a union, an intersection or a difference has no value, and so is
 /// printed `Never` (DESIGN.md sec:diagnostics: a message names every step from the cause to
@@ -20548,7 +20567,10 @@ impl<'a> Denote<'a> {
         {
             let k = match held.left_by_key.get(&key) {
                 Some(&k) => k,
-                None => match def.new_lefts.iter().position(|l| l.key == key) {
+                None => match def.new_lefts.iter().position(|l| {
+                    LEFT_PROBES.with(|c| c.set(c.get() + 1));
+                    l.key == key
+                }) {
                     Some(j) => held.lefts.len() + j,
                     None => {
                         let k = held.lefts.len() + def.new_lefts.len();

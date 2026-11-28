@@ -20,7 +20,7 @@ use super::ty::{Binds, NodeId, Row, Shape, Sig, Ty, WrittenRange};
 use super::{
     DefParts, Denoted, Held, HeldDef, Inexact, Loss, Ranged, carrier_mask, denoted_inexact,
 };
-pub use super::{def_entries, reset_def_entries};
+pub use super::{def_entries, left_probes, reset_def_entries, reset_left_probes};
 use zedc_lattice::interval::Num;
 use zedc_syntax::ast::{self, Expr, ExprKind, RangeEnd, Type, TypeKind};
 use zedc_syntax::lex::{self, Part, Tok};

@@ -813,8 +813,10 @@ fn a_returned_function_with_its_own_bound_writes_its_rows_in_full() {
     zedc::check::ty::set_ignore_other_binders(true);
     let control = check();
     zedc::check::ty::set_ignore_other_binders(false);
+    // The control's text itself names a part (round 3, Codex B-oracles), so that a failure to
+    // print or read back cannot pass for it.
     assert!(
-        control.is_err(),
+        matches!(&control, Err(e) if e.starts_with("names parts") && e.contains("type Part")),
         "the control prints as the test wants:\n{control:?}"
     );
 }
@@ -976,15 +978,14 @@ fn the_design_example_of_shared_rows_beside_a_blank_prints_as_written() {
     );
 }
 
-/// XR-heldname-print-batch round 2, Gemini C1-1b and Codex C1: the examples of DESIGN.md
-/// (sec:diagnostics, "Types in a message") of rows over a variable bounded by a need and over
-/// a leftover, as the fixes of round 2 (D4) print them. The need-bounded variable prints with
-/// no bounds clause, so its rows are named as those of an unbounded variable, and the text
-/// reads back to itself with that variable unbounded (row PRINT-need-bound-clause). The rows
-/// over the leftover `T \ #a` of [`leftover_rows`] at two levels are named, and the text reads
-/// back to itself with the signature's one need.
+/// XR-heldname-print-batch round 2, Gemini C1-1b and Codex C1: the example of DESIGN.md
+/// (sec:diagnostics, "Types in a message") of rows over a variable bounded by a need, as the
+/// fixes of round 2 (D4) print it. The need-bounded variable prints with no bounds clause, so
+/// its rows are named as those of an unbounded variable, and the text reads back to itself with
+/// that variable unbounded (row PRINT-need-bound-clause). One test per example (round 3): an
+/// earlier single test stopped at its first example, so the second was never run alone.
 #[test]
-fn the_design_examples_of_need_bounded_and_leftover_rows_print_as_written() {
+fn the_design_example_of_need_bounded_rows_prints_as_written() {
     use zedc::check::read::parse_type;
     use zedc::check::ty::OTHER;
     let need = sig_of(&need_bounded_rows(4), "f");
@@ -1001,6 +1002,15 @@ fn the_design_examples_of_need_bounded_and_leftover_rows_print_as_written() {
         .first()
         .unwrap_or_else(|| panic!("{text} reads back as no function"));
     assert!(read.bounds.values().all(|m| m & OTHER == 0), "{text}");
+}
+
+/// XR-heldname-print-batch round 2, Gemini C1-1b and Codex C1: the example of DESIGN.md
+/// (sec:diagnostics, "Types in a message") of rows over a leftover. The rows over the leftover
+/// `T \ #a` of [`leftover_rows`] at two levels are named, and the text reads back to itself
+/// with the signature's one need.
+#[test]
+fn the_design_example_of_leftover_rows_prints_as_written() {
+    use zedc::check::read::parse_type;
     let left = sig_of(&leftover_rows(2), "f");
     let text = left.to_string();
     assert_eq!(
@@ -1041,6 +1051,93 @@ fn a_known_payload_shape_writes_shared_rows_in_full() {
         rows("(a0, #a)"),
         "type Part1 = ((T, #a), ((T, #a), U));\ntype Part2 = (Part1, (Part1, V));\n(T, U, V, W) -> (Part2, (Part2, W))"
     );
+}
+
+/// The function `(a: T) -> R_m for T in int | f64`, R_0 = `(T, c)` and R_{k+1} = `(R_k, R_k)`,
+/// one row node at both places of each level.
+fn rows_beside(c: Ty, m: usize) -> zedc::check::ty::Sig {
+    let mut s = super::standing_twice::read_sig("(a: T) -> T for T in int | f64");
+    let t = s.arrows[0].result.clone();
+    s.arrows[0].result = (0..m).fold(Ty::tuple(vec![t, c]), |r, _| Ty::tuple(vec![r.clone(), r]));
+    s
+}
+
+/// XR-heldname-print-batch round 3, Codex C-payload-control (D8 of META3): a set of atoms that
+/// admits any payload, `#a(..)` (a kernel set, as the checker makes it for `#a` with a payload
+/// it does not know), beside the function's own variable in shared rows does not keep the rows
+/// from being named: the rows are written once. Control: an atom with a known payload shape,
+/// `#a(int)` (`Ty::atom_of`), writes them in full at each place ([`Shared::of`] reads
+/// `payload_shapes`). A guard of the text of DESIGN.md "Types in a message".
+#[test]
+fn kernel_any_payload_does_not_veto_local_rows() {
+    let int = super::standing_twice::read_sig("(a: int) -> int").arrows[0]
+        .result
+        .clone();
+    let any = Ty::set(KType::atom_with("a", &KType::top()));
+    let known = Ty::atom_of("a", vec![int], BTreeMap::new());
+    let (any, known) = (
+        rows_beside(any, 4).to_string(),
+        rows_beside(known, 4).to_string(),
+    );
+    assert!(any.contains("type Part"), "{any}");
+    assert!(!known.contains("type Part"), "{known}");
+}
+
+/// XR-heldname-print-batch round 3, Codex C-eligibility (D8 of META3): shared rows over a
+/// variable `X` that the function neither binds nor bounds are not named as definitions in
+/// the function's text: only a variable the function owns or bounds may stand in a part it
+/// names. Control: the same rows once the function owns `X` are named. A guard of the text of
+/// DESIGN.md "Types in a message".
+#[test]
+fn a_repeated_row_with_an_external_variable_is_not_local() {
+    use std::sync::Arc;
+    let x = Ty::var(Arc::from("X"));
+    let rows = (0..4).fold(Ty::tuple(vec![x.clone(), x]), |r, _| {
+        Ty::tuple(vec![r.clone(), r])
+    });
+    let mut s = super::standing_twice::read_sig("(a: int) -> int");
+    s.arrows[0].result = rows;
+    let external = s.to_string();
+    s.own.insert(Arc::from("X"));
+    let owned = s.to_string();
+    assert!(!external.contains("type Part"), "{external}");
+    assert!(owned.contains("type Part"), "{owned}");
+}
+
+/// XR-heldname-print-batch round 3, Codex C-erasure-cost (D8 of META3): a union written `_`
+/// beside shared rows holding a known payload shape does not make their text shorter: the rows
+/// are still written in full at each place, 2^n copies of `#a(1)` at n levels for n = 2, 3, 4.
+/// Control: with `#a` in place of `#a(1)` the rows are named, and `#a` is written as often at
+/// each depth. A guard of the text of DESIGN.md "Types in a message", which no longer says the
+/// text stays linear; row PLAN-print-payload-rows-exponential is to make it so.
+#[test]
+fn absorbed_union_beside_known_payload_rows_does_not_imply_compression() {
+    let text = |inner: &str, n: usize| {
+        let params: Vec<String> = (1..=n).map(|i| format!("positional a{i}")).collect();
+        let rows = (1..=n).fold(inner.to_string(), |s, i| format!("p({s}, a{i})"));
+        let src = format!(
+            "p(positional s, positional v) = (s, (s, v));\nf(positional a0, {}, xs, i, c: bool) = ({rows}, if c {{ (0, 0) }} else {{ xs[i] }});\n",
+            params.join(", ")
+        );
+        sig_of(&src, "f").to_string()
+    };
+    let mut bad = Vec::new();
+    let (mut known, mut bare) = (Vec::new(), Vec::new());
+    for n in [2, 3, 4] {
+        let (k, b) = (text("(a0, #a(1))", n), text("(a0, #a)", n));
+        if !k.contains(", _)") || !b.contains(", _)") {
+            bad.push(format!("no union written `_`:\n{k}\n{b}"));
+        }
+        if !b.contains("type Part") {
+            bad.push(format!("the bare atom's rows are not named:\n{b}"));
+        }
+        known.push(k.matches("#a(1)").count());
+        bare.push(b.matches("#a").count());
+    }
+    if known != [4, 8, 16] || bare.iter().any(|&c| c != bare[0]) {
+        bad.push(format!("copies of #a(1) {known:?}, of #a {bare:?}"));
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
 /// The rows of [`shared_rows`] over `a0`, which is passed to `apply` at a function that may
@@ -1111,7 +1208,9 @@ fn need_bounded_shared_rows_do_not_expand_paths() {
 /// outer function, so the print writes the rows in full (a definition would be read outside
 /// `h`'s clause); a walk that only counts (`Sig::standing_twice`) writes each row's text once
 /// for the opening of `h` ([`Walk::local`]) and enters O(m) tuples, where it entered each once
-/// per path, 2^m. Checked at m and 8m, the work counted (`row_entries`).
+/// per path, 2^m. Checked at m and 8m, the work counted (`row_entries`). The outer function
+/// binds a variable `A` of its own, at its parameter and in its result beside `h` (round 3,
+/// Codex B-oracles), so the walk has an outer variable to count, which stands twice.
 #[test]
 fn returned_bound_shared_rows_do_not_expand_paths() {
     use super::standing_twice::read_sig;
@@ -1125,8 +1224,9 @@ fn returned_bound_shared_rows_do_not_expand_paths() {
         h.arrows[0].result = (0..m).fold(Ty::tuple(vec![n.clone(), int.clone()]), |r, _| {
             Ty::tuple(vec![r.clone(), r])
         });
-        let mut s = read_sig("(a: int) -> int");
-        s.arrows[0].result = Ty::func(Arc::new(h));
+        let mut s = read_sig("(a: A) -> A for A in int | f64");
+        let a = s.arrows[0].result.clone();
+        s.arrows[0].result = Ty::tuple(vec![a, Ty::func(Arc::new(h))]);
         s
     };
     let mut work = Vec::new();
@@ -1135,9 +1235,9 @@ fn returned_bound_shared_rows_do_not_expand_paths() {
         reset_row_entries();
         let twice = s.standing_twice();
         let entries = row_entries();
-        assert!(twice.is_empty(), "{twice:?}");
+        assert!(twice.contains("A") && !twice.contains("N"), "{twice:?}");
         assert!(
-            entries <= 8 * (m as u64 + 2),
+            entries > 0 && entries <= 8 * (m as u64 + 2),
             "{entries} tuples entered counting the places of {m} levels"
         );
         work.push(entries);
@@ -1160,7 +1260,7 @@ fn standing_twice_enters_each_shared_row_a_bounded_number_of_times() {
         let _ = s.standing_twice();
         let entries = row_entries();
         assert!(
-            entries <= 8 * (n + 2),
+            entries > 0 && entries <= 8 * (n + 2),
             "{entries} tuples entered at {n} levels"
         );
     }
@@ -1313,6 +1413,119 @@ fn a_leftover_need_read_back_is_on_the_parameter_and_gives_the_result() {
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
+/// The paths in `t` to each type that holds the variable `v`: a path is the row and component
+/// index at each tuple on the way, the empty path `t` itself.
+fn var_paths(t: &Ty, v: &str, at: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+    if t.vars.iter().any(|x| &**x == v) {
+        out.push(at.clone());
+    }
+    for (r, row) in t.tuples.iter().enumerate() {
+        for (i, c) in row.iter().enumerate() {
+            at.extend([r, i]);
+            var_paths(c, v, at, out);
+            at.truncate(at.len() - 2);
+        }
+    }
+}
+
+/// The needs of `s`, in order, with no variable named: for each, the parameter it is on (its
+/// slot in the first arrow), what it does, and the paths in the first arrow's result to what
+/// it gives. Two signatures that differ only in the names of their variables and the spans of
+/// their needs have the same graph, which subtyping cannot see for a need that leaves a
+/// variable (row SUBTYPE-leftover-renamed).
+type NeedGraph = Vec<(Option<usize>, String, Vec<Vec<usize>>)>;
+fn need_graph(s: &zedc::check::ty::Sig) -> NeedGraph {
+    let Some(arrow) = s.arrows.first() else {
+        return Vec::new();
+    };
+    (s.needs.iter())
+        .map(|n| {
+            let slot = arrow.params.iter().position(|p| *p == n.on);
+            let mut paths = Vec::new();
+            if let Some(v) = n.result.as_ref().and_then(|r| r.as_var()) {
+                var_paths(&arrow.result, v, &mut Vec::new(), &mut paths);
+            }
+            (slot, format!("{:?}", n.kind), paths)
+        })
+        .collect()
+}
+
+/// The need graph ([`need_graph`]) of each function `text` reads as: the type itself, or each
+/// function in the tuple it is, in order.
+fn need_graphs(text: &str) -> Result<Vec<NeedGraph>, String> {
+    let t = zedc::check::read::parse_type(text)?;
+    let fns: Vec<_> = match t.tuples.iter().next() {
+        Some(r) => r.iter().flat_map(|c| c.fns.iter().cloned()).collect(),
+        None => t.fns.iter().cloned().collect(),
+    };
+    Ok(fns.iter().map(|s| need_graph(s)).collect())
+}
+
+/// XR-heldname-print-batch round 3, Codex B-left-order (D6 of META3): the needs of the
+/// leftovers definitions write are put on the function in the order their uses stand in the
+/// text written out: `#a`'s, in `Part1`, then `#b`'s. Needs are compared in order (`Needs::eq`,
+/// the digests), so two orders are two signatures. Before, the walk put the need of the
+/// definition it entered first before those of the definitions it names, `#b` then `#a`.
+/// Control: the text written out with the two removed sets swapped has the other order, so the
+/// comparison sees an order.
+#[test]
+fn leftover_needs_are_installed_in_inlined_first_use_order() {
+    let named =
+        need_graphs("type Part1 = (T \\ #a, T);\ntype Part2 = (Part1, T \\ #b);\nT -> Part2");
+    let full = need_graphs("T -> ((T \\ #a, T), T \\ #b)");
+    let swapped = need_graphs("T -> ((T \\ #b, T), T \\ #a)");
+    assert!(full.is_ok() && swapped.is_ok(), "{full:?}\n{swapped:?}");
+    assert_ne!(full, swapped);
+    assert_eq!(named, full);
+}
+
+/// XR-heldname-print-batch round 3, Codex two owners (D7 of META3): a definition holding a
+/// leftover, named by two sibling functions through a second definition, gives each function
+/// its own need on its own `T`, with what it gives at each place, as the text written out does.
+/// A guard: Gemini ran this case on 91ad6f5a4 and each function had its need.
+#[test]
+fn a_leftover_definition_installs_one_need_per_outer_signature() {
+    let named = "type Part1 = (T \\ #a, T);\ntype Part2 = (Part1, Part1);\n(T -> Part2, ((T, int) -> Part2))";
+    let full = "(T -> ((T \\ #a, T), (T \\ #a, T)), ((T, int) -> ((T \\ #a, T), (T \\ #a, T))))";
+    let (a, b) = (need_graphs(named), need_graphs(full));
+    match &b {
+        Ok(gs) if gs.len() == 2 && gs.iter().all(|g| g.len() == 1 && g[0].2.len() == 2) => {}
+        _ => panic!("`{full}` reads as {b:?}"),
+    }
+    assert_eq!(a, b, "{named}");
+}
+
+/// XR-heldname-print-batch round 3, Codex B-oracles (D7 of META3): the signature of
+/// [`leftover_rows`] at 1 and 6 levels and the type its text reads back as have the same need
+/// graph ([`need_graph`]): the need on the first parameter, what it removes, and every place
+/// of what it gives. Controls: moving what the need gives to another place of the result, or
+/// the need to another parameter, changes the graph.
+#[test]
+fn a_leftover_read_back_keeps_its_need_graph() {
+    let mut bad = Vec::new();
+    for n in [1, 6] {
+        let s = sig_of(&leftover_rows(n), "f");
+        let text = s.to_string();
+        match need_graphs(&text) {
+            Ok(back) if back.len() == 1 && back[0] == need_graph(&s) => {}
+            got => bad.push(format!(
+                "{n} levels: {text}\n  wants {:?}\n  reads {got:?}",
+                need_graph(&s)
+            )),
+        }
+    }
+    for (a, b) in [
+        ("T -> (T \\ #a, T)", "T -> (T, T \\ #a)"),
+        ("(T, U) -> (T \\ #a, U)", "(T, U) -> (U \\ #a, T)"),
+    ] {
+        match (need_graphs(a), need_graphs(b)) {
+            (Ok(x), Ok(y)) if x != y => {}
+            got => bad.push(format!("`{a}` and `{b}` read as {got:?}")),
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
 /// XR-heldname-print-batch round 2, Codex B6-expansion: the text of [`leftover_rows`] at `n` and
 /// `8n` levels is linear in `n`: at most 64 bytes a level, at most 10.5 times longer at 8 times
 /// the levels, and at `n` it reads back to itself with the signature's one need. Round 1 wrote
@@ -1370,6 +1583,8 @@ fn a_used_definition_does_not_excuse_a_vacant_sibling_clause() {
         "(((a: Part1) -> int for T in int | f64), ((b: int) -> int for T in int | f64))",
         "(((a: T) -> int for T in int | f64), ((b: int) -> int for T in int | f64))",
         "(((a: Part1) -> int for T in int | f64), int for T in int | f64)",
+        // Round 3, Gemini B1-A: the sibling's clause stands on `Part1`, not on a function type.
+        "(((a: Part1) -> int for T in int | f64), ((b: int) -> (Part1 for T in int | f64)))",
     ];
     let read = [
         "(((a: Part1) -> int for T in int | f64), ((b: Part1) -> int for T in int | f64))",
@@ -1384,6 +1599,94 @@ fn a_used_definition_does_not_excuse_a_vacant_sibling_clause() {
             _ => {}
         }
     }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// The resolver's words for a bounded variable used outside every function type of its clause
+/// (`zedc_resolve::resolve`'s `type_var`).
+const OUTSIDE: &str = "stands outside a function type";
+/// The resolver's words for a bounded variable used in two function types of its clause.
+const TWO: &str = "stands in two function types";
+
+/// Checks each of `cases`, a text after `type Part1 = (T, T);` and the resolver's words it is
+/// rejected with (`None`: it reads): the text, and the text with `Part1` written out, which the
+/// reader must treat alike (a use of a bounded variable through a definition meets the rules of
+/// a written use). A rejection in other words, as a parse error before the reading, is reported
+/// as such, so that a text the grammar refuses is seen and replaced, not passed.
+fn clause_home_cases(cases: &[(&str, Option<&str>)]) -> Vec<String> {
+    let mut bad = Vec::new();
+    for &(text, want) in cases {
+        let full = text.replace("Part1", "(T, T)");
+        let named = format!("type Part1 = (T, T);\n{text}");
+        for t in [&named, &full] {
+            match (zedc::check::read::parse_type(t), want) {
+                (Ok(_), None) => {}
+                (Err(e), Some(w)) if e.contains(w) => {}
+                (Ok(ty), Some(w)) => bad.push(format!("`{t}` reads as {ty}; wants `{w}`")),
+                (Err(e), w) => bad.push(format!("`{t}` is rejected: {e}; wants {w:?}")),
+            }
+        }
+    }
+    bad
+}
+
+/// XR-heldname-print-batch round 3, Claude F1 (D1 of META3): a use of a bounded variable
+/// through a definition meets the two rules the resolver applies to a written use: it stands
+/// in a function type of its clause, and in one only (an overload is one). Before, a name for a
+/// definition read under a clause marked the clause used before it looked for the clause's
+/// function type, and checked neither rule, so (a)-(d) read though written out each is
+/// rejected. Controls that read: the same uses in one function type, or with a clause each.
+#[test]
+fn a_use_through_a_definition_meets_the_rules_of_a_written_use() {
+    let bad = clause_home_cases(&[
+        (
+            "(((a: T) -> int for T in int | f64), ((b: int) -> (Part1 for T in f64)))",
+            Some(OUTSIDE),
+        ),
+        (
+            "(((a: Part1) -> int), ((b: Part1) -> int)) for T in int | f64",
+            Some(TWO),
+        ),
+        (
+            "(((a: T) -> int), ((b: Part1) -> int)) for T in int | f64",
+            Some(TWO),
+        ),
+        (
+            "(Part1, (a: Part1) -> int) for T in int | f64",
+            Some(OUTSIDE),
+        ),
+        ("(a: Part1) -> (Part1, int) for T in int | f64", None),
+        (
+            "(((a: Part1) -> int), ((b: int) -> int)) for T in int | f64",
+            None,
+        ),
+        (
+            "(((a: Part1) -> int for T in int | f64), ((b: Part1) -> int for T in int | f64))",
+            None,
+        ),
+    ]);
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// XR-heldname-print-batch round 3, Codex B-clause-home (D1 of META3): the clause home of a use
+/// through a definition is the one of its literal expansion. Rejected: two sibling function
+/// types under one clause, each naming `Part1`; and a clause on `Part1` beside a function type,
+/// inside an outer one, after a sibling that supplies `T` under a clause of its own. Read:
+/// both names under one function type, and a clause on each sibling.
+#[test]
+fn a_definition_use_obeys_the_clause_home_of_literal_expansion() {
+    let bad = clause_home_cases(&[
+        ("(int -> Part1, f64 -> Part1) for T in int", Some(TWO)),
+        (
+            "int -> ((int -> Part1 for T in int), (Part1 for T in f64))",
+            Some(OUTSIDE),
+        ),
+        ("int -> (Part1, Part1) for T in int", None),
+        (
+            "((int -> Part1 for T in int), (f64 -> Part1 for T in int))",
+            None,
+        ),
+    ]);
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
@@ -1429,6 +1732,61 @@ fn a_part_field_label_is_not_a_definition_use() {
     match read_back_bounds_of(control) {
         Ok(bounds) if bounds == ["T"] => {}
         got => bad.push(format!("`{control}`: {got:?}")),
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// The own variables of each function `text` reads as, the type itself or each function in the
+/// tuple it is, in order.
+fn own_sets(text: &str) -> Result<Vec<Vec<String>>, String> {
+    let t = zedc::check::read::parse_type(text)?;
+    let fns: Vec<_> = match t.tuples.iter().next() {
+        Some(r) => r.iter().flat_map(|c| c.fns.iter().cloned()).collect(),
+        None => t.fns.iter().cloned().collect(),
+    };
+    Ok(fns
+        .iter()
+        .map(|s| s.own.iter().map(|v| v.to_string()).collect())
+        .collect())
+}
+
+/// XR-heldname-print-batch round 3, Codex B-label-free and Gemini B5-free-label (D4 of META3):
+/// a field label `T` in a definition, as in `#x(T: int)`, is no use of a variable `T`, so a
+/// sibling function type that writes `T` twice does not give the definition's function type an
+/// own variable `T`. Before, the scan for a definition's free names took every capitalized
+/// token written twice in the text, the label included. Each text gives the own variables of
+/// the text written out. Control: a true field type `T`, `#x(v: T)`, is a use.
+#[test]
+fn a_field_label_does_not_add_an_own_variable_from_a_sibling() {
+    let cases = [
+        (
+            "type Part1 = #x(T: int);\n",
+            "(int -> Part1, T -> T)",
+            "#x(T: int)",
+        ),
+        (
+            "type Part1 = #x(T: int);\n",
+            "((a: Part1) -> int, (b: T, c: T) -> int)",
+            "#x(T: int)",
+        ),
+        (
+            "type Part1 = #x(v: T);\n",
+            "((a: Part1) -> int, (b: T, c: T) -> int)",
+            "#x(v: T)",
+        ),
+    ];
+    let mut bad = Vec::new();
+    for (def, text, body) in cases {
+        let named = format!("{def}{text}");
+        let full = text.replace("Part1", body);
+        match (own_sets(&named), own_sets(&full)) {
+            (Ok(a), Ok(b)) if a == b => {}
+            (a, b) => bad.push(format!("`{named}` owns {a:?}\n`{full}` owns {b:?}")),
+        }
+    }
+    match own_sets("type Part1 = #x(v: T);\n((a: Part1) -> int, (b: T, c: T) -> int)") {
+        Ok(owns) if owns.first().is_some_and(|o| o.iter().any(|v| v == "T")) => {}
+        got => bad.push(format!("the control's first function owns no `T`: {got:?}")),
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
@@ -1488,7 +1846,7 @@ fn reading_shared_definitions_across_inner_arrows_scales() {
             let entries = def_entries();
             match read {
                 Err(e) => bad.push(format!("{n}, outer {outer}: {e}")),
-                Ok(_) if entries > 2 * (2 * n as u64) + 8 => {
+                Ok(_) if entries == 0 || entries > 2 * (2 * n as u64) + 8 => {
                     bad.push(format!("{n}, outer {outer}: {entries} definitions entered"))
                 }
                 Ok(_) => {}
@@ -1508,6 +1866,153 @@ fn reading_shared_definitions_across_inner_arrows_scales() {
             (a, b) => bad.push(format!(
                 "outer {outer}:\n`{named}` reads {a:?}\n`{full}` reads {b:?}"
             )),
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// [`inner_arrows`] without the outer parameter, each inner function with a clause of its
+/// own, `((x: U) -> (Partm, U) for U in int)`, as the printer writes an inner signature that
+/// bounds a variable: a clause that names no name a definition writes.
+fn inner_clauses(m: usize, f: usize) -> String {
+    let mut text = "type Part1 = (T, T);\n".to_string();
+    for k in 2..=m {
+        text += &format!("type Part{k} = (Part{0}, Part{0});\n", k - 1);
+    }
+    let inner: Vec<String> = (0..f)
+        .map(|_| format!("((x: U) -> (Part{m}, U) for U in int)"))
+        .collect();
+    text + &format!("(a: T) -> ({}) for T in int | f64", inner.join(", "))
+}
+
+/// XR-heldname-print-batch round 3, Claude F3 (D3 of META3): reading [`inner_clauses`] enters
+/// each definition a bounded number of times, at most 2(2n) + 8 (`read::def_entries`) at
+/// m = f = n = 64 and 512, and more than none. Before, each inner clause pushed a clause and
+/// walked every definition again, m·f entries, though no definition writes `U`.
+#[test]
+fn reading_shared_definitions_across_inner_clauses_scales() {
+    use zedc::check::read::{def_entries, parse_type, reset_def_entries};
+    let mut bad = Vec::new();
+    for n in [64, 512] {
+        let text = inner_clauses(n, n);
+        reset_def_entries();
+        let read = parse_type(&text);
+        let entries = def_entries();
+        match read {
+            Err(e) => bad.push(format!("{n}: {e}")),
+            Ok(_) if entries == 0 || entries > 2 * (2 * n as u64) + 8 => {
+                bad.push(format!("{n}: {entries} definitions entered"))
+            }
+            Ok(_) => {}
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// A chain of `m` closed definitions, R_1 = `(int, int)` and R_{k+1} = `(R_k, R_k)`, and a
+/// tuple of `f` sibling functions `(x: int) -> (R_m, i)`, for `i` from 0, with no clause:
+/// Codex's witness of XR-heldname-print-batch round 3, B-neutral-DAG. With `full`, each
+/// definition is written out where it is named.
+fn closed_sibling_arrows(m: usize, f: usize, full: bool) -> String {
+    let mut text = "type Part1 = (int, int);\n".to_string();
+    for k in 2..=m {
+        text += &format!("type Part{k} = (Part{0}, Part{0});\n", k - 1);
+    }
+    let row = match full {
+        true => (1..m).fold("(int, int)".to_string(), |r, _| format!("({r}, {r})")),
+        false => format!("Part{m}"),
+    };
+    let inner: Vec<String> = (0..f)
+        .map(|i| format!("((x: int) -> ({row}, {i}))"))
+        .collect();
+    match full {
+        true => format!("({})", inner.join(", ")),
+        false => text + &format!("({})", inner.join(", ")),
+    }
+}
+
+/// XR-heldname-print-batch round 3, Codex B-neutral-DAG (D3 of META3): reading
+/// [`closed_sibling_arrows`] enters each definition a bounded number of times, at most
+/// 2(2n) + 8 (`read::def_entries`) at m = f = n = 64 and 512. The definitions hold no free,
+/// unbound or leftover name, so walking them changes nothing; before, each sibling opened its
+/// own outermost frame and walked all m, m·f entries. At m = f = 3 the text reads as the text
+/// written out. Guard: a definition that holds no variable itself but names one that holds a
+/// bounded `T` still gives `T` to the function that names it.
+#[test]
+fn reading_closed_shared_definitions_across_sibling_arrows_scales() {
+    use zedc::check::read::{def_entries, parse_type, reset_def_entries};
+    let mut bad = Vec::new();
+    for n in [64, 512] {
+        let text = closed_sibling_arrows(n, n, false);
+        reset_def_entries();
+        let read = parse_type(&text);
+        let entries = def_entries();
+        match read {
+            Err(e) => bad.push(format!("{n}: {e}")),
+            Ok(_) if entries > 2 * (2 * n as u64) + 8 => {
+                bad.push(format!("{n}: {entries} definitions entered"))
+            }
+            Ok(_) => {}
+        }
+    }
+    let (named, full) = (
+        closed_sibling_arrows(3, 3, false),
+        closed_sibling_arrows(3, 3, true),
+    );
+    if let Err(e) = read_alike(&named, &full) {
+        bad.push(e);
+    }
+    let chain = "type Part1 = (T, T);\ntype Part2 = (Part1, int);\n(a: int) -> (Part2, int) for T in int | f64";
+    match read_back_bounds_of(chain) {
+        Ok(b) if b == ["T"] => {}
+        got => bad.push(format!("`{chain}` bounds {got:?}")),
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// XR-heldname-print-batch round 3, Codex B-left-index and Gemini B3-new-lefts-scan (D2 of
+/// META3): one definition of k distinct leftovers `T \ #k0` … `T \ #k(k-1)`, each written
+/// twice, read in `T -> (Part1, Part1)`. Finding the variable of each leftover's key looks at
+/// no more than 4k leftovers (`read::left_probes`) at k = 64 and 512; before, each looked at
+/// every distinct leftover read before it in the definition, about k² in all. Each repeated
+/// key reuses its first variable: the function has k needs, each giving a variable of its own.
+#[test]
+fn reading_one_definition_with_many_distinct_leftovers_scales() {
+    use zedc::check::read::{left_probes, parse_type, reset_left_probes};
+    let text = |k: usize| {
+        let parts: Vec<String> = (0..k)
+            .flat_map(|i| [format!("T \\ #k{i}"), format!("T \\ #k{i}")])
+            .collect();
+        format!("type Part1 = ({});\nT -> (Part1, Part1)", parts.join(", "))
+    };
+    let mut bad = Vec::new();
+    for k in [64, 512] {
+        reset_left_probes();
+        let read = parse_type(&text(k));
+        let probes = left_probes();
+        let read = match read {
+            Ok(read) => read,
+            Err(e) => {
+                bad.push(format!("{k}: {e}"));
+                continue;
+            }
+        };
+        if probes == 0 || probes > 4 * k as u64 {
+            bad.push(format!("{k} distinct leftovers: {probes} probes"));
+        }
+        let Some(s) = read.fns.first() else {
+            bad.push(format!("{k}: no function"));
+            continue;
+        };
+        let gives: std::collections::BTreeSet<String> = (s.needs.iter())
+            .filter_map(|n| n.result.as_ref().map(|r| r.to_string()))
+            .collect();
+        if s.needs.len() != k || gives.len() != k {
+            bad.push(format!(
+                "{k} distinct leftovers: {} needs giving {} variables",
+                s.needs.len(),
+                gives.len()
+            ));
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
@@ -1545,7 +2050,7 @@ fn standing_twice_does_not_reenter_owner_rows_per_inner_lambda() {
         reset_row_entries();
         let twice = s.standing_twice();
         let entries = row_entries();
-        if entries > 8 * (m as u64 + 2) {
+        if entries == 0 || entries > 8 * (m as u64 + 2) {
             bad.push(format!("{entries} tuples entered at {m} inner functions"));
         }
         if !twice.contains("T") {
@@ -1562,6 +2067,58 @@ fn standing_twice_does_not_reenter_owner_rows_per_inner_lambda() {
     let twice = s.standing_twice();
     if twice.contains("T") {
         bad.push(format!("shadowed `T` stands twice in {s}: {twice:?}"));
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// The function of [`standing_twice_does_not_reenter_owner_rows_per_inner_lambda`] at `m`, with
+/// one more inner function beside the `m`: one that binds a `T` of its own, `(x: int) -> T`.
+fn rows_beside_a_shadow(m: usize) -> zedc::check::ty::Sig {
+    use super::standing_twice::read_sig;
+    use std::sync::Arc;
+    let bounded = read_sig("(a: T) -> T for T in int | f64");
+    let t = bounded.arrows[0].result.clone();
+    let row = (0..m).fold(Ty::tuple(vec![t.clone(), t.clone()]), |r, _| {
+        Ty::tuple(vec![r.clone(), r])
+    });
+    let mut inner: Vec<Ty> = (0..m)
+        .map(|i| {
+            let mut h = read_sig(&format!("(x: int) -> {i}"));
+            let lit = h.arrows[0].result.clone();
+            h.arrows[0].result = Ty::tuple(vec![row.clone(), lit]);
+            Ty::func(Arc::new(h))
+        })
+        .collect();
+    let mut shadow = read_sig("(x: int) -> int");
+    shadow.own.insert(Arc::from("T"));
+    shadow.arrows[0].result = t;
+    inner.push(Ty::func(Arc::new(shadow)));
+    let mut s = bounded.clone();
+    s.arrows[0].result = Ty::tuple(inner);
+    s
+}
+
+/// XR-heldname-print-batch round 3, Gemini B2-shadow-fan and Claude F2 (D5 of META3):
+/// [`Sig::standing_twice`] on [`rows_beside_a_shadow`] enters each row a bounded number of
+/// times, at most 8(m + 2) tuples (`row_entries`) at m = 64 and 512, and finds that the outer
+/// `T` stands twice. The inner function that binds `T` makes every row over `T` one that holds
+/// a name another function binds, and the walk keyed such a row by the innermost opening, which
+/// each of the `m` functions that bind nothing pushes: Θ(m²) entries.
+#[test]
+fn standing_twice_does_not_reenter_rows_per_lambda_beside_a_shadow() {
+    use zedc::check::ty::{reset_row_entries, row_entries};
+    let mut bad = Vec::new();
+    for m in [64, 512] {
+        let s = rows_beside_a_shadow(m);
+        reset_row_entries();
+        let twice = s.standing_twice();
+        let entries = row_entries();
+        if entries == 0 || entries > 8 * (m as u64 + 2) {
+            bad.push(format!("{entries} tuples entered at {m} inner functions"));
+        }
+        if !twice.contains("T") {
+            bad.push(format!("`T` does not stand twice at {m}: {twice:?}"));
+        }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }

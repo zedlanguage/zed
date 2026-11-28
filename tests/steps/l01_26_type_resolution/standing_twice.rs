@@ -466,9 +466,18 @@ fn a_tuple_inside_a_shared_part_does_not_grow_as_a_union_erases_its_other_place(
         .map(|t| t.matches("type Part").count())
         .collect();
     assert!(
-        defs[0] >= 6 && defs[1] >= 5 && texts[1].len() <= texts[0].len(),
+        texts[1].len() <= texts[0].len(),
         "{defs:?} definitions:\n{}",
         texts.join("\n\n")
+    );
+    // Round 3, Claude F4: the counts the comment states, and both texts, pinned.
+    assert_eq!(defs, [7, 5], "{}", texts.join("\n\n"));
+    assert_eq!(
+        texts,
+        [
+            "(text 0: to be pinned from the red job)",
+            "(text 1: to be pinned from the red job)"
+        ]
     );
 }
 
