@@ -9156,6 +9156,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         if s.facts().classes.is_empty() && !s.has_fwd_needs() && s.facts().fwd_names.is_empty() {
             return s.clone();
         }
+        #[cfg(test)]
+        let _place_decodes = PlaceDecodes::enter();
         // The open forwards are decoded first, from `s` as it was given (Neon's round 2,
         // gap 1): decoded after the held functions' callees were finished, a callee would
         // write a class by the name it has now (`id`'s `$0` as `T`), the decoded needs would
@@ -9284,6 +9286,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // lambda `x -> (x, a)` beside the call (`id`'s `T` against the lambda's `T`), ratio
         // 54.8; row FAIL-map-chain-held-name-renamed-apart-quadratic, bench parked.
         let mut flat_memo: Option<FlatMemo> = None;
+        // `R10Config::force_held_last` (test only): each key's name in the first pass, held
+        // names last, kept for the names below.
+        #[cfg(test)]
+        let mut held_last: Option<Vec<(Printed, Arc<str>)>> = None;
         let (vars, b, order, given) = loop {
             let s = &s_ref;
             let vars = sig_vars(s);
@@ -9365,6 +9371,27 @@ impl<'t, 'a> Ck<'t, 'a> {
                 flat_memo.is_none(),
                 "the flat form holds no compact forward that holds a function"
             );
+            #[cfg(test)]
+            {
+                let reason = if solved {
+                    "solved"
+                } else if unnamed {
+                    "unfinished"
+                } else {
+                    "apart"
+                };
+                HELD_VIEW_FALLBACKS.with(|m| *m.borrow_mut().entry(reason).or_default() += 1);
+                if reason == "apart" && self.r10.cfg.force_held_last {
+                    held_last = Some(
+                        (order.keys.iter().zip(&given))
+                            .filter_map(|(k, g)| match (k, g) {
+                                (Some(p), NameItem::Name(n)) => Some((p.clone(), n.clone())),
+                                _ => None,
+                            })
+                            .collect(),
+                    );
+                }
+            }
             // The flat form is made from `s` as it was given, before its forwards' callees and
             // those of the functions it holds were finished: finishing a callee writes the
             // name a class has now into it (`id`'s `$0` as `T`), the eager checker's flat
@@ -9375,7 +9402,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             // The decode is the eager form, so no finishing is needed on it: the renaming
             // reaches every variable of the flat needs, which is all the finishing was for.
             let mut memo = FlatMemo::new();
+            #[cfg(test)]
+            let decodes_before = zedc_types::ty::fwd_decode_count();
             s_ref = Self::r10_flat_held(given_sig, true, &mut memo);
+            #[cfg(test)]
+            FALLBACK_DECODES.with(|n| {
+                n.set(n.get() + zedc_types::ty::fwd_decode_count() - decodes_before);
+            });
             flat_memo = Some(memo);
         };
         let s = &s_ref;
@@ -9407,6 +9440,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 _ => unreachable!("rename_apart gives each item back as it was given"),
             }
+        }
+        // The mutant of plan section 8 T3 (Claude's FORCE_HELD_LAST, XR-renamed-apart-plan r1):
+        // each key keeps its first-pass name, held names last, on the flat form.
+        #[cfg(test)]
+        if let Some(first) = held_last {
+            names.extend(first);
+            let distinct: HashSet<&Arc<str>> = names.values().collect();
+            assert_eq!(
+                distinct.len(),
+                names.len(),
+                "held-last names collide on the flat keys"
+            );
         }
         // Each copy of a held function's runs met after the first is named as the first
         // (`NameOrder::dups`), O(runs) a copy.
@@ -10471,6 +10516,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.r10.close_counts(fid);
 
         let temp_fwd = self.build_fwd_need_from_open(&f);
+        #[cfg(test)]
+        UNCOUNTED_DECODES.with(|n| n.set(n.get() + 1));
         let decoded = temp_fwd.decode_uncounted(f.call_span, clear_lambda);
 
         let mut touched_roots = BTreeSet::new();
@@ -20814,6 +20861,60 @@ thread_local! {
     /// The number of signatures whose forwards [`Ck::r10_promote_one`] decoded, as holding a
     /// variable from around them, on this thread since a test last set it to 0.
     static OPEN_FWD_PROMOTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    // The counters of plan FAIL-map-chain-held-name-renamed-apart-quadratic section 8 (T2,
+    // T6, M3), on this thread since a test last cleared them (`r10_tests::apart_counts`).
+    /// The signatures [`Ck::finished_keeping`] named by the flat form (`Ck::r10_flat_held`),
+    /// by reason: "apart" for a held name named apart and nothing else, the route part A
+    /// replaces; "solved" and "unfinished" for a solved held class and a callee not finished,
+    /// part A's F4. Part A adds F1, F2 and F3.
+    static HELD_VIEW_FALLBACKS: std::cell::RefCell<BTreeMap<&'static str, u64>> =
+        const { std::cell::RefCell::new(BTreeMap::new()) };
+    /// Counted `FwdNeed` decodes (`zedc_types::ty::fwd_decode_count`) made by the flat form.
+    static FALLBACK_DECODES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Counted `FwdNeed` decodes made inside an outermost [`Ck::finished_keeping`] and not by
+    /// the flat form: plan T2's `place_decodes` (D23; Claude N3).
+    static PLACE_DECODES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// `FwdNeed::decode_uncounted` calls: the expansions at a forward's release and at a
+    /// merge, which `fwd_decode_count` leaves out. Plan T2's `decode_enters` is this plus
+    /// `fwd_decode_count`, every decode of any kind.
+    pub(crate) static UNCOUNTED_DECODES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Calls of [`Ck::finished_keeping`] open on this thread: only the outermost counts
+    /// [`PLACE_DECODES`], so a decode inside a nested call is counted once.
+    static KEEPING_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// One call of [`Ck::finished_keeping`] (test only), from its first decode to its return: the
+/// outermost call adds the counted decodes made meanwhile, less the flat form's, to
+/// [`PLACE_DECODES`].
+#[cfg(test)]
+struct PlaceDecodes {
+    /// `fwd_decode_count` and [`FALLBACK_DECODES`] at the outermost call's start; `None` in a
+    /// nested call.
+    start: Option<(u64, u64)>,
+}
+
+#[cfg(test)]
+impl PlaceDecodes {
+    fn enter() -> Self {
+        let depth = KEEPING_DEPTH.with(|d| d.replace(d.get() + 1));
+        let start = (depth == 0).then(|| {
+            let fallback = FALLBACK_DECODES.with(std::cell::Cell::get);
+            (zedc_types::ty::fwd_decode_count(), fallback)
+        });
+        PlaceDecodes { start }
+    }
+}
+
+#[cfg(test)]
+impl Drop for PlaceDecodes {
+    fn drop(&mut self) {
+        KEEPING_DEPTH.with(|d| d.set(d.get() - 1));
+        if let Some((decodes, fallback)) = self.start {
+            let made = zedc_types::ty::fwd_decode_count() - decodes;
+            let flat = FALLBACK_DECODES.with(std::cell::Cell::get) - fallback;
+            PLACE_DECODES.with(|n| n.set(n.get() + made - flat));
+        }
+    }
 }
 
 #[cfg(test)]

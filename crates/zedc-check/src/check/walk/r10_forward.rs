@@ -1546,6 +1546,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                         self.classes.end_through();
                     }
+                    #[cfg(test)]
+                    crate::check::UNCOUNTED_DECODES.with(|c| c.set(c.get() + 1));
                     expanded.extend(fwd.decode_uncounted(n.span, clear_lambda));
                 }
                 _ => expanded.push(n),

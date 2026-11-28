@@ -85,6 +85,12 @@ pub struct R10Config {
     /// order must read it and keep this route under it, and the red tests that compare with it
     /// assert that the default route decodes nothing.
     pub flat_on_apart: bool,
+    /// The mutant of that plan's T3 (Claude's `FORCE_HELD_LAST`, XR-renamed-apart-plan r1): a
+    /// signature that takes the flat form for a held name named apart and nothing else keeps
+    /// each key's name from the first pass, held names last. It must make the T3 programs A, B,
+    /// D, F, G, H and J differ from the reference on `Sig::digest`, and change nothing in C, E,
+    /// I and K.
+    pub force_held_last: bool,
 }
 
 impl Default for R10Config {
@@ -106,6 +112,7 @@ impl Default for R10Config {
             finish_only_closed_held: false,
             refuse_any_defer: false,
             flat_on_apart: false,
+            force_held_last: false,
         }
     }
 }

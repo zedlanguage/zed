@@ -5460,6 +5460,37 @@ fn run_counting(src: &str, cfg: R10Config) -> (Info, u64) {
     (info, fwd_decode_count())
 }
 
+/// The counters of plan FAIL-map-chain-held-name-renamed-apart-quadratic section 8 for one
+/// check on this thread (T2, M3; exact counts, Gemini N4).
+#[derive(Debug, Default, PartialEq)]
+struct ApartCounts {
+    /// Counted decodes (`fwd_decode_count`): on the base, the apart decodes.
+    decodes: u64,
+    /// Every decode of any kind: the counted ones and `decode_uncounted`'s.
+    decode_enters: u64,
+    /// Counted decodes inside `finished_keeping` and not by the flat form (D23; Claude N3).
+    place_decodes: u64,
+    /// The flat forms `finished_keeping` took, by reason (`super::HELD_VIEW_FALLBACKS`).
+    held_view_fallbacks: std::collections::BTreeMap<&'static str, u64>,
+}
+
+/// One check of `src` under `cfg` with [`ApartCounts`] cleared before it and read after it.
+fn run_apart_counts(src: &str, cfg: R10Config) -> (Info, ApartCounts) {
+    reset_fwd_decode_count();
+    super::UNCOUNTED_DECODES.with(|n| n.set(0));
+    super::PLACE_DECODES.with(|n| n.set(0));
+    super::HELD_VIEW_FALLBACKS.with(|m| m.borrow_mut().clear());
+    let (info, _) = run_with_cfg(src, cfg);
+    let decodes = fwd_decode_count();
+    let counts = ApartCounts {
+        decodes,
+        decode_enters: decodes + super::UNCOUNTED_DECODES.with(std::cell::Cell::get),
+        place_decodes: super::PLACE_DECODES.with(std::cell::Cell::get),
+        held_view_fallbacks: super::HELD_VIEW_FALLBACKS.with(|m| m.borrow().clone()),
+    };
+    (info, counts)
+}
+
 /// The reference of row FAIL-map-chain-held-name-renamed-apart-quadratic (plan section 8, D5):
 /// a held name named apart takes the flat form.
 fn flat_on_apart() -> R10Config {
@@ -5510,38 +5541,73 @@ const APART_HEAD: &str =
 /// T3b's two-level `h0`: the held `id` is a child's, composed at the parent.
 const APART_HEAD_TWO_LEVEL: &str = "id(positional x) = x;\nh0b(positional a, positional m) = \
      (m.map(id), x -> (x, a));\nh0(positional a, positional m) = (h0b(a, m), x -> (x, a));\n";
-/// The functions T3's links pass lambdas to. The plan writes `f` with one argument and with
-/// two (program H); the two-argument one is `f2` here.
-const APART_HELPERS: &str =
-    "f(positional k) = k;\ng(positional k) = k;\nf2(positional k, positional l) = (k, l);\n";
-/// T3's link bodies A-K (the plan has no E or I), each an `h1(a, m)` after the head.
-const APART_BODIES: [(&str, &str); 9] = [
-    ("A", "(h0(a, m), f(y -> (y, a)))"),
-    ("B", "(h0(a, m), x -> (x, a), f(y -> (y, a)))"),
-    ("C", "(f(y -> (y, a)), h0(a, m))"),
-    ("D", "(h0(a, m), f(y -> (y, a)), g(z -> (z, a)))"),
-    ("F", "(h0(a, m), m.map(y -> z -> (y, z, a)))"),
-    ("G", "(h0(a, m), x -> (x, a), f(y -> z -> (y, z, a)))"),
-    ("H", "(h0(a, m), x -> (x, a), f2(y -> (y, a), z -> (z, a)))"),
-    ("J", "(h0(a, m), f(x -> y -> (x, y)), x -> (x, a))"),
-    ("K", "(h0(a, m), x -> (x, a))"),
+/// T3's links A-K, each an `h1(a, m, ...)` after the head: its extra parameters and its body.
+/// `f` and `g` are parameters of `h1`, as in Claude's probe (R1_CLAUDE.patch), not functions
+/// declared beside it: with declared `f` and `g` the held-last mutant changes only F (plan
+/// 8.1, D23). E and I are Claude's two programs that the plan's list leaves out.
+const APART_LINKS: [(&str, &str, &str); 11] = [
+    ("A", ", positional f", "(h0(a, m), f(y -> (y, a)))"),
+    (
+        "B",
+        ", positional f",
+        "(h0(a, m), x -> (x, a), f(y -> (y, a)))",
+    ),
+    ("C", ", positional f", "(f(y -> (y, a)), h0(a, m))"),
+    (
+        "D",
+        ", positional f, positional g",
+        "(h0(a, m), f(y -> (y, a)), g(z -> (z, a)))",
+    ),
+    ("E", "", "(h0(a, m), m.map(y -> (y, a)))"),
+    ("F", "", "(h0(a, m), m.map(y -> z -> (y, z, a)))"),
+    (
+        "G",
+        ", positional f",
+        "(h0(a, m), x -> (x, a), f(y -> z -> (y, z, a)))",
+    ),
+    (
+        "H",
+        ", positional f",
+        "(h0(a, m), x -> (x, a), f(y -> (y, a), z -> (z, a)))",
+    ),
+    (
+        "I",
+        ", positional f",
+        "(h0(a, m), x -> (x, a), f(id, y -> y))",
+    ),
+    (
+        "J",
+        ", positional f",
+        "(h0(a, m), f(x -> y -> (x, y)), x -> (x, a))",
+    ),
+    ("K", "", "(h0(a, m), x -> (x, a))"),
 ];
 
 fn apart_programs(head: &str, prefix: &str) -> Vec<(String, String)> {
-    APART_BODIES
+    APART_LINKS
         .iter()
-        .map(|(l, b)| {
-            let src = format!("{head}{APART_HELPERS}h1(positional a, positional m) = {b};\n");
+        .map(|(l, more, b)| {
+            let src = format!("{head}h1(positional a, positional m{more}) = {b};\n");
             (format!("{prefix}{l}"), src)
         })
         .collect()
 }
 
+/// T3's program `label`.
+fn apart_program(label: &str) -> String {
+    let all = apart_programs(APART_HEAD, "");
+    all.into_iter()
+        .find(|(l, _)| l == label)
+        .expect("a T3 label")
+        .1
+}
+
 /// Plan FAIL-map-chain-held-name-renamed-apart-quadratic T2 (part A's counters that exist
 /// today): on the chain of [`r10_a_chain_whose_links_hold_a_lambda_beside_the_call_admits_each_link`]
-/// at n = 10 and 40, the default check decodes no forward and equals the reference, which
-/// decodes once a link. Red on the base: n-1 decodes, as the reference. `held_view_fallbacks`,
-/// `decode_enters` and `place_decodes` join this test with part A's counters.
+/// at n = 10 and 40, the default check equals the reference, which decodes once a link, and
+/// all four of part A's counters are 0: apart decodes, `held_view_fallbacks`, `decode_enters`
+/// and `place_decodes` ([`ApartCounts`]). Red on the base: n-1 decodes and n-1 "apart"
+/// fallbacks. Fault: places built by decoding, as `held_read_places` does (`place_decodes`).
 #[test]
 fn r10_beside_chain_shares_results_and_does_not_rewalk_spines() {
     let head =
@@ -5549,15 +5615,20 @@ fn r10_beside_chain_shares_results_and_does_not_rewalk_spines() {
     let link = "h{i}(positional a, positional m) = (h{p}(a, m), x -> (x, a));\n";
     for n in [10usize, 40] {
         let src = link_chain(head, link, n);
-        let (c, nc) = run_counting(&src, flat_on_apart());
-        assert_eq!(nc, n as u64 - 1, "n={n}: the reference decodes once a link");
-        let (d, nd) = run_counting(&src, R10Config::default());
+        let (c, cc) = run_apart_counts(&src, flat_on_apart());
+        assert_eq!(
+            cc.decodes,
+            n as u64 - 1,
+            "n={n}: the reference decodes once a link"
+        );
+        let (d, dc) = run_apart_counts(&src, R10Config::default());
         if let Err(msg) = info_eq_full(&format!("n={n}"), &c, &d) {
             panic!("{msg}");
         }
         assert_eq!(
-            nd, 0,
-            "n={n}: {nd} decodes, the held name named apart by decoding"
+            dc,
+            ApartCounts::default(),
+            "n={n}: the held name named apart by decoding"
         );
     }
 }
@@ -5569,8 +5640,8 @@ fn r10_beside_chain_shares_results_and_does_not_rewalk_spines() {
 #[test]
 fn r10_apart_names_follow_e_order_when_an_own_variable_follows_the_forward() {
     let programs = apart_programs(APART_HEAD, "");
-    let (a, _) = run_with_cfg(&programs[0].1, R10Config::default());
-    let (k, _) = run_with_cfg(&programs[8].1, R10Config::default());
+    let (a, _) = run_with_cfg(&apart_program("A"), R10Config::default());
+    let (k, _) = run_with_cfg(&apart_program("K"), R10Config::default());
     assert!(
         info_eq_full("A vs K", &a, &k).is_err(),
         "A and K compare equal"
@@ -5650,20 +5721,141 @@ fn r10_apart_view_beside_a_sigma_image() {
 
 /// Plan T6, an internally clashing held function (Gemini M3): `f`'s own `y -> y` clashes inside
 /// `f`, so part A must take the F3 fallback, which decodes as the reference does; the output
-/// equals the reference's. Not red on the base (the base decodes here too): it holds the
-/// fallback in place once part A is written. Fault: dropping the F3 fallback.
+/// equals the reference's. On the base it equals the reference and decodes as it does, and is
+/// red only on the F3 count, since the base counts the fallback as "apart": once part A is
+/// written it holds the fallback in place. Fault: dropping the F3 fallback.
 #[test]
 fn r10_apart_internally_clashing_held_function_falls_back() {
     let src = "f(positional x) = (x, y -> y);\nh0(positional m) = m.map(f);\n\
                h1(positional a, positional b, positional m) = (h0(m), z -> (z, a, b));\n";
     let (c, nc) = run_counting(src, flat_on_apart());
-    let (d, nd) = run_counting(src, R10Config::default());
+    let (d, dc) = run_apart_counts(src, R10Config::default());
     assert!(d.errors.is_empty(), "{:?}", d.errors);
     if let Err(msg) = info_eq_full("M3", &c, &d) {
         panic!("{msg}");
     }
     assert!(nc > 0, "the reference names nothing apart");
-    assert_eq!(nd, nc, "the fallback decodes as the reference does");
+    assert_eq!(dc.decodes, nc, "the fallback decodes as the reference does");
+    // Control (D23): T3's K, where `id`'s `$0` is finished as `T` and nothing else, must not
+    // take F3.
+    let (_, kc) = run_apart_counts(&apart_program("K"), R10Config::default());
+    assert_eq!(kc.held_view_fallbacks.get("F3"), None, "K took F3: {kc:?}");
+    assert!(
+        dc.held_view_fallbacks.get("F3").is_some_and(|&f| f > 0),
+        "the fallback was not counted as F3: {dc:?}"
+    );
+}
+
+/// Plan T3's fault, run red before part A is written: Claude's held-last naming
+/// (`R10Config::force_held_last`) on the flat form must make programs A, B, D, F, G, H and J
+/// differ from the reference ([`info_eq_full`], on `Sig::digest` in Claude's probe), and C, E,
+/// I and K, where the two orders agree, must stay equal. Not red on the base: it shows T3 can
+/// tell part A's held-last order from the eager one.
+#[test]
+fn r10_apart_held_last_names_differ_from_the_reference() {
+    let held_last = R10Config {
+        force_held_last: true,
+        ..R10Config::default()
+    };
+    let mut faults = Vec::new();
+    for (label, src) in apart_programs(APART_HEAD, "") {
+        let (c, _) = run_with_cfg(&src, flat_on_apart());
+        let (m, _) = run_with_cfg(&src, held_last.clone());
+        let differs = info_eq_full(&label, &c, &m).is_err();
+        let expected = !matches!(label.as_str(), "C" | "E" | "I" | "K");
+        if differs != expected {
+            faults.push(format!(
+                "{label}: held-last differs {differs}, expected {expected}"
+            ));
+        }
+    }
+    assert!(faults.is_empty(), "{}", faults.join("\n"));
+}
+
+/// Plan T4 (D4; Codex C1 r1), the part that needs no part A structure: a non-clashing caller
+/// `left` beside a clashing one `right` of one callee, in both orders, duplicated, and called,
+/// each equal to the reference with the compact branch taken. Red on the base: each decodes.
+/// The Eq/Hash law, the cache-key tests and the fast path of T4 need part A's `held_view` and
+/// join this test with it.
+#[test]
+fn r10_callers_share_a_template_but_not_inequivalent_held_views() {
+    let head = "id(positional x) = x;\nh(positional m) = m.map(id);\n";
+    let left = "left(positional m) = h(m);\n";
+    let right = "right(positional m) = (y -> (y, y), h(m));\n";
+    let right2 = "right2(positional m) = (y -> (y, y), h(m));\n";
+    let calls = "r = right([1]);\nl = left([1]);\n";
+    let programs = [
+        ("left right", format!("{head}{left}{right}")),
+        ("right left", format!("{head}{right}{left}")),
+        ("duplicated", format!("{head}{left}{right}{right2}")),
+        ("left right called", format!("{head}{left}{right}{calls}")),
+        ("right left called", format!("{head}{right}{left}{calls}")),
+    ]
+    .map(|(l, s)| (l.to_string(), s));
+    apart_census(&programs);
+}
+
+/// `h1` of plan T6's two-identity corners: the link of T3's K, and one with eleven own
+/// lambdas, so that its own variables run past `T9` (the digit boundary of Gemini M2).
+fn apart_two_identity_links() -> [(&'static str, String); 2] {
+    let mut pad = String::from("h1(positional a, positional m) = (h0(m)");
+    for v in ["p", "q", "r", "s", "t", "u", "v", "w", "z", "k", "j"] {
+        pad.push_str(&format!(", {v} -> ({v}, a)"));
+    }
+    pad.push_str(");\n");
+    let link = "h1(positional a, positional m) = (h0(m), x -> (x, a));\n".to_string();
+    [("", link), (" padded", pad)]
+}
+
+/// Plan T6 (1b) (D23; Gemini M2, N4): two held identities in one forward that do not collapse
+/// (`id` and `id2`), beside few own variables and beside eleven. Each must take the compact
+/// branch and equal the reference. Faults: the view keyed by finished spelling, or
+/// `fwd_names` iterated in string order. Red on the base: each decodes.
+#[test]
+fn r10_apart_two_held_identities_take_the_compact_branch() {
+    let head = "id(positional x) = x;\nid2(positional x) = x;\n\
+                h0(positional m) = (m.map(id), m.map(id2));\n";
+    let programs =
+        apart_two_identity_links().map(|(l, k)| (format!("1b{l}"), format!("{head}{k}")));
+    apart_census(&programs);
+}
+
+/// Plan T6 (1a) (D23; Gemini M2, N4): a collapsing pair, `id` held twice in one forward (one
+/// held locator, one spelling), must take the F2 fallback, counted, and equal the reference.
+/// Fault: the pair named apart as two identities. Red on the base: the fallback counted is
+/// "apart", not F2.
+#[test]
+fn r10_apart_a_collapsing_held_pair_falls_back_by_f2() {
+    let head = "id(positional x) = x;\nh0(positional m) = (m.map(id), m.map(id));\n";
+    let mut faults = Vec::new();
+    for (l, k) in apart_two_identity_links() {
+        let (label, src) = (format!("1a{l}"), format!("{head}{k}"));
+        let (c, nc) = run_counting(&src, flat_on_apart());
+        let (d, dc) = run_apart_counts(&src, R10Config::default());
+        if !d.errors.is_empty() {
+            faults.push(format!("{label}: errors {:?}", d.errors));
+        }
+        if let Err(msg) = info_eq_full(&label, &c, &d) {
+            faults.push(msg);
+        }
+        if nc == 0 {
+            faults.push(format!("{label}: the reference decodes nothing"));
+        }
+        if !dc.held_view_fallbacks.get("F2").is_some_and(|&f| f > 0) {
+            faults.push(format!("{label}: no F2 fallback counted: {dc:?}"));
+        }
+    }
+    assert!(faults.is_empty(), "{}", faults.join("\n"));
+}
+
+/// Plan T6, views inside `finished_keeping` (b) (D21): a held `W` written before the
+/// caller's own written `W`. Fault: `to` composed onto `held_view`. Red on the base: it
+/// decodes.
+#[test]
+fn r10_apart_a_held_written_name_before_the_callers_own() {
+    let src = "w(positional x: W) = (x, (y: W) -> y);\nh0(positional m) = m.map(w);\n\
+               h1(positional a: W, positional b: W, positional m) = (h0(m), x -> (x, a, b));\n";
+    apart_census(&[("held W".to_string(), src.to_string())]);
 }
 
 mod bench;
