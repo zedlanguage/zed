@@ -20,6 +20,7 @@ mod bound;
 pub mod dec;
 pub mod float_mod;
 mod float_text;
+pub mod form;
 mod room;
 pub mod tininess;
 
