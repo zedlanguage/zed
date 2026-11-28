@@ -429,7 +429,7 @@ impl Form {
 
     /// Every held sum with a positive power replaced by its monomials, sized before it is made:
     /// `(t1 + ... + tk)^e` has at most `C(e + k - 1, k - 1)` monomials, and the system is asked
-    /// for their memory ([`crate::num::room`]) before any is built, so
+    /// for their memory ([`crate::num::room()`]) before any is built, so
     /// `(n + 1)^(2^40)` is refused here and stays held elsewhere. Then by squaring: O(log e)
     /// products, each O(t^2) in its operands' monomials.
     pub fn expanded(&self) -> Result<Form, TooLarge> {
@@ -755,7 +755,7 @@ fn exp_of(q: &Rat, x: &Form) -> Result<Option<Form>, TooLarge> {
 /// The exponential atoms of `f` over the joint coprime base of all their wide bases: when two
 /// wide bases share a prime, the natural coprime base of them all is taken
 /// (`crate::num::coprime::coprime_base_exponents`, Bernstein's algorithms, documented
-/// there) and each element by its least root ([`crate::num::least_root`]), so every
+/// there) and each element by its least root ([`crate::num::least_root()`]), so every
 /// base is coprime to every other and no perfect power. Primes of one word are coprime to
 /// everything already. O(1) when no two wide bases share a prime
 /// (`coprime::shares_a_factor`, by product and remainder trees).
