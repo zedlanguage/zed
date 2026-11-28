@@ -10456,8 +10456,8 @@ impl Scope {
     /// `Order::sync` (the step that put it in the order at once, `Scope::promote`, was
     /// taken out in round 5: Gemini's three tests of round 4 for it stayed green without it,
     /// and META4 says such a construct goes). This is option 1' of XR-lazy-and-kernel-batch-1
-    /// round 1 (FAIL-lazy-hubs-seed-5574242637160979656): the claim this paragraph replaced, that no
-    /// leaf's product reaches another name but through its star, was false for a leaf a
+    /// round 1 (FAIL-lazy-hubs-seed-5574242637160979656): the claim this paragraph replaced,
+    /// that no leaf's product reaches another name but through its star, was false for a leaf a
     /// bound term reads (read back by `Scope::read_back_terms`) and for a leaf a kept test
     /// triggers on (`Scope::narrow_kept_again`).
     ///
@@ -19787,6 +19787,8 @@ impl Scope {
             c[site] += out.len() as u64;
             c
         });
+        #[cfg(not(feature = "counts"))]
+        let _ = site;
         out
     }
 
