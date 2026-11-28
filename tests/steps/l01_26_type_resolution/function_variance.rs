@@ -3110,6 +3110,45 @@ fn an_arrow_lambda_refused_through_a_call_s_needs_is_named() {
     }
 }
 
+/// Row MSG-arrow-lambda-nested-cause: a lambda passed at an intersection inside another such
+/// lambda, where `g` changes type with the arrows of the outer one, `both`, and not with those
+/// of the inner one, `bothK`. Before the fix the refusal named the innermost lambda around
+/// `g`, `k -> …`, whose repair is refused again; it now names the lambda whose arrows give `g`
+/// its two types, both where the body is checked and where `outer`'s need is met at
+/// `outer(f: …)`, and the repair it offers runs. The program stays refused.
+#[test]
+fn the_outer_arrow_lambda_whose_arrows_differ_is_named() {
+    let head = "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\npass(x) = apply(f: x);\n";
+    let both = "both(h: ((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> int)) = h(g: small) + h(g: small4);\n";
+    let both_k = "bothK(h: ((k: (x: int) -> int) -> int) & ((k: (x: f64) -> int) -> int)) = h(k: small) + h(k: small4);\n";
+    let split = "split(h1: (g: (x: int) -> int) -> int, h2: (g: (x: f64) -> int) -> int) = h1(g: small) + h2(g: small4);\n";
+    let want = |lam: &str| {
+        format!(
+            "`{lam}` is passed as `((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> \
+             int)` and rebuilds `g` in another way at each arrow. Try `{lam}` once at each arrow \
+             instead, as arguments of types `(g: (x: int) -> int) -> int` and `(g: (x: f64) -> \
+             int) -> int`. [g]"
+        )
+    };
+    // Refused while the body is checked: `g` is passed to `pass`, which rebuilds it.
+    let lam = "g -> bothK(h: k -> pass(x: g))";
+    let src = format!("{head}{both}{both_k}a = both(h: {lam});\n");
+    assert_eq!(type_errors(&src), [want(lam)], "{src}");
+    let fixed = format!("{head}{split}{both_k}a = split(h1: {lam}, h2: {lam});\n");
+    // `small` at `2.5` takes the `else`: 6 + 6 at the first arrow, 2 + 2 at the second.
+    runs_to(&fixed, "a", "16");
+    // Refused where `outer`'s need is met, after the body was checked.
+    for (call, f) in [("f(g)", "x -> pass(x: x)"), ("f(x: g)", "pass")] {
+        let lam = format!("g -> bothK(h: k -> ({call}, 1)[1])");
+        let src = format!("{head}{both}{both_k}outer(f) = both(h: {lam});\na = outer(f: {f});\n");
+        assert_eq!(type_errors(&src), [want(&lam)], "{src}");
+        let fixed = format!(
+            "{head}{split}{both_k}outer(f) = split(h1: {lam}, h2: {lam});\na = outer(f: {f});\n"
+        );
+        runs_to(&fixed, "a", "4");
+    }
+}
+
 /// A generic function whose variable, with no bound, stands in a parameter's function type is
 /// passed where its instance is expected: `g` at `T = int` is `(h: (x: int) -> int, y: int) ->
 /// int`. Before (row TEST-types-unreached-paths-6), the variable inside the function type was
