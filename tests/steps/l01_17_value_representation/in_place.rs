@@ -305,10 +305,12 @@ fn a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given() {
 }
 
 /// A dense divisor `d = (2^(64 w) - 1) / 3`, every word nonzero, of `w = 2^14 + 1` words, just
-/// above a power of two, where its transforms take the most points for its width, `2^16`:
+/// above a power of two, where its transforms take the most points for its width, `2^15`: the
+/// remainder's, and the estimate's, whose `2 w - 1` coefficients are wrapped onto `2^15` points
+/// (`fast::level_points`, plan row PERF-transform-cubic-ratio-to-9; before, they took `2^16`):
 /// `a mod d` and `a div d` for a dense `a = (2^(64 (3 w + 5)) - 1) / 7` ask 16 words a point,
-/// 8 MiB, and the quotient twice the dividend's width more, a measured bound above their
-/// peaks of 12.5 and 12.75 words a point (`num::POINT_WORDS`). Each answers with what it asks
+/// 4 MiB, and the quotient twice the dividend's width more, a measured bound above their
+/// peaks (`num::POINT_WORDS`). Each answers with what it asks
 /// for given and the [`margin`] of the dividend's width more, checked by `q d + r = a` and `r < d`
 /// modulo 2^61 - 1, and each is refused, naming its ask, with half the remainder's ask given.
 #[test]
@@ -323,8 +325,8 @@ fn a_dense_divisor_asks_for_its_transforms() {
     let modulo = bin(Prim::Mod, num(a.clone()), num(d.clone()));
     let quotient = bin(Prim::IntDiv, num(a.clone()), num(d.clone()));
     let (residue_a, residue_d) = (residue(&int(a.clone())), residue(&int(d.clone())));
-    // 16 words, 2^10 bits, a point.
-    let rem_ask = BigUint::from(1u64 << (k + 2)) << 10u32;
+    // 16 words, 2^10 bits, a point, on 2^(k + 1) points.
+    let rem_ask = BigUint::from(1u64 << (k + 1)) << 10u32;
     let div_ask = &rem_ask + (BigUint::from(a.bits()) << 1u32);
     let bytes = |bits: &BigUint| u64::try_from(bits >> 3u32).expect("a few MiB");
     lower_limit_by(bytes(&div_ask) + margin(a.bits()));

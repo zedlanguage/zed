@@ -3160,7 +3160,13 @@ const REM_STEP: u32 = 24;
 /// five blocks, was at most 13.5 words a point (27 times the divisor's width at a power of
 /// two, whose transforms have twice its words as points, and 50 times just above one, where
 /// they have four times), with glibc's mmap threshold fixed at 128 KiB; the cases at `k` = 20
-/// that ran within 60 s gave the same. 16 leaves a sixth to spare.
+/// that ran within 60 s gave the same. 16 leaves a sixth to spare. Since the estimate's
+/// product wraps its top coefficients (`fast::level_points`, plan row
+/// PERF-transform-cubic-ratio-to-9), the transforms just above a power of two have twice the
+/// divisor's words as points, not four times, so the ask there is half what it was; the
+/// remainder and the quotient by a dense divisor of `2^14 + 1` words answer with that ask
+/// given (`a_dense_divisor_asks_for_its_transforms`, 2026-11-28), but the sweep above was not
+/// measured again.
 const POINT_WORDS: u32 = 16;
 
 /// `a mod m` for an `m` that is not zero, read from the top of `a` with no copy of it, so its
