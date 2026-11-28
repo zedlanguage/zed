@@ -186,8 +186,9 @@ fn the_walk_of_blocks_one_after_another_holds_the_bytes_of_one_block() {
 
 /// The walk of `fees(d, 1)`, a block of `d` bindings each with a test, goes to the allocator
 /// at most 250 times a binding at 4,000 and at 32,000 bindings (items
-/// PERF-walk-allocator-no-coalesce, then PERF-walk-allocs-by-stack below). Measured on this thread (`zed_alloc_count::allocations`,
-/// which counts each allocation and each reallocation), before and after the cuts in
+/// PERF-walk-allocator-no-coalesce, then PERF-walk-allocs-by-stack below). Measured on this
+/// thread (`zed_alloc_count::allocations`, which counts each allocation and each
+/// reallocation), before and after the cuts in
 /// `zedc-preimage` product.rs that carry the item's name:
 ///
 /// | bindings | allocations a binding | bytes a binding   | time            |

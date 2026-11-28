@@ -2697,9 +2697,12 @@ fn audit_seed_126_keeps_the_ends_the_solver_alone_finds() {
     let cover = audit(126..127);
     // The solver alone had the oracle's ends at all 9 steps while the block held `g || !g`
     // (`g` a conjunction), whose two cases it split; with `Formula::or` finding that
-    // disjunction true (PRES-again-monotone) it keeps `a` wider at steps 6 to 8, and the
-    // cover still gives the oracle's ends at every step.
-    assert_eq!(alone.iter().filter(|r| r.ends).count(), 6);
+    // disjunction true (PRES-again-monotone) it kept `a` wider at steps 6 to 8. The exact
+    // backward step for a sum with a one-piece operand (`revision::sum_by_one_piece`,
+    // PROOF-factor-demand-monotone-all-shapes) gives it the oracle's ends at those steps
+    // again: with `forward` in its place the count is 6 (dry-hash, 2026-11-28). The cover
+    // gives the oracle's ends at every step.
+    assert_eq!(alone.iter().filter(|r| r.ends).count(), 9);
     assert_eq!(cover.iter().filter(|r| r.ends).count(), 9);
     for (a, c) in alone.iter().zip(&cover) {
         assert!(

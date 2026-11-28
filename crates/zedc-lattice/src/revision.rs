@@ -504,7 +504,8 @@ fn quotient(z: &End, y: &End, dir: Dir) -> End {
 // (`a_chain_with_clamps_is_read_in_time_near_its_length`,
 // `a_staged_chain_under_false_is_read_in_time_near_its_length`); through [`backward`] alone
 // they keep within their bounds.
-// Test: `l01_24_refinement_lattices::scaling::a_sum_with_a_one_piece_operand_is_exact_and_monotone`.
+// Test:
+// `l01_24_refinement_lattices::scaling::a_sum_with_a_one_piece_operand_is_exact_and_monotone`.
 pub fn sum_by_one_piece(op: &Op, x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
     if let (Op::Add | Op::Sub, Some(q)) = (op, y.first())
         && y.len() == 1
