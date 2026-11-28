@@ -572,8 +572,9 @@ pub(super) enum Frame<'a> {
     /// `flat_map_end`), and the receiver where it is a call of `flatMap` too.
     FlatMap(Ty, Span, Option<&'a Expr>),
     /// `x.foldl(init, f)` or, with `true`, `x.foldr(f, init)`, waiting for `init`: `x`'s type,
-    /// `f`, and the call's span (step L3.3; `fold_dir_end`).
-    FoldInit(Ty, &'a Expr, Span, bool),
+    /// `f`, the call's span (step L3.3; `fold_dir_end`), and the entry slot and type `f` is
+    /// checked at ([`Ck::word_fn`]).
+    FoldInit(Ty, &'a Expr, Span, bool, Option<(usize, Ty)>),
     /// The same, waiting for `f`: `x`'s type, `init`'s type, and the call's span.
     FoldFn(Ty, Ty, Span, bool),
     /// `x.any(p)`, `x.all(p)` or `x.find(p)`, waiting for `p`: `x`'s type, the quantifier
@@ -1486,10 +1487,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = self.flat_map_end(t, at, false);
                 m.ty(t);
             }
-            Frame::FoldInit(x, f, span, right) => {
+            Frame::FoldInit(x, f, span, right, first) => {
                 let init = m.take_arg();
                 m.k(Frame::FoldFn(x, init.ty, span, right));
-                m.job(Job::Arg(f, Want::default()));
+                self.word_fn(m, f, first);
             }
             Frame::FoldFn(x, init, span, right) => {
                 let f = m.take_arg();
@@ -5074,15 +5075,19 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// headline (DESIGN sec:type_language, the `m >< op` row: "`[] >< max` is rejected"),
     /// where a generic lambda, fitted to the entries by its signature alone, was refused by
     /// the word (plan row MSG-map-display-row-fold-headline).
+    ///
+    /// `slot` is the parameter that takes the entries: 0 for those words, 1 for `foldl` and 0
+    /// for `foldr` (the order [`Self::fold_dir_end`] applies the function in); the result
+    /// carries it for [`Self::word_fn`].
     // Complexity tradeoff: a scan of `x`'s pieces, O(pieces), and `word_entries` where the
     // first parameter has no written type, O(arrows of `x`), as `map_end` pays at the same
     // call site, recorded once per call site of the word; `proved_no_entries` is O(arrows of
     // the entries), which the union bounds.
-    fn lambda_entries(&mut self, x: &Ty, f: &Expr, span: Span) -> Option<Ty> {
+    fn lambda_entries(&mut self, x: &Ty, f: &Expr, span: Span, slot: usize) -> Option<(usize, Ty)> {
         let ExprKind::Lambda { params, .. } = &f.kind else {
             return None;
         };
-        if !params.first().is_some_and(|p| p.ty.is_none()) {
+        if !params.get(slot).is_some_and(|p| p.ty.is_none()) {
             return None;
         }
         let open = x.pieces().into_iter().any(|p| match p {
@@ -5094,7 +5099,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // With no open class in `x`, `word_entries` records no need: each variable is read as
         // its resolved type, or as `_` where it has no class.
         let entries = self.word_entries(x, span);
-        (open || self.proved_no_entries(&entries)).then_some(entries)
+        (open || self.proved_no_entries(&entries)).then_some((slot, entries))
     }
 
     /// Whether the lambda `f` reads, at any depth, a name bound outside it that is not a
@@ -5149,10 +5154,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// The function `f` given to `map`, `where`, `flatMap` or `group`, as an argument: a lambda
-    /// with its first parameter of type `first` where [`Self::lambda_entries`] gives one, else
-    /// as any argument.
-    fn word_fn(&mut self, m: &mut M<'a>, f: &'a Expr, first: Option<Ty>) {
+    /// The function `f` given to `map`, `where`, `flatMap`, `group` or a fold, as an argument:
+    /// a lambda with its parameter of the slot in `first` of the type in it where
+    /// [`Self::lambda_entries`] gives one, else as any argument.
+    fn word_fn(&mut self, m: &mut M<'a>, f: &'a Expr, first: Option<(usize, Ty)>) {
         match (&f.kind, first) {
             (ExprKind::Lambda { params, body }, Some(t)) => {
                 m.k(Frame::ArgOf(f));
@@ -12612,7 +12617,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if name == "map" || name == "where" => match (positional, named, curry) {
                     ([f], [], false) => {
                         self.range_param(of, f, 1, 0);
-                        let first = self.lambda_entries(&x.ty, f, span);
+                        let first = self.lambda_entries(&x.ty, f, span, 0);
                         let word = match name {
                             "map" => MapWord::Map,
                             _ => MapWord::Where,
@@ -12644,8 +12649,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                             let (init, f) = if right { (b, a) } else { (a, b) };
                             // The entry is the function's first parameter for `foldr`, its
                             // second for `foldl` (the order `fold_dir_end` applies it in).
-                            self.range_param(of, f, 2, usize::from(!right));
-                            m.k(Frame::FoldInit(x.ty, f, span, right));
+                            let slot = usize::from(!right);
+                            self.range_param(of, f, 2, slot);
+                            // A lambda that reads a name bound outside it is tied to the
+                            // entries in its entry slot, as at `any` (row
+                            // FAIL-fold-lambda-calls-param-entry); one that reads only its own
+                            // names stays generic in both slots, so the accumulator rounds of
+                            // `fold_dir_end` apply it at each accumulator type.
+                            let first = match self.reads_outer_name(f) {
+                                true => self.lambda_entries(&x.ty, f, span, slot),
+                                false => None,
+                            };
+                            m.k(Frame::FoldInit(x.ty, f, span, right, first));
                             m.job(Job::Arg(init, Want::default()));
                         }
                         _ => {
@@ -12668,7 +12683,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(_) if name == "flatMap" => match (positional, named, curry) {
                     ([f], [], false) => {
                         self.range_param(of, f, 1, 0);
-                        let first = self.lambda_entries(&x.ty, f, span);
+                        let first = self.lambda_entries(&x.ty, f, span, 0);
                         self.entry_param("flatMap", &x.ty, of, f);
                         m.k(Frame::FlatMap(x.ty, span, Self::flat_map_receiver(of)));
                         self.word_fn(m, f, first);
@@ -12691,7 +12706,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     ([f], [], false) => {
                         // `rekey` is refused whatever its arguments, so its lambda is generic.
                         let first = match name {
-                            "group" => self.lambda_entries(&x.ty, f, span),
+                            "group" => self.lambda_entries(&x.ty, f, span, 0),
                             _ => None,
                         };
                         if name == "group" {
@@ -12857,7 +12872,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // function, not the enclosing one.
                     ([f], [], false) => {
                         let first = match self.reads_outer_name(f) {
-                            true => self.lambda_entries(&x.ty, f, span),
+                            true => self.lambda_entries(&x.ty, f, span, 0),
                             false => None,
                         };
                         m.k(Frame::Quantify(x.ty, q, span));
@@ -13102,9 +13117,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// A lambda with no expected type: its parameters positional, typed by their
-    /// annotations; one without is generic, as a declared function's. With `first`, the first
-    /// parameter, when it has no written type, is of type `first` ([`Self::lambda_sig`]).
-    fn lambda(&mut self, m: &mut M<'a>, params: &'a [Param], body: &'a Expr, first: Option<Ty>) {
+    /// annotations; one without is generic, as a declared function's. With `first`, the
+    /// parameter of its slot, when it has no written type, is of its type ([`Self::lambda_sig`]).
+    fn lambda(
+        &mut self,
+        m: &mut M<'a>,
+        params: &'a [Param],
+        body: &'a Expr,
+        first: Option<(usize, Ty)>,
+    ) {
         let names = params
             .iter()
             .map(|p| SParam {
@@ -13135,9 +13156,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The signature of a lambda checked as a declared function's body is: each parameter of
     /// `slots` typed by its annotation, one without a type variable its uses constrain, and a
     /// slot no parameter takes a type variable nothing constrains; each parameter of `extra`
-    /// typed by its default; the signature's parameters are `names`. With `first`, the first
-    /// slot, when its parameter has no written type, is of type `first` in place of a new
-    /// variable. Its function type is the result of the jobs pushed.
+    /// typed by its default; the signature's parameters are `names`. With `first`, the slot it
+    /// names, when its parameter has no written type, is of the type it holds in place of a
+    /// new variable. Its function type is the result of the jobs pushed.
     fn lambda_sig(
         &mut self,
         m: &mut M<'a>,
@@ -13145,7 +13166,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         extra: &[&'a Param],
         names: Vec<SParam>,
         body: &'a Expr,
-        mut first: Option<Ty>,
+        mut first: Option<(usize, Ty)>,
     ) {
         self.level += 1;
         let level = self.level;
@@ -13153,10 +13174,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.open_type_vars(level);
         let (mut tys, mut ids) = (Vec::new(), Vec::new());
         let mut plain = extra.is_empty();
-        for p in slots {
+        for (i, p) in slots.enumerate() {
             plain &= p.is_some_and(|p| p.tuple.is_none() && p.default.is_none());
             let declared = p.and_then(|p| p.ty.as_ref());
-            let t = match (declared, first.take()) {
+            let given = first.take_if(|(s, _)| *s == i).map(|(_, t)| t);
+            let t = match (declared, given) {
                 (Some(t), _) => self.written(t, true),
                 (None, Some(t)) => t,
                 (None, None) => {
