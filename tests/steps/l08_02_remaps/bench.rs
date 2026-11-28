@@ -1468,3 +1468,39 @@ fn n_maps_by_a_function_whose_held_name_clashes_check_in_linear_time() {
         run,
     );
 }
+
+/// The sum of `n` squares `k * k`, parenthesized as a balanced tree, so the key nests about
+/// log2(n) deep however many terms it has.
+fn balanced_squares(n: usize) -> String {
+    match n {
+        1 => "k * k".to_string(),
+        _ => format!(
+            "({} + {})",
+            balanced_squares(n / 2),
+            balanced_squares(n - n / 2)
+        ),
+    }
+}
+
+#[test]
+fn a_strictly_monotone_key_of_n_terms_is_checked_in_linear_time() {
+    // The witness "strictly monotone arithmetic" (row TONIC-remap-witness) on a key of n
+    // squares on `int[0..]`: one walk of the key to a kernel term and one grade, each linear,
+    // and the run of the remap over two entries.
+    let n_terms = 2000;
+    let srcs = scaling::inputs(n_terms, |n| {
+        format!(
+            "f(positional m: int[0..] ->? int) = m as (k -> v) into ({} -> v);\n\
+             x = f({{ 0 -> 1, 2 -> 2 }});\n",
+            balanced_squares(n)
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "x"), format!("{{0 -> 1, {} -> 2}}", 4 * n));
+    };
+    scaling::check(
+        "a remap whose key is a sum of n squares of its binder, whole path",
+        n_terms,
+        run,
+    );
+}
