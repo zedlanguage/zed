@@ -1046,10 +1046,16 @@ fn resolver<'u>(
 /// `leaves` standing for the leaves of layer L10 a printed type holds (`_`, `!_`, a literal),
 /// and the forms of step L2.5 the checker prints from L1 on: an atom's payload type, read through
 /// to its parts, an atom with any payload `#a(..)` and every struct `{..}`. A type variable no
-/// bounds clause around it binds is not defined.
-pub fn printed_type(t: &Type, leaves: HashSet<Arc<str>>) -> Result<(), Vec<Error>> {
+/// bounds clause around it binds is not defined. A clause may bound a name of `held`, which
+/// the type holds through a definition it names ([`Resolver::held`]).
+pub fn printed_type(
+    t: &Type,
+    leaves: HashSet<Arc<str>>,
+    held: HashSet<Arc<str>>,
+) -> Result<(), Vec<Error>> {
     let mut r = Resolver {
         printed: Some(leaves),
+        held,
         ..Resolver::default()
     };
     r.walk(Task::Ty(t));
@@ -1112,6 +1118,14 @@ struct Resolver<'u> {
     /// When a printed type is read ([`printed_type`]): the names that stand for its leaves of
     /// layer L10.
     printed: Option<HashSet<Arc<str>>>,
+    /// When a printed type is read: the names its definitions write that no clause in them
+    /// bounds. A definition of a printed type holds no clause, so such a name reads under the
+    /// clause around each name for the definition, as where it is written out (zedc-check
+    /// `Denote::reach`, row XR-heldname-print-batch B1), and a clause bounding it bounds
+    /// something there. The reader checks first that the clause's variable is on a signature
+    /// the type reaches (`read::read_part`, "the bound of ... is on no signature that names
+    /// it"), so [`Resolver::for_end`] does not report the clause as bounding nothing.
+    held: HashSet<Arc<str>>,
     /// The region of each `else`'s operand, by the `else`'s text: an `else` inside another
     /// region gets its region when that region's flow is walked, before the `else` itself.
     else_regions: HashMap<Span, usize>,
@@ -5209,7 +5223,7 @@ impl Resolver<'_> {
             }
             // Cannot fire: the `continue` above skips a name `tvars` does not hold.
             let var = self.tvars.remove(&b.name).expect("bound above");
-            if var.first.is_none() {
+            if var.first.is_none() && !self.held.contains(b.name.as_str()) {
                 self.errors.push(Error {
                     row: None,
                     menu: String::new(),
