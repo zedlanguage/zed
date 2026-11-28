@@ -703,8 +703,8 @@ fn syntax_with_old_break() -> String {
 /// does; seed 27, found after the type-level `else` went out and the `else` tail took a union of
 /// atoms in parentheses, QUESTIONS A113, no longer does; seed 11, found after `()` became a
 /// tuple value, seed 85 after the type-level `else` came in, seed 13 after the `if` statement,
-/// seed 294 before it and seed 45 before that no longer do); if a grammar change moves it, run the seeds again
-/// with a test that calls `fuzz_of` on this test's two specs for each seed and keeps those that
+/// seed 294 before it and seed 45 before that no longer do); if a grammar change moves it, run
+/// the seeds again with a test that calls `fuzz_of` on this test's two specs for each seed and keeps those that
 /// meet the asserts below (the `fuzz` binary cannot: `Spec::open` reads the grammar of the tree
 /// it was built in). The same seed on the real grammar finds nothing, so the failure comes from
 /// the change.
