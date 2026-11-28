@@ -1107,9 +1107,12 @@ fn a_repeated_row_with_an_external_variable_is_not_local() {
 /// XR-heldname-print-batch round 3, Codex C-erasure-cost (D8 of META3): a union written `_`
 /// beside shared rows holding a known payload shape does not make their text shorter: the rows
 /// are still written in full at each place, 2^n copies of `#a(1)` at n levels for n = 2, 3, 4.
-/// Control: with `#a` in place of `#a(1)` the rows are named, and `#a` is written as often at
-/// each depth. A guard of the text of DESIGN.md "Types in a message", which no longer says the
-/// text stays linear; row PLAN-print-payload-rows-exponential is to make it so.
+/// Control: with `#a` in place of `#a(1)` the rows are named at 3 and 4 levels, and `#a` is
+/// written as often at each. At 2 levels no row is named, with `#a`, with `a0` in its place or
+/// with no union beside it (b30-check's probe, round 3): the printer names a row only from that
+/// depth on, as DESIGN.md's example of need-bounded rows writes `(T, (T, U))` four times. A
+/// guard of the text of DESIGN.md "Types in a message", which no longer says the text stays
+/// linear; row PLAN-print-payload-rows-exponential is to make it so.
 #[test]
 fn absorbed_union_beside_known_payload_rows_does_not_imply_compression() {
     let text = |inner: &str, n: usize| {
@@ -1128,10 +1131,13 @@ fn absorbed_union_beside_known_payload_rows_does_not_imply_compression() {
         if !k.contains(", _)") || !b.contains(", _)") {
             bad.push(format!("no union written `_`:\n{k}\n{b}"));
         }
+        known.push(k.matches("#a(1)").count());
+        if n == 2 {
+            continue;
+        }
         if !b.contains("type Part") {
             bad.push(format!("the bare atom's rows are not named:\n{b}"));
         }
-        known.push(k.matches("#a(1)").count());
         bare.push(b.matches("#a").count());
     }
     if known != [4, 8, 16] || bare.iter().any(|&c| c != bare[0]) {
@@ -1664,6 +1670,16 @@ fn a_use_through_a_definition_meets_the_rules_of_a_written_use() {
             "(((a: Part1) -> int for T in int | f64), ((b: Part1) -> int for T in int | f64))",
             None,
         ),
+        // An overload is one function type: its arrows share the clause (the reader gave each
+        // arrow its own function type in the first form of the fix).
+        (
+            "(((a: Part1) -> int) & ((a: Part1) -> f64)) for T in int | f64",
+            None,
+        ),
+        (
+            "(((a: T) -> int) & ((a: T) -> Part1)) for T in int | f64",
+            None,
+        ),
     ]);
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
@@ -2004,8 +2020,9 @@ fn reading_one_definition_with_many_distinct_leftovers_scales() {
             bad.push(format!("{k}: no function"));
             continue;
         };
+        // By the variable's name: printed alone, each variable prints by a name drawn anew, `T`.
         let gives: std::collections::BTreeSet<String> = (s.needs.iter())
-            .filter_map(|n| n.result.as_ref().map(|r| r.to_string()))
+            .filter_map(|n| n.result.as_ref()?.as_var().map(|v| v.to_string()))
             .collect();
         if s.needs.len() != k || gives.len() != k {
             bad.push(format!(

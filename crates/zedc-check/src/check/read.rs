@@ -100,8 +100,8 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
         let def = HeldDef {
             free: free.into(),
             unbound: parts.unbound.into_iter().collect(),
-            refs: parts.refs.into_iter().collect(),
-            lefts: parts.lefts.into_iter().collect(),
+            events: parts.events.into(),
+            neutral: false,
         };
         held.add(name.clone(), def, parts.new_lefts);
         named.insert(name, t);
@@ -310,6 +310,8 @@ fn read_part(
     let mut bounded = Vec::new();
     let mut keyed = HashMap::new();
     let mut hulls = HashMap::new();
+    // The names written as types ([`TypeKind::Name`]), for the free variables below.
+    let mut names: HashSet<&str> = HashSet::new();
     let mut stack = vec![&t];
     while let Some(t) = stack.pop() {
         match &t.kind {
@@ -340,7 +342,10 @@ fn read_part(
                      type"
                 ));
             }
-            TypeKind::Name(_) | TypeKind::Atom(_) | TypeKind::Every(_) | TypeKind::AtomAny(_) => {}
+            TypeKind::Name(n) => {
+                names.insert(n.as_str());
+            }
+            TypeKind::Atom(_) | TypeKind::Every(_) | TypeKind::AtomAny(_) => {}
             TypeKind::Tuple(ts) | TypeKind::Union(ts) => stack.extend(ts),
             TypeKind::And(ts) => {
                 let ts = Type::and_operands(ts);
@@ -403,21 +408,22 @@ fn read_part(
     // printer writes a variable that stands in two places or more (UNDERSCORE-print); a name
     // written once stays undefined, as in a written signature. Written means in the text with
     // each definition written out at each name for it ([`Times`]), so that a definition used
-    // twice writes the names of its body twice. One pass over the tokens with a hash lookup,
-    // O(n).
+    // twice writes the names of its body twice. Only a name written as a type is a candidate,
+    // from the walk above, as [`Times`] counts: a label, as `T` in `#x(T: int)`, is no
+    // variable. Before, a pass over the tokens took labels too, so a label spelled as a
+    // variable made a variable of the outermost signature that nothing there writes (Codex
+    // B-label-free and Gemini B5-free-label, round 3 of XR-heldname-print-batch, D4 of META3).
+    // One hash lookup per name written, O(n). Test: `l01_26_type_resolution::scaling::
+    // a_field_label_does_not_add_an_own_variable_from_a_sibling`.
     let clauses: HashSet<&str> = bounded.iter().copied().collect();
-    let free: HashSet<Arc<str>> = (tokens.iter())
-        .filter_map(|t| match &t.tok {
-            Tok::Name(n)
-                if n.starts_with(|c: char| c.is_ascii_uppercase())
-                    && !binds.contains_key(n.as_str())
-                    && !clauses.contains(n.as_str())
-                    && read.times.twice(n) =>
-            {
-                Some(n.as_str().into())
-            }
-            _ => None,
+    let free: HashSet<Arc<str>> = (names.into_iter())
+        .filter(|n| {
+            n.starts_with(|c: char| c.is_ascii_uppercase())
+                && !binds.contains_key(*n)
+                && !clauses.contains(n)
+                && read.times.twice(n)
         })
+        .map(Arc::from)
         .collect();
     found.extend(free.iter().cloned());
     // A difference from the unknown `_` is refused rather than read as more than it says:
@@ -437,6 +443,7 @@ fn read_part(
         inexact,
         used,
         def,
+        clash,
     } = denoted_inexact(
         &t,
         binds,
@@ -445,6 +452,21 @@ fn read_part(
         Ranged { keyed, hulls },
         read.definition,
     );
+    // A use of a bounded variable through a definition meets the rules of a written one, and is
+    // refused in the resolver's words (`type_var` in zedc-resolve) where it breaks one
+    // (`Denote::name_use`, D1 of META3, round 3 of XR-heldname-print-batch).
+    if let Some((v, outside)) = clash {
+        return Err(match outside {
+            true => format!(
+                "`{text}`: the bounded variable `{v}` stands outside a function type: its bound \
+                 is a function type's, which a call binds"
+            ),
+            false => format!(
+                "`{text}`: the bounded variable `{v}` stands in two function types: its bound \
+                 is the bound of one function type, which a call binds"
+            ),
+        });
+    }
     if let Some(Inexact { span, printed, .. }) = inexact
         .into_iter()
         .find(|i| matches!(i.cause, Loss::Unknown))

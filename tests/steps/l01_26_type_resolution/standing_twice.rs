@@ -475,8 +475,14 @@ fn a_tuple_inside_a_shared_part_does_not_grow_as_a_union_erases_its_other_place(
     assert_eq!(
         texts,
         [
-            "(text 0: to be pinned from the red job)",
-            "(text 1: to be pinned from the red job)"
+            "type Part1 = ((T, T), (T, T));\ntype Part2 = (Part1, Part1);\n\
+             type Part3 = (Part2, Part2);\ntype Part4 = (Part3, Part3);\n\
+             type Part5 = (Part4, Part4);\ntype Part6 = (Part5, Part5);\n\
+             type Part7 = (Part6, int);\n(a: T) -> ((Part7, Part7), Part6) for T in int | f64",
+            "type Part1 = ((T, T), (T, T));\ntype Part2 = (Part1, Part1);\n\
+             type Part3 = (Part2, Part2);\ntype Part4 = (Part3, Part3);\n\
+             type Part5 = (Part4, Part4);\n(a: T) -> ((((Part5, Part5), int), \
+             ((Part5, Part5), int)), _) for T in int | f64"
         ]
     );
 }

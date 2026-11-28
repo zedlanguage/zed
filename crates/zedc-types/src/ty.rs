@@ -24181,11 +24181,16 @@ struct Scope {
     /// The variables of [`Scope::left`] each open signature added, innermost last, so that
     /// [`Scope::close`] takes out exactly those.
     left_opened: Vec<Vec<Arc<str>>>,
-    /// For each open signature, innermost last, the number of its opening: how many
-    /// signatures [`Scope::open`] had opened before it. Two places under the same innermost
-    /// opening read every name the same, as every signature around them was opened at the
-    /// same place, so a walk that only counts writes a tuple's text once for each opening
-    /// ([`Walk::local`]).
+    /// For each open signature that binds a variable, as its own or bounded, innermost last,
+    /// the number of its opening: how many signatures [`Scope::open`] had opened before it.
+    /// Two places under the same innermost such opening read every name the same, as every
+    /// signature around them that binds a name was opened at the same place and one that binds
+    /// none pushes no meaning for a name, so a walk that only counts writes a tuple's text once
+    /// for each opening ([`Walk::local`]). A signature that binds nothing is left out: with
+    /// each opening kept (round 3), one inner function that shadows a name and m inner
+    /// functions binding nothing gave m keys to each of the owner's tuples, Theta(m²) row
+    /// entries (Gemini B2-shadow-fan and Claude F2, round 3 of XR-heldname-print-batch, D5 of
+    /// META3).
     openings: Vec<usize>,
     /// The number of signatures [`Scope::open`] has opened.
     opened: usize,
@@ -24527,9 +24532,17 @@ impl Scope {
             opened.push(left.clone());
         }
         self.left_opened.push(opened);
-        self.openings.push(self.opened);
+        if Self::binds(sig) {
+            self.openings.push(self.opened);
+        }
         self.opened += 1;
         out
+    }
+
+    /// Whether `sig` binds a variable, as its own or bounded: only such a signature is an
+    /// opening of [`Scope::openings`].
+    fn binds(sig: &Sig) -> bool {
+        !sig.own.is_empty() || !sig.bounds.is_empty()
     }
 
     /// What the tests remove from the variable `v` of [`Scope::left`] where it is left of
@@ -24570,7 +24583,9 @@ impl Scope {
                 s.pop();
             }
         }
-        self.openings.pop();
+        if Self::binds(sig) {
+            self.openings.pop();
+        }
     }
 
     /// The scope a message about the comparison `cx` prints its types in, with the own
@@ -25346,9 +25361,17 @@ impl Walk {
     /// the owner's at another, and the key keeps the openings apart. Keyed by the opening
     /// always (round 2), the owner's own tuples were walked again under each of m inner
     /// functions, Theta(m^2) for m functions sharing m tuples (Gemini B5-REG, round 2 of
-    /// XR-heldname-print-batch). Tests: `l01_26_type_resolution::scaling::
-    /// standing_twice_does_not_reenter_owner_rows_per_inner_lambda` and its control where an
-    /// inner function binds the same name.
+    /// XR-heldname-print-batch). The opening is the innermost one that binds a variable
+    /// ([`Scope::openings`]), which on this walk is the innermost that binds a name of
+    /// `others` or the owner: every name a function other than the owner binds is in `others`
+    /// ([`Shared::of`]), and the owner's one opening splits no key. A signature that binds
+    /// nothing pushes no meaning for any name, so places under it read as under the opening
+    /// around it (Claude F2, round 3, D5 of META3). NOT PROVED: m inner functions each binding
+    /// a name of its own still give m keys (the several-opening family, deferred since
+    /// round 2). Tests: `l01_26_type_resolution::scaling::
+    /// standing_twice_does_not_reenter_owner_rows_per_inner_lambda`, its control where an
+    /// inner function binds the same name, and
+    /// `standing_twice_does_not_reenter_rows_per_lambda_beside_a_shadow`.
     fn local<'a>(
         &mut self,
         r: &'a Row,
@@ -25655,7 +25678,8 @@ pub fn set_ignore_other_binders(on: bool) {
 // and ω stand for upper bounds on the number of times a value can be used." Their uses are a
 // type analysis of a program, not counts of places in a text; what carries over is that two
 // values, once and more, are all a reader of the count needs. Both quotes were checked against
-// the papers' text on 2026-11-28 (Collins: the ACM PDF; Turner et al.: the authors' copy at
+// the papers' text on 2026-11-28 (Collins: the scan OpenAlex holds, W1965601529, pp. 655-656,
+// the ACM PDF refusing the fetch; Turner et al.: the authors' copy at
 // homepages.inf.ed.ac.uk/wadler/papers/once/once.ps, where ω prints as `!` in the text layer).
 struct Weights {
     /// For each type, how many times it stands, capped at two.
@@ -26047,7 +26071,8 @@ fn write_parts<'a>(
 /// time: its variables are named by the whole text ([`Walk`]). So is a tuple with variables,
 /// but one placed as [`Shared::local`] says (row PRINT-shared-part-exponential): a tuple held
 /// in two places or more, below a part, whose variables are all bound by the one function the
-/// text writes, its bounded ones included, and that holds no function and no payload, is
+/// text writes, its bounded ones included, and that holds no function and no known payload
+/// shape, is
 /// written in full at its first place outside the unions written `_` only, marked so that [`defs::lift`] takes that text as a
 /// soft part's body once its variables are named, and by reference at the others. Its
 /// variables then stand once in the text for each place, as [`Walk::plan`] counts them; the
@@ -26270,10 +26295,16 @@ impl Shared {
         };
         let mut placed: Vec<(Node<'_>, String)> = Vec::new();
         // Whether each tuple may be written once with its variables ([`Shared::local`]): its
-        // components hold no function and no payload, each variable they hold the owner binds,
-        // as its own or bounded, and no other function binds, and each tuple they hold may be
-        // so. A tuple is left after those it holds, so one look at each component, O(n) in all
-        // with a hash lookup per tuple and variable.
+        // components hold no function and no known payload shape (`Ty::atom_of` payloads;
+        // `#a(..)` is a set member and passes), each variable they hold the owner binds, as its
+        // own or bounded, and no other function binds, and each tuple they hold may be so. A
+        // tuple is left after those it holds, so one look at each component, O(n) in all with a
+        // hash lookup per tuple and variable. A tuple holding a function or a known payload
+        // shape is written in full at each place, and so is each tuple holding it, so on a DAG
+        // of such tuples the text doubles at each level: row PLAN-print-payload-rows-exponential
+        // is to name them (Claude F5, round 3 of XR-heldname-print-batch, D7 of META3; test
+        // `l01_26_type_resolution::scaling::
+        // absorbed_union_beside_known_payload_rows_does_not_imply_compression`).
         //
         // A variable a test leaves of another (a need `Narrow` with it as result), printed as
         // the difference `T \ s` ([`Scope::open`]), may stand in such a tuple: the reader keeps
