@@ -785,8 +785,16 @@ fn build_bmm(n: usize, free: usize, seed: u64, g: bool) -> (Prob, Vec<Vec<bool>>
     for _ in 0..free {
         f[rng.below(n)][rng.below(n)] = true;
     }
+    let p = bmm_instance(&a, &f, g);
+    (p, boolean_product(&a, &f))
+}
+
+/// The instance of [`build_bmm`] for given n x n matrices A and F (A with a unit diagonal for
+/// the proof's step 1; [`any_boolean_product_is_read_off_the_pairs_left`] embeds any A in one).
+fn bmm_instance(a: &[Vec<bool>], f: &[Vec<bool>], g: bool) -> Prob {
+    let n = a.len();
     let mut rows: Vec<Vec<(usize, i64)>> = Vec::new();
-    for au in &a {
+    for au in a {
         rows.push((0..n).filter(|&x| au[x]).map(|x| (x, 1)).collect());
     }
     for v in 0..n {
@@ -818,11 +826,91 @@ fn build_bmm(n: usize, free: usize, seed: u64, g: bool) -> (Prob, Vec<Vec<bool>>
     }
     let side_a: Vec<usize> = (0..n).chain(2 * n..3 * n).collect();
     let consts = vec![0; rows.len()];
-    let p = prob(&rows, &consts, &[(side_a, side_b)], &ment, 4 * n + 3);
-    let c = (0..n)
+    prob(&rows, &consts, &[(side_a, side_b)], &ment, 4 * n + 3)
+}
+
+/// The Boolean product A F of two n x n matrices, by its definition.
+fn boolean_product(a: &[Vec<bool>], f: &[Vec<bool>]) -> Vec<Vec<bool>> {
+    let n = a.len();
+    (0..n)
         .map(|u| (0..n).map(|v| (0..n).any(|x| a[u][x] && f[x][v])).collect())
-        .collect();
-    (p, c)
+        .collect()
+}
+
+/// Step 0 of the proof at the module's "The general worklist and Boolean matrix
+/// multiplication": any A, not only one with a unit diagonal, multiplies through [`build_bmm`]'s
+/// instance. A' = [[I, A], [0, I]] and F' = [[0, 0], [F, 0]] (2n x 2n) have A' F' = [[A F, 0],
+/// [F, 0]], so A F is the top-left block, read off the pairs left: (A F)[u][v] = 1 iff the pair
+/// (s_u, t_v) is not left. F' is at least three quarters zeros, so at least 3 (2n)^2 / 4 atoms
+/// `w_x * z_v` are mentioned whatever F is, and the input size is Θ(n^2). Here A has a zero
+/// diagonal and F runs from no ones to about half ones. Control: without the sign predicates
+/// (`no_def`) the matrix read off is wrong wherever A F has a one.
+#[test]
+fn any_boolean_product_is_read_off_the_pairs_left() {
+    let mut rng = Rng::new(7);
+    let mut ctrl_caught = 0;
+    let mut ctrl_cases = 0;
+    for n in [12usize, 34] {
+        for density in 0..3 {
+            let a: Vec<Vec<bool>> = (0..n)
+                .map(|u| (0..n).map(|x| x != u && rng.coin()).collect())
+                .collect();
+            let f: Vec<Vec<bool>> = (0..n)
+                .map(|_| {
+                    (0..n)
+                        .map(|_| match density {
+                            0 => false,
+                            1 => rng.coin() && rng.coin(),
+                            _ => rng.coin(),
+                        })
+                        .collect()
+                })
+                .collect();
+            let m = 2 * n;
+            let a2: Vec<Vec<bool>> = (0..m)
+                .map(|u| {
+                    (0..m)
+                        .map(|x| u == x || u < n && x >= n && a[u][x - n])
+                        .collect()
+                })
+                .collect();
+            let f2: Vec<Vec<bool>> = (0..m)
+                .map(|x| (0..m).map(|v| x >= n && v < n && f[x - n][v]).collect())
+                .collect();
+            let want = boolean_product(&a, &f);
+            let p = bmm_instance(&a2, &f2, true);
+            let read = |left: &[(usize, usize)]| -> Vec<Vec<bool>> {
+                (0..n)
+                    .map(|u| (0..n).map(|v| !left.contains(&(u, m + v))).collect())
+                    .collect()
+            };
+            let out = solve(&p, Opts::default());
+            println!(
+                "bmm embedded n={n} (n'={m}) F density {density}: ones of AF={} left={} \
+                 worklist={}",
+                want.iter().flatten().filter(|&&b| b).count(),
+                out.left.len(),
+                out.worklist
+            );
+            assert_eq!(read(&out.left), want, "n={n} density={density}");
+            if want.iter().flatten().any(|&b| b) {
+                ctrl_cases += 1;
+                let ctrl = solve(
+                    &p,
+                    Opts {
+                        no_def: true,
+                        ..Opts::default()
+                    },
+                );
+                ctrl_caught += usize::from(read(&ctrl.left) != want);
+            }
+        }
+    }
+    assert!(ctrl_cases > 0);
+    assert_eq!(
+        ctrl_caught, ctrl_cases,
+        "the control no_def must misread A F"
+    );
 }
 
 /// Design sec. 5.3: the pairs left are exactly the zeros of A F (with `g`, also every (s_u,
@@ -1019,8 +1107,10 @@ fn ratios(build: &dyn Fn(usize) -> Prob, ls: [usize; 2]) -> ([u64; 2], [f64; 4])
 /// 5. The rest of step 5 is the kills of the l K rows, each reading the holder lists of its
 ///    three variables, O(r) each, and the X and Y rows, which never die.
 ///
-/// Summed: O(l r log l + r²) = O(N log N). The general worklist stays superlinear: Boolean
-/// matrix multiplication reduces to it (design sec. 5.3), so this bound is for this family.
+/// Summed: O(l r log l + r²) = O(N log N). This bound is for this family only: Boolean matrix
+/// multiplication reduces to the general worklist, so O(N log N) there would multiply Boolean
+/// matrices in O(n² log n) (a conditional bound, not a proved one: the module's "The general
+/// worklist and Boolean matrix multiplication").
 #[test]
 fn the_worklist_of_wlgrow_g_scales() {
     let p = build_wlgrow(10, 10, true);
