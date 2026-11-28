@@ -1262,6 +1262,20 @@ fn a_program_is_offered_a_one_component_shape_as_a_type_it_can_write() {
 }
 
 #[test]
+fn members_that_each_fit_only_the_shape_of_their_own_atom_are_accepted() {
+    use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    // TYPES-bucket-members-share-shape. `((V, #m0),)` and `((V, #m1),)` both hold `V`, so the
+    // closed shapes are not left out, and they agree at component 0 of the outer tuple (a pair
+    // each), so they share a bucket; each member fits only the shape of its own atom, which
+    // the inner tuple's component 1 tells apart. Accepted: `g`'s `h` takes the same values as
+    // `f`'s at every `V`.
+    let src = "p(f: (h: (x: ((V, #m0),) | ((V, #m1),)) -> int for V in int | f64) -> int) = 0;\n\
+               q(g: (h: (x: ((V, #m0),) | ((V, #m1),)) -> int) -> int for V in int | f64) \
+               = p(f: g);\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+}
+
+#[test]
 fn a_bounded_type_variable_in_a_refused_bucket_prints_by_name_with_where_it_is_bound() {
     use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
     // `U` is bounded by `int` in `g`'s type: the bucket prints it by name, once or twice

@@ -991,6 +991,41 @@ fn three_shapes_of_bounded_variables_fit_themselves_renamed() {
     }
 }
 
+/// TYPES-bucket-members-share-shape: n shapes `((X_i, #m_i),)` against themselves renamed
+/// `((Y_i, #m_i),)`. The shapes agree at their one component, a pair each, and differ only
+/// inside it, at the atom, so each member fits only the shape of its own atom. Refused before
+/// for some n (the members shared one bucket, and a member failing the first shape of it was
+/// refused); the row's own program, one variable `V` and two shapes, is
+/// l01_22 kinds `members_that_each_fit_only_the_shape_of_their_own_atom_are_accepted`. Small
+/// instance of the bench `n_shapes_told_apart_inside_a_tuple_fit_themselves_renamed_scales`.
+#[test]
+fn shapes_told_apart_inside_their_one_tuple_fit_themselves_renamed() {
+    use zed_kernel::Value;
+    use zedc::check::ty::{Carrier, EVERY, Ty, fits_sig};
+    let int = Ty::carrier(Carrier::Int);
+    let union = |ts: Vec<Ty>| ts.into_iter().reduce(|a, b| a.union(&b)).unwrap();
+    for n in 2..9 {
+        let shapes = |p: &str| {
+            union(
+                (0..n)
+                    .map(|i| {
+                        let atom = Ty::lit(&Value::atom(&format!("m{i}")));
+                        Ty::tuple(vec![Ty::tuple(vec![
+                            Ty::var(format!("{p}{i}").into()),
+                            atom,
+                        ])])
+                    })
+                    .collect(),
+            )
+        };
+        for bound in [None, Some(1u8), Some(EVERY)] {
+            let s = own_sig("X", n, bound, shapes("X"), int.clone());
+            let q = own_sig("Y", n, bound, shapes("Y"), int.clone());
+            assert!(fits_sig(&s, &q), "{n} shapes, {bound:?}");
+        }
+    }
+}
+
 /// The signatures `(x0: shapes) -> int`, `(x0: written) -> int` and `(x0: joined) -> int` for
 /// n tuples, each of k components and a last component `i`, every own variable bounded to
 /// several carriers. Component j of tuple i is two variables, `X_a | X_b`, except at the places
