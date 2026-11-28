@@ -915,3 +915,60 @@ fn the_tools_take_a_nested_program_and_lex_a_sum() {
         lexes_a_sum(n);
     }
 }
+
+/// FAIL-grammar-fuzz-seed-16384521090608770973: the fuzz of the real grammar at that seed found
+/// a sentence of `Entry` whose tree changed from L1 to L2, `… else #a -> { a -> { } != a }`. At
+/// L1, `{ a -> { } != a }` is no block, so `else #a -> …` failed and `Entry` read
+/// `(… else #a) -> { … }`, an entry whose value is a display; at L2, `Block`'s alternative
+/// `Display` took the brace as the handler's body, which the row "Display in body position"
+/// rejects. A program written at L1 changed its reading at L2. The seed is kept as it is: a
+/// later grammar change can move the sentences it makes, as it moved seed 90's, and then the
+/// sentence check below still holds.
+#[test]
+fn fuzz_of_the_real_grammar_at_seed_16384521090608770973_finds_no_failure() {
+    let dir = spec_dir("fuzz_real_seed_1638", &design(""), "");
+    let spec = Spec::open(&dir.root()).expect("the spec reads");
+    let (outcome, out) = fuzz_of(&spec, 100, 16384521090608770973u64 as i64);
+    assert_eq!(outcome, Ok(true), "{out}");
+    assert!(
+        out.contains(" containment failures 0 derived but rejected 0\n"),
+        "{out}"
+    );
+}
+
+/// The sentence of seed 16384521090608770973, and the spec's own example of the row "Display in
+/// body position" inside a display: each parses as an `Entry` at L1 to the tree it has at every
+/// ring above.
+#[test]
+fn a_display_after_a_handlers_arrow_reads_the_same_at_every_ring() {
+    use zedc::parse::{TOP, Tree, parse};
+    // Rule, alternative, span, inner choices and children, as `zed_tools::syntax::Tree::same`.
+    let same = |a: &Tree, b: &Tree| {
+        let mut stack = vec![(a.root, b.root)];
+        while let Some((x, y)) = stack.pop() {
+            let (x, y) = (&a.nodes[x], &b.nodes[y]);
+            if (x.rule, x.alt, x.start, x.end, &x.branches, x.kids.len())
+                != (y.rule, y.alt, y.start, y.end, &y.branches, y.kids.len())
+            {
+                return false;
+            }
+            stack.extend(x.kids.iter().copied().zip(y.kids.iter().copied()));
+        }
+        true
+    };
+    for text in [
+        "{ } ^ [ ] ( ) ^ { } * - ! ! f ^ { } ( ) ^ - ! ! b ++ ! ( ( ) else { } , ) is not #_ & _ \
+         & #b & b . T [ _ ..= T + ( ) ] else #a -> { a -> { } != a }",
+        "x else #a -> { 1, 2 }",
+    ] {
+        let toks = zedc::lex::lex(text).expect("the sentence lexes");
+        let parsed = |ring| {
+            parse(text, &toks, "Entry", ring)
+                .unwrap_or_else(|e| panic!("{text:?} does not parse at L{ring}: {e}"))
+        };
+        let first = parsed(1);
+        for ring in 2..=TOP {
+            assert!(same(&first, &parsed(ring)), "{text:?} reads differently at L{ring}");
+        }
+    }
+}
