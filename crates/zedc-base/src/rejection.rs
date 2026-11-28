@@ -286,7 +286,6 @@ rows! {
     WrongForm => "Argument in the wrong form",
     ParameterKinds => "Function whose parameter kinds do not fit the expected function type",
     MissingArgument => "Missing argument",
-    // No diagnostic uses these four rows yet: plan row L1.29c emits them.
     ArgumentBeyondParameters => "Argument beyond the parameters",
     ArgumentNamedForNoParameter => "Argument named for no parameter",
     ParameterGivenTwice => "Parameter given two values",

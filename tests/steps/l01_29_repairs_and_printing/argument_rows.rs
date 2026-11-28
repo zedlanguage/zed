@@ -52,9 +52,14 @@ fn an_argument_beyond_the_parameters_names_the_count_and_offers_its_removal() {
     let o = out(&format!("{LIMIT}x = limit(5, 0, 10, 2);\n"));
     assert!(o.contains("`limit` takes 3 arguments by position"), "{o}");
     assert!(o.contains("repair: remove this argument"), "{o}");
-    assert!(o.contains("repair: add a parameter for it to the declaration of `limit`"), "{o}");
+    assert!(
+        o.contains("repair: add a parameter for it to the declaration of `limit`"),
+        "{o}"
+    );
     // The removal checks.
-    assert!(accepted_with_main(&format!("{LIMIT}x = limit(5, 0, 10);\n")));
+    assert!(accepted_with_main(&format!(
+        "{LIMIT}x = limit(5, 0, 10);\n"
+    )));
 }
 
 #[test]
@@ -64,8 +69,14 @@ fn an_argument_of_an_inner_call_is_offered_the_moved_parenthesis() {
     assert!(o.contains("repair: write `f(g(1), y)`"), "{o}");
     // Offered after the removal and before the edit of the declaration.
     let at = |s: &str| o.find(s).unwrap_or_else(|| panic!("{s} in {o}"));
-    assert!(at("repair: remove this argument") < at("repair: write `f(g(1), y)`"), "{o}");
-    assert!(at("repair: write `f(g(1), y)`") < at("declaration of `g`"), "{o}");
+    assert!(
+        at("repair: remove this argument") < at("repair: write `f(g(1), y)`"),
+        "{o}"
+    );
+    assert!(
+        at("repair: write `f(g(1), y)`") < at("declaration of `g`"),
+        "{o}"
+    );
     // The error is reported once, at `y`, the argument beyond `g`'s parameter.
     assert_eq!(o.matches("one more than `g` takes").count(), 1, "{o}");
 }
@@ -88,12 +99,17 @@ fn the_moved_parenthesis_after_no_argument_writes_an_empty_call() {
 fn a_name_for_no_parameter_is_offered_the_nearest_parameter() {
     let o = out(&format!("{GREET}x = greet(\"Al\", puntc: \"?\");\n"));
     assert!(o.contains("repair: write `punct: \"?\"`"), "{o}");
-    assert!(o.contains("repair: add a parameter `puntc` to the declaration of `greet`"), "{o}");
+    assert!(
+        o.contains("repair: add a parameter `puntc` to the declaration of `greet`"),
+        "{o}"
+    );
 }
 
 #[test]
 fn the_nearest_parameter_is_not_offered_when_the_call_gives_it_a_value() {
-    let o = out(&format!("{GREET}x = greet(\"Al\", punct: \"!\", puntc: \"?\");\n"));
+    let o = out(&format!(
+        "{GREET}x = greet(\"Al\", punct: \"!\", puntc: \"?\");\n"
+    ));
     assert!(!o.contains("repair: write `punct:"), "{o}");
     assert!(o.contains("repair: remove this argument"), "{o}");
 }
@@ -104,15 +120,24 @@ fn a_parameter_given_two_values_offers_the_removal_of_either() {
     // second value a program can give a parameter; the parameter is not positional, as a
     // positional one passed by name is refused first, for that.
     let o = out("hello(name: String) = name;\nx = \"Al\".hello(name: \"Bo\");\n");
-    assert!(o.contains("repair: remove this second value for `name`"), "{o}");
-    assert!(o.contains("repair: remove the first value for `name` and keep this one"), "{o}");
+    assert!(
+        o.contains("repair: remove this second value for `name`"),
+        "{o}"
+    );
+    assert!(
+        o.contains("repair: remove the first value for `name` and keep this one"),
+        "{o}"
+    );
 }
 
 #[test]
 fn a_value_before_the_dot_for_no_parameters_offers_the_bare_call() {
     let o = out("seed() = 42;\nx = 3.seed;\n");
     assert!(o.contains("repair: call it as `seed()`"), "{o}");
-    assert!(o.contains("repair: add a first parameter to the declaration of `seed`"), "{o}");
+    assert!(
+        o.contains("repair: add a first parameter to the declaration of `seed`"),
+        "{o}"
+    );
 }
 
 #[test]
@@ -184,7 +209,8 @@ pub(super) fn calls(n: usize) -> String {
     let mut src = String::from(GREET);
     src += "g(positional a: int) = a;\nf(positional a: int, positional b: int) = a;\n";
     for i in 0..n {
-        src += &format!("y{i} = {i};\nx{i} = f(g(1, y{i}));\nw{i} = greet(\"Al\", puntc: \"?\");\n");
+        src +=
+            &format!("y{i} = {i};\nx{i} = f(g(1, y{i}));\nw{i} = greet(\"Al\", puntc: \"?\");\n");
     }
     with_main(&src)
 }
@@ -194,7 +220,10 @@ pub(super) fn calls_offered(src: &str, n: usize) {
     let o = rejected(src);
     assert_eq!(o.matches("repair: write `punct: \"?\"`").count(), n, "{o}");
     for i in [0, n / 2, n - 1] {
-        assert!(o.contains(&format!("repair: write `f(g(1), y{i})`")), "{i}: {o}");
+        assert!(
+            o.contains(&format!("repair: write `f(g(1), y{i})`")),
+            "{i}: {o}"
+        );
     }
 }
 

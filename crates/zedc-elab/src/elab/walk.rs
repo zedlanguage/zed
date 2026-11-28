@@ -2190,7 +2190,11 @@ impl<'a> Elab<'a> {
             let t = match at.get(name.as_str()).copied() {
                 None => {
                     let who = ff.callee.who();
-                    self.misfit(a.span, Misfit::NoParam(name), &who, ff.callee.called())
+                    // The nearest parameter is offered by the checker's copy of this error,
+                    // which the merge keeps where both report; elaboration alone reports a
+                    // call through a parameter, whose menu then names no parameter.
+                    let misfit = Misfit::NoParam(name, None);
+                    self.misfit(a.span, misfit, &who, ff.callee.called())
                 }
                 Some(j) if ff.callee.param(j).1 => {
                     let who = ff.callee.who();

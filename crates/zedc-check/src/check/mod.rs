@@ -252,8 +252,11 @@ pub enum Misfit<'s> {
     Named(&'s str),
     /// A named argument for this positional parameter.
     Positional(&'s str),
-    /// A named argument of a name no parameter has.
-    NoParam(&'s str),
+    /// A named argument of a name no parameter has, with, where one is near (step L1.29c),
+    /// the parameter nearest to it in spelling among those the call gives no value, the code
+    /// of the argument's value, and the span of the whole argument, `name: value`, which the
+    /// repair writing that parameter's name replaces (`Ck::unfit` puts its note there).
+    NoParam(&'s str, Option<(&'s str, &'s str, Span)>),
     /// A named argument for a parameter already filled, with the span of the argument that
     /// filled it where the call writes one ([`Misfit::first_site`]).
     Supplied(&'s str, Option<Span>),
@@ -328,9 +331,10 @@ impl Misfit<'_> {
     /// The row of the rejection table the misfit is a case of, if any.
     pub fn row(self) -> Option<Row> {
         match self {
-            Misfit::NoReceiver | Misfit::TooMany(_) | Misfit::NoParam(_) | Misfit::Supplied(..) => {
-                None
-            }
+            Misfit::NoReceiver => Some(Row::ValueBeforeDotWithNoParameters),
+            Misfit::TooMany(_) => Some(Row::ArgumentBeyondParameters),
+            Misfit::NoParam(..) => Some(Row::ArgumentNamedForNoParameter),
+            Misfit::Supplied(..) => Some(Row::ParameterGivenTwice),
             Misfit::Named(_) | Misfit::Positional(_) => Some(Row::WrongForm),
             Misfit::CurriedPositional { .. } | Misfit::NothingLeftOut => Some(Row::NothingLeftOut),
             Misfit::Missing(..) => Some(Row::MissingArgument),
@@ -379,7 +383,7 @@ impl Misfit<'_> {
                 "this argument is passed by name, as `{name}: …`, and `{name}` of `{who}` is \
                  positional, so a call passes it only by position"
             ),
-            Misfit::NoParam(name) => format!(
+            Misfit::NoParam(name, _) => format!(
                 "this argument is passed by the name `{name}`, and `{who}` has no parameter of \
                  that name, so the argument has no parameter to go to"
             ),
@@ -469,17 +473,27 @@ impl Misfit<'_> {
                 }
                 menu
             }
-            (Misfit::NoParam(name), true) => vec![
-                format!("repair: write the name of a parameter of `{who}` in place of `{name}`"),
-                "repair: remove this argument".into(),
-                format!("repair: add a parameter `{name}` to the declaration of `{who}`"),
-            ],
-            (Misfit::NoParam(name), false) if called == CalledKind::Word => vec![
-                format!("repair: write the name of a parameter of `{who}` in place of `{name}`"),
-                "repair: remove this argument".into(),
-            ],
-            (Misfit::NoParam(name), false) => {
-                vec!["repair: remove this argument".into(), named_function(name)]
+            (Misfit::NoParam(name, near), _) => {
+                // The parameter nearest in spelling, written into the argument (DESIGN.md
+                // sec:diagnostics, row "Argument named for no parameter"); where none is near,
+                // a function with a declaration or a word is offered its parameters' names in
+                // general, and a value, whose parameters a reader cannot look up, nothing.
+                let mut menu: Vec<String> = match near {
+                    Some((p, value, _)) => vec![format!("repair: write `{p}: {value}`")],
+                    None if called == CalledKind::Value => Vec::new(),
+                    None => vec![format!(
+                        "repair: write the name of a parameter of `{who}` in place of `{name}`"
+                    )],
+                };
+                menu.push("repair: remove this argument".into());
+                match called {
+                    CalledKind::Declared => menu.push(format!(
+                        "repair: add a parameter `{name}` to the declaration of `{who}`"
+                    )),
+                    CalledKind::Word => {}
+                    CalledKind::Value => menu.push(named_function(name)),
+                }
+                menu
             }
             (Misfit::Supplied(name, _), _) => vec![
                 format!("repair: remove this second value for `{name}`"),

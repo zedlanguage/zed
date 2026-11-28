@@ -11792,7 +11792,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         let at = receiver.as_ref().map(|r| r.expr.map_or(span, |e| e.span));
         let (slots, missing) = match fit(&sig, declared, at, &args, curry, span, self.t.text) {
             Ok(fitted) => fitted,
-            Err(misfits) => return self.unfit(m, &sig, declared, &args, span, &what, misfits),
+            Err(misfits) => {
+                if declared && receiver.is_none() && !curry && !self.trying {
+                    self.moved_parenthesis(&sig, &args, span, &what);
+                }
+                return self.unfit(m, &sig, declared, &args, span, &what, misfits);
+            }
         };
         let s = CallSigF {
             receiver,
@@ -12206,10 +12211,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             for (at, misfit) in misfits {
                 let message = misfit.message(&who);
-                let menu = misfit.menu(&who, called).into_iter().map(|text| Note {
-                    span: at,
-                    text: text.into(),
-                });
+                // The repair naming the nearest parameter, the first entry, rewrites the whole
+                // argument `name: value`; every other entry is at the argument's value.
+                let first = match misfit {
+                    Misfit::NoParam(_, Some((_, _, whole))) => whole,
+                    _ => at,
+                };
+                let menu =
+                    (misfit.menu(&who, called).into_iter().enumerate()).map(|(k, text)| Note {
+                        span: if k == 0 { first } else { at },
+                        text: text.into(),
+                    });
                 let menu = misfit.first_site().into_iter().chain(menu);
                 match misfit.row() {
                     Some(row) => self.rejects_with(row, at, message, menu.collect()),
@@ -12233,6 +12245,152 @@ impl<'t, 'a> Ck<'t, 'a> {
         let menu = misfit.menu(what, CalledKind::Value);
         m.k(Frame::Fail(Some((at, message, menu))));
         m.each(args.exprs());
+    }
+
+    /// For a call `f(…, g(x, y), …)` of the declared `f`, `fsig`, whose arguments `args` do
+    /// not fit, where a positional argument is a call of the declared `g` with more
+    /// positional arguments than `g` takes: the error at `g`'s first argument beyond its
+    /// parameters, with the repair that moves `g`'s closing parenthesis to before it,
+    /// `f(g(x), y)`, offered only when both calls then check (DESIGN.md sec:diagnostics, row
+    /// "Argument beyond the parameters"; step L1.29c). Elaboration reports the same error
+    /// without the repair, and the merge keeps this copy. The first such argument of `f` is
+    /// tried; the repair is not offered where the call's code runs over more than one line.
+    ///
+    /// Complexity tradeoff: the step's text has the check read the argument types already
+    /// recorded, O(k) for k arguments. On this path none is recorded: `f`'s arguments are not
+    /// walked once they do not fit ([`Self::unfit`]). So the two calls are checked as a trial
+    /// that is undone ([`Self::tried`]), `g` on its kept arguments and `f` on `g`'s result and
+    /// the moved ones, which walks each of the k arguments once: O(k) walks, each costing what
+    /// the argument's own check costs, made only at a call that is already rejected, at most
+    /// one trial per such call, and never a re-check of the unit.
+    fn moved_parenthesis(&mut self, fsig: &Arc<Sig>, args: &Args<'a>, span: Span, what: &Rc<str>) {
+        let Some(text) = self.t.text else {
+            return;
+        };
+        // The first positional argument that is a call of a declared function by position
+        // alone, with more arguments than its parameters.
+        let found = args.positional.iter().enumerate().find_map(|(k, a)| {
+            let ArgSrc::Expr(e) = a else { return None };
+            let ExprKind::Call {
+                callee,
+                positional,
+                named,
+                curry: false,
+                infix: false,
+            } = &e.kind
+            else {
+                return None;
+            };
+            let id = self.declared(callee)?;
+            let gsig = only_fn(self.env.get(&id)?)?;
+            let np = gsig.params.len();
+            let cend = callee.span.end;
+            (named.is_empty() && positional.len() > np).then(|| (k, e, cend, positional, id, gsig))
+        });
+        let Some((k, e, cend, gp, id, gsig)) = found else {
+            return;
+        };
+        let np = gsig.params.len();
+        let gname: Rc<str> = self.t.funcs[&id].name.as_str().into();
+        let kept = Args {
+            positional: gp[..np].iter().map(ArgSrc::Expr).collect(),
+            named: Vec::new(),
+        };
+        let mut moved = Args {
+            positional: Vec::with_capacity(args.positional.len() + gp.len() - np),
+            named: args.named.clone(),
+        };
+        moved
+            .positional
+            .extend(args.positional[..k].iter().cloned());
+        moved
+            .positional
+            .push(ArgSrc::Got(Box::new(Arg::of(Ty::empty()))));
+        moved.positional.extend(gp[np..].iter().map(ArgSrc::Expr));
+        moved
+            .positional
+            .extend(args.positional[k + 1..].iter().cloned());
+        // Both calls fit by count and form before either is checked.
+        let fits =
+            |sig: &Sig, a: &Args<'_>, at: Span| fit(sig, true, None, a, false, at, None).is_ok();
+        if !fits(&gsig, &kept, e.span) || !fits(fsig, &moved, span) {
+            return;
+        }
+        // The code of `f`'s call with `g`'s closing parenthesis after its last kept argument,
+        // or right after its opening one when it takes none: `f(g(x), y)`, `f(g(), x)`.
+        let Some(code) = (|| {
+            let call = text.get(span.start..span.end)?;
+            let close = e.span.end.checked_sub(1)?;
+            (!call.contains('\n') && text.get(close..e.span.end)? == ")").then_some(())?;
+            let (cut, insert) = match np {
+                0 => (text.get(cend..close)?.find('(')? + cend + 1, "), "),
+                _ => (gp[np - 1].span.end, ")"),
+            };
+            let rest = match np {
+                0 => text[cut..close].trim_start(),
+                _ => &text[cut..close],
+            };
+            Some(format!(
+                "{}{insert}{rest}{}",
+                &text[span.start..cut],
+                &text[close + 1..span.end]
+            ))
+        })() else {
+            return;
+        };
+        let checks = self.tried(|ck| {
+            let mut m = M::new();
+            let kept = Rc::new(kept);
+            ck.call_sig(
+                &mut m,
+                gsig.clone(),
+                true,
+                None,
+                kept,
+                false,
+                None,
+                e.span,
+                gname.clone(),
+            );
+            ck.drive(&mut m);
+            let gt = m.take_ty();
+            moved.positional[k] = ArgSrc::Got(Box::new(Arg::of(gt)));
+            let mut m = M::new();
+            let moved = Rc::new(moved);
+            ck.call_sig(
+                &mut m,
+                fsig.clone(),
+                true,
+                None,
+                moved,
+                false,
+                None,
+                span,
+                what.clone(),
+            );
+            ck.drive(&mut m);
+            m.take_ty()
+        });
+        if checks.is_none() {
+            return;
+        }
+        let at = gp[np].span;
+        let misfit = Misfit::TooMany(np);
+        let mut menu: Vec<Note> = (misfit.menu(&gname, CalledKind::Declared).into_iter())
+            .map(|text| Note {
+                span: at,
+                text: text.into(),
+            })
+            .collect();
+        let entry = Note {
+            span,
+            text: format!("repair: write `{code}`").into(),
+        };
+        menu.insert(1.min(menu.len()), entry);
+        let row = misfit
+            .row()
+            .expect("an argument beyond the parameters has its row");
+        self.rejects_with(row, at, misfit.message(&gname), menu);
     }
 
     /// `x.f(args)` and `x?.f(args)`: the call `f(x, args)`; `?.` passes `x`'s atoms around it.
@@ -32432,15 +32590,26 @@ fn fit<'s>(
         }
         next = 1;
     }
+    // Whether a parameter takes an argument by name: a named one, or any of a value whose
+    // parameters are all positional.
+    let all_positional = sig.params.iter().all(|p| p.positional);
+    let by_name = |p: &SParam| !p.positional || !declared && all_positional;
+    // The first positional argument beyond the parameters, which is reported with the names
+    // no parameter has (step L1.29c: a call with both reports both); elaboration reports the
+    // first argument beyond them alone, and so does this.
+    let mut beyond = None;
     for i in 0..args.positional.len() {
         let misfit = match sig.params.get(next) {
-            Some(p) if p.positional || !declared && sig.params.iter().all(|p| p.positional) => {
+            Some(p) if p.positional || !declared && all_positional => {
                 slots[next] = Some(At::Pos(i));
                 next += 1;
                 continue;
             }
             Some(p) => Misfit::Named(&p.name),
-            None => Misfit::TooMany(n),
+            None => {
+                beyond = Some((args.span_at(At::Pos(i), span), Misfit::TooMany(n)));
+                break;
+            }
         };
         let misfits = vec![(args.span_at(At::Pos(i), span), misfit)];
         return Err(misfits);
@@ -32453,9 +32622,18 @@ fn fit<'s>(
         .rev()
         .map(|(j, p)| (&*p.name, j))
         .collect();
+    // The named arguments whose names no parameter has, by their place among the named ones,
+    // and the first other misfit of a named argument. The loop goes on past both, so that the
+    // parameters left without a value, among which the nearest name is sought, are those of
+    // the whole call: a parameter a later argument fills is not offered (step L1.29c).
+    let mut unknown = Vec::new();
+    let mut other = None;
     for (i, (name, _)) in args.named.iter().enumerate() {
         let misfit = match at.get(&**name).copied() {
-            None => Misfit::NoParam(name),
+            None => {
+                unknown.push(i);
+                continue;
+            }
             Some(j) if sig.params[j].positional => Misfit::Positional(name),
             Some(j) if slots[j].is_some() || has_receiver && j == 0 => {
                 // The value that filled the parameter, for the note at it: the argument
@@ -32477,7 +32655,50 @@ fn fit<'s>(
                 continue;
             }
         };
-        let misfits = vec![(args.span_at(At::Named(i), span), misfit)];
+        other = other.or(Some((args.span_at(At::Named(i), span), misfit)));
+    }
+    if beyond.is_some() || !unknown.is_empty() || other.is_some() {
+        // The open parameters, which take a value by name and have none: the receiver's
+        // parameter is filled.
+        let open: Vec<&str> = (sig.params.iter().enumerate())
+            .filter(|&(j, p)| slots[j].is_none() && !(has_receiver && j == 0) && by_name(p))
+            .map(|(_, p)| &*p.name)
+            .filter(|name| !name.is_empty())
+            .collect();
+        let written: Vec<(&str, usize)> =
+            (unknown.iter()).map(|&i| (&*args.named[i].0, 0)).collect();
+        // Complexity tradeoff: a test of each unknown name against each open parameter costs
+        // O(k·p·l) for k unknown names and p parameters of length up to l; used: the spelling
+        // index, O(n log n) in the total length n of the names (zed_collections::spelling,
+        // whose header has the proof), every parameter visible at the one place 0.
+        let near = match open.is_empty() || written.is_empty() {
+            true => vec![None; written.len()],
+            false => {
+                let names: Vec<(&str, std::ops::Range<usize>)> =
+                    open.iter().map(|&p| (p, 0..1)).collect();
+                zed_collections::spelling::nearest(&names, &written)
+            }
+        };
+        let mut misfits: Vec<(Span, Misfit)> = beyond.into_iter().collect();
+        for (&i, near) in unknown.iter().zip(near) {
+            let (name, value) = &args.named[i];
+            // The value as written, on one line, and the span of `name: value`, found by
+            // stepping back from the value over the `:` and the name; without the text, or
+            // where the step back does not meet them, no parameter is offered by name.
+            let whole = match (value, text) {
+                (ArgSrc::Expr(e), Some(t)) => named_arg_span(t, name, e.span),
+                _ => None,
+            };
+            let near = near.zip(whole).map(|(p, (code, at))| (p, code, at));
+            misfits.push((
+                args.span_at(At::Named(i), span),
+                Misfit::NoParam(name, near),
+            ));
+        }
+        misfits.extend(other);
+        // In the order of the text, as elaboration meets them: the first is the one a call
+        // through a value with no recorded signature reports ([`Ck::unfit`]).
+        misfits.sort_by_key(|&(at, _)| at.start);
         return Err(misfits);
     }
     let missing: Vec<usize> = (0..n)
@@ -32542,6 +32763,26 @@ fn fit<'s>(
         true => Ok((slots, missing)),
         false => Err(misfits),
     }
+}
+
+/// The code of a named argument's value at `value` in `text`, and the span of the whole
+/// argument `name: value`, where the text before the value is `name`, then `:`, with spaces
+/// between, and the argument lies on one line; else none. O(length of the argument).
+fn named_arg_span<'t>(text: &'t str, name: &str, value: Span) -> Option<(&'t str, Span)> {
+    let code = text.get(value.start..value.end)?;
+    let before = text.get(..value.start)?.trim_end_matches([' ', '\t']);
+    let before = before.strip_suffix(':')?.trim_end_matches([' ', '\t']);
+    let start = before.strip_suffix(name)?.len();
+    // The name is whole: no identifier character runs on before it.
+    let whole = !before[..start]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '\'');
+    let at = Span {
+        start,
+        end: value.end,
+    };
+    (whole && !text[start..value.end].contains('\n')).then_some((code, at))
 }
 
 /// The words that name a callee written as an expression when its code cannot be shown: the
