@@ -72,7 +72,7 @@ not repeat. Kept.
 | `InPattern`, `OutPattern` `('->' X)*` | no | repetition | not built (L8); the levels are listed outermost first and no nested form can be written | keep |
 | keys of `IndexedDef`, `KeyedPush`, `BoundaryItem` | no | `('[' Key ']')+` | not built (L6, L7; `ast/stmts.rs:160`); keys listed outermost first | keep |
 | `ReduceTail` `Suffix*` after `with`, `as`, `into` | yes | repetition | the L2.1 branch folds left (`reduce_tail`); here not built | keep |
-| `TypeFacet*` | no | repetition | not built (L7, `ast/types.rs:103`); facets are a set | keep |
+| `TypeFacet*` | no | repetition | a facet is not built (L7, `ast/types.rs`), facets are a set; each `with type` clause (L2) builds a `TypeKind::Local` around the type before it, folded left (`local_parts`) | keep |
 | `MoreGen*` | no | repetition | not built (L5); generators are a list | keep |
 | `Update` `('.' Name)*` | no | repetition | not built here; kept by LR2 so the names stay labels | keep |
 | `GAlt`, `GSeq` | yes | repetition | not built (L20); alternation and sequence are associative | keep |
