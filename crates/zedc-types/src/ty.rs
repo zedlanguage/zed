@@ -9677,19 +9677,19 @@ fn meet(ms: impl IntoIterator<Item = Member>) -> Member {
 /// Test: l01_22 kinds `members_that_each_fit_only_the_shape_of_their_own_atom_are_accepted`,
 /// refused before.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Place {
+struct TuplePlace {
     inside: Option<usize>,
     at: usize,
 }
 
 /// The shapes of a group of [`Choices`] whose components have a class ([`class`]) at the same
-/// places ([`Place`]), and are one value at the same places of those, filed by their components
+/// places ([`TuplePlace`]), and are one value at the same places of those, filed by their components
 /// there: by value where they are one value, else by class. A shape filed under another key
 /// than a member's holds no component of the member's there ([`member`], [`meet`]).
 struct Group {
     /// The places filed, each with whether it is filed by value; a place comes after the place
     /// it is inside.
-    places: Vec<(Place, bool)>,
+    places: Vec<(TuplePlace, bool)>,
     /// Whether a place is inside another.
     deep: bool,
     /// The shapes under each key, by their index in the list of shapes, in order.
@@ -9712,14 +9712,14 @@ impl Group {
     ///
     /// Where a place is inside another, the member's components at each place are kept, one for
     /// each tuple at the place around it, each tuple once (by [`Row::node`]); none where a
-    /// component around it holds a variable, which may be any tuples ([`Place`]). Each tuple of
+    /// component around it holds a variable, which may be any tuples ([`TuplePlace`]). Each tuple of
     /// the member at a place is read once for each place inside it, so a lookup is linear in the
     /// member's rows at the places filed, times their components filed.
     fn lookup(&self, xs: &[&Ty], rigid: &BTreeMap<Arc<str>, u8>) -> Option<Bucket> {
         let mut key = Vec::with_capacity(self.places.len());
         let mut anywhere = false;
         let mut at: Vec<Option<Vec<&Ty>>> = Vec::new();
-        for &(Place { inside, at: i }, by_value) in &self.places {
+        for &(TuplePlace { inside, at: i }, by_value) in &self.places {
             let found = match inside {
                 None if !self.deep => member(xs[i], by_value, rigid),
                 None => {
@@ -9809,11 +9809,11 @@ type Buckets = Vec<(usize, Bucket)>;
 impl Choices {
     /// The shapes, each by its index in its list, the keys of its components ([`class`]) and
     /// its components, all of one width. Linear in the shapes' components, and in the rows of
-    /// the places filed inside them, each row once a shape ([`Place`]).
+    /// the places filed inside them, each row once a shape ([`TuplePlace`]).
     fn new<'k>(shapes: impl IntoIterator<Item = (usize, &'k [CompKey], Vec<&'k Ty>)>) -> Choices {
         // The groups by the places where a shape's components have a class, each with whether
         // it is one value there; each group's places are set once all are filed.
-        let mut by_places: BTreeMap<Vec<(Place, bool)>, Group> = BTreeMap::new();
+        let mut by_places: BTreeMap<Vec<(TuplePlace, bool)>, Group> = BTreeMap::new();
         for (i, keys, ys) in shapes {
             let mut places = Vec::new();
             let mut key = Vec::new();
@@ -9829,9 +9829,9 @@ impl Choices {
             while let Some((inside, at, c, y)) = todo.pop() {
                 let Some((k, point)) = c else { continue };
                 let here = places.len();
-                places.push((Place { inside, at }, point.is_some()));
+                places.push((TuplePlace { inside, at }, point.is_some()));
                 key.push(point.clone().map_or_else(|| k.clone(), ShapeKey::Point));
-                // One tuple, not one value, filed by its components too ([`Place`]).
+                // One tuple, not one value, filed by its components too ([`TuplePlace`]).
                 if point.is_some() || y.tuples.len() != 1 {
                     continue;
                 }
@@ -9881,7 +9881,7 @@ impl Choices {
     fn apart(&self, g: usize, id: &Bucket, items: usize, names: &[&Arc<str>]) -> String {
         let filed = &self.groups[g].places;
         let mut places: Vec<String> = Vec::with_capacity(filed.len());
-        for &(Place { inside, at }, _) in filed {
+        for &(TuplePlace { inside, at }, _) in filed {
             places.push(match (inside, at.checked_sub(items)) {
                 (Some(p), _) => format!("component {} of {}", at + 1, places[p]),
                 (None, None) => format!("component {}", at + 1),
@@ -11838,7 +11838,7 @@ fn unchosen_text(
         // `first`'s own at `j`, so the lookup of `first` ([`Choices::lookup`]) gives the
         // bucket that holds `S`. Where `B` is a group whole (`None`, a member that may be at
         // any key), `S`, with a class at `j`, is again of another group. Places inside a
-        // component ([`Place`]) change none of this: `j` is a component, not filed in `B`'s
+        // component ([`TuplePlace`]) change none of this: `j` is a component, not filed in `B`'s
         // group, so neither is a place inside it; `S`'s places inside `j` are those of
         // `first`'s component, where `first`'s keys are `S`'s, as at `j`; and at a place
         // inside another component `first`'s key is `H`'s, or `first` may be at any key there.
@@ -13381,7 +13381,7 @@ impl<'m, 's> Comparing<'m, 's> {
     /// tests after `a_union_of_three_shapes_of_variables_fits_itself_renamed`; COMPLEXITY.md
     /// F124. Members told apart only inside a component that is one tuple in each shape, at any
     /// depth, are in buckets of their own: the shapes are filed by that tuple's components too
-    /// ([`Place`], TYPES-bucket-members-share-shape; test l01_22 kinds
+    /// ([`TuplePlace`], TYPES-bucket-members-share-shape; test l01_22 kinds
     /// `members_that_each_fit_only_the_shape_of_their_own_atom_are_accepted`, benchmark
     /// `n_shapes_told_apart_inside_a_tuple_fit_themselves_renamed_scales`). A complete solution
     /// would search a bucket once for all its members, by keys of the components that are not
