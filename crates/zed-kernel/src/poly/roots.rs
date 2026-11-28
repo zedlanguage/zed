@@ -730,7 +730,7 @@ fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
 /// once its branch and bound has spent the test's units. The test passes at every point above
 /// one where it passes (`p(u' + y) = p(u + ((u' - u) + y))`, a polynomial of coefficients of one
 /// sign taken at a shift `u' - u >= 0`, keeps them so), so each stage is a search of a monotone
-/// predicate, and each point that passes bounds every root of `p` above 1 by `u - 1`:
+/// predicate, and each point that passes bounds every integer root of `p` above 1 by `u - 1`:
 ///
 /// 1. the exponents `m` of `2^m` from 1, doubled until a test passes, the last clamped to
 ///    `top`, the largest exponent under the cap and with `2^m < hi`;
@@ -742,8 +742,8 @@ fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
 ///    m = ⌊lg n⌋ + 1 by successively evaluating F(2^i-1) for i = 1,2,..."; spec
 ///    verification/bib.md, Bentley_1976): B1 tests `2^i - 1`, these the exponents `2^i` and
 ///    `top`, and at most `2 bits(m)` tests (1 at `m = 1`): with `2^(j-1) < m <= 2^j`, `j + 1`
-///    tests to the first power past `m` and `j - 1` to bisect the `2^(j-1)` exponents below it,
-///    and where `top` clamps the last, `k + 1` and fewer than `k` with `2^(k-1) < m`;
+///    tests to the first power at or beyond `m` and `j - 1` to bisect the `2^(j-1)` exponents
+///    below it, and where `top` clamps the last, `k + 1` and fewer than `k` with `2^(k-1) < m`;
 /// 3. a bisection of the integers between `2^(m - 1)` and `2^m`, `m - 1` tests, which gives the
 ///    least `u`. This is the second stage of B2, so the three stages are a bounded variant of
 ///    B2 on `u` (p. 5: "so the total cost of the algorithm (substituting m = ⌊lg n⌋ + 1) is
@@ -758,11 +758,12 @@ fn positive_from(p: &[(u64, BigInt)], u: &BigInt) -> bool {
 /// larger integer below `hi` would pass (`(x - 2)^2` with `hi = 4`: `top = 1`, 2 fails, 3
 /// passes; test `the_bound_search_covers_the_powers_up_to_top`). None loses no root, as the
 /// cut is only an aid. Stage 3 alone takes about `bits(u)` tests, and Bentley and Yao's lower
-/// bound says that, for infinitely many `n`, every correct unbounded search that reads only
-/// the monotone predicate takes more than about `lg n` tests to find the least passing `n`
+/// bound says that every correct unbounded search that reads only the monotone predicate
+/// takes, for infinitely many `n`, more than about `lg n` tests to find the least passing `n`
 /// (p. 11: "Theorem A: For infinitely many n, f(n) > lg n + lg^(2) n + ... + lg^(lg* n) n -
-/// 2(lg* n)", `f(n)` bounding the tests by p. 10); it does not bound every `n`. So the cost
-/// is kept by the schedule, not by the search.
+/// 2(lg* n)", `f(n)` bounding the tests of a given algorithm by p. 10, so the infinite set of
+/// `n` depends on the search: one that tests `n - 1` and `n` first takes 2 at that `n`); it
+/// does not bound every `n`. So the cost is kept by the schedule, not by the search.
 ///
 /// The cap: a test at `u` is run only where `D bits(u) <= 2 B`, `B` the most bits of a
 /// coefficient, so that each number of a test has at most `B + D bits(u + 1) + bits(t) <= 4 B +
@@ -973,12 +974,19 @@ pub(super) fn positive_roots_by(
         //    operations. A test is at most `D (D + 1) / 2` products by [`mul_int`] and as many
         //    sums, each of numbers of at most `B + D bits(u + 1) + bits(t) <= 4 B + bits(t)`
         //    bits by the cap (at [`BoundSearch`]), and `bits(t) <= B` as `t <= D + 1 <= B + 1`,
-        //    so each product is O(M(B)) (`M(n) / n` not decreasing) and each group of `t` of
-        //    them, `horner_units` groups, is O(t M(B)), within one unit. Filling the array is
-        //    O(D + t) copies of at most `B` bits, under one group. So `rented` units bound
-        //    the tests' bit cost by the same per-unit bound, and the bound of [`positive_roots`]
-        //    holds in bit operations with a factor of 2. (With num-bigint's `*`, Toom-3 past
-        //    its crossover, a product was not O(M(B)); round 1 of the cross-review, Gemini.)
+        //    so each operand has at most `5 B` bits and each product is O(M(5 B)). That is
+        //    O(M(B)) by the regularity M(c n) = O(M(n)) for a constant `c`, which the kernel's
+        //    M(n) = O(n log n) meets (zed-bignum's `fast` module doc: "`M(n)` below is the cost
+        //    of a product of two `n`-bit numbers, O(n log n) here"; `c n log(c n) <= c (1 +
+        //    log c) n log n` for `n >= 2`). `M(n) / n` not decreasing alone does not give it
+        //    (`M(n) = 2^n` meets that). Each group of `t` products, `horner_units` groups, is
+        //    then O(t M(B)), within the envelope of one unit. Filling the array is O(D + t)
+        //    copies of at most `B` bits, under one group. So a test's bit cost is at most its
+        //    `units` times the per-unit envelope O(t M(B + s)). The factor 2 of 1 to 3 is on
+        //    charged units, so the bound of [`positive_roots`] holds in bit operations up to
+        //    the constant of that envelope, not with a factor of exactly 2. (With num-bigint's
+        //    `*`, Toom-3 past its crossover, a product was not O(M(B)); round 1 of the
+        //    cross-review, Gemini.)
         // 5. This loop ends at each pass: each test adds `units >= 1` to `rented`
         //    ([`horner_units`] is at least 1), so after at most `spent` tests the condition
         //    fails, and a search has at most `top + 2 bits(top)` tests (stage 1 tests the
@@ -1000,11 +1008,16 @@ pub(super) fn positive_roots_by(
             search.record(pass);
             if pass {
                 hi = x - 1;
+                // A box with `l > hi` is dropped before its `h` is clamped, so no clone of `hi`
+                // is made for a box that goes.
                 open.retain_mut(|(ol, oh)| {
+                    if *ol > hi {
+                        return false;
+                    }
                     if *oh > hi {
                         *oh = hi.clone();
                     }
-                    *ol <= hi
+                    true
                 });
                 if h > hi {
                     h = hi.clone();
@@ -2406,10 +2419,11 @@ mod tests {
                         rf + bi <= bound,
                         "{name}({n}), {on}: {rf} + {bi} steps, over {bound}"
                     );
-                    // 15 units of the branch and bound to its budget, as before plan row
-                    // FAIL-l01_39-roots-benches-bytes, and 14 of the 7 tests of the bound from
-                    // above (2 units each) run beside it, which the switch to the chain used to
-                    // drop from the count: within the factor 2 proved at `positive_roots_by`.
+                    // 14 units of the branch and bound to its budget (`chain_ends(4)`, reported at
+                    // the switch to the chain), 14 of the 7 tests of the bound from above (2 units
+                    // each) run beside it, which the switch used to drop from the count, and 1 of
+                    // the call on the reflected polynomial, whose one interval is empty: 28 is
+                    // within the factor 2 proved at `positive_roots_by`.
                     assert_eq!([ch, un], [1, 29], "{name}({n}), {on}");
                 }
             }
@@ -3075,9 +3089,16 @@ mod tests {
     /// The search covers `[2, 2^top]`, not every integer below `hi` under the cap
     /// (cross-review XR-roots-bound-search-schedule round 1, Codex Q1): on `(x - 2)^2` with `hi
     /// = 4`, `top = 1`; the test at 2 fails (`p(2) = 0`) and the search gives none, though 3
-    /// passes (`(y + 1)^2`). No root is lost: each mode still finds 2.
+    /// passes (`(y + 1)^2`). No root is lost: each mode still finds 2. And `2^top` itself is
+    /// covered (round 2, Gemini R2-3): on `(x - 3)^2` with `hi = 5`, `top = 2`; 2 fails, 4
+    /// passes, 3 fails (`p(3) = 0`), so the search gives 4, and a search that stops a power
+    /// short of `top` gives none.
     #[test]
     fn the_bound_search_covers_the_powers_up_to_top() {
+        let q = from_big_roots(&[BigInt::from(3), BigInt::from(3)]);
+        let mut spent = 0;
+        let got = horner_bound(q.terms(), &BigInt::from(5), &mut spent);
+        assert_eq!(got, Some(BigInt::from(4)));
         let p = from_big_roots(&[BigInt::from(2), BigInt::from(2)]);
         let p = p.terms();
         let mut spent = 0;
