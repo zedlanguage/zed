@@ -156,6 +156,15 @@ fn allocate_splits_a_rat_into_hundredths() {
         // 3.34 = 334/100 = 167/50 and 3.33 = 333/100.
         "{0 -> 167r/50r, 1 -> 333r/100r, 2 -> 333r/100r}"
     );
+    // PRINT-list-and-decimal-rat-form: DESIGN's `[3.34r, 3.33r, 3.33r]` is the value, written
+    // as a literal, and the printed form reads back as that value.
+    assert_eq!(
+        x("allocate(10r, [1, 1, 1], places: 2) == [3.34r, 3.33r, 3.33r]"),
+        "true"
+    );
+    let printed = "{0 -> 167r/50r, 1 -> 333r/100r, 2 -> 333r/100r}";
+    assert_eq!(x(printed), printed);
+    assert_eq!(x(&format!("{printed} == [3.34r, 3.33r, 3.33r]")), "true");
 }
 
 #[test]

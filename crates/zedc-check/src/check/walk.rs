@@ -15607,9 +15607,12 @@ impl<'a> Ck<'_, 'a> {
                         // formulas over the same symbols, so while the unit's projection memo
                         // is open a recomputation is answered with the answers the head got
                         // (`presburger::project_each`): a shared scope is the recomputed one.
-                        // That either equals a check with the memo off rests on the memo's own
-                        // assumption, not proved, that an answer depends only on the formula
-                        // and the symbols (evidence at `project_each`). What it refused
+                        // That either equals a check with the memo off is the memo's claim that
+                        // an answer depends only on the formula and the symbols, shown at
+                        // `project_each` by an audit of every state the solver reads
+                        // (PROOF-sweep-zedc-check-rest case 2), up to one assumption stated
+                        // there: no answer depends on the order a hash map keyed by ids is
+                        // iterated in. What it refused
                         // that its parent's scope did not is placed at `n`'s own test below,
                         // as it would be had `n` been computed.
                         //

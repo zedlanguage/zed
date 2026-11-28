@@ -28,9 +28,11 @@
 //! names, so the parts grow with the program, not with the paths of the types. A whole type
 //! written by several steps and inside no other part is written in full in each, as
 //! `` `x` is (int, rat, bool) here `` and `` `x` is declared `(int, rat, bool)` ``: naming it
-//! would put a definition into short messages for a type written three or four times, so a
-//! chain of n names that each hold the one before with one type of m components,
-//! `x1 = x0; x2 = x1; …`, prints n × m (COMPLEXITY.md row MSG-derive-same-chain).
+//! would put a definition into short messages for a type written three or four times. A step
+//! whose printed type an earlier step wrote writes `the same type as step k` instead, unless
+//! the type is no longer than those words or stands in code ([`same_type_as_step`]), so a chain of n names
+//! that each hold the one before with one type of m components, `x1 = x0; x2 = x1; …`,
+//! writes the type once (MSG-derive-same-chain).
 //!
 //! [`lift`] also names the type variables a message's types write by name (UNDERSCORE-print),
 //! which a printed type marks with the noncharacters U+FDD9 to U+FDDE ([`VARS`]), so that no name
@@ -67,8 +69,13 @@ const END: char = '\u{FDD6}';
 const TYPE: char = '\u{FDD0}';
 /// Closes what [`TYPE`] opens.
 const TYPE_END: char = '\u{FDD1}';
-/// Every mark [`spell`] reads.
+/// Every mark [`spell`] reads, but [`SAME`].
 const SPELLED: [char; 7] = [REF, SOFT, COUNT, WRAP, SOFT_WRAP, TYPE, TYPE_END];
+/// Opens and closes the number of the step that first wrote the printed type that follows
+/// ([`same_type_as_step`]); always followed by a [`TYPE`], so a text that holds it holds one
+/// of [`SPELLED`]. Outside U+FDD0..=U+FDDF and [`LOCALS`], and gone once [`lift`] spells the
+/// text.
+const SAME: char = '\u{FDE7}';
 /// A definition whose place is not known yet, written while the printer places the others.
 pub(super) const WAIT: &str = "\u{FDD7}";
 
@@ -359,6 +366,94 @@ pub(super) fn enclose(roots: &mut [String]) {
     roots[roots.len() - 1].push(TYPE_END);
 }
 
+/// Marks, in each of the steps of a message, `steps` in reading order, a printed type that an
+/// earlier step wrote, so that [`spell`] writes it as `the same type as step k`, `k` the
+/// number, from 1, of the first step that wrote it (DESIGN sec:diagnostics, "Types in a
+/// message"; MSG-derive-same-chain). Run on the steps before [`lift`]. A printed type is a
+/// text [`enclose`] marked, one that holds a reference: a tuple, a union or another part this
+/// module defines. Equal types are equal texts here, since a part is placed once and its
+/// references are its place, and the variables of each printed type are marked apart from any
+/// other's ([`VARS`]), so the comparison is of the texts. A type with no part, as `int` or
+/// `1`, holds no mark and is written where it stands; a type the message writes once is not
+/// changed; nor is one that, spelled, is no longer than the words, as `String | #outOfBounds`
+/// or a part named in that step, `Part4`; nor is a type inside code, after an odd number of backquotes, as the result of
+/// `` `bool -> (Part2, 0)` ``, which must read back as a type.
+///
+/// The type is marked, not replaced: [`SAME`], `k`, [`SAME`], then the type as it was. So the
+/// parts are counted, and named, as if each step wrote the type, and [`spell`] decides by the type as
+/// that step spells it whether it is shorter than the words, with the spelling cut off at the
+/// words' length.
+///
+/// So a chain `x1 = x0; …; xn = x(n-1)` of names of one type of m components writes that type
+/// once, and each later step `the same type as step k`, where it wrote it at each step shown.
+/// The derivation shows a bounded number of lines (`additional lines not shown` in zedc-check),
+/// so the text was linear in m before too; it is shorter by about the number of steps shown:
+/// 39921 bytes before and 8985 after for 800 names of a tuple of 800 components (the bench
+/// `rejecting_a_chain_of_n_names_of_one_type_of_n_components_writes_a_text_linear_in_n`).
+///
+/// Time and space linear in the steps' length: each printed type is read once and hashed
+/// once, and kept once as a key, the first time it is written.
+pub fn same_type_as_step(steps: &mut [String]) {
+    let mut first: HashMap<String, usize> = HashMap::new();
+    for (j, step) in steps.iter_mut().enumerate() {
+        if !step.contains(TYPE) {
+            continue;
+        }
+        let mut out = String::with_capacity(step.len());
+        // Where the outermost printed type now open starts in `step`, and the depth.
+        let (mut open, mut depth, mut copied) = (0usize, 0usize, 0usize);
+        for (i, m) in step.match_indices([TYPE, TYPE_END]) {
+            if m.starts_with(TYPE) {
+                if depth == 0 {
+                    open = i;
+                }
+                depth += 1;
+                continue;
+            }
+            depth = depth
+                .checked_sub(1)
+                .expect("a type is opened before it is closed");
+            if depth > 0 {
+                continue;
+            }
+            let end = i + TYPE_END.len_utf8();
+            let ty = &step[open..end];
+            out.push_str(&step[copied..open]);
+            match first.get(ty) {
+                // The backquotes before `open` are counted from the step's start, so each
+                // step is read once more at most: linear still.
+                Some(&k) if k != j && step[..open].matches('`').count() % 2 == 0 => {
+                    write!(out, "{SAME}{}{SAME}", k + 1).expect("a String takes any text")
+                }
+                Some(_) => {}
+                None => {
+                    first.insert(ty.to_string(), j);
+                }
+            }
+            out.push_str(ty);
+            copied = end;
+        }
+        out.push_str(&step[copied..]);
+        *step = out;
+    }
+}
+
+/// The end in `text`, which opens with [`TYPE`], of that printed type, after its
+/// [`TYPE_END`].
+fn type_end(text: &str) -> usize {
+    let mut depth = 0usize;
+    for (i, m) in text.match_indices([TYPE, TYPE_END]) {
+        match m.starts_with(TYPE) {
+            true => depth += 1,
+            false => depth -= 1,
+        }
+        if depth == 0 {
+            return i + TYPE_END.len_utf8();
+        }
+    }
+    unreachable!("a type is closed after it is opened")
+}
+
 /// Whether `name`, written for a node, is a reference by [`counted_reference`].
 pub(super) fn is_counted(name: &str) -> bool {
     name.starts_with([COUNT, WRAP])
@@ -554,16 +649,63 @@ struct Spelling<'a> {
 /// in what is written. Spelling each part to a string of its own first, and that string into
 /// the part around it, would copy a chain of n parts nested one in the next O(n²) times.
 fn spell(text: &str, s: &Spelling, step: usize, out: &mut String) -> bool {
+    spell_within(text, s, step, out, usize::MAX).expect("no bound to pass")
+}
+
+/// [`spell`] with at most `cap` characters written to `out`: `None`, with `out` holding at most
+/// `cap` characters, as soon as the text would write more, so the time is
+/// linear in `cap`, not in the text. `usize::MAX` writes the whole text.
+fn spell_within(
+    text: &str,
+    s: &Spelling,
+    step: usize,
+    out: &mut String,
+    cap: usize,
+) -> Option<bool> {
     let mut holds = false;
+    // Characters still allowed; counted only under a bound.
+    let mut room = cap;
+    let mut push = |out: &mut String, piece: &str| -> Option<()> {
+        if room != usize::MAX {
+            let n = piece.chars().take(room + 1).count();
+            if n > room {
+                return None;
+            }
+            room -= n;
+        }
+        out.push_str(piece);
+        Some(())
+    };
     let mut stack: Vec<&str> = vec![text];
     while let Some(t) = stack.pop() {
-        let Some(i) = t.find(SPELLED) else {
-            out.push_str(t);
+        let Some(i) = t.find(|c| SPELLED.contains(&c) || c == SAME) else {
+            push(out, t)?;
             continue;
         };
-        out.push_str(&t[..i]);
+        push(out, &t[..i])?;
         let mark = t[i..].chars().next().expect("a mark was found");
         let rest = &t[i + mark.len_utf8()..];
+        if mark == SAME {
+            // A printed type an earlier step wrote: the words that name that step, unless the
+            // type as this step spells it is no longer than they are, as `int | #a` or a part
+            // named here, `Part4`. Spelling the type is cut off at the words' length, so it
+            // costs O(length of the words) whichever is written, and the type is skipped when
+            // the words are.
+            let n = rest.find(SAME).expect("a step number is closed");
+            let ty = &rest[n + SAME.len_utf8()..];
+            let end = type_end(ty);
+            let words = format!("the same type as step {}", &rest[..n]);
+            let mut short = String::new();
+            match spell_within(&ty[..end], s, step, &mut short, words.chars().count()) {
+                Some(named) => {
+                    push(out, &short)?;
+                    holds |= named;
+                }
+                None => push(out, &words)?,
+            }
+            stack.push(&ty[end..]);
+            continue;
+        }
         if mark == TYPE || mark == TYPE_END {
             stack.push(rest);
             continue;
@@ -574,18 +716,18 @@ fn spell(text: &str, s: &Spelling, step: usize, out: &mut String) -> bool {
         let named_here = s.from.get(&k).is_none_or(|&j| j <= step);
         match s.names.get(&k).filter(|_| named_here) {
             Some(name) => {
-                out.push_str(name);
+                push(out, name)?;
                 holds = true;
             }
             None if mark == WRAP || mark == SOFT_WRAP => {
-                out.push('(');
+                push(out, "(")?;
                 stack.push(")");
                 stack.push(s.full[&k]);
             }
             None => stack.push(s.full[&k]),
         }
     }
-    holds
+    Some(holds)
 }
 
 /// Whether definition `k` is named by count ([`add_counted`]).
@@ -1314,6 +1456,93 @@ mod tests {
         let (defs, _) = lift_holding(&mut [&mut s], true, &|_| false);
         assert_eq!(s, "`f` does not take ((1, 1))[]");
         assert!(defs.is_empty());
+    }
+
+    /// A step whose printed type an earlier step wrote writes `the same type as step k`, `k`
+    /// the first that wrote it; a type written once, a different one, and a step's text
+    /// around the type are kept (MSG-derive-same-chain).
+    #[test]
+    fn a_type_an_earlier_step_wrote_is_the_same_type_as_that_step() {
+        let _on = collect();
+        let a = soft_reference(add_soft("(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)".into()));
+        // Shorter, spelled, than the words that would replace it.
+        let b = soft_reference(add_soft("(3, 4)".into()));
+        let u = soft_reference(add_soft("String | #outOfBounds".into()));
+        let h = reference(add("int | #x".into()));
+        let ty = |text: String| {
+            let mut roots = [text];
+            enclose(&mut roots);
+            let [text] = roots;
+            text
+        };
+        let mut steps = vec![
+            "`x` is int here".to_string(),
+            format!("`x2` is {} here", ty(a.clone())),
+            format!("`y` is {}", ty(b.clone())),
+            format!("`x1` is {} here", ty(a.clone())),
+            // A type holding the first inside another is a different type.
+            format!("`z` is {}", ty(format!("({a}, {})", ty(a.clone())))),
+            format!("`w` is {} and {}", ty(b.clone()), ty(a.clone())),
+            format!("`v` is {}", ty(u.clone())),
+            format!("`v2` is {}", ty(u.clone())),
+            // Inside code a type must read back, so it is kept.
+            format!("`f` is `int -> {}`", ty(a.clone())),
+            // A part named in the message is one word, shorter than the words.
+            format!("`p` is {}", ty(h.clone())),
+            format!("`q` is {}", ty(h.clone())),
+        ];
+        same_type_as_step(&mut steps);
+        let mut texts: Vec<&mut String> = steps.iter_mut().collect();
+        lift(&mut texts, &|_| false);
+        assert_eq!(
+            steps,
+            [
+                "`x` is int here",
+                "`x2` is (0, 1, 2, 3, 4, 5, 6, 7, 8, 9) here",
+                "`y` is (3, 4)",
+                "`x1` is the same type as step 2 here",
+                "`z` is ((0, 1, 2, 3, 4, 5, 6, 7, 8, 9), (0, 1, 2, 3, 4, 5, 6, 7, 8, 9))",
+                "`w` is (3, 4) and the same type as step 2",
+                "`v` is String | #outOfBounds",
+                "`v2` is String | #outOfBounds",
+                "`f` is `int -> (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)`",
+                "`p` is Part1",
+                "`q` is Part1",
+            ]
+        );
+    }
+
+    /// A type as long as `the same type as step 1`, 23 characters, is kept; one character more
+    /// and the words are written.
+    #[test]
+    fn a_type_as_long_as_the_words_is_kept_and_one_longer_is_replaced() {
+        let _on = collect();
+        let even = soft_reference(add_soft("#abcdefghij | #klmnopqr".into()));
+        let over = soft_reference(add_soft("#abcdefghij | #klmnopqrs".into()));
+        assert_eq!(
+            "#abcdefghij | #klmnopqr".len(),
+            "the same type as step 1".len()
+        );
+        let ty = |text: String| {
+            let mut roots = [text];
+            enclose(&mut roots);
+            let [text] = roots;
+            text
+        };
+        let mut steps = vec![
+            format!("{} and {}", ty(even.clone()), ty(over.clone())),
+            format!("{} and {}", ty(even.clone()), ty(over.clone())),
+        ];
+        same_type_as_step(&mut steps);
+        let mut texts: Vec<&mut String> = steps.iter_mut().collect();
+        lift(&mut texts, &|_| false);
+        assert_eq!(
+            steps,
+            [
+                "#abcdefghij | #klmnopqr and #abcdefghij | #klmnopqrs",
+                "#abcdefghij | #klmnopqr and the same type as step 1",
+            ]
+        );
     }
 
     /// A printed type inside another is counted with the outermost: a counted part used once

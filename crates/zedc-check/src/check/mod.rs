@@ -1786,6 +1786,8 @@ fn lay_out_with(
     taken: &dyn Fn(&str) -> bool,
 ) {
     let mut own: Vec<String> = notes.iter().map(|n| n.text.to_string()).collect();
+    // The notes are the steps, numbered from 1 in this order (MSG-derive-same-chain).
+    defs::same_type_as_step(&mut own);
     let mut texts: Vec<&mut String> = std::iter::once(&mut *message)
         .chain(own.iter_mut())
         .chain(std::iter::once(menu))
@@ -1960,7 +1962,8 @@ fn lay_out_alone(text: &Arc<str>) -> LaidAlone {
 ///    copies it, and no mark of U+FDD0..=U+FDDF or [`defs::LOCALS`], so `lay_out` neither
 ///    starts nor ends a part in it and moves it whole with the text around it.
 /// 2. The printer never writes U+FDE0 (its marks are U+FDD0..=U+FDDF and
-///    [`defs::LOCALS`], U+FDE2..=U+FDE6), and the program
+///    [`defs::LOCALS`], U+FDE2..=U+FDE6, and U+FDE7, which `lay_out` writes and spells away
+///    within one call), and the program
 ///    writes one only inside a string or a comment, which then is a piece here: a name is
 ///    ASCII (DESIGN.md sec:lexical), and no other token takes a noncharacter. So after the
 ///    swap each U+FDE0 left in a text starts a placeholder, and [`Self::restore`] writes

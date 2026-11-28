@@ -3258,3 +3258,49 @@ fn sums_past_the_period_limit_match_enumeration() {
         "seed {seed}: no case reached the fold's decline"
     );
 }
+
+/// Red before PROOF-sweep-zedc-check-rest case 2: `memo_off` did not read this crate's test
+/// controls `NO_SWEEP_AFTER_REFUSAL` and `sumset::ALWAYS`, so with a memo open a question asked
+/// again under either was answered from the memo, not on the path the control selects. Each
+/// is set after the question was asked once; the question must then reach the solver, and be
+/// answered from the memo once the control is cleared.
+#[test]
+fn the_crate_s_test_controls_ask_a_question_again() {
+    use crate::presburger::{ProjectionMemo, ProjectionStore, project_each, systems_solved};
+    let question = Formula::And(crate::presburger::Shared::new(vec![
+        Formula::Con(Con::ge(&x(), &Lin::constant(0))),
+        Formula::Con(Con::ge(&Lin::constant(9), &x().plus(&sym("y")))),
+        Formula::Or(crate::presburger::Shared::new(vec![
+            Formula::Con(Con::ge(&sym("y"), &Lin::constant(5))),
+            Formula::Con(Con::eq(&x(), &sym("y"))),
+        ])),
+    ]));
+    let syms = [Atom::Sym("x".into()), Atom::Sym("y".into())];
+    let ask = || format!("{:?}", project_each(&question, &syms).map(|e| e.0));
+    let alone = ask();
+    let store = ProjectionStore::default();
+    let _memo = ProjectionMemo::open_in(&store);
+    assert_eq!(ask(), alone);
+    let set = |name: &str, on: bool| match name {
+        "NO_SWEEP_AFTER_REFUSAL" => crate::presburger::NO_SWEEP_AFTER_REFUSAL.set(on),
+        _ => sumset::ALWAYS.set(on),
+    };
+    for name in ["NO_SWEEP_AFTER_REFUSAL", "ALWAYS"] {
+        set(name, true);
+        systems_solved();
+        let got = ask();
+        let solved = systems_solved();
+        set(name, false);
+        assert!(
+            solved > 0,
+            "with {name} set, the question is asked again, not answered from the memo"
+        );
+        assert_eq!(got, alone, "{name}");
+        ask();
+        assert_eq!(
+            systems_solved(),
+            0,
+            "{name} cleared: answered from the memo"
+        );
+    }
+}

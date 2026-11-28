@@ -72,14 +72,19 @@ pub enum Kind {
     },
     /// A written `if`.
     If,
+    /// A written range `a..<b`, or `a..=b` when `through` (MUTATION.md 3.12, H12).
+    Range {
+        /// Whether the range is written `..=`.
+        through: bool,
+    },
 }
 
 /// A written node that a mutant may change (step L25.8), found by
 /// [`elaborate_marked`](super::elaborate_marked).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Mark {
-    /// For an operator or `&&` and `||`, the text between its operands, which holds it; for a
-    /// constant, the constant; for a unary operator or an `if`, the whole expression.
+    /// For an operator, `&&` and `||`, or a range, the text between its operands, which holds
+    /// it; for a constant, the constant; for a unary operator or an `if`, the whole expression.
     pub span: Span,
     /// What it is on.
     pub kind: Kind,
@@ -95,7 +100,8 @@ pub struct Mark {
     pub literal: [bool; 2],
     /// The spans of the parts: an operator's left operand, right operand and whole
     /// expression; the operands of `&&` and `||`; a unary operator's operand; an `if`'s
-    /// condition, then branch and else branch. Unused entries are empty.
+    /// condition, then branch and else branch; a range's low end, high end and whole
+    /// expression. Unused entries are empty.
     pub parts: [Span; 3],
     /// For a constant written as a call's argument, the parameter it fills ([`Slot`]).
     pub slot: Option<Slot>,
@@ -168,8 +174,8 @@ pub fn mark_of(t: &Term) -> Option<usize> {
     }
 }
 
-/// The node a marked elaboration wraps for a mark of kind [`Kind::Unary`], [`Kind::Bool`] or
-/// [`Kind::If`], and the mark's index: such a node `t` is written `and(t, k)` with `k` the
+/// The node a marked elaboration wraps for a mark of kind [`Kind::Unary`], [`Kind::Bool`],
+/// [`Kind::If`] or [`Kind::Range`], and the mark's index: such a node `t` is written `and(t, k)` with `k` the
 /// index. The kernel's `and` takes two `bool`s, so no other term has an integer literal as its
 /// second argument, and the wrapper is never taken for one. Proof, over the terms of this
 /// crate, which are what this reads: `Term::Prim(Prim::And, ..)` is built with a literal

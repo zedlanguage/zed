@@ -45,12 +45,25 @@ fn rejecting_a_chain_of_n_names_each_holding_the_one_before_writes_a_text_linear
 
 #[test]
 fn rejecting_a_chain_of_n_names_of_one_type_writes_a_text_linear_in_n() {
-    // A type of five components at each link. A type as wide as the chain is long is written
-    // whole at each link, n × m in all (COMPLEXITY.md row MSG-derive-same-chain).
+    // A type of five components at each link, written once and then as `the same type as
+    // step 1` (MSG-derive-same-chain).
     scales(
         "rejecting a chain of n names of one type of five components",
         800,
         |n| same(n, 5),
+    );
+}
+
+#[test]
+fn rejecting_a_chain_of_n_names_of_one_type_of_n_components_writes_a_text_linear_in_n() {
+    // A type as wide as the chain is long, written once and then as `the same type as step 1`
+    // (MSG-derive-same-chain). The derivation shows a bounded number of lines, so the text was
+    // linear before too, written at each step shown: 4895 and 39921 bytes at 100 and 800, 8.16
+    // times, before; 1959 and 8985, 4.59 times, after (2026-11-28).
+    scales(
+        "rejecting a chain of n names of one type of n components",
+        100,
+        |n| same(n, n),
     );
 }
 

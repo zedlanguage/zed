@@ -123,3 +123,69 @@ fn a_test_control_set_after_a_question_asks_it_again() {
         );
     }
 }
+
+/// Red before PROOF-sweep-zedc-check-rest case 2: with a memo open, the second run of
+/// `plain_shortcut::both`, the shortcut of `Classed::new` switched off, was answered from the
+/// memo, so a test comparing the two runs compared an answer with itself. The first run takes
+/// the shortcut, as the default does, and is answered from the memo.
+#[test]
+fn the_plain_shortcut_switched_off_asks_a_question_again() {
+    use zedc_lattice::classed::plain_shortcut;
+    let syms = [Atom::Sym("x".into()), Atom::Sym("y".into())];
+    let question = group("x", "y", "z");
+    let alone = sets(&question, &syms);
+    let store = ProjectionStore::default();
+    let _memo = ProjectionMemo::open_in(&store);
+    assert_eq!(sets(&question, &syms), alone);
+    let ((with, with_solved), (without, without_solved), _) = plain_shortcut::both(|| {
+        systems_solved();
+        let got = sets(&question, &syms);
+        (got, systems_solved())
+    });
+    assert_eq!(with_solved, 0, "the shortcut taken: answered from the memo");
+    assert!(
+        without_solved > 0,
+        "the shortcut switched off: the question is asked again, not answered from the memo"
+    );
+    assert_eq!((with, without), (alone.clone(), alone));
+}
+
+/// The one assumption left at `project_each` (PROOF-sweep-zedc-check-rest case 2): equal
+/// formulas built apart, whose shared parts carry other ids, get the same answers with no memo
+/// open. Between the two builds 1000 other parts are made, so the ids differ; each question is
+/// asked over two sets of symbols.
+#[test]
+fn equal_formulas_built_apart_are_answered_alike() {
+    let at = |ns: &[&str]| {
+        ns.iter()
+            .map(|n| Atom::Sym((*n).into()))
+            .collect::<Vec<_>>()
+    };
+    let questions = |k: i64| {
+        vec![
+            group("x", "y", "z"),
+            Formula::Or(Shared::new(vec![
+                group("x", "y", "z"),
+                Formula::And(Shared::new(vec![
+                    ge(sym("x"), k),
+                    ge(sym("z").times(-1), -k),
+                ])),
+            ])),
+            Formula::And(Shared::new(vec![
+                group("x", "y", "z"),
+                Formula::Not(Shared::new(ge(sym("y").plus(&sym("x")), 7))),
+            ])),
+        ]
+    };
+    let ask = |fs: &[Formula]| {
+        (fs.iter())
+            .flat_map(|f| [sets(f, &at(&["x", "y"])), sets(f, &at(&["z"]))])
+            .collect::<Vec<_>>()
+    };
+    let first = ask(&questions(4));
+    let others: Vec<Formula> = (0..1000)
+        .map(|i| Formula::And(Shared::new(vec![ge(sym("w"), i)])))
+        .collect();
+    let second = ask(&questions(4));
+    assert_eq!(first, second, "{} other parts built between", others.len());
+}

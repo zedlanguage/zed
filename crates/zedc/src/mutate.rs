@@ -2,8 +2,9 @@
 //! definition, each modeling an error a person makes at a boundary of the code, and runs the
 //! `test { }` tables (step L1.21) against each such mutant.
 //!
-//! The changes are the set of MUTATION.md section 6 (QUESTIONS A103), heuristics H1 to H11,
-//! each derived there from the boundary it probes and the error it models, with the
+//! The changes are the set of MUTATION.md section 6 (QUESTIONS A103), heuristics H1 to H12
+//! (H13, a dropped `match` guard, waits for layer L2), each derived there from the boundary it
+//! probes and the error it models, with the
 //! literature it follows (Offutt 1996 for the operators, Kuhn 1999 for the conditions, PIT as
 //! Laurent 2016 lists it for the rest):
 //! - H1, a comparison by its strictness neighbor (`<` and `<=`, `>` and `>=`, `==` and `!=`);
@@ -23,7 +24,9 @@
 //!   negated (not when it is a written `!`);
 //! - H10, `+` and `-` each way, `*` by `/` where `/` is defined (the checker types the product
 //!   with no `int`), `/` by `*`, `div` and `mod` each way;
-//! - H11, the operands swapped at `-`, `/`, `div`, `mod`, `^` at `int` and string `++`.
+//! - H11, the operands swapped at `-`, `/`, `div`, `mod`, `^` at `int` and string `++`;
+//! - H12, the high end of a written range flipped, `a..<b` and `a..=b` each way, and at a
+//!   literal high end not the H4 neighbor that is the flip again (MUTATION.md 3.12, 4).
 //!
 //! The literature, as MUTATION.md section 2 quotes it (each checked there against the paper's
 //! text; the derivations of MUTATION.md section 3 are checked by the tests of
@@ -109,7 +112,7 @@ pub enum Change {
 }
 
 /// An edit of a node that replaces more than its operator or its value (MUTATION.md H2, H5
-/// to H9, H11).
+/// to H9, H11, H12).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Edit {
     /// The right operand `b` of a comparison replaced by `b + 1` (`Prim::Add`) or `b - 1`
@@ -128,6 +131,9 @@ pub enum Edit {
     /// The node replaced by its child at this index: a unary operator removed, an operand of
     /// `&&` or `||` dropped, an `if` replaced by a branch (H5, H7, H8, H9).
     Take(u32),
+    /// The range `range(a, b)` that `a..<b` elaborates to made the one of `a..=b`,
+    /// `range(a, b + 1)` (`true`), or back (`false`) (H12).
+    Through(bool),
 }
 
 /// How the report writes a node or a mutant's replacement: pieces of the source and words
@@ -675,7 +681,21 @@ impl Site<'_> {
                 let Some(mark) = self.marks.get(k) else {
                     return differs("a mark has no entry");
                 };
-                stack.push((inner, u, at.clone(), None));
+                match (mark.kind, inner, u) {
+                    // A range's ends, walked here so that a literal high end leaves out the
+                    // neighbor that is the flip of H12 again: `b + 1` at `a..<b` (`a..<11` is
+                    // `a..=10`) and `b - 1` at `a..=b`, whose term reads `b` under the `+ 1`
+                    // (`a..=9` is `a..<10`), as 3.1 leaves out the neighbor that is H1 again
+                    // (MUTATION.md section 4: a mutant that is the same program as another is
+                    // made never). The low end is in both forms, so its neighbors are kept.
+                    (Kind::Range { through }, Term::Prim(Prim::Range, ms), Term::Prim(_, us))
+                        if ms.len() == 2 && us.len() == 2 =>
+                    {
+                        stack.push((&ms[1], &us[1], at.child(1), Some(usize::from(!through))));
+                        stack.push((&ms[0], &us[0], at.child(0), None));
+                    }
+                    _ => stack.push((inner, u, at.clone(), None)),
+                }
                 if self.declared.covers(mark.span) {
                     continue;
                 }
@@ -938,6 +958,15 @@ impl Site<'_> {
                 }
                 Some((mark.span.start, out))
             }
+            // H12: the high end's strictness flipped, each way (MUTATION.md 3.12). The
+            // derivation of the row it needs, at the key `b`, is there.
+            (Kind::Range { through }, Term::Prim(Prim::Range, _), Term::Prim(Prim::Range, _)) => {
+                let words = ["..<", "..="];
+                let was = Change::Shown(Shown::of(&[Word(words[usize::from(through)])]));
+                let to = Shown::of(&[Word(words[usize::from(!through)])]);
+                let out = vec![(was, Change::Edit(Edit::Through(!through), to))];
+                Some((operator_at(self.text, mark.span), out))
+            }
             _ => None,
         }
     }
@@ -1002,7 +1031,20 @@ fn edit(node: &mut Term, e: Edit) {
             let kept = child(node, i).expect("a branch or an operand").clone();
             *node = kept;
         }
-        _ => unreachable!("an edit of an operator or an `if` of its own shape"),
+        // `range(a, b)` to `range(a, b + 1)`, and back: the `+ 1` is the one the elaboration
+        // of `a..=b` adds (`Frame::Range`, zedc-elab walk.rs), so it is there to strip.
+        (Edit::Through(true), Term::Prim(Prim::Range, args)) => {
+            let b = mem::replace(&mut args[1], hole());
+            args[1] = Term::Prim(Prim::Add, vec![b, Term::Lit(Value::Int(1))]);
+        }
+        (Edit::Through(false), Term::Prim(Prim::Range, args)) => {
+            let Term::Prim(Prim::Add, plus) = &mut args[1] else {
+                unreachable!("the high end of `a..=b` is `b + 1`")
+            };
+            let b = mem::replace(&mut plus[0], hole());
+            args[1] = b;
+        }
+        _ => unreachable!("an edit of an operator, an `if` or a range of its own shape"),
     }
 }
 

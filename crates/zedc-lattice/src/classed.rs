@@ -855,6 +855,13 @@ pub mod plain_shortcut {
         let without = f();
         (with, without, count)
     }
+
+    /// Whether the shortcut is switched off on this thread, as in the second run of [`both`]:
+    /// a memo of answers reads it so that it asks a question again rather than answer it
+    /// with what the shortcut's path gave (`zedc_presburger`'s `memo_off`). O(1).
+    pub fn skipped() -> bool {
+        MODE.with(Cell::get) == SKIPPED
+    }
 }
 
 impl PartialEq<IntervalSet> for Classed {

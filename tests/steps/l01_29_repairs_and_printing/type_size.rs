@@ -230,33 +230,35 @@ fn a_chain_of_names_each_holding_the_one_before_names_each_link() {
 }
 
 #[test]
-fn a_chain_of_names_of_one_type_writes_the_type_whole_at_each_link() {
-    // A whole type in a step is written in full, so a chain of n names of one type of m
-    // components writes n × m (COMPLEXITY.md row MSG-derive-same-chain).
+fn a_chain_of_names_of_one_type_writes_the_type_once() {
+    // A step whose whole type an earlier step wrote writes `the same type as step k` when the
+    // type is longer than those words, so a chain of n names of one type of m components
+    // writes the type once (MSG-derive-same-chain; DESIGN sec:diagnostics, "Types in a
+    // message").
     assert_eq!(
-        rejected(&same(4, 5)),
-        r#"6:5: `+` does not take ((0, 1, 2, 3, 4), 1): no arrow of `+` takes these types.
-  [1]  6:5: `x4` is (0, 1, 2, 3, 4) here
+        rejected(&same(4, 9)),
+        r#"6:5: `+` does not take ((0, 1, 2, 3, 4, 5, 6, 7, 8), 1): no arrow of `+` takes these types.
+  [1]  6:5: `x4` is (0, 1, 2, 3, 4, 5, 6, 7, 8) here
        6 | u = x4 + 1;
          |     ^^ [1]
          |     ^^^^^^ [12, 13, 14, 15]
          |          ^ [10, 11]
-  [2]  5:6: `x4` is defined as this expression, (0, 1, 2, 3, 4)
+  [2]  5:6: `x4` is defined as this expression, the same type as step 1
        5 | x4 = x3;
          |      ^^
-  [3]  5:6: `x3` is (0, 1, 2, 3, 4) here
-  [4]  4:6: `x3` is defined as this expression, (0, 1, 2, 3, 4)
+  [3]  5:6: `x3` is the same type as step 1 here
+  [4]  4:6: `x3` is defined as this expression, the same type as step 1
        4 | x3 = x2;
          |      ^^
-  [5]  4:6: `x2` is (0, 1, 2, 3, 4) here
-  [6]  3:6: `x2` is defined as this expression, (0, 1, 2, 3, 4)
+  [5]  4:6: `x2` is the same type as step 1 here
+  [6]  3:6: `x2` is defined as this expression, the same type as step 1
        3 | x2 = x1;
          |      ^^
-  [7]  3:6: `x1` is (0, 1, 2, 3, 4) here
-  [8]  2:6: `x1` is defined as this expression, (0, 1, 2, 3, 4)
+  [7]  3:6: `x1` is the same type as step 1 here
+  [8]  2:6: `x1` is defined as this expression, the same type as step 1
        2 | x1 = x0;
          |      ^^
-  [9]  2:6: `x0` is (0, 1, 2, 3, 4) here
+  [9]  2:6: `x0` is the same type as step 1 here
   [10] 6:10: this literal, 1, is 1
   [11] 6:10: ... (additional lines not shown: 1)
   [12] 6:5: `+` takes (int, int) -> int

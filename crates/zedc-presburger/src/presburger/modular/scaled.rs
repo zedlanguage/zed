@@ -36,6 +36,12 @@ use zed_kernel::digest::{TextMap, TextSet};
 mod rows;
 mod sumset;
 pub(crate) mod sweep;
+
+/// Tests only: whether `sumset::ALWAYS` is set on this thread, for `presburger::memo_off`.
+#[cfg(test)]
+pub(in crate::presburger) fn sumset_always() -> bool {
+    sumset::ALWAYS.with(std::cell::Cell::get)
+}
 #[cfg(test)]
 mod tests;
 

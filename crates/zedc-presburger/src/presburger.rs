@@ -21235,15 +21235,39 @@ fn kept_part(lin: &Lin, kept: &[(Atom, Num)]) -> Option<(BTreeMap<Atom, Int>, In
 // ([`Formula`]), and the symbols. Tradeoffs: memory for each distinct question and its answer
 // until the memo closes (the end of the unit's check); the counters of work done
 // ([`hull_sides_asked`], [`parts_tested`], [`systems_solved`]) count a question once.
-// Assumption, not proved: that the answer of [`project_each_asked`] depends on nothing but the
-// formula, the symbols and the flags [`memo_off`] reads (the solver reads no names, orders or
-// ids it does not get from the formula; ids of shared parts change no answer, [`Formula`]),
-// so that an answer kept is the answer asked again. Evidence: with every hit asked again and
-// compared (a temporary check, not kept), on 2026-11-14, no answer differed over the 2019
-// test pieces of the groups m0_12 (the refusal census), l01_23 to l01_29, l01_38, l01_39 and
-// l02; those pieces also passed and failed alike with the memo and without it. If false, a
-// verdict could depend on which questions came first in a unit; the memo does not change
-// soundness when each answer is sound. Test:
+// Why an answer kept is the answer asked again (PROOF-sweep-zedc-check-rest case 2, an audit
+// by reading of every thread-local and static of this crate and of the crates it calls,
+// 2026-11-28). The key is the formula, compared and hashed as its tree written out
+// ([`Formula`]; identity is only a fast path), and the symbols. Every other state that
+// [`project_each_asked`] reads on its way is of one of five kinds. (1) A flag [`memo_off`]
+// reads: while one is set no answer is read or kept. (2) State set and put back inside one
+// call of this crate's solver (`row_sums::AFTER_STOP`, `SPLINTERS_DEFERRED`,
+// `SPLINTERS_SKIPPED`, `row_sums::JOINED`): it is at its default whenever a memoized question
+// is entered, since no function of the solver calls [`project`], [`project_each`],
+// [`decide_at`] or [`project_each_boxed_classed`]; only callers outside this crate and its
+// tests do (the other `project` functions are `row_sums`', `plane`'s and `classes`' own). (3)
+// A memo keyed by its whole question: `REPAIRS` (the rows compared one by one) and
+// `Memo::renamed` (the renamed formula, the symbols and the cover flag). (4) Counters of work
+// and checks that only tests read (`SOLVES`, `TESTED`, `SIDES`, `meter::EXACT_WORK`, ...,
+// and `CHECK_LOSSLESS`, which asserts and changes nothing). A cover's work limit counts its
+// own `Work::used`, from zero for each question, not the thread's totals. (5) Values fixed for
+// the run, or compared only for equality: the hash seeds of `zed_kernel::digest`, the
+// priorities of `zedc_affine`'s rows, and the stamps of [`fresh_stamp`], which mark the parts
+// one pass has visited (`==` only). In the crates the solver calls (zedc-affine,
+// zedc-lattice, zedc-int, zedc-solvers, zed-kernel, zed-collections, zed-graph) every
+// thread-local and static is of kind (4) or (5), but for the plain-set shortcut of
+// `zedc_lattice::classed`, a test switch that [`memo_off`] reads. The audit found three test
+// switches that [`memo_off`] missed (that shortcut, `NO_SWEEP_AFTER_REFUSAL` and
+// `sumset::ALWAYS`); it reads them now.
+// Assumption, not proved: no answer depends on the order in which a hash map keyed by an id or
+// an integer is iterated (260 such maps in this crate; the ids of shared parts are given in the
+// order the parts are built, so two equal formulas built apart can carry other ids). Evidence:
+// with every hit asked again and compared (a temporary check, not kept), on 2026-11-14, no
+// answer differed over the 2019 test pieces of the groups m0_12 (the refusal census), l01_23
+// to l01_29, l01_38, l01_39 and l02; those pieces also passed and failed alike with the memo
+// and without it; and `l01_38_presburger::memo::equal_formulas_built_apart_are_answered_alike`.
+// If false, a verdict could depend on which questions came first in a unit; the memo does not
+// change soundness when each answer is sound. Test:
 // `l01_29_repairs_and_printing::refused_warning::the_reads_of_one_scope_ask_the_solver_each_question_once`;
 // COMPLEXITY.md row PERF-census-resettle-repeats.
 pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
@@ -21377,8 +21401,15 @@ impl Drop for ProjectionMemo {
 /// three, `METHOD`, `HOLE_ROUTE_OFF` and the cover's controls but `EXACT_OFF` and
 /// `EXACT_LIMIT_SET` were missing). `TWO_AT_A_TIME` is not read here: it changes how a
 /// formula is built (`Formula::and_keeping`), not how a built formula is asked, and the memo
-/// is keyed by the formula. Test:
-/// `l01_38_presburger::memo::a_test_control_set_after_a_question_asks_it_again`.
+/// is keyed by the formula. The plain-set shortcut of `Classed::new` switched off
+/// (`zedc_lattice::classed::plain_shortcut`, which can change the work a budget counts) and,
+/// in this crate's tests, the sweep after a refusal switched off (`NO_SWEEP_AFTER_REFUSAL`) and
+/// the sumset path taken whatever its cost (`sumset::ALWAYS`) are read too
+/// (PROOF-sweep-zedc-check-rest case 2: missing before, found by the audit at
+/// [`project_each`]). Tests:
+/// `l01_38_presburger::memo::a_test_control_set_after_a_question_asks_it_again`,
+/// `l01_38_presburger::memo::the_plain_shortcut_switched_off_asks_a_question_again` and
+/// `modular::scaled::tests::the_crate_s_test_controls_ask_a_question_again`.
 fn memo_off() -> bool {
     old_path()
         || REVERSED.with(Cell::get)
@@ -21403,6 +21434,21 @@ fn memo_off() -> bool {
         || meter::SPARE_OFF.with(Cell::get)
         || exact::METHOD.with(|c| c.get().is_some())
         || extend::counts::HOLE_ROUTE_OFF.with(Cell::get)
+        || zedc_lattice::classed::plain_shortcut::skipped()
+        || test_controls_set()
+}
+
+/// The test controls of this crate's own tests that change the path of a question
+/// ([`memo_off`]); always `false` outside them.
+#[cfg(test)]
+fn test_controls_set() -> bool {
+    NO_SWEEP_AFTER_REFUSAL.with(Cell::get) || modular::scaled::sumset_always()
+}
+
+/// The test controls of this crate's own tests: none outside them.
+#[cfg(not(test))]
+fn test_controls_set() -> bool {
+    false
 }
 
 /// [`project_each`] with no memo of the question as asked: the solver's answer made exact by

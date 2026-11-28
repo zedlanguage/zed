@@ -308,9 +308,9 @@ enum Frame<'a> {
     Remap(&'a Expr),
     /// `k in m` once both are elaborated: whether it is `not in`.
     In(bool),
-    /// `a ..< b` or `a ..= b` once both ends are elaborated: whether the high end is
-    /// inclusive.
-    Range(bool),
+    /// `a ..< b` or `a ..= b`, by its expression, once both ends are elaborated: whether the
+    /// high end is inclusive.
+    Range(bool, &'a Expr),
     /// `a ..` once its low end is elaborated.
     RangeFrom,
     /// An expression done, by its span: its term's nodes that have no site take this one
@@ -1348,7 +1348,7 @@ impl<'a> Elab<'a> {
                         return;
                     }
                 };
-                m.k(Frame::Range(through));
+                m.k(Frame::Range(through, e));
                 m.seq(vec![&**from, &**hi], false);
                 return;
             }
@@ -3362,14 +3362,30 @@ impl<'a> Elab<'a> {
                 });
                 m.give(t);
             }
-            // `a ..= b` is `range(a, b + 1)`; `+` builds a wider integer past `i64`.
-            Frame::Range(through) => {
+            // `a ..= b` is `range(a, b + 1)`; `+` builds a wider integer past `i64`. A written
+            // range is marked around its term (MUTATION.md 3.12, H12), with the text between
+            // its ends, which holds `..<` or `..=`.
+            Frame::Range(through, e) => {
+                let ExprKind::Range(from, to) = &e.kind else {
+                    unreachable!("a range")
+                };
+                let (RangeEnd::Below(hi) | RangeEnd::Through(hi)) = to else {
+                    unreachable!("a range with a high end")
+                };
                 let t = all(m.got()).map(|mut ts| {
                     if through {
                         let b = ts.pop().expect("a high end");
                         ts.push(Term::Prim(Prim::Add, vec![b, Term::Lit(Value::Int(1))]));
                     }
-                    Term::Prim(Prim::Range, ts)
+                    let gap = Span {
+                        start: from.span.end,
+                        end: hi.span.start,
+                    };
+                    let mark = Mark {
+                        parts: [from.span, hi.span, e.span],
+                        ..Mark::on(gap, Kind::Range { through })
+                    };
+                    self.wrap_mark(Term::Prim(Prim::Range, ts), mark)
                 });
                 m.give(t);
             }

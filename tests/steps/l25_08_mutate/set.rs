@@ -1,4 +1,4 @@
-//! The mutation set of A103 (MUTATION.md, DESIGN.md L25.8): each heuristic H1 to H11 with
+//! The mutation set of A103 (MUTATION.md, DESIGN.md L25.8): each heuristic H1 to H12 with
 //! every mutant it gives, the two points next to a border that its mutants ask a table for,
 //! the literal neighbor left out at an `int` comparison, the operators outside the set, the
 //! declared constants left alone, and the A103 example. The list of cases is MUTATION.md
@@ -443,6 +443,85 @@ fn declared_constants_have_no_mutant() {
         found.iter().any(|l| l.contains("`1` replaced by `2`")),
         "{found:?}"
     );
+}
+
+/// H12 (MUTATION.md 3.12, section 7 item 9): `k in 0..<10` gives `k in 0..=10` and back, one
+/// mutant each, the low end's strictness untouched; at a literal high end the H4 neighbor that
+/// is the flip again is left out (`11` at `..<10`, since `0..<11` is `0..=10`; `9` at `..=10`),
+/// and the low end keeps both of its neighbors.
+#[test]
+fn h12_a_range_s_high_end_is_flipped() {
+    let p = "positional k: int";
+    assert_eq!(
+        of(p, "k in 0..<10", "5 -> true"),
+        [
+            at(30, "..<", "..=", ".0.1"),
+            at(29, "0", "-1", ".0.1.0"),
+            at(29, "0", "1", ".0.1.0"),
+            at(33, "10", "9", ".0.1.1"),
+        ]
+    );
+    assert_eq!(
+        of(p, "k in 0..=10", "5 -> true"),
+        [
+            at(30, "..=", "..<", ".0.1"),
+            at(29, "0", "-1", ".0.1.0"),
+            at(29, "0", "1", ".0.1.0"),
+            at(33, "10", "11", ".0.1.1.0"),
+        ]
+    );
+    // A high end that is not a literal keeps no neighbor to leave out; its own operator's
+    // mutants are made as anywhere.
+    let found = of("positional k: int, n: int", "k in 0..<n", "(5, 9) -> true");
+    assert_eq!(found[0], at(38, "..<", "..=", ".0.1"), "{found:?}");
+    assert_eq!(
+        found.iter().filter(|l| l.contains("`..")).count(),
+        1,
+        "{found:?}"
+    );
+}
+
+/// H12, the derivation of MUTATION.md 3.12: the `isDigitKey` table with no row at the key `10`
+/// leaves the flip undetected, and the row `10 -> false` detects it. The flip of a range a fold
+/// reads, the domain of a `for` in the kernel's terms, is detected by any row where the entry
+/// at the high end is not zero. A range in a type gives no mutant (section 4: a changed type is
+/// a program the checker would see again).
+#[test]
+fn h12_the_row_at_the_high_end_detects_the_flip() {
+    let unit = |rows: &str| {
+        report(&format!(
+            "isDigitKey(positional k: int) = k in 0..<10 test {{ {rows} }}\n"
+        ))
+    };
+    let flip = |l: &&String| l.contains("`..<` replaced by `..=`");
+    let without = unit("0 -> true, 5 -> true, 11 -> false");
+    assert_eq!(
+        without.iter().filter(flip).collect::<Vec<_>>(),
+        [
+            "1:39: undetected: `..<` replaced by `..=` in `isDigitKey` at .0.1: every row that \
+          reaches it passes"
+        ],
+        "{without:?}"
+    );
+    // `report` writes only the mutants that live, so each unit is also checked to make the flip.
+    let rows = "0 -> true, 5 -> true, 11 -> false, 10 -> false";
+    let made = changes(&format!(
+        "isDigitKey(positional k: int) = k in 0..<10 test {{ {rows} }}\n"
+    ));
+    assert_eq!(made.iter().filter(flip).count(), 1, "{made:?}");
+    let with = unit(rows);
+    assert!(!with.iter().any(|l| flip(&l)), "{with:?}");
+    let sum = "f(positional n: int) = (0..<n) >< (+) test { 3 -> 3 }\n";
+    assert_eq!(
+        changes(sum).iter().filter(flip).count(),
+        1,
+        "{:?}",
+        changes(sum)
+    );
+    let sum = report(sum);
+    assert!(!sum.iter().any(|l| flip(&l)), "{sum:?}");
+    let typed = changes("f(positional k: int[0..<10]) = k test { 3 -> 3 }\n");
+    assert!(typed.iter().all(|l| !l.contains("`..")), "{typed:?}");
 }
 
 /// The A103 example of MUTATION.md section 6 with `&&` (the chain `lo <= x < hi` waits for
