@@ -1834,6 +1834,15 @@ mod a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_prod
         run(&bounded_hubs(), first..first + 8, satellites);
     }
 
+    /// Case seed 4520948814785025178 of `random_seeds` (run seed 4520948814785025171,
+    /// FAIL-lazy-satellites-seed-4520948814785025171, b22-names2's merge_check: "m after",
+    /// eager -15..=-2 against lazy -13..=-2). Red on origin/main f79759f83 (local job r2),
+    /// green on part A, f6c6c6657 (local job r1, 2026-11-28).
+    #[test]
+    fn seed_4520948814785025178() {
+        run(&bounded_hubs(), [4520948814785025178], satellites);
+    }
+
     // Seed 14813679539726631198 of `satellites` (FAIL-lazy-satellites-seed-14813679539726631198,
     // run seed 14813679539726631197, filed by b30-check): `n` settled apart, eager -3..=20 and
     // lazy -3..=2 after the ninth step. Both are sound, as the concrete set is empty
