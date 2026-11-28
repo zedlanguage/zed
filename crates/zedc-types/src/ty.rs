@@ -9632,13 +9632,66 @@ fn member(x: &Ty, by_value: bool, rigid: &BTreeMap<Arc<str>, u8>) -> Member {
     }
 }
 
+/// Where a component of a member meets the shapes' at the places inside one tuple, at which a
+/// [`Group`] files ([`Group::lookup`]): `ms` says where each of its tuples' components there may
+/// be held ([`member`]). The shapes' component there is one value or of one class, so it holds
+/// the components of two tuples only when they are held under one key: Nowhere when one of them
+/// is held nowhere or two are held under two keys, else the key one is held under, or Anywhere
+/// when each may be held by any shape.
+fn meet(ms: impl IntoIterator<Item = Member>) -> Member {
+    let mut out = Member::Anywhere;
+    for m in ms {
+        match (m, &out) {
+            (Member::Nowhere, _) => return Member::Nowhere,
+            (Member::Anywhere, _) => {}
+            (Member::At(k), Member::Anywhere) => out = Member::At(k),
+            (Member::At(k), Member::At(l)) if k == *l => {}
+            (Member::At(_), _) => return Member::Nowhere,
+        }
+    }
+    out
+}
+
+/// A place a [`Group`] files: the component `at` of a member, or, where `inside` is the index
+/// of an earlier place of the group, the component `at` of each tuple at that place.
+///
+/// A place inside another is filed only where each shape of the group is one tuple there, of
+/// one length, that is not one value (TYPES-bucket-members-share-shape). Why the shapes may be
+/// filed by the components of that tuple, proof (proofdoc-bucket-depth): (1) the values of one
+/// tuple `(a_0, …, a_k)` are the tuples `(v_0, …, v_k)` with each `v_i` a value of `a_i`, the
+/// tuple type being the product of its components (the product type of B. C. Pierce, Types
+/// and Programming Languages, MIT Press 2002, sec. 11.6 and 11.7; cited from memory, the text
+/// not checked for this row), as [`Comparing`] compares a row with a row, component by
+/// component. (2) So a component `x` of a member, made of the tuples `r`, is held by that tuple
+/// exactly when each `r_i` is held by `a_i`, for each `i`. (3) The shapes' `a_i` at a place
+/// filed is one value or of one class ([`class`]), so `r_i` is held by it only where it is held
+/// under its key ([`member`], as at the top), and the tuples of `x` are all held only where
+/// they are held under one key ([`meet`]). (4) A shape filed under another key than the
+/// member's at a place inside therefore does not hold the member's component at the place
+/// around it, and so does not hold the member, which is what filing at the top claims (the
+/// claim [`Choices`] rests on). A variable in `x` may be any tuples, so its tuples' components
+/// may be held anywhere. Each row of a shape is filed under at most one place (the walk keeps
+/// the rows it has filed, by [`Row::node`]): a row shared at two paths is filed at the first,
+/// which files less finely but holds by (4) all the same; a shape with rows shared at many paths
+/// (a type written with names for its parts) is then filed in its number of rows, not paths.
+/// Test: l01_22 kinds `members_that_each_fit_only_the_shape_of_their_own_atom_are_accepted`,
+/// refused before.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Place {
+    inside: Option<usize>,
+    at: usize,
+}
+
 /// The shapes of a group of [`Choices`] whose components have a class ([`class`]) at the same
-/// places, and are one value at the same places of those, filed by their components there: by
-/// value where they are one value, else by class. A shape filed under another key than a
-/// member's holds no component of the member's there ([`member`]).
+/// places ([`Place`]), and are one value at the same places of those, filed by their components
+/// there: by value where they are one value, else by class. A shape filed under another key
+/// than a member's holds no component of the member's there ([`member`], [`meet`]).
 struct Group {
-    /// The places filed, each with whether it is filed by value.
-    places: Vec<(usize, bool)>,
+    /// The places filed, each with whether it is filed by value; a place comes after the place
+    /// it is inside.
+    places: Vec<(Place, bool)>,
+    /// Whether a place is inside another.
+    deep: bool,
     /// The shapes under each key, by their index in the list of shapes, in order.
     buckets: BTreeMap<Vec<ShapeKey>, Vec<usize>>,
     /// Every shape of the group, in order.
@@ -9656,11 +9709,43 @@ type ExactVars = HashMap<Arc<str>, Vec<(usize, usize)>>;
 impl Group {
     /// The bucket of the member whose components are `xs`, read with the rigid variables
     /// `rigid`: `None` when no shape of the group holds it.
+    ///
+    /// Where a place is inside another, the member's components at each place are kept, one for
+    /// each tuple at the place around it, each tuple once (by [`Row::node`]); none where a
+    /// component around it holds a variable, which may be any tuples ([`Place`]). Each tuple of
+    /// the member at a place is read once for each place inside it, so a lookup is linear in the
+    /// member's rows at the places filed, times their components filed.
     fn lookup(&self, xs: &[&Ty], rigid: &BTreeMap<Arc<str>, u8>) -> Option<Bucket> {
         let mut key = Vec::with_capacity(self.places.len());
         let mut anywhere = false;
-        for &(j, by_value) in &self.places {
-            match member(xs[j], by_value, rigid) {
+        let mut at: Vec<Option<Vec<&Ty>>> = Vec::new();
+        for &(Place { inside, at: i }, by_value) in &self.places {
+            let found = match inside {
+                None if !self.deep => member(xs[i], by_value, rigid),
+                None => {
+                    at.push(Some(vec![xs[i]]));
+                    member(xs[i], by_value, rigid)
+                }
+                Some(p) => {
+                    let here = at[p]
+                        .as_ref()
+                        .filter(|cs| cs.iter().all(|c| c.vars.is_empty()));
+                    let here = here.map(|cs| {
+                        let mut seen = HashSet::new();
+                        (cs.iter().flat_map(|c| c.tuples.iter()))
+                            .filter(|r| seen.insert(r.node()))
+                            .filter_map(|r| r.get(i))
+                            .collect::<Vec<&Ty>>()
+                    });
+                    let found = match &here {
+                        Some(cs) => meet(cs.iter().map(|c| member(c, by_value, rigid))),
+                        None => Member::Anywhere,
+                    };
+                    at.push(here);
+                    found
+                }
+            };
+            match found {
                 Member::Nowhere => return None,
                 Member::Anywhere => anywhere = true,
                 Member::At(k) => key.push(k),
@@ -9722,23 +9807,44 @@ struct Choices {
 type Buckets = Vec<(usize, Bucket)>;
 
 impl Choices {
-    /// The shapes, each by its index in its list and the keys of its components ([`class`]),
-    /// all of one width.
-    fn new<'k>(shapes: impl IntoIterator<Item = (usize, &'k [CompKey])>) -> Choices {
+    /// The shapes, each by its index in its list, the keys of its components ([`class`]) and
+    /// its components, all of one width. Linear in the shapes' components, and in the rows of
+    /// the places filed inside them, each row once a shape ([`Place`]).
+    fn new<'k>(shapes: impl IntoIterator<Item = (usize, &'k [CompKey], Vec<&'k Ty>)>) -> Choices {
         // The groups by the places where a shape's components have a class, each with whether
         // it is one value there; each group's places are set once all are filed.
-        let mut by_places: BTreeMap<Vec<(usize, bool)>, Group> = BTreeMap::new();
-        for (i, keys) in shapes {
+        let mut by_places: BTreeMap<Vec<(Place, bool)>, Group> = BTreeMap::new();
+        for (i, keys, ys) in shapes {
             let mut places = Vec::new();
             let mut key = Vec::new();
-            for (j, c) in keys.iter().enumerate() {
-                if let Some((k, point)) = c {
-                    places.push((j, point.is_some()));
-                    key.push(point.clone().map_or_else(|| k.clone(), ShapeKey::Point));
+            let mut seen = HashSet::new();
+            // The components still to file, last first, so each place's are filed after it
+            // and before the next place's: the places of a shape come in one order whatever
+            // the shape, the order of their paths.
+            let mut todo: Vec<(Option<usize>, usize, &CompKey, &Ty)> = (keys.iter().zip(ys))
+                .enumerate()
+                .rev()
+                .map(|(j, (c, y))| (None, j, c, y))
+                .collect();
+            while let Some((inside, at, c, y)) = todo.pop() {
+                let Some((k, point)) = c else { continue };
+                let here = places.len();
+                places.push((Place { inside, at }, point.is_some()));
+                key.push(point.clone().map_or_else(|| k.clone(), ShapeKey::Point));
+                // One tuple, not one value, filed by its components too ([`Place`]).
+                if point.is_some() || y.tuples.len() != 1 {
+                    continue;
                 }
+                let Some(r) = y.tuples.first().filter(|r| seen.insert(r.node())) else {
+                    continue;
+                };
+                let inner = (r.keys().comps.iter().zip(r.iter())).enumerate().rev();
+                todo.extend(inner.map(|(j, (c, y))| (Some(here), j, c, y)));
             }
+            let deep = places.iter().any(|(p, _)| p.inside.is_some());
             let group = by_places.entry(places).or_insert_with(|| Group {
                 places: Vec::new(),
+                deep,
                 buckets: BTreeMap::new(),
                 all: Vec::new(),
                 exact: std::sync::OnceLock::new(),
@@ -9773,12 +9879,15 @@ impl Choices {
     /// Why the shapes of the bucket `id` of group `g` may each hold the members found in it,
     /// for a message: the members have `items` items, then the fields `names`.
     fn apart(&self, g: usize, id: &Bucket, items: usize, names: &[&Arc<str>]) -> String {
-        let places: Vec<String> = (self.groups[g].places.iter())
-            .map(|&(j, _)| match j.checked_sub(items) {
-                None => format!("component {}", j + 1),
-                Some(f) => format!("field {}", names[f]),
-            })
-            .collect();
+        let filed = &self.groups[g].places;
+        let mut places: Vec<String> = Vec::with_capacity(filed.len());
+        for &(Place { inside, at }, _) in filed {
+            places.push(match (inside, at.checked_sub(items)) {
+                (Some(p), _) => format!("component {} of {}", at + 1, places[p]),
+                (None, None) => format!("component {}", at + 1),
+                (None, Some(f)) => format!("field {}", names[f]),
+            });
+        }
         match (id, &places[..]) {
             (_, []) => "have no component that is one value, of one carrier, of one atom name or \
                         of one tuple length"
@@ -9945,23 +10054,33 @@ impl Filed {
     /// In the size of `t`'s tuples and payloads. The keys of the tuples are those each row
     /// keeps ([`Row::keys`]); those of a payload shape are found here.
     fn new(t: &Ty) -> Filed {
-        let mut rows: HashMap<usize, Vec<(usize, &[CompKey])>> = HashMap::new();
+        let mut rows: HashMap<usize, Vec<(usize, &[CompKey], Vec<&Ty>)>> = HashMap::new();
         for (i, r) in t.tuples.iter().enumerate() {
-            rows.entry(r.len()).or_default().push((i, &r.keys().comps));
+            rows.entry(r.len())
+                .or_default()
+                .push((i, &r.keys().comps, r.iter().collect()));
         }
         let mut payloads = HashMap::new();
         for (n, rs) in &t.payloads {
             let Some(rs) = rs else { continue };
-            let mut groups: HashMap<ShapeGroup, Vec<(usize, Vec<CompKey>)>> = HashMap::new();
+            let mut groups: HashMap<ShapeGroup, Vec<(usize, Vec<CompKey>, Vec<&Ty>)>> =
+                HashMap::new();
             for (i, r) in rs.iter().enumerate() {
-                let keys = comps(r).into_iter().map(class).collect();
-                groups.entry(shape_group(r)).or_default().push((i, keys));
+                let ys = comps(r);
+                let keys = ys.iter().map(|y| class(y)).collect();
+                groups
+                    .entry(shape_group(r))
+                    .or_default()
+                    .push((i, keys, ys));
             }
             let groups = groups.into_iter();
             payloads.insert(
                 n.clone(),
                 groups
-                    .map(|(g, s)| (g, Choices::new(s.iter().map(|(i, k)| (*i, &k[..])))))
+                    .map(|(g, s)| {
+                        let shapes = s.iter().map(|(i, k, ys)| (*i, &k[..], ys.clone()));
+                        (g, Choices::new(shapes))
+                    })
                     .collect(),
             );
         }
@@ -11718,7 +11837,11 @@ fn unchosen_text(
         // keys are `H`'s at `H`'s places, where `first`, held by `H`, has those keys too, and
         // `first`'s own at `j`, so the lookup of `first` ([`Choices::lookup`]) gives the
         // bucket that holds `S`. Where `B` is a group whole (`None`, a member that may be at
-        // any key), `S`, with a class at `j`, is again of another group.
+        // any key), `S`, with a class at `j`, is again of another group. Places inside a
+        // component ([`Place`]) change none of this: `j` is a component, not filed in `B`'s
+        // group, so neither is a place inside it; `S`'s places inside `j` are those of
+        // `first`'s component, where `first`'s keys are `S`'s, as at `j`; and at a place
+        // inside another component `first`'s key is `H`'s, or `first` may be at any key there.
         // (4) Written after the first shape of `B` and before the second, `S` is the next
         // shape after the first of `B` that `first` takes; by (1) `first` has failed at most
         // that one shape of `B` when it takes `S`, and has taken no later shape of `B`, so it
@@ -13256,10 +13379,15 @@ impl<'m, 's> Comparing<'m, 's> {
     /// `tests/steps/l01_22_type_representation/kinds.rs`,
     /// `payloads_with_a_variable_are_searched_by_their_keys` and the tests after it, and the
     /// tests after `a_union_of_three_shapes_of_variables_fits_itself_renamed`; COMPLEXITY.md
-    /// F124. A complete solution would search a bucket once for all its members, by keys of
-    /// the components that are not one value too (a tuple of a carrier, a payload), at any
-    /// depth, as the kernel files its rows (`RowIndex`), and would find the groups that may
-    /// hold a member by a partial-match index rather than one lookup in each.
+    /// F124. Members told apart only inside a component that is one tuple in each shape, at any
+    /// depth, are in buckets of their own: the shapes are filed by that tuple's components too
+    /// ([`Place`], TYPES-bucket-members-share-shape; test l01_22 kinds
+    /// `members_that_each_fit_only_the_shape_of_their_own_atom_are_accepted`, benchmark
+    /// `n_shapes_told_apart_inside_a_tuple_fit_themselves_renamed_scales`). A complete solution
+    /// would search a bucket once for all its members, by keys of the components that are not
+    /// one value and not one tuple too (tuples of several rows, a payload), as the kernel files
+    /// its rows (`RowIndex`), and would find the groups that may hold a member by a
+    /// partial-match index rather than one lookup in each.
     #[allow(clippy::too_many_arguments)]
     async fn search<'t, G: Ord + Clone, M: Clone>(
         &'m self,
