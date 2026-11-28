@@ -3158,6 +3158,12 @@ struct Ck<'t, 'a> {
     /// ([`Self::set`]), where one was: of two rebuildings at a span, the one kept. Compared
     /// with [`Self::arrow_now`] at the refusal of a second one ([`arrow_cause`]).
     fit_arrows: HashMap<Span, Arc<ty::ArrowFrame>>,
+    /// For each span refused outside a trial for a rebuilding that differs at the arrows of
+    /// a lambda ([`Self::arrow_lambda_twice`]), the index in [`Self::errors`] and the id of
+    /// that refusal: a later rebuilding at the span is refused without a second message
+    /// while that error is still there. Read only where the error at the index still has
+    /// the id, since errors after a point can be undone.
+    arrow_refused: HashMap<Span, (usize, usize)>,
     /// How many lambdas are being checked at the arrows of an intersection outside a trial
     /// (`FitF::joined` in walk.rs): while any is, a bare `else` is not refused at each arrow
     /// but joined in [`Self::else_joined`], and refused once when the outermost ends
@@ -3909,6 +3915,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             arrow_lambdas: HashMap::new(),
             arrow_now: ty::ArrowTrail::default(),
             fit_arrows: HashMap::new(),
+            arrow_refused: HashMap::new(),
             arrow_fits: 0,
             else_joined: Vec::new(),
             else_joined_at: HashMap::new(),
@@ -12680,6 +12687,24 @@ impl Ck<'_, '_> {
         let Some((l, e)) = caused.or_else(innermost) else {
             return false;
         };
+        // Only the first rebuilding at a span that differs from its first fit gets a message.
+        // The lambdas around a span are checked nested, the inner one at all its arrows for
+        // each arrow of the outer one, so the trails come in order with the innermost arrow
+        // moving fastest. The first trail t whose rebuilding differs follows one that gave the
+        // first fit's rebuilding; going to t moved one lambda to its next arrow and set every
+        // lambda inside it back to arrow 0, so that lambda is the one whose arrows make the
+        // difference, and [`arrow_cause`] of t and the first trail names it (every arrow inside
+        // it is 0 in both). A later trail can also differ at an inner lambda: with
+        // `g -> bothK(h: k -> pass(x: g))` passed to `both`, the trails (1, 0) and then (1, 1)
+        // differ from (0, 0), and the second names `k -> …`, whose repair is refused again.
+        // Test: `function_variance::the_outer_arrow_lambda_whose_arrows_differ_is_named`. A
+        // trial still pushes its refusal, since its errors are counted and then undone.
+        let refused = self.arrow_refused.get(&at);
+        if !self.trying
+            && refused.is_some_and(|&(i, id)| self.errors.get(i).is_some_and(|f| f.id == id))
+        {
+            return true;
+        }
         let code = self.code(Some(at)).unwrap_or("the value");
         let lam = self.code(Some(l)).unwrap_or("the lambda");
         let whole = self.sig_text(&e);
@@ -12705,6 +12730,10 @@ impl Ck<'_, '_> {
                  rebuilding of `{code}`"
             )],
         );
+        if !self.trying {
+            let i = self.errors.len() - 1;
+            self.arrow_refused.insert(at, (i, self.errors[i].id));
+        }
         true
     }
 
