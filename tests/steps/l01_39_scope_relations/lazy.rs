@@ -969,7 +969,10 @@ fn a_forced_test_with_dead_arms_in_many_sides_settles_as_the_eager_scope() {
             replay(&bounded_hubs(), &steps);
         }
         let mut steps = Vec::from(forced_start());
-        steps.push(Step::Assume(forced_sides(k, std::slice::from_ref(&both_dead)), false));
+        steps.push(Step::Assume(
+            forced_sides(k, std::slice::from_ref(&both_dead)),
+            false,
+        ));
         assert!(eager_after(&bounded_hubs(), &steps).bottom, "k {k}");
         replay(&bounded_hubs(), &steps);
     }
