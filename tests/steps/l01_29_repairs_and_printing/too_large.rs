@@ -308,7 +308,7 @@ fn a_rat_base_fixed_through_a_name_and_a_division_is_rejected() {
 
 /// The rejection of `String(x ^ (2^62))` for `x = rat(b) / rat(b + 1)`.
 /// Both parts have about `2^62 * 30.8` digits, 246 EiB together; the least bound says 245.
-const RAT_PRINTED: &str = r#"4:17: Number too large for any memory of the target: `String(x ^ (2^62))` needs at least 245 EiB; Linux x86_64 addresses 16 EiB.
+const RAT_PRINTED: &str = r#"4:17: Number too large for any memory of the target: `String(x ^ (2^62))` needs at least 245 EiB; Linux x86_64 addresses 16 EiB. Try `m.stdout <- String(x ^ (2^58))` instead.
   [1]  4:24: this `^` gives rat
        4 |     m.stdout <- String(x ^ (2^62));
          |                 ^^^^^^^^^^^^^^^^^^ [22, 23, 24]
@@ -351,7 +351,9 @@ const RAT_PRINTED: &str = r#"4:17: Number too large for any memory of the target
   [21] 4:31: this literal, 62, is 62
   [22] 4:17: `String(x ^ (2^62))` asks for at least 2^70 bits: printing a number writes all of its digits, a byte each
   [23] 4:17: or read an operand from the input: the run then stops if no memory holds what it writes out
-  [24] 4:17: or delete `String(x ^ (2^62))` if its result is not used"#;
+  [24] 4:17: or delete `String(x ^ (2^62))` if its result is not used
+  fixes, each checked here:
+    m.stdout <- String(x ^ (2^58));    needs at least 15 EiB"#;
 
 /// The `else` a push of a value that may be `#divByZero` ends with: DESIGN.md sec:failure
 /// (QUESTIONS A113), every `else` names the atoms it takes, and a value with no atom takes
@@ -1077,8 +1079,10 @@ fn a_build_past_the_memory_limit_is_rejected_and_the_largest_within_it_compiles(
     assert!(
         out.starts_with(
             "3:22: Number too large for the memory limit of `main`: `2^(2^23) + 1` needs at \
-             least 1 MiB; `@limits(memory: 1048576)`. Try `@limits(memory: 2^21)` instead."
-        ) && out.contains("`2^(2^23) + 1` asks for at least 8388609 bits"),
+             least 1 MiB; `@limits(memory: 1048576)`. Try `m.stdout <- String(2^(2^22) + 1 > \
+             0)` instead."
+        ) && out.contains("`2^(2^23) + 1` asks for at least 8388609 bits")
+            && out.contains("    @limits(memory: 2^21)                    lets the run hold 2 MiB"),
         "{out}"
     );
     // Printing writes a byte a digit: `2^(2^20)` has 315653 digits, `2^(2^24)` 5050446.
@@ -1092,7 +1096,8 @@ fn a_build_past_the_memory_limit_is_rejected_and_the_largest_within_it_compiles(
     assert!(
         out.starts_with(
             "3:15: Number too large for the memory limit of `main`: `String(2^(2^24))` needs \
-             at least 4.8 MiB; `@limits(memory: 1048576)`. Try `@limits(memory: 2^23)` instead."
+             at least 4.8 MiB; `@limits(memory: 1048576)`. Try `m.stdout <- String(2^(2^21))` \
+             instead."
         ),
         "{out}"
     );

@@ -20135,13 +20135,117 @@ impl<'t, 'a> Ck<'t, 'a> {
         let Some(bits) = bits else {
             return;
         };
+        let shrink = self.shrink_power(args);
         self.judge_build(WideBuild {
             p,
             span,
             args: args.iter().map(|a| a.span).collect(),
             bits: Num::from(num_bigint::BigInt::from(bits)),
             bounded: None,
+            shrink,
         });
+    }
+
+    /// The first of `args`, the operands of a build, that is a power `x ^ e` whose base and
+    /// exponent the text fixes, `e` an `int` with `|e| >= 3` (so some `2^j`, `j >= 1`, is
+    /// smaller), where the text fixes every operand: what the repair "a smaller operand"
+    /// sizes the build with ([`Self::build_operand_fix`]). Each read is kept by span
+    /// ([`Self::fixed_value`]), which the build has made already.
+    fn shrink_power(&mut self, args: &[&'a Expr]) -> Option<Box<ShrinkPower>> {
+        let (at, x, e) = args.iter().enumerate().find_map(|(i, a)| match &a.kind {
+            ExprKind::Binary(BinaryOp::Pow, x, e) => Some((i, &**x, &**e)),
+            _ => None,
+        })?;
+        let Some(Value::Int(k)) = self.fixed_value(e) else {
+            return None;
+        };
+        let m = k.unsigned_abs();
+        if m < 3 {
+            return None;
+        }
+        let base = self.fixed_value(x)?;
+        let vals = (args.iter().map(|a| self.fixed_value(a))).collect::<Option<Vec<Value>>>()?;
+        Some(Box::new(ShrinkPower {
+            at,
+            base,
+            exp: e.span,
+            negative: k < 0,
+            top: (m - 1).ilog2(),
+            vals,
+        }))
+    }
+
+    /// The repair "an operand made smaller" of the build `w` past `room` bits, the address
+    /// space or the memory limit of `main` (DESIGN.md sec:diagnostics, "Number too large for
+    /// any memory of the target": "an operand made smaller, written as the rewritten line";
+    /// plan row CONST-kept-sizes, part 2): where an operand is a power the text fixes
+    /// ([`ShrinkPower`]), its exponent lowered to the largest `±2^j` below it with which the
+    /// build, sized again by the kernel ([`kernel_build`]) on the power folded at that
+    /// exponent, fits `room`. `String(b ^ (2^20))` under a limit of 1 MiB offers `2^15`, whose
+    /// digits need 616 KiB; `2^16`'s power needs 512 KiB, but its digits 1.2 MiB. `None` where
+    /// no operand is such a power or no exponent `2^j`, `j >= 1`, fits.
+    ///
+    /// Each exponent offered is checked: the build is sized at it and fits. The search for the
+    /// largest assumes that the size grows with `j` (the power of a base other than 0, 1 and
+    /// -1 grows with its exponent, and with it the digits, a sum's part and what a comparison
+    /// reads); where it does not, a smaller `j` that fits may be offered, never one that
+    /// does not fit. Only the build itself is sized: an operation around it that builds from
+    /// its value, as a `String` of a sum, is not, and may still pass `room` with the repair
+    /// (left open in plan row CONST-kept-sizes).
+    ///
+    /// Complexity tradeoff: the naive method tries each `j` from the top, up to 62 sizings, or
+    /// checks the whole unit again with the repair written in. Used: a binary search over
+    /// `1..=top`, at most 6 sizings, each one kernel operation on kept forms under the fold
+    /// bound, which is refused before it allocates past 16 MiB.
+    fn build_operand_fix(&self, w: &WideBuild, room: &Num) -> Option<Rewrite> {
+        let s = w.shrink.as_deref()?;
+        // The bits the build makes at the exponent `±2^j`: `Some(None)` where it builds
+        // nothing kept, `None` where the power is no number (the evaluator gives an atom).
+        let sized = |j: u32| -> Option<Option<Num>> {
+            let k = 1i64 << j;
+            let k = if s.negative { -k } else { k };
+            let power = prim_folded(Prim::Pow, vec![s.base.clone(), Value::Int(k)])?;
+            let mut vals = s.vals.clone();
+            vals[s.at] = power;
+            if w.p == Prim::Div || vals.iter().any(|v| matches!(v, Value::Rat(_))) {
+                // The run reads both operands of `/`, and an `int` beside a `rat`, at `rat`.
+                vals = vals.into_iter().map(at_rat).collect::<Option<_>>()?;
+            }
+            Some(kernel_build(w.p, vals).map(|b| Num::from(num_bigint::BigInt::from(b))))
+        };
+        let fits =
+            |j: u32| sized(j).and_then(|b| b.as_ref().is_none_or(|b| b <= room).then_some(b));
+        // Binary search for the largest `j` in `1..=top` that fits: `lo` fits (or is 0, none
+        // found), every `j` above `hi` does not.
+        let (mut lo, mut hi, mut best) = (0u32, s.top, None);
+        while lo < hi {
+            let mid = lo + (hi - lo).div_ceil(2);
+            match fits(mid) {
+                Some(b) => (lo, best) = (mid, Some(b)),
+                None => hi = mid - 1,
+            }
+        }
+        let j = (lo >= 1).then_some(lo)?;
+        // `lo` and `best` change together, where `fits(mid)` held, so `best` is the size at `lo`.
+        let bits = best.expect("lo >= 1 is set only where fits(lo) held");
+        let with = match s.negative {
+            true => format!("-(2^{j})"),
+            false => format!("(2^{j})"),
+        };
+        let holds = match bits {
+            Some(b) => format!(
+                "needs at least {}",
+                bytes_text_of(&(&b + &Num::from(7i64)).div_floor(&Num::from(8i64)))
+            ),
+            None => "builds nothing in full".to_string(),
+        };
+        let code = self.code(Some(w.span))?;
+        let alone = format!(
+            "{}{with}{}",
+            code.get(..s.exp.start.checked_sub(w.span.start)?)?,
+            code.get(s.exp.end.checked_sub(w.span.start)?..)?,
+        );
+        Rewrite::new(&[(s.exp, &with)], &holds, &alone)
     }
 
     /// `a + b` or `a - b` at `span` where the text fixes one operand, an integer, and the
@@ -20192,6 +20296,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 args: args.iter().map(|a| a.span).collect(),
                 bits: Num::from(num_bigint::BigInt::from(bits)),
                 bounded: Some(o.span),
+                shrink: None,
             });
             return;
         }
@@ -20281,10 +20386,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             span: w.span,
             text: format!("or delete `{code}` if its result is not used").into(),
         });
-        let fixes = match main_limit {
-            Some(m) => vec![self.main_limit_fix(&w.bits, m)],
-            None => Vec::new(),
+        // The repairs: a smaller power operand, then a larger memory limit.
+        let room = match main_limit {
+            Some(m) => Num::from(i128::try_from(m.room_bits()).expect("at most 2^67")),
+            None => Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3))),
         };
+        let mut fixes = vec![self.build_operand_fix(w, &room)];
+        if let Some(m) = main_limit {
+            fixes.push(self.main_limit_fix(&w.bits, m));
+        }
         self.reject(
             Some(Row::NumberOverAddressSpace),
             w.span,

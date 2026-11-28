@@ -12233,6 +12233,33 @@ impl Scope {
         // whose joins hold a constraint on `m` that differs from both sides'. Used: the
         // leaves the family bounds cut ([`Scope::cut_leaves`]), as for a hub moved (row
         // EAGER-hub-diff-join, COMPLEXITY.md row C49).
+        //
+        // NOT PROVED (plan row PROOF-eager-hub-cut-finds-stars): that cutting at the hubs in
+        // `moved` (above) and `cored` (here) finds every star whose projection the join
+        // changes. What holds, read from the code: a refresh of a side only narrows a leaf, to
+        // its product met with its projection; where the family's bound `B` is exact
+        // ([`Scope::core_leaf_bound`] cases 1 and 2, which [`Scope::family_bound`] admits
+        // alone) the projection of a leaf of class `c` is its product met with `B` moved by
+        // `c`'s shift, so the refresh changes exactly the leaves whose product `B` cuts, the
+        // ones `cut_leaves` lists from the two ends of the synced order; a family whose bound
+        // is not found lists all its leaves. Not shown: (a) that a star whose hubs hold
+        // neither a name in `moved` nor one in `cored` keeps, in the join, the projection it
+        // has on each side, when a conjunct one side holds alone names only names outside
+        // both sets (a name of `differ` whose free conjuncts agree); (b) that the hull the
+        // join takes of the two sides' leaves ([`Scope::join_refreshed`]) equals the
+        // projection a lazy scope makes of the star in the joined relation when read, which
+        // the tests compare leaf by leaf on small cases only
+        // (`an_eager_nest_of_tests_within_the_hubs_settles_the_stars_as_the_lazy_one`).
+        // Prior art, which proves the like claim for difference bounds only: for octagons the
+        // hull of two strongly closed systems is their entrywise maximum and is strongly
+        // closed (Miné 2006, doi:10.1007/s10990-006-8609-1, arXiv cs/0703084: "if the two
+        // arguments of $\vee$ are strongly closed, then the result is also strongly closed"),
+        // so an entry of the join differs from a side's only where the sides' closed entries
+        // differ; and after one added constraint only the paths through it shorten
+        // (Chawdhary, Robbins and King, arXiv 1610.02952, sec. "Improved Incremental
+        // Closure"). Carrying this to (a) needs a star's projection to be a function of the
+        // closed bounds on its hubs' names alone, which the code does not show for stars
+        // whose classes have a period or a coefficient other than 1.
         if eager {
             for n in &cored {
                 for side in [&mut a, &mut b] {

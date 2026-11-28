@@ -639,6 +639,23 @@ struct WideBuild {
     /// The operand the text does not fix, whose type bounds the build
     /// ([`Ck::too_large_sum_beside`]); `None` where the text fixes both.
     bounded: Option<Span>,
+    /// An operand that is a power the text fixes, which the repair "a smaller operand" lowers
+    /// (`Ck::build_operand_fix`); `None` where no operand is one.
+    shrink: Option<Box<ShrinkPower>>,
+}
+
+/// An operand of a [`WideBuild`], `vals[at]`, that is a power `x ^ e` whose base `base` and
+/// exponent `e` (at `exp`, `|e| >= 3`) the text fixes, with the values of every operand of the
+/// build, `vals`: what `Ck::build_operand_fix` needs to size the build again at the exponent
+/// `±2^j` without reading the text again (plan row CONST-kept-sizes, part 2).
+struct ShrinkPower {
+    at: usize,
+    base: Value,
+    exp: Span,
+    negative: bool,
+    /// The largest `j` with `2^j < |e|`, so every exponent tried is smaller than `e`.
+    top: u32,
+    vals: Vec<Value>,
 }
 
 /// A product or quotient `a * b` or `a / b` at `span` whose least size the text proves

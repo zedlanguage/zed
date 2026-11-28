@@ -65,21 +65,25 @@ fn each_argument_of_a_limit_is_a_positive_constant() {
 fn a_power_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
     // Since KEPT-power-form (DESIGN.md step L1.17c) `b ^ (2^20)` is kept and builds nothing;
     // its sum with 1 writes out `2^20 * 64 + 2` bits, 8 MiB, past the limit. Before, the power
-    // itself was rejected, with a smaller exponent as a repair (now plan row CONST-kept-sizes).
+    // itself was rejected. The repair "a smaller operand" (plan row CONST-kept-sizes, part 2)
+    // sizes the sum again: `2^16 * 64 + 2` bits, 512 KiB, fit, and `2^17`'s do not.
     let src = "@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
                m.stdout <- String(b ^ (2^20) + 1 > 0);\n}\n";
     let out = rejected(src);
     assert!(
         out.starts_with(
             "4:24: Number too large for the memory limit of `main`: `b ^ (2^20) + 1` needs at \
-             least 8 MiB; `@limits(memory: 1048576)`. Try `@limits(memory: 2^24)` instead."
+             least 8 MiB; `@limits(memory: 1048576)`. Try `m.stdout <- String(b ^ (2^16) + 1 > \
+             0)` instead."
         ),
         "{out}"
     );
     assert!(
         out.contains("the memory limit of `main` lets the run hold 1 MiB")
             && out.ends_with(
-                "  fixes, each checked here:\n    @limits(memory: 2^24)    lets the run hold 16 MiB"
+                "  fixes, each checked here:\n    m.stdout <- String(b ^ (2^16) + 1 > 0);    \
+                 needs at least 512 KiB\n    @limits(memory: 2^24)                      lets the run \
+                 hold 16 MiB"
             ),
         "{out}"
     );
@@ -88,6 +92,51 @@ fn a_power_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
     assert_eq!(built(&src.replace("@limits(memory: 1048576)\n", "")), None);
     assert_eq!(built(&src.replace("2^20", "2^16")), None);
     assert_eq!(built(&src.replace(" + 1 > 0", " > 0")), None);
+}
+
+/// Plan row CONST-kept-sizes, part 2: the repair "a smaller operand" of a build is checked by
+/// sizing the build again. Printed, `b ^ (2^16)` needs about 1.2 MiB of digits under the
+/// 1 MiB limit, though the power alone builds nothing (and in full would take 512 KiB), so the
+/// repair offers `2^15`, whose digits need about 616 KiB, and the program with it compiles.
+/// The test dropped with KEPT-power-form (`a_smaller_power_offered_is_checked_with_the_print_
+/// around_it`, d501ac3f6), rebuilt on the kept form.
+#[test]
+fn a_smaller_power_offered_for_a_print_past_the_memory_limit_is_checked() {
+    let src = "@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
+               m.stdout <- String(b ^ (2^20));\n}\n";
+    let out = rejected(src);
+    assert!(
+        out.starts_with(
+            "4:17: Number too large for the memory limit of `main`: `String(b ^ (2^20))` needs \
+             at least "
+        ) && out.contains("Try `m.stdout <- String(b ^ (2^15))` instead."),
+        "{out}"
+    );
+    assert!(
+        out.contains("    m.stdout <- String(b ^ (2^15));    needs at least 616 KiB")
+            && out.contains("@limits(memory: 2^"),
+        "{out}"
+    );
+    assert!(!out.contains("2^16"), "{out}");
+    assert_eq!(built(&src.replace("2^20", "2^15")), None);
+    assert!(built(&src.replace("2^20", "2^16")).is_some());
+    // A negative exponent: `rat(b) ^ -(2^20)` prints the digits of `1/b^(2^20)`, and the
+    // repair keeps the sign.
+    let neg = src.replace("String(b ^ (2^20))", "String(rat(b) ^ -(2^20))");
+    let out = rejected(&neg);
+    assert!(
+        out.contains("Try `m.stdout <- String(rat(b) ^ -(2^"),
+        "{out}"
+    );
+    // An exponent of 2 has no smaller `2^j` but 1, which is the base: no such repair, only
+    // the larger limit.
+    let small = "@limits(memory: 16)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
+                 m.stdout <- String(b ^ 2);\n}\n";
+    let out = rejected(small);
+    assert!(
+        out.contains("Try `@limits(memory: 2^") && !out.contains("String(b ^ (2^"),
+        "{out}"
+    );
 }
 
 #[test]
