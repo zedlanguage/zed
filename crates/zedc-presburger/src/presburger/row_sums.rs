@@ -366,10 +366,11 @@ use zedc_int::int::{Int, i128_div_ceil};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
 use super::formula::{Atom, Conjuncts, Formula, Id, Model, Rel, one_bound};
-use super::refusal::{EachClassed, Refusal};
+use super::refusal::{Classed, EachClassed, Refusal};
 use super::row_domains::{self, Settled, range};
 
 mod classes;
+mod equation;
 pub(super) mod plane;
 mod rows;
 
@@ -747,7 +748,9 @@ pub(super) fn point(
     }
 }
 
-/// [`super::project_each`] of a formula of the class onto `syms`: the join's exact sets where
+/// [`super::project_each`] of a formula of the class onto `syms`: where its one row is an
+/// equation over two atoms, the exact sets of module `equation`, with no join run (outside the
+/// test controls that ask for the join); else the join's exact sets where
 /// it finishes within [`JOIN_LIMIT`], and the solver's `old(None)` where the formula has no
 /// plan. Where the join stops at its limit, `old(Some(domains))` when `old_exact` holds (the
 /// solver's answer, its projection counted against `meter::EXACT_LIMIT`, made exact by the
@@ -789,6 +792,28 @@ pub(super) fn project(
     // the join's work (`Plan::project`, `plane::project`); else the join. The test controls of
     // the join's limit ask for the join itself, so they skip this.
     let join_asked = ROW_SUMS_JOIN.with(Cell::get) || JOIN_LIMIT_SET.with(Cell::get).is_some();
+    // One equation over two atoms: its integer points solved whole (module `equation`), each
+    // answer ranges met with a class, at a cost that does not grow with the widths of the
+    // ranges, where the join lists one interval per value.
+    if !join_asked && let Some(mut sets) = equation::answer(&rows) {
+        JOINED.with(|j| j.set(None));
+        let none = sets.iter().all(|s| s.ranges.is_empty());
+        let sets = (wanted.iter())
+            .map(|w| {
+                Ok(match w {
+                    Some(a) => {
+                        std::mem::replace(&mut sets[*a], Classed::plain(IntervalSet::empty()))
+                    }
+                    None if none => Classed::plain(IntervalSet::empty()),
+                    None => Classed::plain(IntervalSet::range(End::NegInf, End::PosInf)),
+                })
+            })
+            .collect();
+        return Ok(EachClassed {
+            sets,
+            causes: Vec::new(),
+        });
+    }
     let shape = if join_asked {
         None
     } else {
@@ -966,7 +991,8 @@ thread_local! {
     /// of the switch; as under [`ROW_SUMS_JOIN`], `project` asks the join.
     pub static JOIN_LIMIT_SET: Cell<Option<u64>> = const { Cell::new(None) };
     /// The units the last join on this thread spent and whether it answered; `None` where
-    /// the last formula of the class had no plan.
+    /// the last formula of the class had no plan, or was a projection answered with no join
+    /// (module `equation`).
     pub static JOINED: Cell<Option<(u64, bool)>> = const { Cell::new(None) };
     /// The last polygons `Plan::project` tried on this thread: the allowance of their last
     /// try, the units of all their tries, and whether they answered.
