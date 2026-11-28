@@ -658,3 +658,54 @@ fn decide_scales_over_a_sum_of_conditionals_other_than_a_constant() {
         },
     );
 }
+
+/// FAIL-one-way-torus-growth-refusal, and the benchmark for PERF-tie-rekey-count (ties that may
+/// recur after a step, each a System::rekey): [`capped_one_way_torus`] at t = 22 and 62, 484 and
+/// 3844 variables, 7.94 times.
+#[test]
+fn decide_on_a_one_way_torus_scales() {
+    let (t, t8) = (22, 62);
+    let (small, large) = (capped_one_way_torus(t, 4), capped_one_way_torus(t8, 4));
+    assert_eq!((decide(&small), decide(&large)), (Ok(false), Ok(false)));
+    scaling::check("decide on a one-way torus", t * t, |m| {
+        let f = if m == t * t { &small } else { &large };
+        let _ = std::hint::black_box(decide(f));
+    });
+}
+
+/// `tvpi::empty` alone on the rows of [`capped_one_way_torus`] at top 4 (shown empty after
+/// every node is raised twice and one walk of the parents) and top 5 (no raise), at
+/// 10,000 and 80,089 variables (t = 100 and 283, 8.01 times).
+#[test]
+fn tvpi_on_a_one_way_torus_scales() {
+    use zedc::store::int::Int;
+    use zedc::store::tvpi;
+    let torus = |t: usize, top: i64| {
+        let v = |i: usize, j: usize| (i % t) * t + j % t;
+        let mut rows: Vec<(Vec<(usize, Int)>, Int)> = Vec::new();
+        for i in 0..t {
+            for j in 0..t {
+                for next in [v(i, j + 1), v(i + 1, j)] {
+                    let a = vec![(v(i, j), Int::from(-1)), (next, Int::from(3))];
+                    rows.push((a, Int::from(-10)));
+                }
+                rows.push((vec![(v(i, j), Int::from(-1))], Int::from(top)));
+            }
+        }
+        rows
+    };
+    let (t, t8) = (100, 283);
+    let inputs = [
+        (t * t, [torus(t, 4), torus(t, 5)]),
+        (t8 * t8, [torus(t8, 4), torus(t8, 5)]),
+    ];
+    let empty =
+        |rows: &[(Vec<(usize, Int)>, Int)]| tvpi::empty(rows.iter().map(|(a, k)| (&a[..], k)));
+    for (_, [four, five]) in &inputs {
+        assert!(empty(four) && !empty(five));
+    }
+    scaling::check("tvpi::empty on a one-way torus", t * t, |m| {
+        let [four, five] = &inputs[usize::from(m != t * t)].1;
+        let _ = std::hint::black_box((empty(four), empty(five)));
+    });
+}

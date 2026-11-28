@@ -2695,3 +2695,82 @@ fn every_naming_of_a_random_conjunction_gets_one_projection() {
         assert_eq!(seen.len(), 1, "seed {seed}, system {s}: {rows:?}\n{seen:?}");
     }
 }
+
+// FAIL-one-way-torus-growth-refusal (found by b30-pres4 for PERF-tie-rekey-count, 2026-11-28, on
+// wt/b30-pres26 based on origin/main 80a56df72).
+//
+// The cycle of `one_way_cycle` on a t x t torus, both ways round turned one way, every variable at
+// most `top`. At top 4 it has no point even over the rationals: summing the 2t² rows gives
+// 4·Σv >= 20·t², and the caps give Σv <= 4·t². `decide` answered t = 2, 3, 4 (false at top 4,
+// true at top 5) but refused with Err(Growth) at top 4 for every t from 5 (25 variables, 75 rows)
+// to 12, and at t = 22 and 62; top 5 was answered true at every t tried. The system has two
+// variables per row (TVPI), coefficients 3 and -1; `tvpi::empty` now shows it empty before the
+// refusal (presburger.rs, the stage before `Refusal::Growth`).
+pub(super) fn capped_one_way_torus(t: usize, top: i64) -> Formula {
+    let v = |i: usize, j: usize| Lin::atom(Atom::Sym(format!("v{}_{}", i % t, j % t).into()));
+    let mut fs = Vec::new();
+    for i in 0..t {
+        for j in 0..t {
+            let lo = v(i, j).plus(&Lin::constant(10));
+            fs.push(Formula::Con(Con::ge(&v(i, j + 1).times(3), &lo)));
+            fs.push(Formula::Con(Con::ge(&v(i + 1, j).times(3), &lo)));
+            fs.push(Formula::Con(Con::ge(&Lin::constant(top), &v(i, j))));
+        }
+    }
+    Formula::and(fs)
+}
+
+#[test]
+fn a_capped_one_way_torus_is_decided() {
+    for t in 2..=12 {
+        let (empty, full) = (capped_one_way_torus(t, 4), capped_one_way_torus(t, 5));
+        assert_eq!(decide(&empty), Ok(false), "t = {t}, top 4");
+        assert_eq!(decide(&full), Ok(true), "t = {t}, top 5");
+        // The other entry, which also gives a point, agrees.
+        assert_eq!(
+            satisfiable(&empty).map(|p| p.is_some()),
+            Ok(false),
+            "t = {t}, top 4"
+        );
+        assert_eq!(
+            satisfiable(&full).map(|p| p.is_some()),
+            Ok(true),
+            "t = {t}, top 5"
+        );
+    }
+}
+
+/// The torus of [`capped_one_way_torus`] at t = 3 to 5 as rows, under the naming as written and
+/// 20 random ones: one answer, `false` at top 4 and `true` at top 5.
+#[test]
+fn every_naming_of_a_capped_one_way_torus_gets_one_answer() {
+    let torus = |t: usize, top: i64| {
+        let mut rows = Vec::new();
+        for i in 0..t {
+            for j in 0..t {
+                let here = i * t + j;
+                for next in [i * t + (j + 1) % t, ((i + 1) % t) * t + j] {
+                    let mut c = vec![0; t * t];
+                    c[next] = 3;
+                    c[here] = -1;
+                    rows.push(ge(&c, -10));
+                }
+                let mut c = vec![0; t * t];
+                c[here] = -1;
+                rows.push(ge(&c, top));
+            }
+        }
+        rows
+    };
+    let (mut rng, seed) = Rng::fresh("every naming of a capped one-way torus");
+    for t in 3..=5 {
+        for (top, want) in [(4, "Ok(false)"), (5, "Ok(true)")] {
+            let seen = sampled_namings(&torus(t, top), t * t, &mut rng, 20);
+            assert_eq!(
+                seen.into_keys().collect::<Vec<_>>(),
+                [want],
+                "t = {t}, top {top}, seed {seed:#x}"
+            );
+        }
+    }
+}

@@ -121,7 +121,7 @@ use zedc_int::q::Q;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::lattice::Congruence;
 use zedc_solvers::linear::Term;
-use zedc_solvers::{live3, twovar, utvpi};
+use zedc_solvers::{live3, tvpi, twovar, utvpi};
 
 mod absorbing;
 mod deep;
@@ -19842,8 +19842,30 @@ impl Omega {
                 break;
             }
             // Rows changed since the test above, which ran once, are read again here, before
-            // a refusal: a pair of variables whose rows have no point shows the rows empty.
-            if self.sys.live > 3 && pairs_empty(&self.sys) {
+            // a refusal: a pair of variables whose rows have no point shows the rows empty, and
+            // so do bounds that the rows of at most two variables carry past each other or
+            // around a cycle ([`tvpi::empty`]).
+            //
+            // Complexity tradeoff (FAIL-one-way-torus-growth-refusal): `3·v' >= v + 10` from
+            // each cell of a t × t torus to its two next ones, every `v <= 4`, has no point
+            // (the rows sum to `4·Σv >= 20·t²`, the caps to `Σv <= 4·t²`), but no pair shows it,
+            // no elimination is exact, and from t = 5 the question was refused for growth.
+            // Naive version: none, refused; a complete test of rows of two variables (Hochbaum
+            // and Naor, `O(m·n²·log m)`) would decide all such rows over the rationals and fail
+            // the scaling rule. Used: one propagation of bounds over the rows of one or two
+            // terms with the loop inequalities of the cycles it meets, `O(m·n)` operations at
+            // worst and linear where the bounds settle or cross in a few rounds (its proof and
+            // tradeoff at zedc-solvers tvpi.rs). It runs only here, where the system would
+            // otherwise be refused, so an answered question pays nothing. What is given up:
+            // rows empty only through rows of three variables or more, or through cycles the
+            // propagation does not meet; and a search stopped at its bound on scans answers
+            // `false` (refused, as before), an answer that may depend on the order of the rows.
+            // Tests: `l01_38_omega_test::names::a_capped_one_way_torus_is_decided`, the bench
+            // `decide_on_a_one_way_torus_scales`.
+            if self.sys.live > 3
+                && (pairs_empty(&self.sys)
+                    || tvpi::empty(self.sys.rows.iter().map(|(a, held)| (&**a, &held.k))))
+            {
                 return Leaf::Empty;
             }
             if self.sys.live <= 3 {
