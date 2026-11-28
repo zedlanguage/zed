@@ -3618,8 +3618,9 @@ fn sizes(p: &Part<Row>) -> (u64, u64, u64) {
 ///    node off the path is not cut when fixed and a fixed node is not pushed when it leaves the
 ///    path;
 /// 5. each carry, `N + E`. Carried from an unknown expression, on a stack, each node changes at
-///    most once (from unknown, every operator monotone) and only a changed node reads its
-///    parents, so at most `E`. Carried from a known one, from a heap, each node is queued once
+///    most once (from unknown, every operator monotone, given the invariant proved at the code
+///    of [`Part::pins_by`] and asserted there in the tests: every node not fixed has the value
+///    of its operands) and only a changed node reads its parents, so at most `E`. Carried from a known one, from a heap, each node is queued once
 ///    and taken once, and reads its parents when first reached and when it changes, once
 ///    each, so at most `N + E`;
 /// 6. per shared expression, at most two trials and one pin, three carries: `3S(N + E)`.

@@ -2043,6 +2043,39 @@ impl<A: Literal> Part<A> {
                 order.push(i);
             },
         );
+        // The invariant the carries rest on: every node not fixed has the value `step` gives it
+        // from its operands' values in `known` (a fixed node keeps its pin). Proof, step by step:
+        // 1. After Kahn's order it holds: each node was evaluated after all of its operands,
+        //    which no later step changed, and no node is fixed.
+        // 2. A trial does not write `known` (the carry gets `&[Option<bool>]` and gives an
+        //    overlay), so the trials keep it.
+        // 3. Only `pin` writes `known`: it fixes `i`, carries `v` from `i` (no `need`, no `req`)
+        //    and writes the overlay. A node not fixed whose operands all keep their values keeps
+        //    its own, and the invariant at it. A node `q` not fixed with an operand that changed:
+        //    a. carried from a heap (`i` known): the places taken rise, since a node is pushed
+        //       only by one it is a parent of, of a lesser place, and every node in the heap has
+        //       a place at least that of the node taken. So `q`, pushed when its operand changed,
+        //       is taken once, after every operand that changes (each of a lesser place), and is
+        //       evaluated on their final values;
+        //    b. carried on a stack (`i` unknown): by the invariant before the pin and since each
+        //       operator is monotone in three-valued logic, every change is from unknown to known
+        //       (by induction on the changes: if the operands so far only went from unknown to
+        //       known, `step` at `q` gives the value it gave, or a known one where it gave
+        //       unknown), so a node changes at most once; each node that changes is pushed and
+        //       evaluates all of its parents not fixed when taken, so `q` is evaluated after its
+        //       operands' last change, on their final values.
+        //    In both, `q` ends with `step` of its operands' final values: the invariant holds.
+        // So it holds at the start of every trial; checked in the tests (`settled_by`'s callers)
+        // after Kahn's order and after each pin, the only places `known` changes.
+        #[cfg(test)]
+        let consistent = |known: &[Option<bool>], fixed: &[bool]| {
+            (0..exprs.len()).all(|q| fixed[q] || step(&exprs[q], &|c| known[c]) == known[q])
+        };
+        #[cfg(test)]
+        assert!(
+            consistent(&known, &vec![false; exprs.len()]),
+            "Kahn's order left a node off its operands' value"
+        );
         // Each expression's place in Kahn's order, for the carry of an override.
         let mut place = vec![0usize; exprs.len()];
         for (k, &q) in order.iter().enumerate() {
@@ -2208,6 +2241,12 @@ impl<A: Literal> Part<A> {
                 known[n] = x;
                 nodes.push(n);
             }
+            // `O(N)` a pin, tests only and not counted in `SETTLE_WORK`.
+            #[cfg(test)]
+            assert!(
+                consistent(known, fixed),
+                "a pin left a node off its operands' value"
+            );
             // The nodes whose value the pin changed, read by [`Pins::Required`]'s phase A.
             nodes
         };
