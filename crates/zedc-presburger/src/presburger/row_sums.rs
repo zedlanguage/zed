@@ -776,25 +776,11 @@ pub(super) fn project(
     for a in wanted.iter().flatten() {
         want[*a] = true;
     }
-    let each_of = move |mut sets: Vec<Option<IntervalSet>>| {
-        let each = (wanted.iter())
-            .map(|w| {
-                Ok(match w.and_then(|a| sets[a].take()) {
-                    Some(set) => set,
-                    None => IntervalSet::range(End::NegInf, End::PosInf),
-                })
-            })
-            .collect();
-        EachClassed::plain((each, Vec::new()))
-    };
-    // Two atoms besides those an equation defines: the polygons' projections, whose cost does
-    // not grow with the widths of the ranges, where they are shown exact and cost no more than
-    // the join's work (`Plan::project`, `plane::project`); else the join. The test controls of
-    // the join's limit ask for the join itself, so they skip this.
     let join_asked = ROW_SUMS_JOIN.with(Cell::get) || JOIN_LIMIT_SET.with(Cell::get).is_some();
     // One equation over two atoms: its integer points solved whole (module `equation`), each
     // answer ranges met with a class, at a cost that does not grow with the widths of the
-    // ranges, where the join lists one interval per value.
+    // ranges, where the join lists one interval per value. The test controls of the join's
+    // limit ask for the join itself, so they skip this.
     if !join_asked && let Some(mut sets) = equation::answer(&rows) {
         JOINED.with(|j| j.set(None));
         let none = sets.iter().all(|s| s.ranges.is_empty());
@@ -814,6 +800,21 @@ pub(super) fn project(
             causes: Vec::new(),
         });
     }
+    let each_of = move |mut sets: Vec<Option<IntervalSet>>| {
+        let each = (wanted.iter())
+            .map(|w| {
+                Ok(match w.and_then(|a| sets[a].take()) {
+                    Some(set) => set,
+                    None => IntervalSet::range(End::NegInf, End::PosInf),
+                })
+            })
+            .collect();
+        EachClassed::plain((each, Vec::new()))
+    };
+    // Two atoms besides those an equation defines: the polygons' projections, whose cost does
+    // not grow with the widths of the ranges, where they are shown exact and cost no more than
+    // the join's work (`Plan::project`, `plane::project`); else the join. The test controls of
+    // the join's limit ask for the join itself, so they skip this.
     let shape = if join_asked {
         None
     } else {
