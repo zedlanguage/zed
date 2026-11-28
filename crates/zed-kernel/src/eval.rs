@@ -544,7 +544,8 @@ pub struct World {
 // ([`Namer::canon`]); then a lookup by the form hashes a few words. Tradeoff: each node and
 // tuple named is kept while the world lives, as its key is. The replay order, `Value`'s order,
 // is made once, when the wave's record is taken ([`Reads::into_map`]), O(r log r) comparisons
-// of r keys. Tests `m0_09_kernel_evaluator::a_lookup_port_read_at_a_long_join_or_a_doubled_tuple_is_asked_once`
+// of r keys. Tests
+// `m0_09_kernel_evaluator::a_lookup_port_read_at_a_long_join_or_a_doubled_tuple_is_asked_once`
 // and `m0_09_kernel_evaluator::bench::scaling::reading_a_port_at_doubled_keys_scales`.
 #[derive(Clone, Debug, Default)]
 pub struct Reads {
