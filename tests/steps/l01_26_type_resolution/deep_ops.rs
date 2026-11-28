@@ -350,6 +350,10 @@ fn a_signature_writes_each_need_as_the_derived_debug_of_the_need_writes_it() {
             word: word.clone(),
             other: y(),
             first: true,
+            follows: Arc::from([(
+                1,
+                Arc::from([(ty::Carrier::F64, y()), (ty::Carrier::Rat, z())]),
+            )]),
         },
         NeedKind::Sum,
         NeedKind::Entries,

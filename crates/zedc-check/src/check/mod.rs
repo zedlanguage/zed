@@ -2352,6 +2352,11 @@ struct Class {
     /// run time, if any, and the body the parameter is in scope in; of a merged class, the
     /// outer one where one body holds the other.
     binder: Option<(Witness, Span)>,
+    /// The class of the parameter this class of literals alone follows ([`Ck::follow_param`]),
+    /// if any: where the function ends, the class's own needs are needs on that parameter's
+    /// value, read at each call at the carrier the call gives it (row
+    /// LIT-generic-class-follows-needs).
+    follows: Option<usize>,
     /// Whether its values are those of generic literals only, as of `1 + 1` inside a function: of a
     /// merged class, whether both were. An `if` merges it with the class of its other branch.
     generic: bool,
@@ -2814,6 +2819,12 @@ struct Ck<'t, 'a> {
     /// The class each literal of [`Info::follows`] joined, by the literal's span, as
     /// [`Ck::resolve`] made the class a type variable; read by [`Ck::own_follows`].
     follow_class: HashMap<Span, usize>,
+    /// The class an `Entries` need gives, the parameter of the function `map`, `where`,
+    /// `flatMap` or `group` gives each entry to, by the need's span, outside a trial: a
+    /// refusal of the need at a call names the use in that function that took carriers from
+    /// it, as `e.trim` (`Ck::word_entries`; plan row MSG-generic-lambda-result-literal-type,
+    /// (a)). One insert per such need, one lookup on the error path.
+    entries_result: HashMap<Span, usize>,
     /// For each call of a function with a bounded type variable, outside a trial: the class
     /// the variable names, the class of the caller the binding holds if any, and the carriers
     /// it holds outside any class ([`Ck::own_follows`] reads them; plan row
@@ -3857,6 +3868,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             lit_uncarried: HashSet::new(),
             kept_ops: HashMap::new(),
             follow_class: HashMap::new(),
+            entries_result: HashMap::new(),
             instances: Vec::new(),
             lit_written: HashMap::new(),
             lit_order: Vec::new(),
@@ -6929,6 +6941,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             size: 1,
             proof: None,
             binder: None,
+            follows: None,
             generic: false,
             asked: false,
             floats: false,
@@ -10265,6 +10278,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             size: 1,
             proof: None,
             binder: None,
+            follows: None,
             generic: false,
             asked: false,
             floats: false,

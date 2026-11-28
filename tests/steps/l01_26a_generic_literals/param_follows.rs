@@ -169,7 +169,13 @@ fn an_operation_with_a_need_of_its_own_follows_the_parameter_at_each_call() {
     // `f64`, `f32` and `rat`, as `h(x: f64)` is. Before, every call was refused with "Int
     // power with a negative exponent: `2 : int ^ -1 : int`."
     let def = "g(positional x) = x == 2^-1;\nh(x: f64) = x == 2^-1;";
-    let calls = ["g(0.5f64)", "g(0.5f32)", "g(1r / 2r)", "h(x: 0.5f64)", "g(0.25f64)"];
+    let calls = [
+        "g(0.5f64)",
+        "g(0.5f32)",
+        "g(1r / 2r)",
+        "h(x: 0.5f64)",
+        "g(0.25f64)",
+    ];
     let out = prints("l01_26a_param_follows_power", def, &calls);
     assert_eq!(out, "true true true true false\n");
     // At an `int` the exponent `-1` lies outside the ints `^` on an int takes: refused, with

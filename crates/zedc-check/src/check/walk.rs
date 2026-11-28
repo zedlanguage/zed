@@ -3308,10 +3308,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// takes its value at the class's own carrier ([`Ck::lits_take`]'s choice, `f64` where the
     /// class may take it) instead of its own, so the operation runs at a carrier it has, and
     /// the comparison is false there, as `x == 0.5` is at an `int`: `/` of two `int` literals
-    /// has no arrow. A class with a need of its own, as the base of `2^-1`, does not follow:
-    /// a need on it is checked again at each call ([`Ck::check_on`]), where no argument gives
-    /// its variable a type, so it keeps the carrier [`Self::class_takes`] reads, and the need
-    /// is checked at that carrier, as before. Returns whether `k` follows `p`.
+    /// has no arrow. A class with a need of its own, as the base of `2^-1`, follows too, and
+    /// records `p` (`Class::follows`): where the function ends, its needs become needs on
+    /// `p`'s value ([`Self::generalize`]), so that each call reads them at the carrier it
+    /// gives the parameter: `g(positional x) = x == 2^-1` is true at `0.5f64`, `0.5f32` and
+    /// `1r / 2r`, as `h(x: f64) = x == 2^-1` is at `0.5f64`, and refused at `1` with the
+    /// repair of an int power with a negative exponent (DESIGN.md, "The repair of a value
+    /// outside the ints its use takes"). Before, such a class did not follow, and its needs
+    /// stayed on its own variable, which no argument gives a type. Such a class follows only
+    /// a parameter of its own function (`level`): a need moved to a parameter of a function
+    /// around would be one of that function's, which ends later. Returns whether `k` follows
+    /// `p`.
     // Complexity tradeoff: naive version, merge `k` into `p` as an arithmetic operator does,
     // O(log N) (check/mod.rs, struct `Class`) and the literals moved, which removes from `p`
     // the carriers `k` cannot take,
@@ -3330,8 +3337,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     // 1. The only caller is [`Self::equal_classes`], once per comparison, on the classes of
     //    its two sides; it tries `(kx, ky)`, then `(ky, kx)` only if the first fails, so one
     //    comparison makes `k` follow at most one parameter.
-    // 2. The guard admits only a class of literals alone (`generic`, no `binder`, no `uses`).
-    //    Such a class is made by the literals of one expression, and an expression's type
+    // 2. The guard admits only a class of literals alone (`generic`, no `binder`). Its uses,
+    //    admitted since LIT-generic-class-follows-needs, are needs on its values and move no
+    //    class; so they do not change how it reaches a comparison, and this step holds with
+    //    them. Such a class is made by the literals of one expression, and an expression's type
     //    goes to its one parent; so the class reaches a second comparison only through a
     //    name or a function's result.
     // 3. A name in a body is a parameter, whose class has a `binder` or is merged with one
@@ -3351,7 +3360,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     // found.
     fn follow_param(&mut self, k: usize, p: usize) -> bool {
         let (c, q) = (&self.classes[k], &self.classes[p]);
-        if k == p || !c.generic || c.binder.is_some() || q.generic || !c.uses.is_empty() {
+        if k == p || !c.generic || c.binder.is_some() || q.generic {
+            return false;
+        }
+        if !c.uses.is_empty() && c.level != q.level {
             return false;
         }
         let Some(b) = q.binder.clone() else {
@@ -3371,6 +3383,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         self.touch(k);
         self.classes[k].binder = Some(b);
+        self.classes[k].follows = Some(p);
         for (s, v) in adopted {
             self.put(Undo::Adopt(s, Some(v)));
         }
@@ -5062,7 +5075,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let r = self.class_root(&v);
                     match r.map(|r| (r, self.classes[r].resolved.clone())) {
                         Some((_, Some(t))) => self.word_entries(&t, span),
-                        Some((r, None)) => self.need(r, NeedKind::Entries, true, span),
+                        Some((r, None)) => {
+                            let out = self.need(r, NeedKind::Entries, true, span);
+                            if !self.trying
+                                && let Some(k) = self.class_of_ty(&out)
+                            {
+                                self.entries_result.insert(span, k);
+                            }
+                            out
+                        }
                         None => Ty::dynamic(),
                     }
                 }
@@ -16541,8 +16562,44 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (n, t) in &now {
             self.check_on(n, t, n.span, None);
         }
+        // A class of literals alone that follows a parameter of this function
+        // ([`Self::follow_param`]) has its needs read on that parameter's value: put on its
+        // variable, so each call checks them at the carrier it gives the parameter, or checked
+        // now where the parameter has a type. Its own variable is given by no argument, so a
+        // need left on it made every call refused (row LIT-generic-class-follows-needs).
+        // O(u) for its u needs.
+        let followed = |ck: &Self, r: usize| {
+            let p = ck.find(ck.classes[r].follows?);
+            (p != r && ck.classes[p].level == level).then_some(p)
+        };
         for &r in &vars {
+            let p = followed(self, r);
             let uses = take(self, r);
+            if let Some(p) = p {
+                let on = Ty::var(format!("${p}").into());
+                let uses = uses.into_iter().map(|(s, mut n)| {
+                    n.on = on.clone();
+                    (s, n)
+                });
+                match (self.classes[p].resolved.clone()).filter(|_| !var_of(self, p)) {
+                    Some(t) => {
+                        let uses: Vec<_> = uses.collect();
+                        self.discharge(Discharge::Checked, uses.len());
+                        for (_, n) in &uses {
+                            self.check_on(n, &t, n.span, None);
+                        }
+                    }
+                    None => {
+                        let uses: Vec<_> = uses.collect();
+                        self.discharge(Discharge::Signature, uses.len());
+                        needs.extend(
+                            uses.into_iter()
+                                .map(|(s, n)| (s, self.strip_widened(n, strip))),
+                        );
+                    }
+                }
+                continue;
+            }
             self.discharge(Discharge::Signature, uses.len());
             needs.extend(
                 uses.into_iter()
@@ -17632,6 +17689,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut flowed = std::mem::take(&mut self.classes[child].flowed);
         let level = self.classes[child].level;
         let binder = self.classes[child].binder.clone();
+        let follows = self.classes[child].follows;
         let generic = self.classes[child].generic;
         let asked = self.classes[child].asked;
         let floats = self.classes[child].floats;
@@ -17668,6 +17726,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             (Some(a), Some(b)) if b.1.start <= a.1.start && a.1.end <= b.1.end => Some(b),
             (a, b) => a.or(b),
         };
+        c.follows = c.follows.or(follows);
         if c.uses.len() < uses.len() {
             std::mem::swap(&mut c.uses, &mut uses);
             std::mem::swap(&mut c.known, &mut known);
@@ -18393,10 +18452,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 word,
                 other,
                 first,
+                follows,
             } => {
                 let other = self.bound(other, binds);
+                let other = self.follow_components(&on, other, follows);
                 let (x, y) = if *first { (&on, &other) } else { (&other, &on) };
-                self.min_max_tuples(what, &word_sig(word), x, y, [None, None], span)
+                let passed = Some((*first, follows));
+                self.min_max_tuples(what, &word_sig(word), x, y, [None, None], passed, span)
             }
             NeedKind::Concat { other, first } => {
                 // The value's variable stands for `on` in the other operand too, as in `a ++ a`,
@@ -18774,12 +18836,25 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // entry (`String` where it calls `e.trim`), not what is required of the callee's
                 // result, which the generic text below said ("`h` gives 1 | 2 here, which is
                 // not String"; plan row MSG-generic-lambda-result-literal-type, (a)).
+                // The use in that function that took carriers from its parameter, `e.trim`,
+                // is named where the checker kept it ([`Ck::entries_result`]) and its code is
+                // on one line.
+                let used = (self.entries_result.get(&n.span))
+                    .map(|&k| self.find(k))
+                    .and_then(|k| self.classes[k].reasons.first().map(|r| r.span))
+                    .and_then(|s| self.code_line(Some(s)));
                 let (text, menu) = match n.kind {
                     NeedKind::Entries => (
-                        format!(
-                            "{what} gives each entry of its argument to a function that \
+                        match used {
+                            Some(u) => format!(
+                                "{what} gives each entry of its argument to a function whose \
+                                 `{u}` requires a value of {r}, and an entry here is {got}{why}"
+                            ),
+                            None => format!(
+                                "{what} gives each entry of its argument to a function that \
                                  requires a value of {r}, and an entry here is {got}{why}"
-                        ),
+                            ),
+                        },
                         format!(
                             "repair: change the argument, so that each of its entries is a \
                                  value of {r}"
@@ -24087,6 +24162,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// shapes of one length on each side are joined position by position, so each level is read
     /// once rather than once per pair of shapes, and a pair of component types met again
     /// through shared rows is not read again: the check is linear in the types read.
+    ///
+    /// `passed` is the follows of a use checked at a call ([`NeedKind::Order`]), with whether
+    /// its value is `x`: where that value is still a class there, as the parameter `b` of
+    /// `h(positional b) = g(b)` at `g`'s use `min(a, (1, 2))`, the use made on the class keeps
+    /// them, so the literals follow the components of what `h`'s call passes. Before, the use
+    /// made there followed nothing, and `h((0.5, 1.0))` was refused.
+    #[allow(clippy::too_many_arguments)]
     fn min_max_tuples(
         &mut self,
         what: &str,
@@ -24094,6 +24176,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         x: &Ty,
         y: &Ty,
         written: [Option<Rc<[Part<'a>]>>; 2],
+        passed: Option<(bool, &ty::OrderFollows)>,
         span: Span,
     ) -> Ty {
         // Called through a function value, a message names the word as well as the value.
@@ -24102,7 +24185,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => what.to_string(),
         };
         let written = written.map(|w| w.map(Part::Tuple));
-        let mut todo = vec![(x.clone(), y.clone(), written.clone())];
+        // Each pair with its component path from the operands, `[1, 0]` for `v[1][0]`, which
+        // a misfit of two components names (plan rows MSG-types-as-literals and
+        // MINMAX-param-literal-follow: `min` of `(0.5, 1.0)` and `("a", 2)` printed only the
+        // component call's operands, `` `min` does not take ("a", 0.5) ``, which reads as a
+        // tuple). Each path is an index into `steps`, whose entry is the path's parent and
+        // its last position, so a pair adds O(1) and only a misfit spells its path out, in
+        // O(d) at depth d. A copy of the path per pair cost O(d) each, O(n^2) bytes for two
+        // tuples nested n deep (benchmark checking_min_of_two_tuples_nested_n_deep_scales).
+        const ROOT: usize = usize::MAX;
+        let mut steps: Vec<(usize, usize)> = Vec::new();
+        let mut todo = vec![(x.clone(), y.clone(), written.clone(), ROOT)];
         // The decimal literals with no suffix written as components that meet only such
         // literals, with their messages.
         let mut unfixed_found: Vec<(Span, Span, Msg)> = Vec::new();
@@ -24110,7 +24203,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         // What the application gives, where one operand is a class and nothing else and the
         // other is closed: what the class's use gives ([`Ck::order_given`]).
         let mut given = None;
-        while let Some((a, b, at)) = todo.pop() {
+        let deeper = |steps: &mut Vec<(usize, usize)>, path: usize, i: usize| -> usize {
+            steps.push((path, i));
+            steps.len() - 1
+        };
+        while let Some((a, b, at, path)) = todo.pop() {
             let pair = (a, b);
             let outer = seen.is_empty();
             // A pair with literals written in it is checked each time, since each literal
@@ -24166,11 +24263,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                         open[i] = false;
                         continue;
                     }
+                    let follows = match (outer && self.class_of_ty(t).is_some(), passed) {
+                        (true, Some((first, f))) if first == (i == 0) => f.clone(),
+                        (true, _) => self.order_follows(k, u, &at[1 - i]),
+                        (false, _) => Arc::from([]),
+                    };
                     let kind = NeedKind::Order {
                         what: what.into(),
                         word: sig.word.clone().unwrap_or_default(),
                         other: u.clone(),
                         first: i == 0,
+                        follows,
                     };
                     if outer && u.closed() && self.class_of_ty(t).is_some() {
                         given = Some(self.order_given(k, kind, what, sig, span));
@@ -24259,6 +24362,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     _ => Arg::of(t.clone()),
                 };
                 let [f0, f1] = fixed;
+                let from = self.errors.len();
                 self.apply(
                     Label::Text(what),
                     sig,
@@ -24266,6 +24370,28 @@ impl<'t, 'a> Ck<'t, 'a> {
                     true,
                     span,
                 );
+                if path != ROOT && self.errors.len() > from {
+                    let mut at_path = Vec::new();
+                    let mut k = path;
+                    while k != ROOT {
+                        at_path.push(steps[k].1);
+                        k = steps[k].0;
+                    }
+                    let index: String = at_path.iter().rev().map(|i| format!("[{i}]")).collect();
+                    let note = Note {
+                        span,
+                        text: format!(
+                            "{who} compares {} and {} component by component, and these are \
+                             their components {index}",
+                            self.text(x),
+                            self.text(y)
+                        )
+                        .into(),
+                    };
+                    for e in &mut self.errors[from..] {
+                        e.add_notes(std::slice::from_ref(&note));
+                    }
+                }
             } else if only(a, open[0]) || only(b, open[1]) {
                 // Nothing more to check here.
             } else if a.is_empty() || b.is_empty() {
@@ -24300,7 +24426,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 for (n, rows) in by_len {
                     for i in 0..n {
                         let (s, t) = pair(Ty::union_all(rows.iter().map(|r| &r[i])));
-                        todo.push((s, t, [None, None]));
+                        todo.push((s, t, [None, None], deeper(&mut steps, path, i)));
                     }
                 }
             } else if a.tuples.is_empty()
@@ -24352,7 +24478,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                             Some(Part::Other) | None => None,
                             Some(p) => Some(p.clone()),
                         };
-                        todo.push((join(&s), join(&t), [part(&ws), part(&wt)]));
+                        let at = deeper(&mut steps, path, i);
+                        todo.push((join(&s), join(&t), [part(&ws), part(&wt)], at));
                     }
                 }
             }
@@ -24403,7 +24530,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 let old = old.clone();
                 let (x, y) = if *first { (&old, other) } else { (other, &old) };
-                self.min_max_tuples(what, sig, x, y, [None, None], span);
+                self.min_max_tuples(what, sig, x, y, [None, None], None, span);
                 let other = other.clone();
                 return self.join_order(s, i, &kind, &other, span);
             }
@@ -24418,6 +24545,119 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.classes[j].order_of = Some((r, (word, first, span)));
         }
         out
+    }
+
+    /// The literal components that follow the class `k`'s components, of the other operand
+    /// `u` of a `min` or `max` use, written `w` ([`NeedKind::Order`]'s `follows`): where `k` is
+    /// a parameter's class or a component of one ([`Class::binder`]) and `u` one tuple display
+    /// in the body, each literal written there without a suffix takes at run time the carrier
+    /// of `k`'s component at its position, as a generic literal beside the parameter does
+    /// (DESIGN.md sec:reduction, item 5: with `g(positional a) = min(a, (1, 2))`, `g((0.5,
+    /// 1.0))` is `(0.5, 1.0)`; step L1.26a; plan row MINMAX-param-literal-follow). Recorded
+    /// here are its values at the other carriers ([`Info::follows`]) and the component it
+    /// follows ([`Info::witness`]), read by the elaborator as for any generic literal, with
+    /// the literal's span standing for the read of the component; the need checks each call
+    /// with those values ([`Ck::follow_components`]). Before, the `1` was read at `int` once,
+    /// when `g` was checked, and every call with a component of another carrier was refused.
+    /// Cost: O(n) for a display of n components, one [`follow_values`] each.
+    fn order_follows(&mut self, k: usize, u: &Ty, w: &Option<Part<'a>>) -> ty::OrderFollows {
+        let r = self.find(k);
+        let (Some(Part::Tuple(ps)), Some((of, body)), true) =
+            (w, self.classes[r].binder.clone(), self.level > 0)
+        else {
+            return Arc::from([]);
+        };
+        let mut rows = u.tuples.iter();
+        match (rows.next(), rows.next()) {
+            (Some(row), None) if row.len() == ps.len() => {}
+            _ => return Arc::from([]),
+        }
+        let of = Arc::new(of);
+        let mut out = Vec::new();
+        for (i, p) in ps.iter().enumerate() {
+            let Part::Lit(l) = p else {
+                continue;
+            };
+            if !l.bare || l.span.start < body.start || body.end < l.span.end {
+                continue;
+            }
+            let values = follow_values(l, Carrier::NUMBER_BITS);
+            if values.is_empty() {
+                continue;
+            }
+            let at: Arc<[(Carrier, Ty)]> = (values.iter()).map(|(c, v)| (*c, Ty::lit(v))).collect();
+            out.push((i, at));
+            let read = l.span;
+            let w = Witness::Component {
+                of: of.clone(),
+                i,
+                read,
+            };
+            self.put(Undo::Follows(l.span, Some(values)));
+            self.put(Undo::Witness(l.span, Some(w)));
+            // The literal keeps its own value where a call gives the component its carrier.
+            self.info.follows_own.insert(l.span);
+        }
+        out.into()
+    }
+
+    /// `other`, the other operand of a `min` or `max` use bound at a call, with each literal
+    /// component of `follows` read at the carrier the value `on` has at its position, where
+    /// `on`'s components there are numbers of carriers the literal is exactly a value of:
+    /// the literal's own type at its own carrier, else its value at each carrier the component
+    /// holds ([`Ck::order_follows`]). A component of another carrier, or of no number, keeps
+    /// the literal's own type, which the use then refuses as before. O(size of `on`'s rows of
+    /// the length of `other`'s row) for each listed position.
+    fn follow_components(&self, on: &Ty, other: Ty, follows: &ty::OrderFollows) -> Ty {
+        if follows.is_empty() {
+            return other;
+        }
+        let mut rows = other.tuples.iter();
+        let (Some(row), None) = (rows.next(), rows.next()) else {
+            return other;
+        };
+        let n = row.len();
+        let mut comps: Vec<Ty> = row.to_vec();
+        for (i, at) in follows.iter() {
+            let Some(own) = comps.get(*i).cloned() else {
+                continue;
+            };
+            let at_i = Ty::union_all((on.tuples.iter()).filter(|r| r.len() == n).map(|r| &r[*i]));
+            // A component still a class of literals alone, as `0.5` in `g((0.5, 1.0))`, is
+            // read at the carrier the class takes where nothing narrows it after this point
+            // ([`Self::class_takes`]), as an operation on literals alone is at `==`.
+            let taken = || {
+                let k = self.class_of_ty(&at_i)?;
+                match self.class_takes(self.find(k), Carrier::NUMBER_BITS)? {
+                    (_, LitsTake::Rejected(..)) => None,
+                    (c, _) => Some(vec![c]),
+                }
+            };
+            let Some(cs) = (at_i.numeric_carriers())
+                .or_else(taken)
+                .filter(|cs| !cs.is_empty())
+            else {
+                continue;
+            };
+            let own_c = own.numeric_carrier();
+            let mut t = Ty::empty();
+            for c in cs {
+                match at.iter().find(|(d, _)| *d == c) {
+                    Some((_, v)) => t = t.union(v),
+                    None if own_c == Some(c) => t = t.union(&own),
+                    None => {
+                        t = own.clone();
+                        break;
+                    }
+                }
+            }
+            comps[*i] = t;
+        }
+        Ty {
+            tuples: Default::default(),
+            ..other
+        }
+        .union(&Ty::tuple(comps))
     }
 
     /// `x mod m` takes `m` in int[1..] (DESIGN.md sec:domains; QUESTIONS A174, author,
@@ -30038,7 +30278,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             && matches!(sig.word.as_deref(), Some("min" | "max"))
         {
             let written = [x.parts.clone(), y.parts.clone()];
-            let t = self.min_max_tuples(what.text(), sig, &x.ty, &y.ty, written.clone(), span);
+            let t =
+                self.min_max_tuples(what.text(), sig, &x.ty, &y.ty, written.clone(), None, span);
             return (out.union(&t), Vec::new());
         }
         // `min` and `max` refuse two strings, which `<=` and `>=` order (DESIGN.md

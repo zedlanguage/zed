@@ -1749,17 +1749,34 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             word,
             other,
             first,
-        } => parts.extend([
-            Dbg::Text("Order { what: "),
-            Dbg::Leaf(what),
-            Dbg::Text(", word: "),
-            Dbg::Leaf(word),
-            Dbg::Text(", other: "),
-            Dbg::Ty(other),
-            Dbg::Text(", first: "),
-            Dbg::Leaf(first),
-            Dbg::Text(" }"),
-        ]),
+            follows,
+        } => {
+            parts.extend([
+                Dbg::Text("Order { what: "),
+                Dbg::Leaf(what),
+                Dbg::Text(", word: "),
+                Dbg::Leaf(word),
+                Dbg::Text(", other: "),
+                Dbg::Ty(other),
+                Dbg::Text(", first: "),
+                Dbg::Leaf(first),
+                Dbg::Text(", follows: "),
+            ]);
+            debug_list(parts, "[", follows.iter(), "]", |p, (i, at)| {
+                p.extend([Dbg::Text("("), Dbg::Leaf(i), Dbg::Text(", ")]);
+                debug_list(p, "[", at.iter(), "]", |p, (c, t)| {
+                    p.extend([
+                        Dbg::Text("("),
+                        Dbg::Leaf(c),
+                        Dbg::Text(", "),
+                        Dbg::Ty(t),
+                        Dbg::Text(")"),
+                    ]);
+                });
+                p.push(Dbg::Text(")"));
+            });
+            parts.push(Dbg::Text(" }"));
+        }
         NeedKind::Concat { other, first } => parts.extend([
             Dbg::Text("Concat { other: "),
             Dbg::Ty(other),
@@ -5727,6 +5744,11 @@ impl DataUse {
     }
 }
 
+/// The literal components of the other operand of a `min` or `max` use that follow the
+/// value's components ([`NeedKind::Order`]): each position with the literal's type at each
+/// carrier other than its own of which it is exactly a value.
+pub type OrderFollows = Arc<[(usize, Arc<[(Carrier, Ty)]>)]>;
+
 /// The uses a [`Need`] records.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum NeedKind {
@@ -5817,6 +5839,12 @@ pub enum NeedKind {
         other: Ty,
         /// Whether the value is the first operand.
         first: bool,
+        /// The components of `other`, a tuple display of one row, that are literals written
+        /// without a suffix, by position, each with its type at each other numeric carrier of
+        /// which it is exactly a value: at a call each takes the carrier the value's component
+        /// at that position has, as it does at run time (DESIGN.md sec:reduction, item 5; plan
+        /// row MINMAX-param-literal-follow). Empty for most uses.
+        follows: OrderFollows,
     },
     /// A use that takes an int in its domain, as `^`'s exponent and a bit word's operand do,
     /// of a value whose ints the body shows no bound of and which is no parameter: the value
@@ -7656,11 +7684,13 @@ impl Need {
                     word,
                     other,
                     first,
+                    follows,
                 } => NeedKind::Order {
                     what: what.clone(),
                     word: word.clone(),
                     other: f(other),
                     first: *first,
+                    follows: follows.clone(),
                 },
                 NeedKind::Concat { other, first } => NeedKind::Concat {
                     other: f(other),
@@ -34476,12 +34506,22 @@ pub mod r10_hash {
                     word,
                     other,
                     first,
+                    follows,
                 } => {
                     self.emit(TAG_NK_ORDER);
                     self.emit_str(what);
                     self.emit_str(word);
                     self.emit_ty(other);
                     self.emit_bool(*first);
+                    self.emit_usize(follows.len());
+                    for (i, at) in follows.iter() {
+                        self.emit_usize(*i);
+                        self.emit_usize(at.len());
+                        for (c, t) in at.iter() {
+                            self.emit(u64::from(c.bit()));
+                            self.emit_ty(t);
+                        }
+                    }
                 }
                 NeedKind::NoInt(d) => {
                     self.emit(TAG_NK_NOINT);

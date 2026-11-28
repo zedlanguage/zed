@@ -3,7 +3,7 @@
 
 use super::x;
 use zed_kernel::{Prim, Term, Value};
-use zed_tests::step_helpers::l01_16_elaboration::{Checked, checked, errors, value};
+use zed_tests::step_helpers::l01_16_elaboration::{Checked, checked, elab, errors, value};
 use zed_tests::step_helpers::l01_26_type_resolution::sig;
 use zed_tests::step_helpers::l01_29_diagnostics::rejected_with_main;
 
@@ -306,7 +306,8 @@ fn a_parameter_met_with_a_tuple_refuses_what_min_refuses() {
     // DESIGN.md sec:reduction, item 5: the literals of `(1, 2)` in the body follow the carriers
     // of the components a call gives (row MINMAX-param-literal-follow; before, they were read
     // at `int` once and this call was refused with "`min` does not take (0.5, 1)").
-    assert_eq!(e("g((0.5, 1.0))"), Vec::<String>::new());
+    let fits = format!("{g}x = g((0.5, 1.0));\n");
+    assert_eq!(elab(&fits).err(), None, "{fits}");
     // A number is not a tuple: the parameter keeps no number carrier.
     assert_eq!(
         e("g(3)"),
@@ -336,7 +337,7 @@ fn the_literals_of_a_tuple_met_with_a_parameter_follow_its_components_at_each_ca
         ("g((0.5, 1.0))", "(0.5, 1.0)"),
         ("g((2.0f64, 0.5f64))", "(1.0, 2.0)"),
         ("g((1r, 3r))", "(1r, 2r)"),
-        ("g((1, 3.0f32))", "(1, 2.0)"),
+        ("g((1, 3.0f32))", "(1, 2.0f32)"),
         ("g((0, 9))", "(0, 9)"),
     ] {
         assert_eq!(v(&format!("{g}x = {call};\n")), want, "{call}");
@@ -359,15 +360,24 @@ fn a_misfit_of_two_components_names_both_tuples_and_the_component() {
     let note = |src: &str, at: &str| {
         let out = rejected_with_main(src);
         assert!(
-            out.contains(&format!("component by component, and these are their components {at}")),
+            out.contains(&format!(
+                "component by component, and these are their components {at}"
+            )),
             "{out}"
         );
         out
     };
     let out = note("x = min((0.5f64, \"a\"), (1.0f64, 2));\n", "[1]");
-    assert!(out.contains("`min` compares (0.5, \"a\") and (1.0, 2)"), "{out}");
+    // Printed types are syntax: an `f64` literal keeps its suffix.
+    assert!(
+        out.contains("`min` compares (0.5f64, \"a\") and (1.0f64, 2)"),
+        "{out}"
+    );
     note("x = min((1, (2, \"a\")), (1, (2, 3)));\n", "[1][1]");
-    note("g(positional a) = min(a, (1, 2));\nx = g((\"a\", 1.0));\n", "[0]");
+    note(
+        "g(positional a) = min(a, (1, 2));\nx = g((\"a\", 1.0));\n",
+        "[0]",
+    );
 }
 
 #[test]
