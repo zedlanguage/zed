@@ -938,16 +938,18 @@ fn needs_made_inside_nested_arrow_lambdas_scale() {
         let mut src = String::from(
             "both(h: ((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> int)) = h(g: x -> 1) + h(g: x -> 2);\n\
              bothK(h: ((k: (x: int) -> int) -> int) & ((k: (x: f64) -> int) -> int)) = h(k: x -> 3) + h(k: x -> 4);\n\
+             inc(y) = y + 1;\n\
              c0(f) = f(y: 1);\n",
         );
+        // `inc`, not a lambda: a lambda's parameter is positional, and `f` is called by name.
         for i in 0..n {
             let j = i + 1;
             src.push_str(&format!(
-                "o{i}(f) = both(h: g -> bothK(h: k -> f(y: {i})));\na{i} = o{i}(f: y -> y + 1);\n\
+                "o{i}(f) = both(h: g -> bothK(h: k -> f(y: {i})));\na{i} = o{i}(f: inc);\n\
                  c{j}(f) = both(h: g -> bothK(h: k -> c{i}(f: f)));\n"
             ));
         }
-        src.push_str(&format!("d = c{n}(f: y -> y + 1);\n"));
+        src.push_str(&format!("d = c{n}(f: inc);\n"));
         src
     };
     let n = 200;
