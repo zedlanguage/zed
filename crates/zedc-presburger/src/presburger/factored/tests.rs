@@ -987,7 +987,8 @@ fn ratios(build: &dyn Fn(usize) -> Prob, ls: [usize; 2]) -> ([u64; 2], [f64; 4])
 /// exception 4 of A225. The sign events of [`super::Joint::gain`] give 7.50 (worklist 10,960
 /// at l = 10 and 82,220 at l = 28; at l = 20 and 40, sizes 5,301 and 20,201, it is 40,088 and
 /// 166,032: 4.14 times at 3.81 times the input; local run, b30-pres4, 2026-11-28). They leave
-/// the same pairs as the row rechecks, which the test checks at l = 10.
+/// the same pairs as the row rechecks, which the test checks at l = 10 and 28; the row
+/// rechecks on the same inputs are the control and must grow past the limit.
 ///
 /// *Proof of the bound.* Rows: X_i = Σ x + (±1) pv + e_i and Y_j = Σ y + d_j + (±1) g (i, j
 /// < r), one product of the X and the Y rows; K_t = −x_t + c_t − c_{t+1} with M_t = m_t, a
@@ -1043,6 +1044,27 @@ fn the_worklist_of_wlgrow_g_scales() {
         r[2] < crate::scaling::LIMIT,
         "the worklist grew {:.2} times at 8x the input on wlgrow_g",
         r[2]
+    );
+    // Control: the row rechecks on the same two inputs grow past the limit, and leave the same
+    // pairs at l = 28 too.
+    let (p28, new28) = {
+        let p = build_wlgrow(28, 28, true);
+        let out = solve(&p, Opts::default());
+        (p, out)
+    };
+    let old28 = solve(&p28, rows);
+    let control = old28.worklist as f64 / old.worklist.max(1) as f64;
+    println!(
+        "control: row rechecks {} to {} ({control:.2})",
+        old.worklist, old28.worklist
+    );
+    assert_eq!(
+        new28.left, old28.left,
+        "the sign events left other pairs at l = 28"
+    );
+    assert!(
+        control > crate::scaling::LIMIT,
+        "control: the row rechecks grew only {control:.2} times"
     );
 }
 
