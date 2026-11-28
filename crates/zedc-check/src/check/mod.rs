@@ -12668,10 +12668,12 @@ impl Ck<'_, '_> {
     /// `both`, the outer one's arrows give `g` its two types, and it is named, not the inner
     /// one (row MSG-arrow-lambda-nested-cause). Where either trail is missing (a fit written
     /// outside such a lambda, a need made before its trail was kept, as one decoded from a
-    /// compact forward whose path holds none) or no common lambda's arrow differs, the lambda named is the
-    /// innermost recorded one that holds `at`, as before. Cost: O(l) for the l lambdas
-    /// recorded and O(d) for the depth of the trails, once per refusal; the naive way, a stack
-    /// cut when each body ends, loses the lambda before a later call meets the body's needs.
+    /// compact forward whose path holds none) or no common lambda's arrow differs, the lambda
+    /// named is the innermost recorded one that holds `at`, as before. Only the first differing
+    /// rebuilding at a span gets a message ([`Self::arrow_refused`]). Cost: O(l) for the l
+    /// lambdas recorded and O(d) for the depth of the trails, once per refusal; the naive way,
+    /// a stack cut when each body ends, loses the lambda before a later call meets the body's
+    /// needs.
     fn arrow_lambda_twice(&mut self, at: Span) -> bool {
         let caused = match (self.fit_arrows.get(&at), &self.arrow_now.0) {
             (Some(first), Some(now)) => arrow_cause(first, now),
