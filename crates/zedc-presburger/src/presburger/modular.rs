@@ -5704,10 +5704,14 @@ fn build_model(
         model.insert(a.clone(), v.clone());
     }
 
+    // `-x` once, not a copy of `x` per quotient: each copy is the bits of `x`, and the `2n`
+    // quotients of `pncx_easy_pairs_scale` wrote `2n` of them (PRES-growth-pncx-pairs).
+    let neg_x = -x_val;
+    let signed_x = |s: i8| if s > 0 { x_val } else { &neg_x };
+
     // Global quotients `q_root`:
     for (q_root, gq) in global_quots {
-        let sx_val = if gq.s_x > 0 { x_val.clone() } else { -x_val };
-        let q_div = (&sx_val + &gq.c_lo).div_floor(&gq.m);
+        let q_div = (signed_x(gq.s_x) + &gq.c_lo).div_floor(&gq.m);
         let q_val = if gq.sigma_q > 0 { q_div } else { -&q_div };
         model.insert(q_root.clone(), q_val);
     }
@@ -5716,8 +5720,7 @@ fn build_model(
     for (q_root, wins) in local_windows {
         let mut chosen_q = Int::ZERO;
         for lw in wins {
-            let sx_val = if lw.s_x > 0 { x_val.clone() } else { -x_val };
-            let u = &sx_val + &lw.c_lo;
+            let u = signed_x(lw.s_x) + &lw.c_lo;
             if u.mod_floor(&lw.m) <= lw.w {
                 let q_div = u.div_floor(&lw.m);
                 chosen_q = if lw.sigma_q > 0 { q_div } else { -&q_div };

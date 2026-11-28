@@ -17,15 +17,66 @@ fn pncx_distinct_moduli_scale() {
     });
 }
 
+/// The bits of a model of `pncx_formula("pairs", n)` as `satisfiable` writes it, up to a constant
+/// factor: `2n` quotients of `log2 x` bits each, `x` below the product of the `2n` primes.
+///
+/// Proof that the answer has this many bits, up to a constant factor. Each pair `(a, b)` has
+/// `(x mod a, x mod b)` in {(0, 1), (1, 0)}, so `x` is divisible by one prime of each of the `n`
+/// pairs; `x = 0` makes every remainder 0, and `x >= 1` is a row, so `x` is at least the product
+/// of `n` distinct primes, at least `n!`, and `log2 x` is Θ(n log n). The point the walk finds is
+/// the least `x >= 1` of its residue class modulo the product of all `2n` primes, so `log2 x`
+/// is at most the sum of their logs, also Θ(n log n); that the walk finds the least point is
+/// NOT PROVED here, and `pncx_easy_pairs_scale` checks the bound on the point it finds at both
+/// sizes. The model gives each of the `2n`
+/// quotients `q_i = (x - r_i) / p_i` its value (`modular::build_model`), `log2 x - log2 p_i` bits
+/// each. So the model has Θ(n² log n) bits and the cost below is within a constant factor of it.
+fn pairs_model_bits(n: usize) -> f64 {
+    let mut logs = 0.0;
+    let (mut found, mut p) = (0, 2u64);
+    while found < 2 * n {
+        if (2..).take_while(|d| d * d <= p).all(|d| p % d != 0) {
+            logs += (p as f64).log2();
+            found += 1;
+        }
+        p += 1;
+    }
+    2.0 * n as f64 * logs
+}
+
+/// The work and the bytes of a point of `n` separate remainder pairs, held to the ratio of the
+/// bits of its model at `n` and `8n` (`pairs_model_bits`, about 84 from 650 to 5200): that is,
+/// work of order 1 per bit of the answer. The orchestrator accepted this measure on 2026-11-25
+/// (ledger, PRES-growth-pncx-pairs): no order below the answer's own size is possible, and a
+/// check at power 1 in `n` fails on the size of the answer alone. That the work is O(1) per model
+/// bit is NOT PROVED for the whole of `satisfiable`: `build_model` does one division of `x` by a
+/// one-word prime per quotient, O(log x) each, and the CRT and the walk before it are measured,
+/// not proved. Measured on hm5 at 650 and 5200 (2026-11-25): 13.39 times the instructions and
+/// 24.1 times the bytes.
 #[test]
 fn pncx_easy_pairs_scale() {
     use zedc::store::presburger::satisfiable;
-    let inputs = zed_tests::scaling::inputs(2, |n| pncx_formula("pairs", n));
-    zed_tests::scaling::check_order("separate remainder pairs", 2, 1, |n| {
-        let ans = satisfiable(&inputs[&n]);
-        assert!(matches!(ans, Ok(Some(_))));
-        let _ = std::hint::black_box(ans);
-    });
+    let inputs = zed_tests::scaling::inputs(650, |n| pncx_formula("pairs", n));
+    let x = zedc::store::presburger::Atom::Sym(std::sync::Arc::from("x"));
+    for (&n, f) in &inputs {
+        let model = satisfiable(f).expect("answered").expect("a point");
+        assert!(f.holds(&model));
+        // `2n log2 x` model bits at most, within the cost below.
+        let x_bits = model[&x].bits() as f64;
+        assert!(
+            2.0 * n as f64 * (x_bits - 1.0) <= pairs_model_bits(n),
+            "x of {x_bits} bits"
+        );
+    }
+    zed_tests::scaling::check_proved_cost(
+        "separate remainder pairs",
+        650,
+        ("the bits of the model", pairs_model_bits),
+        |n| {
+            let ans = satisfiable(&inputs[&n]);
+            assert!(matches!(ans, Ok(Some(_))));
+            let _ = std::hint::black_box(ans);
+        },
+    );
 }
 
 #[test]

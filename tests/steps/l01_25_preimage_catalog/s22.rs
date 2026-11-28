@@ -2398,6 +2398,38 @@ fn chain_cross_dead_at_small_sizes() {
     }
 }
 
+/// The cover answers its question on `m` for `cross_dead` at size `k`: the chain counts the `j`
+/// in `1..=k` with `i < j`, so `tk = m + k - max(i, 0)` and the points meeting `tk >= 0` in the
+/// box `[2-k, k-2]²` are those with `m >= max(i, 0) - k`. Every `i` of the box meets it at
+/// `m = k - 2` and every `m` at `i = 0`, so both boxes stay whole, and the relation is checked
+/// against the interpreter on the window.
+fn the_cover_answers_m_on_cross_dead(k: usize) {
+    let (t, ds, d) = family("cross_dead", k);
+    let p = preimage(&t, &ds, &d);
+    let ki = k as i64;
+    let what = format!("cross_dead k={k}");
+    assert!(
+        !matches!(p.refusal, Some(Refusal::Questions | Refusal::Repeats)),
+        "{what}: the cover refused, {:?}",
+        p.refusal
+    );
+    let whole = IntervalSet::of(2 - ki, ki - 2);
+    assert_eq!(
+        (&p.domains["i"].met(), &p.domains["m"].met()),
+        (&whole, &whole),
+        "{what}"
+    );
+    check(&t, &ds, &d, &p, (-8, 8));
+}
+
+/// Size 8, where the cover stopped at its work limit (`Refusal::Questions`) on 66eca8290
+/// (PERF-cross-dead-cover-question-search) and answers on aec80c508. Size 64 still refuses; its
+/// test joins when that row's search lands.
+#[test]
+fn the_cover_answers_m_on_cross_dead_at_8() {
+    the_cover_answers_m_on_cross_dead(8);
+}
+
 /// The chain of `k` guards `i mod 1024 == j`, else `min(t + 1, 2^40)`, asked `tk >= 0`: the
 /// summary over every class does not read `min`, so each class's run reads the guards itself.
 pub(super) fn min_remainders(k: usize) -> Term {
