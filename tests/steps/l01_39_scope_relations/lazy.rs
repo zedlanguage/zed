@@ -1799,10 +1799,10 @@ mod a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_prod
         }
     }
 
-    /// Run seed 13561823126443913154 of `random_seeds` (FAIL-lazy-satellites-seed-13561823126443913154,
-    /// filed by b30-pres4: "m after", eager [-12, 20], lazy [-13, 20]), red on origin/main ce063f500
-    /// and green on part A a262708d4 (dry-hash, 2026-11-28). The case seed is not recorded, so all
-    /// eight run.
+    /// Run seed 13561823126443913154 of `random_seeds`
+    /// (FAIL-lazy-satellites-seed-13561823126443913154, filed by b30-pres4: "m after", eager
+    /// [-12, 20], lazy [-13, 20]), red on origin/main ce063f500 and green on part A a262708d4
+    /// (dry-hash, 2026-11-28). The case seed is not recorded, so all eight run.
     #[test]
     fn seeds_from_13561823126443913154() {
         run(
@@ -3333,8 +3333,8 @@ fn a_refusal_only_the_eager_projection_raises_is_warned_alike() {
 /// that warns while a leaf of the lazy scope is stale (its held product is not the eager
 /// one); 624 steps warned and none had a stale leaf (2026-11-28), so this sweep cannot show
 /// a refusal the lazy scope skipped, and that count is printed, not asserted. The case is
-/// [`warnings_of_a_lazy_scope_read_its_settled_view`]. 150 seeds (300 ran on head a262708d4 without a difference,
-/// 1278 steps with warnings, 2026-11-28).
+/// [`warnings_of_a_lazy_scope_read_its_settled_view`]. 150 seeds (300 ran on head a262708d4
+/// without a difference, 1278 steps with warnings, 2026-11-28).
 #[test]
 fn a_lazy_scope_warns_as_the_eager_one_at_every_step_of_random_refusing_systems() {
     let p = Premises::new();

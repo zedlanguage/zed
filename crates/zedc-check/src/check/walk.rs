@@ -15176,8 +15176,9 @@ impl<'a> Ck<'_, 'a> {
             // `with_bound_read_settles_a_stale_summary_input`. Gemini's two whole programs
             // (`l01_39_scope_relations::lazy_check`) do not show it through the checker: the
             // first passes without the settle (the tests on its path settle `x` first), the
-            // second is rejected both ways (a tuple part is read as `int`). The same step in `bind_with`
-            // is tested by `l01_39_scope_relations::lazy::a_summarized_binding_reads_its_inputs_settled`.
+            // second is rejected both ways (a tuple part is read as `int`). The same step in
+            // `bind_with` is tested by
+            // `l01_39_scope_relations::lazy::a_summarized_binding_reads_its_inputs_settled`.
             let names = s.settled_names(sum.summary.vars());
             let (image, premises) = self.read_image(b, &sum, names);
             // With `preimage-ref`, under a test: the same read from a copy settled at every

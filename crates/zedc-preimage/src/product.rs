@@ -10455,8 +10455,8 @@ impl Scope {
     /// that starts to take them, by a binding or a kept test, is placed by the next
     /// `Order::sync` (the step that put it in the order at once, `Scope::promote`, was
     /// taken out in round 5: Gemini's three tests of round 4 for it stayed green without it,
-    /// and META4 says such a construct goes). This is option 1' of XR-lazy-and-kernel-batch-1 round 1
-    /// (FAIL-lazy-hubs-seed-5574242637160979656): the claim this paragraph replaced, that no
+    /// and META4 says such a construct goes). This is option 1' of XR-lazy-and-kernel-batch-1
+    /// round 1 (FAIL-lazy-hubs-seed-5574242637160979656): the claim this paragraph replaced, that no
     /// leaf's product reaches another name but through its star, was false for a leaf a
     /// bound term reads (read back by `Scope::read_back_terms`) and for a leaf a kept test
     /// triggers on (`Scope::narrow_kept_again`).
@@ -10491,9 +10491,11 @@ impl Scope {
     /// test again with the stale leaves near a new refusal settled
     /// (`Scope::settled_before_refusal`). Not proved: that the kept sets of a question met in
     /// the eager order and in the lazy one come to the same (`Scope::refuse` keeps their
-    /// meet). Tests: `l01_39_scope_relations::lazy::warnings_of_a_lazy_scope_read_its_settled_view`,
+    /// meet). Tests:
+    /// `l01_39_scope_relations::lazy::warnings_of_a_lazy_scope_read_its_settled_view`,
     /// `l01_39_scope_relations::lazy::reaches_of_a_lazy_scope_gives_the_eager_refusals`, the
-    /// witness `l01_39_scope_relations::lazy::a_refusal_only_the_eager_projection_raises_is_warned_alike`
+    /// witness
+    /// `l01_39_scope_relations::lazy::a_refusal_only_the_eager_projection_raises_is_warned_alike`
     /// and the sweep
     /// `l01_39_scope_relations::lazy::a_lazy_scope_warns_as_the_eager_one_at_every_step_of_random_refusing_systems`,
     /// which compare the warnings and the refusal maps at every step. The public product reads are
@@ -10528,8 +10530,8 @@ impl Scope {
     /// (seeds 116, 237, 272, 2220, 22490, 22671), and the step-by-step comparison at those
     /// seeds, equal at each step. (2) A refused projection of a stale leaf's block left the
     /// lazy leaf coarser (`a` lazily `[-15, ∞)`, eagerly `[-5, ∞)`); the leaves near a new
-    /// refusal are now settled and the test taken again (`Scope::settled_before_refusal`;
-    /// test `l01_39_scope_relations::lazy::a_refused_projection_leaves_the_lazy_leaf_as_the_eager_one`).
+    /// refusal are now settled and the test taken again (`Scope::settled_before_refusal`; test
+    /// `l01_39_scope_relations::lazy::a_refused_projection_leaves_the_lazy_leaf_as_the_eager_one`).
     /// Settling is sound, since it only meets the leaf with the projection of a star of
     /// conjuncts the scope holds and with [`Scope::reduce`]'s reductions, each a meet with
     /// what the relation implies. The star's projection onto its hubs is [`Conjuncts::star`]
