@@ -8652,6 +8652,28 @@ impl<'t, 'a> Ck<'t, 'a> {
         // B4 witness at `generalize` (then replace the decode with a boundary assertion), or
         // find the program that needs the decode.
         //
+        // PROOF-heldname-b4-witness, the ways an open forward could reach this point with no
+        // B4 witness, and what is known of each (b22-free2, 2026-11-28):
+        // M1, a variable from around `cur` that is not a class (B4 tests class ids only):
+        // OPEN, no program found and no proof.
+        // M2, an outer class not yet made when B4 runs: REFUTED. Admission
+        // (`r10_forward.rs`, `r10_eval_a_prime`) reserves the forward's ids with
+        // `reserve_ids_o1` and makes only the exit offsets; the caller's types get only the
+        // exit ids, through `binds`. An internal id appears only inside a `NeedKind::Fwd`, in
+        // a decode made inside `finished_with`, in `r10_make_left_internal_classes` (which
+        // makes the classes) or in a forced forward (which makes `lo..hi`), so every class a
+        // signature outside a forward holds is made when B4 tests it.
+        // M5, a decode that gives back nested `NeedKind::Fwd` needs which B4 never saw: OPEN.
+        // M7, a lambda closed at its own `generalize` (its forward kept, no B4 witness) whose
+        // own class is bound to a class of the function around it later, so the outer
+        // `generalize` writes that class into the lambda's signature: OPEN as a proof, and
+        // reached by none of the nine programs of r10_tests.rs
+        // `r10_closed_lambda_bound_after_its_end_reaches_no_promote_decode` (the lambda mapped,
+        // applied, applied and held, joined with an open lambda, joined and applied, passed to
+        // a function that applies it, held in an open lambda, returned and applied, mapped in
+        // an open lambda; measured 2026-11-28). The step a proof needs: a class own to a level
+        // is never bound after that level's `generalize` to a class of a lower level.
+        //
         // Open claim C1, which (3) rests on and which is not proved here: a compact forward
         // in a closed signature nested in another is named by `finished_with` of the
         // signature at the top of the nest exactly as its flat needs would be named there.

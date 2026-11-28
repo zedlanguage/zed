@@ -2695,11 +2695,38 @@ pub fn tys_hold_only_closed_fns<'a>(tys: impl Iterator<Item = &'a Ty>) -> bool {
 /// variables are `own` ([`Sig::closed_within`]): the functions `Ck::r10_finish_one_fwd_callee`
 /// (zedc-check) finishes inside a callee with those own variables
 /// (HELDNAME-closed-in-callee).
+///
+/// A data family that holds a function ([`Sig::holds_fn_as_data`]) is asked here as one
+/// signature, since [`fns_outside_tys`] collects `t.fns` and does not enter it. The finishing
+/// enters it instead ([`Ty::with_held_fns`] in `Ck::r10_finish_one_fwd_callee`) and asks each
+/// function inside. The two agree in the direction the forward needs
+/// (DOC-heldname-data-families-own-vars). Proof. (1) A family binds no own variable: each site
+/// that makes a signature data builds it by `Sig::one`, `Sig::one_partial` or `Sig::of_arrow`
+/// with an empty `own`, or copies one (`data: s.data`, `unwrap_to_change`), or gets it from
+/// `Ck::sig_of` for a written list or map type. `sig_of` gives `own` the free names, which only
+/// the reader of printed types makes, and the bounds of a `for` whose home is that type. No
+/// program writes a `for` on a list or map type. This is checked by the `debug_assert!` below.
+/// (2) By [`VarFacts::of`] and `VarFacts::tys`, the family's `outer ∪ outer_classes` is the
+/// union of those of the functions it holds and the variables of its keys and entries outside
+/// functions, less its own, which is empty by (1). (3) So the family is closed within `own`
+/// exactly where each function inside it is closed and each variable of its keys and entries
+/// outside functions is a class in `own`. Where this test holds, each function the finishing
+/// asks also passes, so no held function is left unfinished while
+/// [`FwdNeed::held_open_fn`] is false. The converse fails only on a key or entry variable
+/// outside `own`'s classes. Then `held_open_fn` is set although every function inside was
+/// finished, and the caller decodes the forward (`unnamed` in `Ck::finished_with`): extra
+/// work, not a wrong name.
 pub fn tys_hold_only_fns_closed_within<'a>(
     tys: impl Iterator<Item = &'a Ty>,
     own: &BTreeSet<Arc<str>>,
 ) -> bool {
-    fns_outside_tys(tys, |_| true).is_some_and(|fns| fns.iter().all(|f| f.closed_within(own)))
+    fns_outside_tys(tys, |_| true).is_some_and(|fns| {
+        debug_assert!(
+            (fns.iter()).all(|f| !f.holds_fn_as_data() || f.own.is_empty()),
+            "a data family binds no own variable"
+        );
+        fns.iter().all(|f| f.closed_within(own))
+    })
 }
 
 /// [`fns_outside`] over the types `tys`.

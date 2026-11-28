@@ -2078,6 +2078,78 @@ fn r10_open_forward_kept_without_b4_is_decoded_at_finish() {
     }
 }
 
+/// PROOF-heldname-b4-witness, the case B4 does not see: a lambda that reads nothing from
+/// around it when its function ends, so `generalize` keeps its forward compact (no class of
+/// a function around, no B4 witness), and which a later step could make read a class of the
+/// function around it, by binding one of its own classes after its end (case M7 of the proof
+/// at `Ck::r10_promote_one`). If one did, `finished_with` would meet an open forward with no
+/// B4 witness and decode it there. Each program puts such a lambda where a bind might reach
+/// its classes: mapped over a parameter, applied at once, applied and held, joined with a
+/// lambda that reads a parameter, passed to a function that applies it, held inside a lambda
+/// that reads a parameter, returned by a function and applied, mapped inside a lambda that
+/// reads a parameter. In each the decode at `r10_promote_one` is reached by none. In seven
+/// the lambda keeps its forward (`kept_at_generalize` counts it beside `h1`'s own, 2 or
+/// more); a lambda passed to `map` keeps none of its own (1, `h1`'s: measured, 2026-11-28),
+/// so those two programs show only that the decode is not reached, not case M7.
+#[test]
+fn r10_closed_lambda_bound_after_its_end_reaches_no_promote_decode() {
+    let id = "id(positional x) = x;\nh0(positional m) = m.map(id);\n\
+              h1(positional m) = h0(m).map(id);\n";
+    let programs = [
+        ("mapped", "g(positional mm) = mm.map(m -> h1(m));\n"),
+        ("applied", "g(positional a) = (m -> h1(m))(a);\n"),
+        (
+            "applied_and_held",
+            "g(positional a) = {\n    f = m -> h1(m);\n    (f(a), f)\n};\n",
+        ),
+        (
+            "joined",
+            "g(positional c, positional a) = if c { (m -> h1(m)) } else { (n -> h1(a)) };\n",
+        ),
+        (
+            "joined_and_applied",
+            "g(positional c, positional a) = {\n    \
+             f = if c { (m -> h1(m)) } else { (n -> h1(a)) };\n    (f(a), f)\n};\n",
+        ),
+        (
+            "passed_to_apply",
+            "ap(positional f, positional x) = f(x);\ng(positional a) = ap(m -> h1(m), a);\n",
+        ),
+        ("inside_open", "g(positional a) = n -> (a, m -> h1(m));\n"),
+        (
+            "returned_and_applied",
+            "mk(positional u) = m -> h1(m);\ng(positional a) = mk(a)(a);\n",
+        ),
+        (
+            "mapped_inside_open",
+            "g(positional a) = mm -> (a, mm.map(m -> h1(m)));\n",
+        ),
+    ];
+    let mut failed = Vec::new();
+    for (name, body) in programs {
+        let src = format!("{id}{body}");
+        super::OPEN_FWD_PROMOTED.with(|n| n.set(0));
+        let (d, st) = run_with_cfg(&src, R10Config::default());
+        let reached = super::OPEN_FWD_PROMOTED.with(|n| n.get());
+        if !d.errors.is_empty() {
+            failed.push(format!("{name}: errors {:?}", d.errors));
+        }
+        let min_kept = if name.starts_with("mapped") { 1 } else { 2 };
+        if st.kept_at_generalize < min_kept {
+            failed.push(format!(
+                "{name}: the lambda keeps no forward (kept {})",
+                st.kept_at_generalize
+            ));
+        }
+        if reached != 0 {
+            failed.push(format!(
+                "{name}: the promote decode is reached {reached} times"
+            ));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
 /// FAIL-map-chain-own-vars-carry: programs beside those of L3-G1 above, where D may refuse a
 /// forward, and must still give E's results and signatures. A chain function passed to a map
 /// inside another chain's link (`k(mm) = mm.map(h3)`) holds a compact forward with internal
@@ -5076,6 +5148,212 @@ fn r10_a_deferred_variable_a_need_mentions_is_refused() {
             panic!("{msg}\n{src}");
         }
     }
+}
+
+/// The programs of TEST-heldname-defer-sigma-exit-intersection: a call `d(f) = c(f)` whose
+/// callee `c` returns a lambda `z -> q(f, z)`, so `#12` defers the lambda's variable, and whose
+/// needs reach it only through the `sigma` of a forward: the lambda passes `z` to `q`
+/// directly (depth 1) or through `q2` and `q3` (depths 2 and 3), and `q`'s need "`f` takes
+/// `x`" is the only need that mentions it. (A lambda returned and read by no need, as `z ->
+/// (z, a)`, is not mentioned at all: the `unread` program of
+/// `r10_calls_with_unmentioned_deferred_variables_agree_with_the_control`.) (label, program).
+fn sigma_deferred_programs() -> Vec<(String, String)> {
+    let q = "q(positional f, positional x) = f(x);\n";
+    let q2 = "q2(positional f, positional x) = q(f, x);\n";
+    let q3 = "q3(positional f, positional x) = q2(f, x);\n";
+    let mut out = Vec::new();
+    for (depth, defs, callee) in [
+        (1, q.to_string(), "q"),
+        (2, format!("{q}{q2}"), "q2"),
+        (3, format!("{q}{q2}{q3}"), "q3"),
+    ] {
+        let base = format!(
+            "{defs}c(positional f) = (f(1), z -> {callee}(f, z));\nd(positional f) = c(f);\n"
+        );
+        out.push((format!("depth {depth} bare"), base.clone()));
+        out.push((
+            format!("depth {depth} passes"),
+            format!("{base}r = d(x -> x + 1)[1](2);\n"),
+        ));
+        out.push((
+            format!("depth {depth} refused"),
+            format!("{base}r = d(x -> x + 1)[1](\"s\");\n"),
+        ));
+    }
+    out
+}
+
+/// TEST-heldname-defer-sigma-exit-intersection, `sigma`: a deferred variable that a need of
+/// the callee mentions only through the `sigma` of a forward, one, two or three forwards deep
+/// ([`sigma_deferred_programs`]), keeps the call refused (`#12`), the output is the
+/// control's (`refuse_any_defer`) on every field, and the `bare` and `passes` programs check
+/// with no error while `refused` has one. Negative control: with the `sigma` types left out
+/// of `mentioned` (`drop_conds` "#12-sigma"), at depth 3 the call is admitted and the errors
+/// change, so there the walk of `sigma` is what refuses it: `bare` and `passes` gain the error
+/// "`q3` does not take every value", and in `refused` that error takes the place of "`f` does
+/// not take ("s")" (measured 2026-11-28; one error in both, so the lists are compared, not
+/// their lengths). At depths 1 and 2 the call stays refused under that drop and the output is
+/// unchanged (measured 2026-11-28: `#12` refused 1 with and without it), so something besides
+/// the `sigma` walk also mentions the variable there; which part is not found yet, and the
+/// control is asserted only at depth 3.
+#[test]
+fn r10_a_deferred_variable_in_a_second_level_sigma_is_refused() {
+    let control = R10Config {
+        refuse_any_defer: true,
+        ..R10Config::default()
+    };
+    let dropped = R10Config {
+        drop_conds: ["#12-sigma".to_string()].into_iter().collect(),
+        ..R10Config::default()
+    };
+    for (label, src) in sigma_deferred_programs() {
+        let (d, stats) = run_with_cfg(&src, R10Config::default());
+        let (c, _) = run_with_cfg(&src, control.clone());
+        let refused = stats.refused.get("#12").copied().unwrap_or(0);
+        assert!(refused >= 1, "{label}: {:?}\n{src}", stats.refused);
+        assert_eq!(
+            d.errors.is_empty(),
+            !label.ends_with("refused"),
+            "{label}: {:?}\n{src}",
+            d.errors
+        );
+        if let Err(msg) = info_eq_full(&label, &c, &d) {
+            panic!("{msg}\n{src}");
+        }
+        if !label.starts_with("depth 3") {
+            continue;
+        }
+        let (x, st_drop) = run_with_cfg(&src, dropped.clone());
+        let refused_drop = st_drop.refused.get("#12").copied().unwrap_or(0);
+        assert!(
+            refused_drop < refused,
+            "{label}: with the sigma walk dropped, #12 refused {refused_drop}, as with it \
+             ({refused})\n{src}"
+        );
+        assert_ne!(
+            x.errors, d.errors,
+            "{label}: the errors are the same with the sigma walk dropped\n{src}"
+        );
+    }
+}
+
+/// TEST-heldname-two-callers-template: one callee `hm` holding the function `id` (`m.map(id)`)
+/// is finished once, as a template, and two callers use it differently. `g1` holds nothing
+/// else, so no held item clashes and the template is reused as written: no forward is
+/// decoded. `g2` holds its own lambda `y -> (y, y)` before the call, whose variable is printed
+/// by the same name as the held `id`'s, so `finished_with` names one apart and takes the flat
+/// form: one decode. Each program's output, alone and with both callers, is the control's
+/// (`finish_only_closed_held`, whose callers decode as E did) on every field: text, decoded
+/// needs, own variables and digests ([`info_eq_full`]), and with both callers each decodes as
+/// it does alone. Negative control: with the held names left out of `finished_with`
+/// (`skip_held_names`), the clash is not seen, `g2` keeps the template, and its output
+/// differs from the control's.
+#[test]
+fn r10_two_callers_of_one_callee_reuse_held_template_only_without_clash() {
+    let callee = "id(positional x) = x;\nhm(positional m) = m.map(id);\n";
+    let g1 = "g1(positional m) = hm(m);\n";
+    let g2 = "g2(positional m) = (y -> (y, y), hm(m));\n";
+    let control = R10Config {
+        finish_only_closed_held: true,
+        ..R10Config::default()
+    };
+    let decodes_of = |src: &str, cfg: R10Config| {
+        reset_fwd_decode_count();
+        let (info, _) = run_with_cfg(src, cfg);
+        (info, fwd_decode_count())
+    };
+    let alone = format!("{callee}{g1}");
+    let clash = format!("{callee}{g2}");
+    let both = format!("{callee}{g1}{g2}");
+    let (d1, n1) = decodes_of(&alone, R10Config::default());
+    let (d2, n2) = decodes_of(&clash, R10Config::default());
+    let (db, nb) = decodes_of(&both, R10Config::default());
+    for (label, d, src) in [
+        ("g1", &d1, &alone),
+        ("g2", &d2, &clash),
+        ("both", &db, &both),
+    ] {
+        assert!(d.errors.is_empty(), "{label}: {:?}", d.errors);
+        let (c, _) = run_with_cfg(src, control.clone());
+        if let Err(msg) = info_eq_full(label, &c, d) {
+            panic!("{msg}\n{src}");
+        }
+    }
+    assert_eq!(n1, 0, "g1 reuses the template: no decode");
+    assert_eq!(n2, 1, "g2's clash takes the flat form: {n2} decodes");
+    assert_eq!(nb, n1 + n2, "each caller decodes as it does alone");
+    let skip = R10Config {
+        skip_held_names: true,
+        ..R10Config::default()
+    };
+    let (s2, m2) = decodes_of(&clash, skip);
+    let (c2, _) = run_with_cfg(&clash, control);
+    assert!(
+        m2 < n2,
+        "with held names skipped, g2 decoded {m2}, as without ({n2})"
+    );
+    assert!(
+        info_eq_full("g2 skip", &c2, &s2).is_err(),
+        "with held names skipped, g2's output is still the control's: the clash is untested"
+    );
+}
+
+/// The programs of TEST-heldname-nested-forward-order: a forward nested two deep (`h2` calls
+/// `h1`, which calls `h0`, each mapping by `id`) and one a level less deep, beside a lambda of the caller's
+/// own: `(h2(m), h1(n), (y) -> y)`, or with the two calls swapped (`swapped`), so the internal results of the two calls and their first uses come in another
+/// order.
+fn nested_order_program(swapped: bool) -> String {
+    let defs = "id(positional x) = x;\nh0(positional m) = m.map(id);\n\
+                h1(positional m) = h0(m).map(id);\nh2(positional m) = h1(m).map(id);\n";
+    let body = match swapped {
+        false => "(h2(m), h1(n), (y) -> y)",
+        true => "(h1(n), h2(m), (y) -> y)",
+    };
+    format!("{defs}g(positional m, positional n) = {body};\n")
+}
+
+/// TEST-heldname-nested-forward-order: nested forwards keep the internal results' owners and
+/// the order of first use as the flat form gives them. Each program's output is that of the
+/// control that decodes every kept forward in `generalize` (`decode_in_generalize`, the
+/// flat signatures E made) on every field: own variables, decoded needs in order, text and
+/// digests ([`info_eq_full`]). The two programs differ only in the order of the two calls
+/// (a swapped mutant), and their signatures for `g` differ, so a checker that kept one fixed
+/// order would fail one of them. Skip-promote control on a sibling clash: with the B4
+/// expansion skipped (`skip_barrier` "B4"), the clash between the held `id` name and `g`'s
+/// own lambda is still named as the flat form names it.
+#[test]
+fn r10_nested_forward_preserves_internal_ownership_and_first_use_order() {
+    let control = R10Config {
+        decode_in_generalize: true,
+        ..R10Config::default()
+    };
+    let mut texts = Vec::new();
+    for swapped in [false, true] {
+        let src = nested_order_program(swapped);
+        let (d, stats) = run_with_cfg(&src, R10Config::default());
+        assert!(d.errors.is_empty(), "swapped={swapped}: {:?}", d.errors);
+        assert!(
+            stats.kept_at_generalize >= 2,
+            "swapped={swapped}: {stats:?}"
+        );
+        let (c, _) = run_with_cfg(&src, control.clone());
+        if let Err(msg) = info_eq_full(&format!("swapped={swapped}"), &c, &d) {
+            panic!("{msg}\n{src}");
+        }
+        let skip_b4 = R10Config {
+            skip_barrier: Some("B4"),
+            ..R10Config::default()
+        };
+        let (s, _) = run_with_cfg(&src, skip_b4);
+        if let Err(msg) = info_eq_full(&format!("swapped={swapped} skip B4"), &c, &s) {
+            panic!("{msg}\n{src}");
+        }
+        texts.push(expected::info_text(&d));
+    }
+    assert_ne!(
+        texts[0], texts[1],
+        "the swap changes the order the output shows"
+    );
 }
 
 /// HELDNAME-defer-unmentioned-admit: the check admitting calls whose deferred variables no

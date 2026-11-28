@@ -169,6 +169,10 @@ impl<'t, 'a> Ck<'t, 'a> {
 
         let mut all_mentioned_vars = Vars::default();
         let mut on_mentioned_vars = Vars::default();
+        // Negative control of `#12` (TEST-heldname-defer-sigma-exit-intersection): leave a
+        // forward's `sigma` types out of the walk that builds `mentioned`. One set lookup per
+        // summary.
+        let drop_mentioned_sigma = self.r10.cfg.drop_conds.contains("#12-sigma");
         let mut held_free = 0usize;
         // The names the held functions bind (part (B) below), as `FwdNeed::held_names_of`
         // gives them: the same routine runs again where a finished callee replaces this one.
@@ -223,8 +227,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                             explicit_results.extend(exp.iter().cloned());
                         }
                     }
-                    for (_, t) in &fwd.sigma {
-                        t.vars_in(&mut all_mentioned_vars);
+                    if !drop_mentioned_sigma {
+                        for (_, t) in &fwd.sigma {
+                            t.vars_in(&mut all_mentioned_vars);
+                        }
                     }
                     for (_, t) in &fwd.exits {
                         t.vars_in(&mut all_mentioned_vars);
@@ -900,6 +906,24 @@ impl<'t, 'a> Ck<'t, 'a> {
         // way. Internal results are the classes `[k0, k0 + total_results)` when the results are
         // consecutive (`first_result_id`); otherwise `#26` refuses, and any class is counted
         // here. So the test below refuses every call where the premise may fail.
+        //
+        // The root-vector invariant this rests on (TEST-heldname-defer-sigma-exit-intersection).
+        // Every variable that a decode of this callee's needs writes, at any depth of its nest
+        // of forwards, is written through the vectors of a forward at the root, one of
+        // `sig.needs`: its `sigma` (one type for each parameter of its callee) or its results
+        // `[lo, lo + need_count)`. Proof, by induction on the depth. At depth 1 it is the decode
+        // above. At depth `d + 1`, a forward in a callee at depth `d` decodes into that callee's
+        // variables: its parameters' classes, which the level above replaces by its `sigma`
+        // types, and its results, which the level above replaces by its exits or makes internal
+        // results of the block (`child_subst` above maps `$(ck0 + off)` to the exit type). By
+        // induction, the level above writes each of these through a root vector. So the walk
+        // needs only the root forwards' `sigma` and exit types, besides the leaf needs, the
+        // held names and the internal results. An exit is a variable `$eid` of the level above
+        // (`build_fwd_need_from_open`), reserved apart from the forward's own results, so the
+        // internal test does not cover it and the exit walk stays. Not shown: a program whose
+        // refusal only the exit walk keeps (the `sigma` programs and the chains tried on
+        // 2026-11-28 refused alike without it). Dropping the `sigma` walk ("#12-sigma") turns
+        // the depth-3 program red (`r10_a_deferred_variable_in_a_second_level_sigma_is_refused`).
         //
         // Negative control: `h(positional f) = (f(1), z -> f(z))` called through `g(f) = h(f)`
         // defers `z`, which the need "`f` takes `z`" mentions, so the call is still refused
