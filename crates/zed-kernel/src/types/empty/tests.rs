@@ -1310,20 +1310,20 @@ fn random_tuples(s: &mut Rng) -> Vec<Type> {
 /// tuples of every length less some among them ([`check_classes`]): the runs on later
 /// components and the first components of a negated one-tuple type. Here on 250 draws from a
 /// fresh seed each run; 1,000, as the test drew until TEST-kernel-tests-under-1s (1.15 s
-/// alone), run in [`bench::joined_in_random_tuples_scales`].
+/// alone), run from a fixed seed in [`bench::joined_in_random_tuples_scales`].
 #[test]
 fn types_that_meet_are_joined_in_random_unions_and_negations_of_tuples() {
-    joined_in_random_tuples(250);
+    let (mut s, _) =
+        Rng::fresh("types_that_meet_are_joined_in_random_unions_and_negations_of_tuples");
+    joined_in_random_tuples(&mut s, 250);
 }
 
 /// The check of [`types_that_meet_are_joined_in_random_unions_and_negations_of_tuples`] on
-/// `cases` draws.
-fn joined_in_random_tuples(cases: usize) {
-    let (mut s, _) =
-        Rng::fresh("types_that_meet_are_joined_in_random_unions_and_negations_of_tuples");
+/// `cases` draws from `s`.
+fn joined_in_random_tuples(s: &mut Rng, cases: usize) {
     let (mut met, mut apart) = (0, 0);
     for case in 0..cases {
-        let ts = random_tuples(&mut s);
+        let ts = random_tuples(s);
         check_classes(case, &ts, &mut met, &mut apart);
     }
     classes_met_and_apart_built(met, apart);
@@ -4018,9 +4018,10 @@ fn overlaps_are_the_same_in_every_order_on_repeated_stems() {
 /// same in every order, each from an empty group cache, and without the shortcuts of `joined`
 /// (PROOF-kernel-overlaps-order). [`check_classes`] tries four orders of every case with the
 /// cache kept; this tries all of them, for fewer cases: the first 100 draws, not the 400 drawn
-/// until TEST-kernel-tests-under-1s (2.12 s alone). A bench of `n` against `8n` draws measured
-/// 10.9, past the limit of 10.5, as the cases a draw keeps vary widely in size, so the draws
-/// past 100 are not run.
+/// until TEST-kernel-tests-under-1s (2.12 s alone). The bench of the first `n` against the
+/// first `8n` draws from seed 1, n = 50, measures 10.87 times the instructions, past the limit
+/// of 10.5: ledger FAIL-overlaps-every-order-scaling, its test in
+/// wt/failing-tests/FAIL-overlaps-every-order-scaling.rs until the cause is fixed.
 #[test]
 fn overlaps_are_the_same_in_every_order_on_random_cells() {
     let (checked, taken) = overlaps_in_every_order_from(1, 5, 100);
@@ -4343,11 +4344,13 @@ mod bench {
         });
     }
 
-    /// [`super::joined_in_random_tuples`] on `n` draws; 1,000 at `8n`.
+    /// [`super::joined_in_random_tuples`] on the first `n` draws from one fixed seed, so the
+    /// draws at `n` are the first of those at `8n` on every run; 1,000 at `8n`. The test draws
+    /// from a new seed each run, which here would give the two sizes different draws.
     #[test]
     fn joined_in_random_tuples_scales() {
         crate::scaling::check("overlaps on n random types of tuples", 125, |n| {
-            super::joined_in_random_tuples(n)
+            super::joined_in_random_tuples(&mut super::Rng::new(1), n)
         });
     }
 }

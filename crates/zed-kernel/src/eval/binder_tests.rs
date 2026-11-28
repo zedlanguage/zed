@@ -805,12 +805,18 @@ fn reads_agrees_on_random_terms(seeds: u64) {
 /// leaves out a name read only where the binders on its one path bind it (row
 /// TEST-reads-deep-sharing). Seen to fail with `scoped_names` reading every shared node
 /// inside a node reached twice apart too, which the test above misses. On 2,500 seeds, not the
-/// 20,000 run until TEST-kernel-tests-under-1s (3.38 s alone). A bench of `n` against `8n`
-/// seeds measured 10.3, near the limit of 10.5, as the cost of a draw varies widely, so the
-/// seeds past 2,500 are not run.
+/// 20,000 run until TEST-kernel-tests-under-1s (3.38 s alone); the 20,000 run in
+/// [`bench::reads_on_deeply_shared_terms_scales`], measured at 10.29 times, under the limit of
+/// 10.5 but over the 9 preferred; the cause of the excess over 8 is not yet found.
 #[test]
 fn reads_lies_between_the_tree_walk_and_the_shared_bound_on_deeply_shared_terms() {
-    for seed in 1..=2_500u64 {
+    reads_within_bounds_on_deeply_shared_terms(2_500);
+}
+
+/// The check of [`reads_lies_between_the_tree_walk_and_the_shared_bound_on_deeply_shared_terms`]
+/// on seeds 1 to `seeds`.
+fn reads_within_bounds_on_deeply_shared_terms(seeds: u64) {
+    for seed in 1..=seeds {
         let mut g = Gen {
             rng: Xorshift64::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1),
             pool: Vec::new(),
@@ -844,6 +850,16 @@ mod bench {
             2_500,
             |n| super::reads_agrees_on_random_terms(n as u64),
         );
+    }
+
+    /// [`super::reads_within_bounds_on_deeply_shared_terms`] on seeds 1 to `n`, so the seeds at
+    /// `n` are the first of those at `8n`: each term has depth 6 at most, so the work is O(n).
+    /// At `8n` it checks the 20,000 seeds the test checked until TEST-kernel-tests-under-1s.
+    #[test]
+    fn reads_on_deeply_shared_terms_scales() {
+        crate::scaling::check("reads within its bounds on n shared terms", 2_500, |n| {
+            super::reads_within_bounds_on_deeply_shared_terms(n as u64)
+        });
     }
 }
 

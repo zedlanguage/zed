@@ -1053,17 +1053,19 @@ pub fn on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> T {
 }
 
 /// The line a check prints once, as it ends, passed or failed (TEST-bench-split): `bench <what>
-/// n=<n> ns=<small>/<large> instr=<small>/<large> bytes=<small>/<large> ratio=<ratio>`, where
-/// `ns` is the least elapsed time of the runs of each size in the last measurement (see
-/// [`counted_on_a_thread`]), `instr` the least count of the meter (`work=` for a meter of
-/// processor time or cycles, which are not instructions), `bytes` the least bytes, and `ratio`
-/// that of the count. `n` is `-` for a [`compare`]. A guard that prints on drop prints the line on
+/// n=<n> ns=<small>/<large> instr=<small>/<large> bytes=<small>/<large> ratio=<ratio>
+/// limit=<limit>`, where `ns` is the least elapsed time of the runs of each size in the last
+/// measurement (see [`counted_on_a_thread`]), `instr` the least count of the meter (`work=` for
+/// a meter of processor time or cycles, which are not instructions), `bytes` the least bytes,
+/// `ratio` that of the count, and `limit` the ratio it is held under. `n` is `-` for a
+/// [`compare`]. A guard that prints on drop prints the line on
 /// every way out of a check, a panic included, with what was measured last; a check that panics
 /// before its first measurement prints none. The time is never a pass condition.
 struct BenchLine<'a> {
     what: &'a str,
     n: Option<usize>,
     key: &'static str,
+    limit: f64,
     last: Option<Measured>,
 }
 
@@ -1080,7 +1082,7 @@ impl BenchLine<'_> {
         let Measured { ns, units, bytes } = self.last?;
         let n = self.n.map_or("-".into(), |n| n.to_string());
         Some(format!(
-            "bench {} n={n} ns={}/{} {}={}/{} bytes={}/{} ratio={:.3}",
+            "bench {} n={n} ns={}/{} {}={}/{} bytes={}/{} ratio={:.3} limit={:.3}",
             self.what,
             ns.0,
             ns.1,
@@ -1089,7 +1091,8 @@ impl BenchLine<'_> {
             units.1,
             bytes.0,
             bytes.1,
-            units.1 as f64 / units.0.max(1) as f64
+            units.1 as f64 / units.0.max(1) as f64,
+            self.limit
         ))
     }
 }
@@ -2179,6 +2182,7 @@ fn compare_measured(
         what,
         n,
         key: if meter.instructions { "instr" } else { "work" },
+        limit,
         last: None,
     };
     // The bytes of the first run of each size, on a meter that takes the least of several runs:

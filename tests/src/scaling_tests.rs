@@ -845,7 +845,7 @@ fn bench_fields(out: &str, what: &str) -> (String, [u64; 2], [u64; 2]) {
         let (a, b) = f.split_once('/').unwrap_or_else(|| panic!("{key}{f}"));
         [a.parse().unwrap(), b.parse().unwrap()]
     };
-    for key in ["bytes=", "ratio="] {
+    for key in ["bytes=", "ratio=", "limit="] {
         field(key);
     }
     let key = if line.split(' ').any(|f| f.starts_with("instr=")) {
@@ -857,7 +857,7 @@ fn bench_fields(out: &str, what: &str) -> (String, [u64; 2], [u64; 2]) {
 }
 
 /// Each check prints one line `bench <what> n=<n> ns=<small>/<large> instr=<small>/<large>
-/// bytes=<small>/<large> ratio=<ratio>` and writes the two times to the file of
+/// bytes=<small>/<large> ratio=<ratio> limit=<limit>` and writes the two times to the file of
 /// [`RATIOS_FILE`] (TEST-bench-split). The count of a loop 8 times as long grows, held above
 /// 4 times; that of the negative control, a loop of one length at both sizes, stays under 2.
 /// Each time is at least the sleep of its run, 8 times as long at 8n for the growing loop: a
