@@ -25333,19 +25333,35 @@ impl Walk {
     /// before it, no type of the text had been entered, and after it, [`Local::start`] had.
     /// Inside a tuple's text no signature opens a variable (the text holds no function,
     /// [`Shared::local`]), so [`Scope::same`] is opened in the order of the first pass too.
+    ///
+    /// On a walk that only counts, a tuple is keyed by the opening of the innermost signature
+    /// around it only when it holds, at any depth, a name some function other than the owner
+    /// binds (`others`, the flag of [`Shared::local`]); else by 0. Why the count is the same:
+    /// a tuple of [`Shared::local`] holds only names the owner or another function binds
+    /// (`free` in [`Shared::of`]). If none is another's, no signature opened inside the owner
+    /// binds any of its names, as its own or bounded, so none pushes a meaning for them
+    /// ([`Scope::open`]), and each reads at every opening as the owner binds it: the tuple
+    /// counts the same places at each, and walking it once counts them as walking it at each
+    /// would. If one is another's, it may read as that function's variable at one opening and
+    /// the owner's at another, and the key keeps the openings apart. Keyed by the opening
+    /// always (round 2), the owner's own tuples were walked again under each of m inner
+    /// functions, Theta(m^2) for m functions sharing m tuples (Gemini B5-REG, round 2 of
+    /// XR-heldname-print-batch). Tests: `l01_26_type_resolution::scaling::
+    /// standing_twice_does_not_reenter_owner_rows_per_inner_lambda` and its control where an
+    /// inner function binds the same name.
     fn local<'a>(
         &mut self,
         r: &'a Row,
         at: PrintAt,
-        rank: usize,
+        (rank, uses_other): (usize, bool),
         out: &mut String,
         stack: &mut Vec<Print<'a>>,
         scope: &Scope,
     ) {
         let wrap = r.wraps(at);
-        let opening = match self.named {
-            Some(_) => scope.openings.last().copied().unwrap_or(0),
-            None => 0,
+        let opening = match (&self.named, uses_other) {
+            (Some(_), true) => scope.openings.last().copied().unwrap_or(0),
+            _ => 0,
         };
         let key = (r.node(), opening);
         let resume = match self.plan {
@@ -26080,8 +26096,10 @@ struct Shared {
     closed: bool,
     /// Each shared tuple that holds variables and is written once, at its first place, as a
     /// part of the table, and by reference at the others ([`Walk::local`]), by its number,
-    /// with its place in the order [`Shared::of`] leaves the nodes, each after those inside it.
-    local: HashMap<NodeId, usize>,
+    /// with its place in the order [`Shared::of`] leaves the nodes, each after those inside it,
+    /// and whether it holds, at any depth, a name some function of the text other than the
+    /// owner binds ([`Walk::local`] keys only such a tuple by the opening around it).
+    local: HashMap<NodeId, (usize, bool)>,
 }
 
 /// The one function `start` writes, where it writes a function and nothing else: the
@@ -26253,47 +26271,39 @@ impl Shared {
         let mut placed: Vec<(Node<'_>, String)> = Vec::new();
         // Whether each tuple may be written once with its variables ([`Shared::local`]): its
         // components hold no function and no payload, each variable they hold the owner binds,
-        // as its own or bounded by carriers, no other function binds and no test leaves of
-        // another (`lefts` below), and each tuple they
-        // hold may be so. A tuple is left after those it holds, so one look at each component,
-        // O(n) in all with a hash lookup per tuple and variable.
+        // as its own or bounded, and no other function binds, and each tuple they hold may be
+        // so. A tuple is left after those it holds, so one look at each component, O(n) in all
+        // with a hash lookup per tuple and variable.
+        //
+        // A variable a test leaves of another (a need `Narrow` with it as result), printed as
+        // the difference `T \ s` ([`Scope::open`]), may stand in such a tuple: the reader keeps
+        // the leftover a definition writes, one variable for each `T` and `s` in the text, and
+        // puts its need on the outermost function type at the first name for the definition
+        // (zedc-check `Denote::left_of` and `HeldLeft`), as written out. Round 2 wrote such a
+        // tuple in full at each place, and a variable bounded by a need (`OTHER`) too, which
+        // made the text exponential in the depth of a DAG of tuples that printed linearly
+        // before (Codex B6-expansion, round 2 of XR-heldname-print-batch; row
+        // FIX-heldname-veto-expansion). A variable bounded by a need prints no clause, written
+        // in full or named (PRINT-need-bound-clause), so writing its tuples in full kept
+        // nothing the text would hold. Tests: `l01_26_type_resolution::scaling::
+        // leftover_shared_rows_print_in_linear_text` and
+        // `need_bounded_shared_rows_do_not_expand_paths`.
         let mut writable: HashMap<NodeId, bool> = HashMap::new();
-        // A variable a test leaves of another (a need `Narrow` with it as result) may print as
-        // the difference `T \ s` ([`Scope::open`]), which the reader makes, with its need, only
-        // where a function type is open around it (zedc-check `Denote::left_of`): in a
-        // definition there is none, so the need would be lost on reading back (XR-heldname-
-        // print-batch r1, B1-2). A tuple holding one is written in full at each place. All
-        // such variables are taken, those printed as plain variables too, as which prints so
-        // depends on the scope at the place; O(needs).
-        let lefts: HashSet<&Arc<str>> = (owner.into_iter())
-            .flat_map(|o| o.needs.iter())
-            .filter_map(|n| match (&n.kind, &n.result) {
-                (NeedKind::Narrow(_), Some(left)) => left.as_var(),
-                _ => None,
-            })
-            .collect();
+        // Whether each tuple holds, at any depth, a name of `others`: found with `writable`,
+        // from the names of its components and the tuples they hold, each left before it, so
+        // O(1) more per tuple and variable ([`Walk::local`]).
+        let mut uses_other: HashMap<NodeId, bool> = HashMap::new();
         // On a walk that only counts, nothing is read back, and [`Walk::local`] writes a tuple's
         // text once for each opening of the innermost signature around its places, where every
         // name reads the same: so a tuple may hold any name a function of the text binds
         // (row PRINT-returned-bound-shared-rows-exponential: the rows of a returned function
         // that bounds its own variable, held twice at each level, were walked once per path).
-        let ignore_others = IGNORE_OTHER_BINDERS.with(Cell::get);
-        // A placed definition may name a variable the owner bounds by carriers alone, not one
-        // whose bound holds `OTHER` (bounded by a need, as `a0` passed to a function that may
-        // fail): its text writes no clause for it, so it reads back unbounded, written in full
-        // or not (XR-heldname-print-batch r1, C-2; test
-        // `l01_26_type_resolution::scaling::a_variable_bounded_by_a_need_is_not_named_in_shared_rows`).
-        // Its rows are written in full at each place, as before this batch.
+        let ignore_others = IGNORE_OTHER_BINDERS.with(Cell::get) || !placing;
         let free = |v: &Arc<str>| {
             let own = owner.is_some_and(|o| o.own.contains(v) || o.bounds.contains_key(v));
-            let placed = owner.is_some_and(|o| match o.bounds.get(v) {
-                Some(&m) => m & OTHER == 0,
-                None => o.own.contains(v),
-            });
-            match (placing, ignore_others) {
-                (false, _) => own || others.contains(v),
-                (true, true) => (own || others.contains(v)) && !lefts.contains(v),
-                (true, false) => placed && !others.contains(v) && !lefts.contains(v),
+            match ignore_others {
+                true => own || others.contains(v),
+                false => own && !others.contains(v),
             }
         };
         for (rank, node) in order.into_iter().enumerate() {
@@ -26308,8 +26318,13 @@ impl Shared {
                         })
                 });
                 writable.insert(r.node(), ok);
+                let other = r.iter().any(|c| {
+                    c.vars.iter().any(|v| others.contains(v))
+                        || (c.tuples.iter()).any(|q| uses_other.get(&q.node()) == Some(&true))
+                });
+                uses_other.insert(r.node(), other);
                 if ok && r.holds_vars() && matches!(rows[&r.node()], (2.., true)) {
-                    shared.local.insert(r.node(), rank);
+                    shared.local.insert(r.node(), (rank, other));
                 }
             }
             match node {
@@ -26474,7 +26489,9 @@ fn walk_parts<'a>(
                 Some(name) if r.wraps(at) => out.push_str(&defs::wrapped(name)),
                 Some(name) => out.push_str(name),
                 None => match shared.local.get(&r.node()) {
-                    Some(&rank) if !root => walk.local(r, at, rank, out, &mut stack, scope),
+                    Some(&(rank, others)) if !root => {
+                        walk.local(r, at, (rank, others), out, &mut stack, scope)
+                    }
                     _ => {
                         ROW_ENTRIES.with(|c| c.set(c.get() + 1));
                         r.parts(at, &mut stack)

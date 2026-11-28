@@ -1046,12 +1046,12 @@ fn resolver<'u>(
 /// `leaves` standing for the leaves of layer L10 a printed type holds (`_`, `!_`, a literal),
 /// and the forms of step L2.5 the checker prints from L1 on: an atom's payload type, read through
 /// to its parts, an atom with any payload `#a(..)` and every struct `{..}`. A type variable no
-/// bounds clause around it binds is not defined. A clause may bound a name of `held`, which
-/// the type holds through a definition it names ([`Resolver::held`]).
+/// bounds clause around it binds is not defined. A clause whose bound's span is in `held`
+/// bounds a name the type holds under it through a definition it names ([`Resolver::held`]).
 pub fn printed_type(
     t: &Type,
     leaves: HashSet<Arc<str>>,
-    held: HashSet<Arc<str>>,
+    held: HashSet<Span>,
 ) -> Result<(), Vec<Error>> {
     let mut r = Resolver {
         printed: Some(leaves),
@@ -1118,14 +1118,19 @@ struct Resolver<'u> {
     /// When a printed type is read ([`printed_type`]): the names that stand for its leaves of
     /// layer L10.
     printed: Option<HashSet<Arc<str>>>,
-    /// When a printed type is read: the names its definitions write that no clause in them
-    /// bounds. A definition of a printed type holds no clause, so such a name reads under the
-    /// clause around each name for the definition, as where it is written out (zedc-check
-    /// `Denote::reach`, row XR-heldname-print-batch B1), and a clause bounding it bounds
-    /// something there. The reader checks first that the clause's variable is on a signature
-    /// the type reaches (`read::read_part`, "the bound of ... is on no signature that names
-    /// it"), so [`Resolver::for_end`] does not report the clause as bounding nothing.
-    held: HashSet<Arc<str>>,
+    /// When a printed type is read: the bounds, by the span of each bound's name, that a name
+    /// for a definition under their clause uses. A definition of a printed type holds no
+    /// clause, so a name it writes reads under the clause around each name for the definition,
+    /// as where it is written out (zedc-check `Denote::reach`, row XR-heldname-print-batch B1),
+    /// and the clause the reading reaches there bounds something. Only that clause: a name
+    /// for a definition under one clause excuses no clause elsewhere that names the same
+    /// variable and that no use reaches, as `type Part1 = (T, T); ((Part1 -> int for T in
+    /// int), (int -> int for T in f64))`, whose second clause bounds nothing (row
+    /// FIX-heldname-clause-occurrence, round 2 of XR-heldname-print-batch). The reader checks
+    /// first that the clause's variable is on a signature the type reaches (`read::read_part`,
+    /// "the bound of ... is on no signature that names it"), so [`Resolver::for_end`] does
+    /// not report such a clause as bounding nothing.
+    held: HashSet<Span>,
     /// The region of each `else`'s operand, by the `else`'s text: an `else` inside another
     /// region gets its region when that region's flow is walked, before the `else` itself.
     else_regions: HashMap<Span, usize>,
@@ -5223,7 +5228,7 @@ impl Resolver<'_> {
             }
             // Cannot fire: the `continue` above skips a name `tvars` does not hold.
             let var = self.tvars.remove(&b.name).expect("bound above");
-            if var.first.is_none() && !self.held.contains(b.name.as_str()) {
+            if var.first.is_none() && !self.held.contains(&b.span) {
                 self.errors.push(Error {
                     row: None,
                     menu: String::new(),

@@ -6763,7 +6763,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
-        let (ty, inexact, _) = denoted_inexact(
+        let Denoted { ty, inexact, .. } = denoted_inexact(
             t,
             &Binds::new(),
             &HashSet::new(),
@@ -19465,7 +19465,7 @@ pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
 /// variables). A printed type writes such a name for a variable that stands in two places or
 /// more (UNDERSCORE-print), which only `parse_type` reads back.
 pub fn denoted_free(t: &Type, leaves: &Binds, free: &HashSet<Arc<str>>) -> Ty {
-    denoted_inexact(t, leaves, free, &Held::new(), Ranged::default(), false).0
+    denoted_inexact(t, leaves, free, &Held::new(), Ranged::default(), false).ty
 }
 
 /// The definitions of a printed type read so far, as a graph: for each, the names its body
@@ -19476,6 +19476,32 @@ struct Held {
     defs: Vec<HeldDef>,
     /// The index in `defs` of the definition each name stands for, the last of a name.
     by_name: HashMap<Arc<str>, usize>,
+    /// The leftovers `T \ s` the definitions write, each once, in the order first read
+    /// ([`Denote::left_of`]).
+    lefts: Vec<HeldLeft>,
+    /// The index in `lefts` of each leftover, by its key ([`HeldLeft::key`]).
+    left_by_key: HashMap<(Arc<str>, String), usize>,
+}
+
+/// A leftover `T \ s` a definition writes: what a failed test leaves of the variable `T` of
+/// the outermost function type. Its variable is made once for the text, named `T\k` for its
+/// index `k` in [`Held::lefts`], and its need is put on the outermost function type around
+/// the first name for a definition that reaches it ([`Denote::reach`]), as where the
+/// definition is written out the need is read there ([`Denote::left_of`]). Before, the printer
+/// wrote a tuple holding a leftover in full at each place, since its need was lost in a
+/// definition, which made the text exponential in the depth of a DAG of such tuples (Codex
+/// B6-expansion, round 2 of XR-heldname-print-batch; row FIX-heldname-veto-expansion).
+struct HeldLeft {
+    /// The name of `T` and the text of `s`: the same text reads as the same leftover.
+    key: (Arc<str>, String),
+    /// `T`.
+    on: Ty,
+    /// What the test removes.
+    narrow: Narrow,
+    /// The leftover's variable, `T\k`.
+    name: Arc<str>,
+    /// The span of the difference where first read.
+    span: Span,
 }
 
 /// One definition of [`Held`].
@@ -19489,6 +19515,8 @@ struct HeldDef {
     unbound: Box<[Arc<str>]>,
     /// The definitions its body names, by index in [`Held::defs`], each before it.
     refs: Box<[usize]>,
+    /// The leftovers its body writes, by index in [`Held::lefts`].
+    lefts: Box<[usize]>,
 }
 
 impl Held {
@@ -19496,8 +19524,13 @@ impl Held {
         Held::default()
     }
 
-    /// Adds the definition `name`, with what its body writes directly ([`HeldDef`]).
-    fn add(&mut self, name: Arc<str>, def: HeldDef) {
+    /// Adds the definition `name`, with what its body writes directly ([`HeldDef`]) and the
+    /// leftovers it writes first, numbered from `self.lefts.len()` on ([`DefParts`]).
+    fn add(&mut self, name: Arc<str>, def: HeldDef, new_lefts: Vec<HeldLeft>) {
+        for l in new_lefts {
+            self.left_by_key.insert(l.key.clone(), self.lefts.len());
+            self.lefts.push(l);
+        }
         self.by_name.insert(name, self.defs.len());
         self.defs.push(def);
     }
@@ -19526,8 +19559,9 @@ struct Ranged {
 /// more than the difference ([`Ty::diff_exact`]). Each arrow whose span `ranged` holds is read
 /// with its range ([`Ranged`]), and each name of a definition `held` lists reads the names the
 /// definition holds as they read where it is written out ([`Denote::reach`]). With
-/// `want_unbound`, also the names `t` writes that no clause in it bounds and that are not
-/// among `free` ([`HeldDef::unbound`]); otherwise that set is empty.
+/// `want_unbound` (a definition is read), also the names `t` writes that no clause in it
+/// bounds and that are not among `free` ([`HeldDef::unbound`]), and the definitions it names
+/// ([`HeldDef::refs`]); otherwise those sets are empty.
 fn denoted_inexact(
     t: &Type,
     leaves: &Binds,
@@ -19535,20 +19569,58 @@ fn denoted_inexact(
     held: &Held,
     ranged: Ranged,
     want_unbound: bool,
-) -> (Ty, Vec<Inexact>, BTreeSet<Arc<str>>) {
+) -> Denoted {
     let mut d = Denote {
         leaves,
         free,
         held,
         bound: HashMap::new(),
+        clauses: Vec::new(),
         open: Vec::new(),
         empty: None,
         inexact: Vec::new(),
         ranged,
-        unbound: want_unbound.then(BTreeSet::new),
+        def: want_unbound.then(DefParts::default),
+        used: HashSet::new(),
     };
     let ty = d.ty(t);
-    (ty, d.inexact, d.unbound.unwrap_or_default())
+    Denoted {
+        ty,
+        inexact: d.inexact,
+        used: d.used,
+        def: d.def.unwrap_or_default(),
+    }
+}
+
+/// What [`denoted_inexact`] reads of a written type.
+struct Denoted {
+    /// Its value.
+    ty: Ty,
+    /// Its differences whose value holds more than the difference ([`Denote::inexact`]).
+    inexact: Vec<Inexact>,
+    /// The bounds, by the span of each bound's variable, that a name read under their clause
+    /// uses ([`Denote::used`]).
+    used: HashSet<Span>,
+    /// For a definition, what its body writes ([`DefParts`]); empty for any other type.
+    def: DefParts,
+}
+
+/// What reading a definition of a printed type finds in its body besides its value
+/// ([`HeldDef`]).
+#[derive(Default)]
+struct DefParts {
+    /// The names it writes that no clause in it bounds and that are not among the text's free
+    /// names ([`HeldDef::unbound`]).
+    unbound: BTreeSet<Arc<str>>,
+    /// The definitions of [`Held`] it names as types, by index: the names of type references,
+    /// so a field label spelled as a definition's name is not one (FIX-heldname-def-edges).
+    refs: BTreeSet<usize>,
+    /// The leftovers `T \ s` it writes, by index in [`Held::lefts`], the new ones included
+    /// ([`Denote::left_of`]).
+    lefts: BTreeSet<usize>,
+    /// The leftovers it writes that no definition before it wrote, numbered from
+    /// `Held::lefts.len()` on.
+    new_lefts: Vec<HeldLeft>,
 }
 
 thread_local! {
@@ -19599,7 +19671,9 @@ fn emptied(t: &Type, out: &mut Vec<Note>) {
         empty: Some(HashSet::new()),
         inexact: Vec::new(),
         ranged: Ranged::default(),
-        unbound: None,
+        def: None,
+        used: HashSet::new(),
+        clauses: Vec::new(),
     };
     d.ty(t);
     let empty = d.empty.unwrap_or_default();
@@ -19789,8 +19863,10 @@ fn explain_empty(t: &Type, found: impl Fn(&Type) -> bool, out: &mut Vec<Note>) {
 /// `Step::Unbind`, O(b) expected; a use of a bounded variable does one expected O(1) lookup in
 /// `bound`, one index into `open`, and at most two inserts into its home's sorted sets, each
 /// O(log k) for the `k` variables of that home. So it is O(size of the type · log k) in all,
-/// with no factor of the depth; the operations that make each part's value come on top, as
-/// [`Denote::ty`] says, and are not linear.
+/// with no factor of the depth, for the names written in the type; the operations that make
+/// each part's value come on top, as [`Denote::ty`] says, and are not linear, and so do the
+/// walks of definitions a name for one makes, which [`Denote::reach`] bounds and which are not
+/// linear in the size of the text in every case (FIX-heldname-reading-multi-env).
 struct Denote<'a> {
     leaves: &'a Binds,
     /// The names read as variables of the outermost function type around them where no clause
@@ -19801,9 +19877,13 @@ struct Denote<'a> {
     /// it reads where the definition is written out in full (`read::parse_type`, rows
     /// PRINT-shared-part-exponential and XR-heldname-print-batch B1), by [`Denote::reach`].
     held: &'a Held,
-    /// Each variable a clause around the place bounds: its mask and the number of function
-    /// types open at the clause, which is the index in `open` of its signature.
-    bound: HashMap<&'a str, (u8, usize)>,
+    /// Each variable a clause around the place bounds: its mask, the number of function types
+    /// open at the clause, which is the index in `open` of its signature, and the span of the
+    /// bound's variable, which names the clause ([`Denote::used`]).
+    bound: HashMap<&'a str, ClauseBound>,
+    /// For each clause around the place, outermost first, the number of function types open
+    /// at it: the index in `open` of its signature ([`Denote::reach`]).
+    clauses: Vec<usize>,
     /// The function types open around the place, outermost first.
     open: Vec<Reading>,
     /// The span of each part read whose type lists no value, kept only by [`emptied`], which
@@ -19816,9 +19896,16 @@ struct Denote<'a> {
     /// The arrows read with a range on their key or their result ([`Ranged`]), which
     /// `read::parse_type` finds in a printed type and [`Ck::param_keys`] in a declared parameter's.
     ranged: Ranged,
-    /// The names read that no clause around them bounds and that are not among `free`, kept
-    /// only where `read::parse_type` reads a definition ([`HeldDef::unbound`]).
-    unbound: Option<BTreeSet<Arc<str>>>,
+    /// What a definition's body writes, kept only where `read::parse_type` reads a definition
+    /// ([`DefParts`]).
+    def: Option<DefParts>,
+    /// The bounds, by the span of each bound's variable, that a name read under their clause
+    /// is bounded by: a name written in the type, or one a definition writes, read at a name
+    /// for the definition ([`Denote::reach`]). The resolver takes such a clause as bounding
+    /// something though the type it closes writes the name only through a definition, and only
+    /// that clause: a clause elsewhere naming the same variable is not excused
+    /// (`zedc_resolve::resolve::printed_type`, row FIX-heldname-clause-occurrence).
+    used: HashSet<Span>,
 }
 
 /// A difference `a \ b` whose value holds more than `a & !b` ([`Denote::inexact`]).
@@ -19861,9 +19948,9 @@ struct Reading {
     /// The variable made for each difference `T \ s` read so far, by `T` and the text of `s`
     /// ([`Denote::left_of`]): the same text reads as the same leftover.
     lefts: HashMap<(Arc<str>, String), Ty>,
-    /// The definitions [`Denote::reach`] has walked while this is the function type opened
-    /// last, by index in [`Held::defs`], in its result and in its parameters: what a name in
-    /// them reads as is the same at each name for them until a clause is entered or left.
+    /// The definitions [`Denote::reach`] has walked while this is its memo frame, by index in
+    /// [`Held::defs`], in its result and in its parameters: what a name in them reads as is
+    /// the same at each name for them until a clause is entered or left.
     walked: [HashSet<usize>; 2],
 }
 
@@ -19882,8 +19969,12 @@ enum Step<'a> {
     /// [`Denote::close_params`].
     Close,
     /// Restore what the variables of a `for` clause were bounded by around it.
-    Unbind(Vec<(&'a str, Option<(u8, usize)>)>),
+    Unbind(Vec<(&'a str, Option<ClauseBound>)>),
 }
+
+/// What a clause around a place bounds a variable by ([`Denote::bound`]): its mask, the number
+/// of function types open at the clause, and the span of the bound's variable.
+type ClauseBound = (u8, usize, Span);
 
 impl<'a> Denote<'a> {
     /// The type `t` denotes. The parts of each type are denoted in written order and each type
@@ -19923,6 +20014,7 @@ impl<'a> Denote<'a> {
                             None => self.bound.remove(v),
                         };
                     }
+                    self.clauses.pop();
                     self.rewalk();
                 }
             }
@@ -19964,6 +20056,9 @@ impl<'a> Denote<'a> {
             }
             TypeKind::Name(n) if self.leaves.contains_key(n.as_str()) => {
                 if let Some(d) = self.held.index(n.as_str()) {
+                    if let Some(def) = &mut self.def {
+                        def.refs.insert(d);
+                    }
                     self.reach(d);
                 }
                 self.leaves[n.as_str()].clone()
@@ -20036,10 +20131,11 @@ impl<'a> Denote<'a> {
                             .expect("resolve and the reader of printed types check each bound");
                         (
                             b.name.as_str(),
-                            self.bound.insert(b.name.as_str(), (mask, depth)),
+                            self.bound.insert(b.name.as_str(), (mask, depth, b.span)),
                         )
                     })
                     .collect();
+                self.clauses.push(depth);
                 self.rewalk();
                 steps.extend([Step::Unbind(outer), Step::Ty(ty)]);
                 return;
@@ -20266,9 +20362,11 @@ impl<'a> Denote<'a> {
     /// by it if the use is in its parameters; a name of `free` is a variable of the outermost
     /// function type. A use outside every function type of its clause, as in `int \ T`, bounds
     /// nothing; resolve rejects it. Any other name is noted in `unbound` when `note` says so
-    /// and the reading keeps that set.
+    /// and the reading keeps that set. A bounded use marks its clause's bound as used
+    /// ([`Denote::used`]).
     fn name_use(&mut self, v: &str, note: bool) {
-        if let Some(&(mask, at)) = self.bound.get(v) {
+        if let Some(&(mask, at, clause)) = self.bound.get(v) {
+            self.used.insert(clause);
             if let Some(home) = self.open.get_mut(at) {
                 home.bounds.insert(v.into(), mask);
                 if home.params {
@@ -20279,8 +20377,8 @@ impl<'a> Denote<'a> {
             if let Some(home) = self.open.first_mut() {
                 home.free.insert(v.into());
             }
-        } else if note && let Some(unbound) = &mut self.unbound {
-            unbound.insert(v.into());
+        } else if note && let Some(def) = &mut self.def {
+            def.unbound.insert(v.into());
         }
     }
 
@@ -20289,46 +20387,77 @@ impl<'a> Denote<'a> {
     /// makes the outermost function type the home of the names of its `free`, and reads each
     /// name of its `unbound` as a use there ([`Denote::name_use`]), so a name a clause around
     /// the place bounds is bounded with the clause's mask on the clause's function type, and
-    /// held by it in its parameters, as a name written there is. With no function type open
-    /// a name reads as nothing, as written out.
+    /// held by it in its parameters, as a name written there is; and the leftovers `T \ s` it
+    /// writes are put on the outermost function type with their needs ([`HeldLeft`]), as
+    /// written out they are read there. With no function type open a name reads as nothing,
+    /// as written out.
     ///
-    /// Why each definition once a place: what a name reads as depends only on the clauses
-    /// around the place (`bound`), the function types open and whether the place is in the
-    /// parameters of each. While a function type is the one opened last, the ones around it
-    /// are in their parameters or not as at its opening, so for it and its side (parameters
-    /// or result) only `bound` can change, and it changes only where a clause is entered or
-    /// left, where [`Denote::rewalk`] forgets the walk. So a definition walked once for the
-    /// function type and side, with no clause entered or left since, has read each of its
-    /// names as they read now, and reading them again changes no set: each insert is into a
-    /// set.
+    /// Each definition is walked once for a memo frame and side between two clause changes:
+    /// the memo frame is `w = min(t, c)`, with `t` the index of the function type opened last
+    /// and `c` the index of the signature of the clause entered last (0 with no clause), and
+    /// the side is whether `open[w]` is in its parameters. A definition in `open[w].walked` on
+    /// that side is not walked again.
+    ///
+    /// Claim: a walk skipped so would change no set and mark no bound. Proof.
+    /// 1. A walk's effect is a set of inserts ([`Denote::name_use`], [`Denote::put_left`]):
+    ///    into `open[0].free`, of each leftover into `open[0]` once by its key, and
+    ///    for a name `v` with `bound[v] = (mask, at, s)`, `s` into `used` and, if `open[at]`
+    ///    exists, `v` into `open[at].bounds` and, if `open[at].params`, into `open[at].held`.
+    ///    So it depends only on `bound`, on which frames exist at the indices `at` of the
+    ///    clauses around the place, and on their `params` flags.
+    /// 2. Clauses nest: one entered inside another is entered with at least as many function
+    ///    types open, so the indices `at` of the clauses around the place are at most `c`.
+    /// 3. Only the frame opened last changes its `params` flag ([`Denote::close_params`]), and
+    ///    a frame at an index is replaced only after every frame above it is closed, its
+    ///    `walked` sets with it.
+    /// 4. If `t >= c`, `w = c`: by 2 the frames the effect depends on are at indices at most
+    ///    `w`, those below `w` are below `t` and fixed by 3, and `open[w]`'s flag is the side.
+    ///    Frames above `w` opened and closed since the walk change nothing in 1.
+    /// 5. If `t < c`, `w = t`, and the clause's own signature is not open: no frame the effect
+    ///    depends on is above `t`, and the frames up to `t` are fixed but `open[t]`'s flag,
+    ///    which is the side.
+    /// 6. `bound` changes only where a clause is entered or left. At an entry with `t` frames
+    ///    open, the new `c` is `t + 1` (or more frames, see 2), so the memo frame at the next
+    ///    name is `open[t]` until a frame opens, then the new frame, whose sets are empty;
+    ///    [`Denote::rewalk`] empties `open[t]`'s at the entry. At the clause's `Unbind`, with
+    ///    the same `t`, `bound` is again as before the entry; the memo frame is `open[t]`,
+    ///    emptied there again, or `open[c']` for the clause `c' < t` around, whose sets hold
+    ///    only walks made before the entry (while the inner clause stood, the memo frame was at
+    ///    index `t` or more, by 4 and 5), under the same `bound`, so they still hold by 1-5.
+    ///
+    /// So a definition in the memo set was walked under the same `bound`, the same frames at
+    /// the indices of 1, with the same flags: the same inserts, each into a set.
     // Complexity tradeoff: before, each definition kept the variables of all the definitions
     // it names, at any depth, copied into its own list (a transitive set copied to each
     // definition, O(n·k) for n definitions in a chain and k variables), and each name for it
-    // inserted them all. Used: each definition keeps the names its body writes and the
-    // definitions it names, and a name for one walks the definitions it reaches that the
-    // function type opened last has not walked on this side since a clause: each definition
-    // and each of its edges and names once per function type and side, so O((d + e + v) log k)
-    // for each function type a printed type opens, with d definitions, e names of definitions
-    // in their bodies, v names they write, and k the variables of its home. A type that opens
-    // f function types each naming the definitions pays that f times, the size of the text
-    // with the definitions written in each signature once (Codex, XR-heldname-print-batch r1:
-    // the cost is in the reachable pairs of node and binding environment). A clause entered or
-    // left in a function type makes its next name walk again: a type of c clauses, each
-    // naming the definitions, costs c walks. The printer writes one clause per signature, after
-    // its arrows (`write_parts`), so a printed type walks each definition at most twice per
-    // signature (its parameters and its result). Test:
+    // inserted them all. Then (round 1) the memo was the function type opened last, so a type
+    // whose f inner function types each name a DAG of m definitions walked it f times,
+    // Theta(m·f) (Codex, round 2 of XR-heldname-print-batch, B1-cost). Used: the memo frame
+    // above, so inner function types opened under the clause's signature share its walk: for
+    // a type with one binding environment (no clause, or one clause around the names), each
+    // definition and each of its edges and names is walked at most twice per memo frame (its
+    // two sides), O((d + e + v) log k + f) for the printer's form, one clause after each
+    // signature's arrows (`write_parts`), with d definitions, e names of definitions in their
+    // bodies, v names they write, and k the variables of a home. NOT PROVED: a type of several
+    // clauses each naming the definitions pays a walk at each clause entered or left; no
+    // O(n log n) bound in the size of the text is proved for several nested binding
+    // environments (row FIX-heldname-reading-multi-env). Tests:
+    // `l01_26_type_resolution::scaling::reading_shared_definitions_across_inner_arrows_scales`
+    // (the walks counted, `def_entries`),
     // `l01_26_type_resolution::scaling::a_bound_used_only_in_lifted_parts_reads_back_as_bounded`
     // (the bound and the held set read through five definitions) and the bench
     // `l01_26_type_resolution::bench::scaling::reading_a_long_chain_of_definitions_holding_a_
     // bounded_variable_scales`.
     fn reach(&mut self, d: usize) {
         let held = self.held;
+        let Some(t) = self.open.len().checked_sub(1) else {
+            return;
+        };
+        let w = t.min(self.clauses.last().copied().unwrap_or(0));
         let mut todo = vec![d];
         while let Some(k) = todo.pop() {
-            let Some(last) = self.open.last_mut() else {
-                return;
-            };
-            if !last.walked[usize::from(last.params)].insert(k) {
+            let memo = &mut self.open[w];
+            if !memo.walked[usize::from(memo.params)].insert(k) {
                 continue;
             }
             DEF_ENTRIES.with(|c| c.set(c.get() + 1));
@@ -20336,6 +20465,9 @@ impl<'a> Denote<'a> {
             todo.extend(def.refs.iter().copied());
             if let Some(home) = self.open.first_mut() {
                 home.free.extend(def.free.iter().cloned());
+                for &l in &def.lefts {
+                    Self::put_left(home, &held.lefts[l]);
+                }
             }
             for v in &def.unbound {
                 self.name_use(v, false);
@@ -20395,32 +20527,64 @@ impl<'a> Denote<'a> {
     /// `l01_26_type_resolution::scaling::a_lifted_row_keeps_its_leftover_need_beside_an_absorbed_union`).
     /// What a test leaves of `T` by a set is one type, so two leftovers of `T` by sets of the
     /// same text are the same type. O(|s|) for the key besides `exact_kernel`.
+    ///
+    /// In a definition, where no function type is open, the leftover is kept in
+    /// [`Held::lefts`], one variable for each key in the text, and its need is put on the
+    /// outermost function type around the first name for a definition that reaches it
+    /// ([`Denote::reach`]); in the text's own part, a leftover a definition wrote reads as the
+    /// definition's variable, so a leftover written in a definition and beside it is one
+    /// (row FIX-heldname-veto-expansion).
     fn left_of(&mut self, a: &Ty, b: &Ty, span: Span) -> Option<Ty> {
         let on = a.as_var()?;
         let removed = b.exact_kernel()?;
         if !self.free.contains(on) {
             return None;
         }
-        let home = self.open.first_mut()?;
         let set = Ty::set(removed.clone());
         let key = (on.clone(), set.to_string());
+        let held = self.held;
+        if self.open.is_empty()
+            && let Some(def) = &mut self.def
+        {
+            let k = match held.left_by_key.get(&key) {
+                Some(&k) => k,
+                None => match def.new_lefts.iter().position(|l| l.key == key) {
+                    Some(j) => held.lefts.len() + j,
+                    None => {
+                        let k = held.lefts.len() + def.new_lefts.len();
+                        let name: Arc<str> = format!("{on}\\{k}").into();
+                        def.new_lefts.push(HeldLeft {
+                            key,
+                            on: a.clone(),
+                            narrow: Self::narrow_of(&removed, set),
+                            name,
+                            span,
+                        });
+                        k
+                    }
+                },
+            };
+            def.lefts.insert(k);
+            let name = match held.lefts.get(k) {
+                Some(l) => &l.name,
+                None => &def.new_lefts[k - held.lefts.len()].name,
+            };
+            return Some(Ty::var(name.clone()));
+        }
+        let home = self.open.first_mut()?;
         if let Some(left) = home.lefts.get(&key) {
             return Some(left.clone());
         }
-        // The printer writes the need `e else #a -> d` makes, `Narrow::Atom(a)`, as `T \ s` with
-        // `s` = `ty::any_payload(a)`, `#a | #a(..)` (`Scope::open` in zedc-types), so that set
-        // reads back as that need, the inverse of the print: `Narrow::Not(s)` takes the same
-        // values but is another need, and the text would read back as another signature (B1-2,
-        // the test above at 1 level). One look at the set's first atom name and one comparison.
-        let one = (removed.atom_names().into_iter().flatten())
-            .next()
-            .filter(|&(_, bare)| bare)
-            .map(|(n, _)| Arc::<str>::from(n));
-        let narrow = match one {
-            Some(n) if removed == ty::any_payload(&n) => Narrow::Atom(n),
-            _ => Narrow::Not(set),
-        };
-        let left: Arc<str> = format!("{on}\\{}", home.needs.len()).into();
+        // A leftover a definition wrote, read here before any name for the definition: its
+        // variable, whose need the name will find put already ([`Denote::reach`]).
+        if let Some(&k) = held.left_by_key.get(&key) {
+            Self::put_left(home, &held.lefts[k]);
+            return home.lefts.get(&key).cloned();
+        }
+        let narrow = Self::narrow_of(&removed, set);
+        // Numbered past the definitions' leftovers, so no two leftovers share a name: each
+        // push adds one to `home.needs`.
+        let left: Arc<str> = format!("{on}\\{}", held.lefts.len() + home.needs.len()).into();
         home.free.insert(left.clone());
         home.needs.push(Need {
             on: a.clone(),
@@ -20432,6 +20596,46 @@ impl<'a> Denote<'a> {
         });
         home.lefts.insert(key, Ty::var(left.clone()));
         Some(Ty::var(left))
+    }
+
+    /// Puts the leftover `l` of a definition on `home`, the outermost function type, unless a
+    /// leftover of its key is on it: its variable as a free one of `home` and its need
+    /// ([`HeldLeft`]). O(|key|) for the lookup.
+    fn put_left(home: &mut Reading, l: &HeldLeft) {
+        if home.lefts.contains_key(&l.key) {
+            return;
+        }
+        home.free.insert(l.name.clone());
+        home.needs.push(Need {
+            on: l.on.clone(),
+            kind: NeedKind::Narrow(l.narrow.clone()),
+            result: Some(Ty::var(l.name.clone())),
+            span: l.span,
+            alike: Arc::from([]),
+            via: CallPath::default(),
+        });
+        home.lefts.insert(l.key.clone(), Ty::var(l.name.clone()));
+    }
+
+    /// The need a failed test makes that leaves of a variable all but the kernel set
+    /// `removed`, printed `T \ s` with `set` = `s`.
+    fn narrow_of(removed: &KType, set: Ty) -> Narrow {
+        // The printer writes the need `e else #a -> d` makes, `Narrow::Atom(a)`, as `T \ s` with
+        // `s` = `ty::any_payload(a)`, `#a | #a(..)` (`Scope::open` in zedc-types), so that set
+        // reads back as that need, the inverse of the print: `Narrow::Not(s)` takes the same
+        // values but is another need, and the text would read back as another signature (B1-2,
+        // the test above at 1 level). One look at the set's first atom name and one comparison.
+        // So a failed `is #a | #a(..)`, which makes `Narrow::Not` of that set, reads back as
+        // `Narrow::Atom(a)`: the two leave the same values, and the text cannot tell them
+        // apart (Gemini B1-2-N, round 2 of XR-heldname-print-batch).
+        let one = (removed.atom_names().into_iter().flatten())
+            .next()
+            .filter(|&(_, bare)| bare)
+            .map(|(n, _)| Arc::<str>::from(n));
+        match one {
+            Some(n) if *removed == ty::any_payload(&n) => Narrow::Atom(n),
+            _ => Narrow::Not(set),
+        }
     }
 }
 

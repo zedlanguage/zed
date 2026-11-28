@@ -9,7 +9,7 @@
 //! type prints as `Never`, a prelude type name of L1; its L10 form `!_` is read as well.
 
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use zed_collections::by_address::ByAddress;
 
@@ -17,7 +17,9 @@ use zed_kernel::num::{TooLarge, literal_f64};
 use zed_kernel::{Rat, Value};
 
 use super::ty::{Binds, NodeId, Row, Shape, Sig, Ty, WrittenRange};
-use super::{Held, HeldDef, Inexact, Loss, Ranged, carrier_mask, denoted_inexact};
+use super::{
+    DefParts, Denoted, Held, HeldDef, Inexact, Loss, Ranged, carrier_mask, denoted_inexact,
+};
 pub use super::{def_entries, reset_def_entries};
 use zedc_lattice::interval::Num;
 use zedc_syntax::ast::{self, Expr, ExprKind, RangeEnd, Type, TypeKind};
@@ -76,18 +78,12 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
         tokens.by_ref().take(range.start - at).for_each(drop);
         at = range.end;
         let part: Vec<lex::Token> = tokens.by_ref().take(range.len()).collect();
-        let mut refs: Vec<usize> = (part.iter())
-            .filter_map(|t| match &t.tok {
-                Tok::Name(n) => held.index(n.as_str()),
-                _ => None,
-            })
-            .collect();
         let read = Reader {
             times: &times,
             held: &held,
             definition: name.is_some(),
         };
-        let (t, free, unbound) = read_part(
+        let (t, free, parts) = read_part(
             text,
             &text[from..to],
             from,
@@ -101,14 +97,13 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
         };
         let mut free: Vec<Arc<str>> = free.into_iter().collect();
         free.sort_unstable();
-        refs.sort_unstable();
-        refs.dedup();
         let def = HeldDef {
             free: free.into(),
-            unbound: unbound.into_iter().collect(),
-            refs: refs.into(),
+            unbound: parts.unbound.into_iter().collect(),
+            refs: parts.refs.into_iter().collect(),
+            lefts: parts.lefts.into_iter().collect(),
         };
-        held.add(name.clone(), def);
+        held.add(name.clone(), def, parts.new_lefts);
         named.insert(name, t);
     }
     unreachable!("the text's own part is the last of `parts`")
@@ -119,8 +114,8 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
 /// (sec:type_resolution, rule 4, a name written twice or more), so that a definition used
 /// twice counts each name in its body twice (row PRINT-shared-part-exponential). A name a
 /// `for` clause binds, one followed by `in` (`TypeBounds = 'for' (Name 'in' TypeUnion) % ','`,
-/// syntax.peg), and a name of a definition, are not counted, as the reading of each part
-/// skips them.
+/// syntax.peg), a name of a definition, and a field label (a name followed by `:`), are not
+/// counted, as the reading of each part skips them.
 // Complexity tradeoff: naive, the text written out with each definition at each name for it and
 // the names counted there, O(2^d) for a part used twice at each of d levels, the fault the
 // definitions remove. Used: each definition's uses counted in each part's tokens, its weight
@@ -149,8 +144,14 @@ impl Times {
         let mut names: Vec<HashMap<&'t str, u64>> = Vec::with_capacity(parts.len());
         for (p, (name, range, ..)) in parts.iter().enumerate() {
             let (mut u, mut m) = (Vec::new(), HashMap::new());
-            for t in &tokens[range.clone()] {
+            let part = &tokens[range.clone()];
+            for (j, t) in part.iter().enumerate() {
                 let Tok::Name(n) = &t.tok else { continue };
+                // A label, as `Part1` in `#x(Part1: int)`, names a field, not a type: it is
+                // no use of a definition and no variable (row FIX-heldname-def-edges).
+                if part.get(j + 1).is_some_and(|t| t.tok == Tok::Op(":")) {
+                    continue;
+                }
                 match defined.get(n.as_str()) {
                     Some(&q) => u.push(q),
                     None if capital(n) && !clause.contains(n.as_str()) => {
@@ -204,8 +205,8 @@ struct Reader<'a> {
 }
 
 /// What [`read_part`] gives for a part: its type, the variables written in it, and, for a
-/// definition, the names it writes that no clause in it bounds.
-type PartRead = (Ty, HashSet<Arc<str>>, BTreeSet<Arc<str>>);
+/// definition, what its body writes besides ([`DefParts`]).
+type PartRead = (Ty, HashSet<Arc<str>>, DefParts);
 
 /// The tokens of `head`, the text of a printed type from byte `from` to a token's start or the
 /// end, given `tokens`, the tokens the whole text has there: the same tokens with their spans
@@ -428,8 +429,15 @@ fn read_part(
     // `kinds::the_difference_of_payloads_of_one_atom_takes_the_payloads`),
     // and a difference that takes part of a variable is held by `left_of`.
     // A definition also gives the names it writes that no clause in it bounds, which read
-    // under the clause around each name for it (`Denote::reach`).
-    let (ty, inexact, unbound) = denoted_inexact(
+    // under the clause around each name for it (`Denote::reach`), and the definitions it names
+    // as types and the leftovers it writes; the last part gives the bounds a name for a
+    // definition uses.
+    let Denoted {
+        ty,
+        inexact,
+        used,
+        def,
+    } = denoted_inexact(
         &t,
         binds,
         &free,
@@ -509,19 +517,20 @@ fn read_part(
     // defined. A clause of the last part may bound a name only its definitions write, which
     // reads under the clause at each name for them (`Denote::reach`); the check above has
     // found its variable on a signature, so the resolver takes the clause as bounding
-    // something. Definitions hold no clause, so they pass no names. O(v) for the v names the
-    // definitions write, once for the text.
+    // something. Only the clauses a name for a definition reaches are passed, by the span of
+    // the bound's variable: before, the spellings every definition leaves unbound were, and a
+    // clause on a sibling signature that no use reaches was excused when any definition wrote
+    // its name (Codex B1-clause and Gemini B1-NEW, round 2 of XR-heldname-print-batch; row
+    // FIX-heldname-clause-occurrence). Definitions hold no clause, so they pass none.
     let held = match read.definition {
         true => HashSet::new(),
-        false => (read.held.defs.iter())
-            .flat_map(|d| d.unbound.iter().cloned())
-            .collect(),
+        false => used,
     };
     if let Err(es) = zedc_resolve::resolve::printed_type(&t, found, held) {
         let why: Vec<String> = es.into_iter().map(|e| written.back(&e.message)).collect();
         return Err(format!("`{text}`: {}", why.join("; ")));
     }
-    Ok((ty, free, unbound))
+    Ok((ty, free, def))
 }
 
 /// What the reading of one printed type has walked of its parts' types, for the check that
