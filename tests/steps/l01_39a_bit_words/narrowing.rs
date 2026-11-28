@@ -174,7 +174,8 @@ fn a_test_on_a_call_the_operand_repeats_narrows_it_where_the_callee_has_a_summar
     rejected(&at(-1));
     // A callee with no summary (`n * n` is no affine piece) is kept as one name for both
     // calls too (CHECK-implicit-call-limits, `Reading::Test` in walk.rs), so the test on one
-    // narrows the other, with the same boundary; a name for the value does the same.
+    // narrows the other; a name for the value does the same. The boundary is -2, not -1:
+    // `n * n - 3` never equals -1, but it is -2 at `n = 1`, so `popCount(-2)` is a real fault.
     let square = |c: i32| {
         format!(
             "g(positional n: int) = n * n - 3;\n\
@@ -182,7 +183,7 @@ fn a_test_on_a_call_the_operand_repeats_narrows_it_where_the_callee_has_a_summar
         )
     };
     assert!(accepted(&square(0)), "{}", square(0));
-    rejected(&square(-1));
+    rejected(&square(-2));
     assert!(rows_pass(
         "g(positional n: int) = n * n - 3;\n\
          f(positional n: int) = { m = g(n); if m >= 0 { popCount(m) } else { 0 } }\n\
