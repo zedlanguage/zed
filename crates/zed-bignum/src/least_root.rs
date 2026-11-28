@@ -547,9 +547,10 @@ pub fn nth_root_rem_uint(a: &BigUint, k: u64) -> (BigUint, BigUint) {
 /// a square doubles the factor its operand carries, so the bounds are within a factor of
 /// about `1 + k 2^(-126)` of the power, `1 + 2^(-86)` for an index under `2^40`; and a turn at
 /// bit `i` of the root tries a `t` that differs from the root by about `2^i`, a factor `1 + k
-/// 2^(i - R)` or more on the power, past the bounds' for all but the last few `i`. Before (ledger FAIL-roots-binomial-u32-narrowing) every turn took the
-/// power: `R` powers of up to `n` bits, `O(log k M(n))`, and `3^(2^32)`, about 850 MB, for the
-/// root of `2^(2^32)` alone. Three versions before this one, all
+/// 2^(i - R)` or more on the power, past the bounds' for all but the last few `i`. Before
+/// (ledger FAIL-roots-binomial-u32-narrowing) every turn took the power: `R` powers of up to
+/// `n` bits, `O(log k M(n))`, and `3^(2^32)`, about 850 MB, for the root of `2^(2^32)` alone.
+/// Three versions before this one, all
 /// measured by `kth_roots_scale` from 2,048 to 8,192 words for `k` 3 and 64 (2026-11-20):
 /// `h = floor(R / 2)` and turns until `y >= x`, 2 or 3 turns a level, the last only to
 /// confirm, and `T(8n) / T(n)` from 8.9 to 12.8 as the turn count changed between sizes; one
