@@ -5299,9 +5299,9 @@ fn r10_two_callers_of_one_callee_reuse_held_template_only_without_clash() {
 }
 
 /// The programs of TEST-heldname-nested-forward-order: a forward nested two deep (`h2` calls
-/// `h1`, which calls `h0`, each mapping by `id`) and one a level less deep, beside a lambda of the caller's
-/// own: `(h2(m), h1(n), (y) -> y)`, or with the two calls swapped (`swapped`), so the internal results of the two calls and their first uses come in another
-/// order.
+/// `h1`, which calls `h0`, each mapping by `id`) and one a level less deep, beside a lambda of
+/// the caller's own: `(h2(m), h1(n), (y) -> y)`, or with the two calls swapped (`swapped`), so
+/// the internal results of the two calls and their first uses come in another order.
 fn nested_order_program(swapped: bool) -> String {
     let defs = "id(positional x) = x;\nh0(positional m) = m.map(id);\n\
                 h1(positional m) = h0(m).map(id);\nh2(positional m) = h1(m).map(id);\n";
